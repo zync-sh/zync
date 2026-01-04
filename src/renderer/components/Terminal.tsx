@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { SearchAddon } from 'xterm-addon-search';
@@ -20,54 +20,7 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
   // Find connection status
   const isLocal = activeConnectionId === 'local';
   const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
-
-  // Add local state to track verified connection status
-  const [backendConnected, setBackendConnected] = useState<boolean | null>(null);
-  const [spawnError, setSpawnError] = useState<string | null>(null);
-
-  // Verify connection with backend when component mounts or connection changes
-  useEffect(() => {
-    if (!activeConnectionId || isLocal) {
-      setBackendConnected(true);
-      return;
-    }
-
-    let retries = 0;
-    const maxRetries = 10; // Try for up to 5 seconds
-    let timeoutId: NodeJS.Timeout;
-
-    const checkStatus = async () => {
-      try {
-        const isAlive = await window.ipcRenderer.invoke('ssh:status', activeConnectionId);
-        if (isAlive) {
-          setBackendConnected(true);
-        } else if (retries < maxRetries) {
-          // Connection might still be establishing, retry after delay
-          retries++;
-          timeoutId = setTimeout(checkStatus, 500);
-        } else {
-          setBackendConnected(false);
-        }
-      } catch {
-        setBackendConnected(false);
-      }
-    };
-
-    checkStatus();
-    return () => clearTimeout(timeoutId);
-  }, [activeConnectionId, isLocal]);
-
-  // Also listen to frontend connection state changes
-  useEffect(() => {
-    if (connection?.status === 'connected') {
-      setBackendConnected(true);
-    } else if (connection?.status === 'disconnected' || connection?.status === 'error') {
-      setBackendConnected(false);
-    }
-  }, [connection?.status]);
-
-  // Use backend status if available, otherwise fall back to frontend state
-  const isConnected = isLocal || (backendConnected !== null ? backendConnected : connection?.status === 'connected');
+  const isConnected = isLocal || connection?.status === 'connected';
 
   // Use termId if provided, otherwise fallback to connectionId
   const sessionId = termId || activeConnectionId;
@@ -152,7 +105,6 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
     termRef.current = term;
 
     // Spawn shell via IPC
-    console.log(`[Terminal] Spawning shell for ${sessionId} (rows=${term.rows}, cols=${term.cols})`);
     window.ipcRenderer
       .invoke('terminal:spawn', {
         connectionId: activeConnectionId,
@@ -160,18 +112,8 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
         rows: term.rows,
         cols: term.cols,
       })
-      .then((res: any) => {
-          console.log(`[Terminal] Spawn result:`, res);
-          if (!res.success) {
-              const msg = res.error || 'Unknown failure spawning terminal';
-              console.error('Failed to spawn terminal:', msg);
-              setSpawnError(msg);
-              term.write(`\r\n\x1b[31mFailed to start terminal session: ${msg}\x1b[0m\r\n`);
-          }
-      })
-      .catch((err: any) => {
-        console.error('Failed to spawn terminal IPC:', err);
-        setSpawnError(err.message);
+      .catch((err) => {
+        console.error('Failed to spawn terminal:', err);
         term.write(`\r\n\x1b[31mFailed to start terminal session: ${err.message}\x1b[0m\r\n`);
       });
 
@@ -180,23 +122,15 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
       window.ipcRenderer.send('terminal:write', { termId: sessionId, data });
     });
 
-    // Listeners
+    // Define the listener function separately so we can remove it later
     const handleTerminalData = (_: any, { termId: incomingTermId, data }: { termId: string; data: string }) => {
       if (incomingTermId === sessionId) {
         term.write(data);
       }
     };
-    
-    const handleTerminalClosed = (_: any, { termId: incomingTermId }: { termId: string }) => {
-        if (incomingTermId === sessionId) {
-            console.log(`[Terminal] Session closed: ${sessionId}`);
-            term.write('\r\n\x1b[33m--- Session Ended ---\x1b[0m\r\n');
-        }
-    };
 
     // Add listener
     window.ipcRenderer.on('terminal:data', handleTerminalData);
-    window.ipcRenderer.on('terminal:closed', handleTerminalClosed);
 
     // Resize Observer for container
     const resizeObserver = new ResizeObserver(() => {
@@ -222,7 +156,6 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
     return () => {
       // Remove listener properly
       window.ipcRenderer.off('terminal:data', handleTerminalData);
-      window.ipcRenderer.off('terminal:closed', handleTerminalClosed);
 
       resizeObserver.disconnect();
 
@@ -245,27 +178,11 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
   if (!activeConnectionId) return <div className="p-8 text-gray-400">Please connect to a server first.</div>;
   if (!isConnected)
     return (
-      <div className="p-8 text-gray-400 flex flex-col items-center gap-2">
-        <div className="flex items-center gap-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-2 border-app-accent border-t-transparent"></div>{' '}
-            Connecting to terminal...
-        </div>
-        <div className="text-xs text-gray-600 font-mono mt-4">
-            DEBUG: ID={activeConnectionId}<br/>
-            LocalState={backendConnected === null ? 'null' : backendConnected.toString()}<br/>
-            GlobalState={connection?.status || 'undefined'}
-        </div>
+      <div className="p-8 text-gray-400 flex items-center gap-2">
+        <div className="animate-spin rounded-full h-4 w-4 border-2 border-app-accent border-t-transparent"></div>{' '}
+        Connecting to terminal...
       </div>
     );
-  
-  if (spawnError) {
-      return (
-          <div className="h-full w-full bg-app-bg p-8 flex flex-col items-center justify-center text-red-400">
-              <h3 className="text-xl font-bold mb-2">Terminal Connection Failed</h3>
-              <p>{spawnError}</p>
-          </div>
-      );
-  }
 
   return <div className="h-full w-full bg-app-bg p-2" ref={containerRef} />;
 }

@@ -1,15 +1,23 @@
 {
   "name": "ssh-ui",
   "version": "1.0.0",
-  "description": "",
+  "description": "A modern, beautiful SSH client for the web generation.",
   "main": "dist-electron/index.js",
+  "homepage": "https://github.com/gajendra/ssh-ui",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:linux": "npm run build && electron-builder --linux",
+    "build:win": "npm run build && electron-builder --win",
     "preview": "vite preview"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "ssh",
+    "terminal",
+    "electron",
+    "react"
+  ],
+  "author": "Gajendra <gajendra@example.com>",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -71,8 +79,13 @@
         "AppImage",
         "deb"
       ],
-      "icon": "public/icon.svg",
+      "icon": "public/icon.png",
       "category": "Development"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.png",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "files": [
       "dist-electron/**/*",

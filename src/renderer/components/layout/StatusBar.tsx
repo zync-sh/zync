@@ -4,13 +4,12 @@ import { useConnections } from '../../context/ConnectionContext';
 export function StatusBar() {
   const { activeConnectionId, connections } = useConnections();
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
-  const isConnected = activeConnection?.status === 'connected';
 
   return (
     <div className="h-6 bg-app-accent/10 border-t border-app-accent/20 flex items-center px-3 text-[10px] select-none text-app-text/80 justify-between shrink-0">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
-          {isConnected && activeConnection ? (
+          {activeConnection ? (
             <>
               <Wifi size={10} className="text-app-success" />
               <span className="font-medium">Connected to {activeConnection.name}</span>

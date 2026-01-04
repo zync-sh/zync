@@ -4,15 +4,14 @@ import { app, BrowserWindow } from 'electron';
 process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public');
 
-// Disable GPU/Sandbox for stability
+// Disable GPU Acceleration for Linux/Remote stability
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
 app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('use-gl', 'swiftshader');
-app.commandLine.appendSwitch('no-sandbox');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
 
 let win: BrowserWindow | null;
 // 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
-const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || "http://localhost:5000";
+const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
 function createWindow() {
   const iconPath = path.join(process.env.VITE_PUBLIC || '', 'icon.svg');
@@ -20,20 +19,16 @@ function createWindow() {
 
   win = new BrowserWindow({
     icon: iconPath,
-    // titleBarStyle: 'hidden', // Commented out to test blackout fix
-    // titleBarOverlay: {
-    //   color: '#0f172a',
-    //   symbolColor: '#ffffff',
-    // },
-    autoHideMenuBar: true, // Hide default menu bar but keep window frame
+    titleBarStyle: 'hidden', // Sleek borderless look
+    titleBarOverlay: {
+      color: '#0f172a',
+      symbolColor: '#ffffff',
+    },
     width: 1200,
     height: 800,
     backgroundColor: '#0f172a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      sandbox: false, // Required when app.commandLine.appendSwitch('no-sandbox') is used
-      contextIsolation: true,
-      nodeIntegration: false,
     },
   });
 
@@ -47,10 +42,7 @@ function createWindow() {
   }
 
   if (VITE_DEV_SERVER_URL) {
-    console.log('Loading Dev Server:', VITE_DEV_SERVER_URL);
     win.loadURL(VITE_DEV_SERVER_URL);
-    console.log('Opening DevTools...');
-    win.webContents.openDevTools({ mode: 'detach' });
   } else {
     // win.loadFile('dist/index.html')
     win.loadFile(path.join(process.env.DIST || '', 'index.html'));

@@ -12,9 +12,7 @@ export interface SSHConfig {
   jumpServerId?: string; // ID of the bastion host connection
 }
 
-import { EventEmitter } from 'node:events';
-
-export class SSHManager extends EventEmitter {
+export class SSHManager {
   private connections: Map<string, Client> = new Map();
 
   async connect(config: SSHConfig): Promise<void> {
@@ -65,23 +63,13 @@ export class SSHManager extends EventEmitter {
 
       conn
         .on('ready', () => {
-          console.log(`[SSH] Connection ready: ${config.id} (${config.host})`);
           this.connections.set(config.id, conn);
           resolve();
         })
         .on('error', (err) => {
-          console.error(`[SSH] Connection error for ${config.id}:`, err.message);
-          this.emit('error', config.id, err);
           reject(err);
         })
         .on('end', () => {
-          console.log(`[SSH] Connection ended: ${config.id}`);
-          this.emit('disconnect', config.id, 'Connection ended by server');
-          this.connections.delete(config.id);
-        })
-        .on('close', () => {
-          console.log(`[SSH] Connection closed: ${config.id}`);
-          this.emit('disconnect', config.id, 'Connection closed');
           this.connections.delete(config.id);
         });
 
@@ -90,9 +78,6 @@ export class SSHManager extends EventEmitter {
         port: config.port,
         username: config.username,
         sock: sock, // Inject the stream if provided (Jump Server)
-        keepaliveInterval: 10000,
-        keepaliveCountMax: 3,
-        readyTimeout: 20000,
       };
 
       if (config.privateKeyPath) {

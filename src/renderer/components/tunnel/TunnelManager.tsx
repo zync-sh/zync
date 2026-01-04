@@ -33,6 +33,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     remotePort: '80',
   });
 
+
+
   const loadTunnels = async () => {
     if (!activeConnectionId) return;
     try {
@@ -47,7 +49,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     if (activeConnectionId) {
       loadTunnels();
     }
-  }, [activeConnectionId, loadTunnels]);
+  }, [activeConnectionId]); // Removed loadTunnels from deps to avoid infinite loop or need for useCallback
+
 
   const handleSaveTunnel = async () => {
     if (!activeConnectionId) return;

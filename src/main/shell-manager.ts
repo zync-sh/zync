@@ -39,34 +39,21 @@ export class SSHShellManager {
     if (!client) throw new Error('Client not connected');
 
     // Allow multiple shells per connection (Channels)
-    return new Promise((resolve, reject) => {
-      client.shell({ term: 'xterm', rows, cols }, (err, stream) => {
-        if (err) {
-          console.error('Failed to open shell channel:', err);
-          // Also try to send data if possible, but rejection is better for the UI loader
-          win.webContents.send('terminal:data', { termId, data: `\r\nConnection Error: ${err.message}\r\n` });
-          win.webContents.send('terminal:closed', { termId });
-          return reject(err);
-        }
+    client.shell({ term: 'xterm', rows, cols }, (err, stream) => {
+      if (err) throw err;
 
-        console.log(`[ShellManager] Shell created for ${termId} (conn: ${connectionId})`);
-        this.streams.set(termId, stream);
+      this.streams.set(termId, stream);
 
-        stream.on('data', (data: any) => {
-          // console.log(`[ShellManager] Data from ${termId}: ${data.length} bytes`);
-          win.webContents.send('terminal:data', {
-            termId,
-            data: data.toString(),
-          });
+      stream.on('data', (data: any) => {
+        win.webContents.send('terminal:data', {
+          termId,
+          data: data.toString(),
         });
+      });
 
-        stream.on('close', () => {
-          console.log(`[ShellManager] Shell closed for ${termId}`);
-          win.webContents.send('terminal:closed', { termId });
-          this.streams.delete(termId);
-        });
-
-        resolve();
+      stream.on('close', () => {
+        win.webContents.send('terminal:closed', { termId });
+        this.streams.delete(termId);
       });
     });
   }

@@ -1,16 +1,15 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-import { BrowserWindow, ipcMain } from 'electron';
-import { type SSHConfig, sshManager } from './ssh-manager';
+import { ipcMain, BrowserWindow } from 'electron';
+import { sshManager, SSHConfig } from './ssh-manager';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
 const execPromise = promisify(exec);
-
-import { settingsManager } from './settings-manager';
 import { sftpManager } from './sftp-manager';
 import { sshShellManager } from './shell-manager';
-import { type Snippet, snippetManager } from './snippets-manager';
+import { settingsManager } from './settings-manager';
+import { tunnelManager, TunnelConfig } from './tunnel-manager';
+import { snippetManager, Snippet } from './snippets-manager';
 import { SSHConfigParser } from './ssh-config-parser';
-import { type TunnelConfig, tunnelManager } from './tunnel-manager';
 
 export function setupIPC() {
   // Snippets Operations
@@ -69,7 +68,7 @@ export function setupIPC() {
 
   ipcMain.handle('settings:set', async (_, settings) => {
     settingsManager.setSettings(settings); // Replaces or merges? electron-store set(obj) merges top-level? No, set(object) sets multiple items.
-    // But Store.set(obj) usually merges?
+    // But Store.set(obj) usually merges? 
     // Let's rely on setSettings impl from manager.
     // Actually better to handle update.
     // For simplicity, we expect full object or partial.
@@ -80,7 +79,6 @@ export function setupIPC() {
 
   // SSH Session Management
   ipcMain.handle('ssh:connect', async (_, config: SSHConfig) => {
-    console.log('[IPC] ssh:connect called for:', config.id);
     // Connect SSH first (terminal)
     await sshManager.connect(config);
 
@@ -88,18 +86,19 @@ export function setupIPC() {
       // Then connect SFTP (file manager)
       // Sequential execution prevents potential race conditions or auth rate limiting on some servers
       await sftpManager.connect(config);
-    } catch (error: any) {
-      console.error('SFTP Connection Failed (proceeding with Terminal only):', error);
-      // Do NOT disconnect SSH. Allow terminal usage even if SFTP is disabled/failed.
-      // sshManager.disconnect(config.id);
+    } catch (error) {
+      console.error('SFTP Connection Failed:', error);
+      // If SFTP fails, should we disconnect SSH? 
+      // For now, let's treat it as a partial failure but allow terminal access?
+      // But the UI expects both. Let's disconnect SSH and throw to ensure consistent state.
+      sshManager.disconnect(config.id);
+      throw error;
     }
 
-    console.log('[IPC] ssh:connect completed for:', config.id);
     return { success: true };
   });
 
   ipcMain.handle('ssh:disconnect', async (_, id: string) => {
-    console.log('[IPC] ssh:disconnect called for:', id);
     sshManager.disconnect(id);
     await sftpManager.disconnect(id);
     return { success: true };
@@ -120,9 +119,7 @@ export function setupIPC() {
   });
 
   ipcMain.handle('ssh:status', async (_, id: string) => {
-    const isAlive = !!sshManager.getClient(id);
-    console.log(`[IPC] ssh:status check for ${id}: ${isAlive}`);
-    return isAlive;
+    return !!sshManager.getClient(id);
   });
 
   // SFTP Operations
@@ -134,13 +131,11 @@ export function setupIPC() {
     return sftpManager.cwd(id);
   });
 
-  ipcMain.handle('sftp:get', async (_, { id, remotePath, localPath }) => {
-    // Download
+  ipcMain.handle('sftp:get', async (_, { id, remotePath, localPath }) => { // Download
     return sftpManager.get(id, remotePath, localPath);
   });
 
-  ipcMain.handle('sftp:put', async (_, { id, localPath, remotePath }) => {
-    // Upload
+  ipcMain.handle('sftp:put', async (_, { id, localPath, remotePath }) => { // Upload
     return sftpManager.put(id, localPath, remotePath);
   });
 
@@ -164,46 +159,40 @@ export function setupIPC() {
     return sftpManager.writeFile(id, path, content);
   });
 
-  ipcMain.handle(
-    'sftp:copyToServer',
-    async (event, { sourceConnectionId, sourcePath, destinationConnectionId, destinationPath, transferId }) => {
-      return sftpManager.copyBetweenServers(
-        sourceConnectionId,
-        sourcePath,
-        destinationConnectionId,
-        destinationPath,
-        (transferred, total) => {
-          event.sender.send('transfer:progress', {
-            transferred,
-            total,
-            percentage: (transferred / total) * 100,
-            sourcePath,
-            transferId,
-          });
-        },
-        transferId,
-      );
-    },
-  );
+  ipcMain.handle('sftp:copyToServer', async (event, { sourceConnectionId, sourcePath, destinationConnectionId, destinationPath, transferId }) => {
+    return sftpManager.copyBetweenServers(
+      sourceConnectionId,
+      sourcePath,
+      destinationConnectionId,
+      destinationPath,
+      (transferred, total) => {
+        event.sender.send('transfer:progress', {
+          transferred,
+          total,
+          percentage: (transferred / total) * 100,
+          sourcePath,
+          transferId
+        });
+      },
+      transferId
+    );
+  });
 
   ipcMain.handle('sftp:cancelTransfer', async (_, { transferId }) => {
     return sftpManager.cancelTransfer(transferId);
   });
 
+
   // Native Dialogs
   const { dialog } = require('electron');
 
   ipcMain.handle('dialog:openFile', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openFile', 'multiSelections'],
-    });
+    const result = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
     return result;
   });
 
   ipcMain.handle('dialog:openDirectory', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-    });
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     return result;
   });
 
@@ -214,16 +203,10 @@ export function setupIPC() {
 
   // Terminal Operations
   ipcMain.handle('terminal:spawn', async (event, { connectionId, termId, rows, cols }) => {
-    console.log(`[IPC] terminal:spawn called for: ${connectionId} (termId: ${termId})`);
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false };
-    try {
-      await sshShellManager.spawn(connectionId, termId, rows, cols, win);
-      return { success: true };
-    } catch (error: any) {
-      console.error('[IPC] terminal:spawn failed:', error);
-      return { success: false, error: error.message };
-    }
+    await sshShellManager.spawn(connectionId, termId, rows, cols, win);
+    return { success: true };
   });
 
   ipcMain.on('terminal:write', (_, { termId, data }) => {
@@ -241,8 +224,8 @@ export function setupIPC() {
   // Key Management
   ipcMain.handle('ssh:importKey', async (_, filePath: string) => {
     const { app } = require('electron');
-    const fs = require('node:fs');
-    const path = require('node:path');
+    const fs = require('fs');
+    const path = require('path');
 
     try {
       const userDataPath = app.getPath('userData');
@@ -278,23 +261,5 @@ export function setupIPC() {
       console.error('Failed to parse config:', e);
       throw e;
     }
-  });
-
-  // Window Controls
-  ipcMain.handle('window:update-title-bar-overlay', (event, overlay) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win) {
-      // titleBarOverlay is not supported on Linux and throws if not enabled
-      if (process.platform === 'linux') return { success: true };
-
-      try {
-        win.setTitleBarOverlay(overlay);
-        return { success: true };
-      } catch (e: any) {
-        // Silently fail if overlay is disabled or unsupported
-        return { success: false, error: e.message };
-      }
-    }
-    return { success: false };
   });
 }

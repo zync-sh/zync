@@ -48,7 +48,7 @@ class SettingsManager {
     // Actually store.set(obj) merges. The type definition usually expects complete T.
     // Let's iterate to be type-safe and support deep merge if needed (though top level here)
     for (const [key, value] of Object.entries(settings)) {
-      this.store.set(key, value);
+      this.store.set(key as any, value);
     }
   }
 

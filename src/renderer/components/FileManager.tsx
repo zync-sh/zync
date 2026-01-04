@@ -33,53 +33,8 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   // Find the actual connection object to check status
   const isLocal = activeConnectionId === 'local';
   const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
-
-  // Add local state to track verified connection status
-  const [backendConnected, setBackendConnected] = useState<boolean | null>(null);
-
-  // Verify connection with backend when component mounts or connection changes
-  useEffect(() => {
-    if (!activeConnectionId || isLocal) {
-      setBackendConnected(true);
-      return;
-    }
-
-    let retries = 0;
-    const maxRetries = 10; // Try for up to 5 seconds
-    let timeoutId: NodeJS.Timeout;
-
-    const checkStatus = async () => {
-      try {
-        const isAlive = await window.ipcRenderer.invoke('ssh:status', activeConnectionId);
-        if (isAlive) {
-          setBackendConnected(true);
-        } else if (retries < maxRetries) {
-          // Connection might still be establishing, retry after delay
-          retries++;
-          timeoutId = setTimeout(checkStatus, 500);
-        } else {
-          setBackendConnected(false);
-        }
-      } catch {
-        setBackendConnected(false);
-      }
-    };
-
-    checkStatus();
-    return () => clearTimeout(timeoutId);
-  }, [activeConnectionId, isLocal]);
-
-  // Also listen to frontend connection state changes
-  useEffect(() => {
-    if (connection?.status === 'connected') {
-      setBackendConnected(true);
-    } else if (connection?.status === 'disconnected' || connection?.status === 'error') {
-      setBackendConnected(false);
-    }
-  }, [connection?.status]);
-
-  // Use backend status if available, otherwise fall back to frontend state
-  const isConnected = isLocal || (backendConnected !== null ? backendConnected : connection?.status === 'connected');
+  // Local is always "connected" for file operations
+  const isConnected = isLocal || connection?.status === 'connected';
 
   const { settings } = useSettings();
   const [currentPath, setCurrentPath] = useState(''); // Empty initially
@@ -209,35 +164,19 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   const initHomeDirectory = useCallback(async () => {
     if (!activeConnectionId || !isConnected) return;
     setLoading(true);
-
-    // Retry logic for SFTP - it might not be ready yet even if SSH is connected
-    let retries = 0;
-    const maxRetries = 5;
-
-    const attemptInit = async (): Promise<void> => {
-      try {
-        const path = await window.ipcRenderer.invoke('sftp:cwd', {
-          id: activeConnectionId,
-        });
-        setCurrentPath(path);
-        setHomePath(path);
-        loadFiles(path);
-      } catch (error: any) {
-        if (error.message?.includes('SFTP session not active') && retries < maxRetries) {
-          // SFTP still connecting, retry after delay
-          retries++;
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          return attemptInit();
-        }
-
-        console.error('Failed to get home dir:', error);
-        setCurrentPath('/');
-        setHomePath('/');
-        loadFiles('/');
-      }
-    };
-
-    await attemptInit();
+    try {
+      const path = await window.ipcRenderer.invoke('sftp:cwd', {
+        id: activeConnectionId,
+      });
+      setCurrentPath(path);
+      setHomePath(path);
+      loadFiles(path);
+    } catch (error: any) {
+      console.error('Failed to get home dir:', error);
+      setCurrentPath('/');
+      setHomePath('/');
+      loadFiles('/');
+    }
   }, [activeConnectionId, isConnected]);
 
   useEffect(() => {
@@ -252,7 +191,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   }, [activeConnectionId, isConnected, initHomeDirectory]);
 
   // update loadFiles to not depend on 'loading' state recursion
-  const loadFiles = async (path: string, retriesLeft = 5) => {
+  const loadFiles = async (path: string) => {
     if (!activeConnectionId) return;
     setLoading(true);
     try {
@@ -274,12 +213,6 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
       setFiles(mappedEntries);
       setCurrentPath(path); // Ensure path is updated
     } catch (error: any) {
-      if (error.message?.includes('SFTP session not active') && retriesLeft > 0) {
-        // SFTP still connecting, retry after delay
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        return loadFiles(path, retriesLeft - 1);
-      }
-
       console.error('Failed to load files', error);
       showToast('error', `Failed to load directory: ${error.message}`);
     } finally {
@@ -710,7 +643,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
         <div className="text-center">
           <p className="text-sm font-medium text-app-text mb-1">Disconnected</p>
           <p className="text-xs text-app-muted mb-4 opacity-70">The remote session was terminated</p>
-          <Button onClick={() => activeConnectionId && connect(activeConnectionId)}>Reconnect</Button>
+          <Button onClick={() => connect(activeConnectionId)}>Reconnect</Button>
         </div>
       </div>
     );

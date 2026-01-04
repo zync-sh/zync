@@ -64,17 +64,8 @@
     height: 10px;
 }
 
-.scrollbar-thin::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-}
-
 ::-webkit-scrollbar-track {
     background: var(--color-app-bg);
-}
-
-.scrollbar-track-transparent::-webkit-scrollbar-track {
-    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -82,11 +73,6 @@
     border-radius: 5px;
     border: 2px solid var(--color-app-bg);
     /* Padding effect */
-}
-
-.scrollbar-thin::-webkit-scrollbar-thumb {
-    border: none;
-    border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -127,23 +113,6 @@
     --color-app-accent: #a6e22e;
 }
 
-.dark-warm {
-    --color-app-bg: #1c1917;
-    /* Stone 900 */
-    --color-app-panel: #292524;
-    /* Stone 800 */
-    --color-app-surface: #44403c;
-    /* Stone 700 */
-    --color-app-border: #57534e;
-    /* Stone 600 */
-    --color-app-text: #e7e5e4;
-    /* Stone 200 */
-    --color-app-muted: #a8a29e;
-    /* Stone 400 */
-    --color-app-accent: #f97316;
-    /* Orange 500 */
-}
-
 /* Ensure background is applied */
 body {
     background-color: var(--color-app-bg);
@@ -151,8 +120,8 @@ body {
 }
 
 .xterm .xterm-viewport {
-    background-color: transparent;
-    overflow-y: auto;
+    background-color: transparent !important;
+    overflow-y: auto !important;
 }
 
 /* Hide scrollbar track in terminal to make it clean */

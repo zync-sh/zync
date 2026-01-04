@@ -18,55 +18,26 @@ export interface FileEntry {
 
 export class SFTPManager {
   private wrappers: Map<string, SFTPWrapper> = new Map();
-  private connectionPromises: Map<string, Promise<void>> = new Map();
 
   async connect(config: SSHConfig): Promise<void> {
     // Local connection doesn't need explicit SFTP connection
     if (config.id === 'local') return;
 
-    // Return existing promise if connection is already in progress
-    if (this.connectionPromises.has(config.id)) {
-        return this.connectionPromises.get(config.id);
-    }
-
-    console.log(`[SFTP] Attempting SFTP connection for: ${config.id}`);
-    
     // Reuse existing SSH connection
     const client = sshManager.getClient(config.id);
     if (!client) throw new Error('SSH Client disjointed. Please connect SSH first.');
 
-    const connectionPromise = new Promise<void>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       client.sftp((err, sftp) => {
-        if (err) {
-          console.error(`[SFTP] Failed to establish SFTP for ${config.id}:`, err.message);
-          this.connectionPromises.delete(config.id);
-          return reject(err);
-        }
-        
-        // Check if we were disconnected while connecting
-        if (!this.connectionPromises.has(config.id)) {
-            console.log(`[SFTP] Connection for ${config.id} was aborted. Closing session.`);
-            sftp.end();
-            return resolve();
-        }
-
-        console.log(`[SFTP] SFTP session established for: ${config.id}`);
+        if (err) return reject(err);
         this.wrappers.set(config.id, sftp);
-        // We keep the promise resolved so future waiters get it immediately
         resolve();
       });
     });
-
-    this.connectionPromises.set(config.id, connectionPromise);
-    return connectionPromise;
   }
 
   async disconnect(id: string) {
     if (id === 'local') return;
-    
-    // Cancel any in-progress connection
-    this.connectionPromises.delete(id);
-
     const sftp = this.wrappers.get(id);
     if (sftp) {
       sftp.end(); // Ends the SFTP subsystem
@@ -74,19 +45,10 @@ export class SFTPManager {
     }
   }
 
-  private async getWrapper(id: string): Promise<SFTPWrapper> {
-    // If we have an active connection prompt, wait for it
-    if (this.connectionPromises.has(id)) {
-        await this.connectionPromises.get(id);
-    }
-
+  private getWrapper(id: string): SFTPWrapper {
     const sftp = this.wrappers.get(id);
     if (!sftp) throw new Error(`SFTP session not active for id: ${id}`);
     return sftp;
-  }
-
-  public getWrapperSync(id: string): SFTPWrapper | undefined {
-    return this.wrappers.get(id);
   }
 
   // Wrappers for SFTP operations
@@ -122,13 +84,13 @@ export class SFTPManager {
       }
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      sftp.readdir(dirPath, (err: Error | undefined, list: any[]) => {
+      sftp.readdir(dirPath, (err, list) => {
         if (err) return reject(err);
 
         const entries = list.map(
-          (item: any) =>
+          (item) =>
             ({
               name: item.filename,
               type: item.longname.startsWith('d') ? 'd' : item.longname.startsWith('l') ? 'l' : '-',
@@ -154,9 +116,9 @@ export class SFTPManager {
       return os.homedir();
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      sftp.realpath('.', (err: Error | undefined, path: string) => {
+      sftp.realpath('.', (err, path) => {
         if (err) return reject(err);
         resolve(path);
       });
@@ -170,9 +132,9 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      (sftp as any).fastGet(remotePath, localPath, (err: Error | undefined) => {
+      sftp.fastGet(remotePath, localPath, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -185,9 +147,9 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      (sftp as any).fastPut(localPath, remotePath, (err: Error | undefined) => {
+      sftp.fastPut(localPath, remotePath, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -200,9 +162,9 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      (sftp as any).mkdir(path, (err: Error | undefined) => {
+      sftp.mkdir(path, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -215,9 +177,9 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      (sftp as any).rename(oldPath, newPath, (err: Error | undefined) => {
+      sftp.rename(oldPath, newPath, (err) => {
         if (err) reject(err);
         else resolve();
       });
@@ -230,21 +192,21 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     // We need to know if it is a directory or file first
     // Use stat
     return new Promise((resolve, reject) => {
-      sftp.stat(pathUrl, (err: Error | undefined, stats: any) => {
+      sftp.stat(pathUrl, (err, stats) => {
         if (err) return reject(err);
 
         if (stats.isDirectory()) {
-          (sftp as any).rmdir(pathUrl, (err: Error | undefined) => {
+          sftp.rmdir(pathUrl, (err) => {
             if (err) reject(err);
             else resolve();
           });
         } else {
           // unlink checks
-          (sftp as any).unlink(pathUrl, (err: Error | undefined) => {
+          sftp.unlink(pathUrl, (err) => {
             if (err) reject(err);
             else resolve();
           });
@@ -258,9 +220,9 @@ export class SFTPManager {
       return await fsp.readFile(path, 'utf-8');
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      sftp.readFile(path, (err: Error | undefined, buffer: Buffer) => {
+      sftp.readFile(path, (err, buffer) => {
         if (err) return reject(err);
         resolve(buffer.toString('utf-8'));
       });
@@ -273,10 +235,9 @@ export class SFTPManager {
       return;
     }
 
-    const sftp = await this.getWrapper(id);
+    const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
-      // Use any to avoid strict type mismatch with Callback vs local signature
-      (sftp as any).writeFile(path, content, (err: Error | undefined) => {
+      sftp.writeFile(path, content, (err) => {
         if (err) return reject(err);
         resolve();
       });
@@ -299,9 +260,9 @@ export class SFTPManager {
       const stats = await fsp.stat(sourcePath);
       totalSize = stats.size;
     } else {
-      const sftp = await this.getWrapper(sourceId);
+      const sftp = this.getWrapper(sourceId);
       await new Promise<void>((resolve, reject) => {
-        sftp.stat(sourcePath, (err: Error | undefined, stats: any) => {
+        sftp.stat(sourcePath, (err, stats) => {
           if (err || !stats) return reject(err || new Error('No stats'));
           totalSize = stats.size;
           resolve();
@@ -314,14 +275,14 @@ export class SFTPManager {
     if (sourceId === 'local') {
       readStream = fs.createReadStream(sourcePath);
     } else {
-      readStream = (await this.getWrapper(sourceId)).createReadStream(sourcePath);
+      readStream = this.getWrapper(sourceId).createReadStream(sourcePath);
     }
 
     let writeStream: any;
     if (destId === 'local') {
       writeStream = fs.createWriteStream(destPath);
     } else {
-      writeStream = (await this.getWrapper(destId)).createWriteStream(destPath);
+      writeStream = this.getWrapper(destId).createWriteStream(destPath);
     }
 
     // Track active transfer

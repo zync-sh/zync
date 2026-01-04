@@ -25,6 +25,8 @@ export function SnippetsManager() {
     command: '',
   });
 
+
+
   const loadSnippets = async () => {
     const list = await window.ipcRenderer.invoke('snippets:getAll');
     setSnippets(list);
@@ -32,7 +34,8 @@ export function SnippetsManager() {
 
   useEffect(() => {
     loadSnippets();
-  }, [loadSnippets]);
+  }, []); // Only run on mount
+
 
   const handleSave = async () => {
     if (!editingSnippet.name || !editingSnippet.command) {
@@ -104,7 +107,6 @@ export function SnippetsManager() {
           </div>
         )}
         {snippets.map((snippet) => (
-          // biome-ignore lint/a11y/noStaticElementInteractions: interactive div
           <div
             key={snippet.id}
             className="bg-app-panel border border-app-border rounded-lg p-4 hover:border-app-accent transition-colors cursor-pointer group"
@@ -142,11 +144,8 @@ export function SnippetsManager() {
             placeholder="e.g. Check Disk Space"
           />
           <div>
-            <label htmlFor="snippet-command" className="block text-xs font-medium text-app-muted mb-1">
-              Command
-            </label>
+            <label className="block text-xs font-medium text-app-muted mb-1">Command</label>
             <textarea
-              id="snippet-command"
               className="w-full bg-app-bg border border-app-border rounded p-2 text-sm text-app-text focus:outline-none focus:border-app-accent font-mono"
               rows={4}
               value={editingSnippet.command}

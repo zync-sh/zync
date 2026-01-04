@@ -39,11 +39,8 @@ export function TransferManager() {
       }
     };
 
-    if (window.ipcRenderer) {
-      window.ipcRenderer.on('transfer:progress', handler);
-      return () => window.ipcRenderer.off('transfer:progress', handler);
-    }
-    return () => {};
+    window.ipcRenderer.on('transfer:progress', handler);
+    return () => window.ipcRenderer.off('transfer:progress', handler);
   }, [transfers, updateTransferProgress]);
 
   // Auto-remove completed/failed/cancelled transfers after 5 seconds
@@ -111,11 +108,9 @@ export function TransferManager() {
               onClick={async () => {
                 // Cancel on backend
                 try {
-                  if (window.ipcRenderer) {
-                    await window.ipcRenderer.invoke('sftp:cancelTransfer', {
-                      transferId: transfer.id,
-                    });
-                  }
+                  await window.ipcRenderer.invoke('sftp:cancelTransfer', {
+                    transferId: transfer.id,
+                  });
                   cancelTransfer(transfer.id);
                 } catch (_err) {
                   // If backend cancel fails, just remove from UI
