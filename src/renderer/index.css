@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+@theme {
+    /* Premium Dark Theme */
+    --color-app-bg: #0f111a;
+    /* Deep rich dark */
+    --color-app-panel: #1a1d2d;
+    /* Slightly lighter blue-gray for sidebar */
+    --color-app-surface: #262a3b;
+    /* For cards/inputs/active states */
+    --color-app-border: #2f344a;
+    /* Subtle border */
+
+    --color-app-text: #e2e8f0;
+    /* Bright text (Slate-200) */
+    --color-app-muted: #94a3b8;
+    /* Muted text (Slate-400) */
+    --color-app-accent: #6366f1;
+    /* Indigo-500 - Vibrant primary */
+
+    --color-app-success: #10b981;
+    /* Emerald-500 */
+    --color-app-danger: #ef4444;
+    /* Red-500 */
+    --color-app-warning: #f59e0b;
+    /* Amber-500 */
+
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+@layer utilities {
+    .glass {
+        @apply backdrop-blur-md bg-app-panel/80 border border-app-border/50;
+    }
+
+    .glass-surface {
+        @apply backdrop-blur-sm bg-app-surface/70 border border-app-border/30;
+    }
+
+    .mask-linear-fade {
+        mask-image: linear-gradient(to right, black 90%, transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
+    }
+}
+
+@layer base {
+    * {
+        border-color: var(--color-app-border);
+    }
+
+    body {
+        background-color: var(--color-app-bg);
+        color: var(--color-app-text);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--color-app-bg);
+}
+
+.scrollbar-track-transparent::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--color-app-border);
+    border-radius: 5px;
+    border: 2px solid var(--color-app-bg);
+    /* Padding effect */
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+    border: none;
+    border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-app-muted);
+}
+
+/* Terminal styles overrides */
+
+/* Theme Overrides */
+.light {
+    --color-app-bg: #ffffff;
+    --color-app-panel: #f3f4f6;
+    --color-app-surface: #e5e7eb;
+    --color-app-border: #e5e7eb;
+    --color-app-text: #24292f;
+    --color-app-muted: #57606a;
+    --color-app-accent: #0969da;
+}
+
+.dracula {
+    --color-app-bg: #282a36;
+    --color-app-panel: #282a36;
+    /* Unified for simpler look, or #44475a sidebar */
+    --color-app-surface: #44475a;
+    --color-app-border: #6272a4;
+    --color-app-text: #f8f8f2;
+    --color-app-muted: #6272a4;
+    --color-app-accent: #ff79c6;
+}
+
+.monokai {
+    --color-app-bg: #272822;
+    --color-app-panel: #272822;
+    --color-app-surface: #3e3d32;
+    --color-app-border: #49483e;
+    --color-app-text: #f8f8f2;
+    --color-app-muted: #75715e;
+    --color-app-accent: #a6e22e;
+}
+
+.dark-warm {
+    --color-app-bg: #1c1917;
+    /* Stone 900 */
+    --color-app-panel: #292524;
+    /* Stone 800 */
+    --color-app-surface: #44403c;
+    /* Stone 700 */
+    --color-app-border: #57534e;
+    /* Stone 600 */
+    --color-app-text: #e7e5e4;
+    /* Stone 200 */
+    --color-app-muted: #a8a29e;
+    /* Stone 400 */
+    --color-app-accent: #f97316;
+    /* Orange 500 */
+}
+
+/* Ensure background is applied */
+body {
+    background-color: var(--color-app-bg);
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.xterm .xterm-viewport {
+    background-color: transparent;
+    overflow-y: auto;
+}
+
+/* Hide scrollbar track in terminal to make it clean */
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+}

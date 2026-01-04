@@ -1,0 +1,45 @@
+import { Loader2 } from 'lucide-react';
+import { type ButtonHTMLAttributes, forwardRef } from 'react';
+import { cn } from '../../lib/utils';
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg' | 'icon';
+  isLoading?: boolean;
+}
+
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant = 'primary', size = 'md', isLoading, children, disabled, ...props }, ref) => {
+    const variants = {
+      primary: 'bg-app-accent hover:bg-app-accent/90 text-white shadow-lg shadow-app-accent/20',
+      secondary: 'bg-app-surface hover:bg-app-surface/80 text-app-text border border-app-border',
+      ghost: 'hover:bg-app-surface/50 text-app-muted hover:text-app-text',
+      danger: 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20',
+    };
+
+    const sizes = {
+      sm: 'h-8 px-3 text-xs',
+      md: 'h-10 px-4 py-2',
+      lg: 'h-12 px-6 text-lg',
+      icon: 'h-9 w-9 p-0 flex items-center justify-center',
+    };
+
+    return (
+      <button
+        ref={ref}
+        disabled={disabled || isLoading}
+        className={cn(
+          'inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:pointer-events-none disabled:opacity-50',
+          variants[variant],
+          sizes[size],
+          className,
+        )}
+        {...props}
+      >
+        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        {children}
+      </button>
+    );
+  },
+);
+Button.displayName = 'Button';
