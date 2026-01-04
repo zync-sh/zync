@@ -30,7 +30,7 @@ export function ResourceWidget({
             {title}
           </h3>
           <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-white">{value}</span>
+            <span className="text-2xl font-bold text-[var(--color-app-text)]">{value}</span>
             <span className="text-xs text-app-muted">{subtext}</span>
           </div>
         </div>

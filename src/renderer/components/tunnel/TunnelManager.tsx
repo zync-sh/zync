@@ -200,7 +200,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                     className={`w-2 h-2 rounded-full ${tunnel.status === 'active' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'}`}
                   />
                   <div>
-                    <div className="font-medium text-white">{tunnel.name}</div>
+                    <div className="font-medium text-[var(--color-app-text)]">{tunnel.name}</div>
                     <div className="text-sm text-app-muted flex items-center gap-2 font-mono">
                       <span className="text-app-accent">127.0.0.1:{tunnel.localPort}</span>
                       <span>→</span>
@@ -214,7 +214,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                   {/* Toggle Button */}
                   <button
                     onClick={() => handleToggleTunnel(tunnel)}
-                    className={`p-2 rounded transition-colors ${tunnel.status === 'active' ? 'text-green-400 hover:bg-green-400/10' : 'text-app-muted hover:text-white hover:bg-app-surface'}`}
+                    className={`p-2 rounded transition-colors ${tunnel.status === 'active' ? 'text-green-400 hover:bg-green-400/10' : 'text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface'}`}
                     title={tunnel.status === 'active' ? 'Stop Tunnel' : 'Start Tunnel'}
                   >
                     {tunnel.status === 'active' ? (

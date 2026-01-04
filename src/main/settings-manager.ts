@@ -1,7 +1,7 @@
 import Store from 'electron-store';
 
 export interface AppSettings {
-  theme: 'dark' | 'light' | 'dracula' | 'monokai';
+  theme: 'dark' | 'light' | 'dracula' | 'monokai' | 'warm';
   terminal: {
     fontSize: number;
     fontFamily: string;

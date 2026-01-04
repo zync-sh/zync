@@ -123,7 +123,7 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
     <div className="p-6 overflow-auto h-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-min">
       {/* Header */}
       <div className="col-span-full mb-4">
-        <h1 className="text-2xl font-bold text-white mb-2">System Overview</h1>
+        <h1 className="text-2xl font-bold text-[var(--color-app-text)] mb-2">System Overview</h1>
         <p className="text-app-muted">Real-time metrics for currently active server</p>
       </div>
 
@@ -151,7 +151,7 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
         </h3>
         <div className="flex-1 flex flex-col justify-center">
           <div className="flex justify-between items-end mb-2">
-            <span className="text-2xl font-bold text-white">{metrics.disk.percent}%</span>
+            <span className="text-2xl font-bold text-[var(--color-app-text)]">{metrics.disk.percent}%</span>
             <span className="text-xs text-app-muted">
               {metrics.disk.used} / {metrics.disk.total}
             </span>
@@ -186,15 +186,15 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
           <div className="flex-1 flex flex-col justify-center text-sm gap-1">
             <div className="flex justify-between">
               <span className="text-app-muted">OS</span>{' '}
-              <span className="text-white truncate max-w-[150px]" title={metrics.info.os}>
+              <span className="text-[var(--color-app-text)] truncate max-w-[150px]" title={metrics.info.os}>
                 {metrics.info.os}
               </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-app-muted">Kernel</span> <span className="text-white">{metrics.info.kernel}</span>
+              <span className="text-app-muted">Kernel</span> <span className="text-[var(--color-app-text)]">{metrics.info.kernel}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-app-muted">Arch</span> <span className="text-white">{metrics.info.arch}</span>
+              <span className="text-app-muted">Arch</span> <span className="text-[var(--color-app-text)]">{metrics.info.arch}</span>
             </div>
           </div>
         )}

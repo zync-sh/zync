@@ -186,7 +186,7 @@ export function FileGrid({
                   className={cn(
                     'truncate font-medium leading-tight transition-colors mb-1',
                     viewMode === 'grid' ? 'text-xs' : 'text-sm',
-                    isSelected ? 'text-white' : 'text-app-text/90 group-hover:text-white',
+                    isSelected ? 'text-app-accent' : 'text-app-text/90 group-hover:text-[var(--color-app-text)]',
                   )}
                   title={file.name}
                 >

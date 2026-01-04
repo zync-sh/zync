@@ -6,7 +6,7 @@ export function StatusBar() {
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
 
   return (
-    <div className="h-6 bg-app-accent/10 border-t border-app-accent/20 flex items-center px-3 text-[10px] select-none text-app-text/80 justify-between shrink-0">
+    <div className="h-6 bg-app-panel border-t border-app-border flex items-center px-3 text-[10px] select-none text-app-text/80 justify-between shrink-0">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5 hover:text-white transition-colors cursor-pointer">
           {activeConnection ? (

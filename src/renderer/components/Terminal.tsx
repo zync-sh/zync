@@ -47,6 +47,11 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
     if (!containerRef.current || !activeConnectionId || !sessionId || !isConnected) return;
 
     // Initialize Xterm with settings
+    const computedStyle = getComputedStyle(document.body);
+    const appBg = computedStyle.getPropertyValue('--color-app-bg').trim();
+    const appText = computedStyle.getPropertyValue('--color-app-text').trim();
+    const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
+
     const term = new XTerm({
       cursorBlink: true,
       fontSize: settings.terminal.fontSize,
@@ -55,10 +60,10 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
       lineHeight: settings.terminal.lineHeight,
       allowProposedApi: true,
       theme: {
-        background: '#0f111a', // --color-app-bg
-        foreground: '#e2e8f0', // --color-app-text
-        cursor: '#6366f1', // --color-app-accent
-        selectionBackground: 'rgba(99, 102, 241, 0.3)',
+        background: appBg || '#0f111a',
+        foreground: appText || '#e2e8f0',
+        cursor: appAccent || '#6366f1',
+        selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)', // minimal opacity hex if possible, else fallback
         black: '#000000',
         red: '#ef4444',
         green: '#10b981',
@@ -173,7 +178,8 @@ export function TerminalComponent({ connectionId, termId }: { connectionId?: str
     settings.terminal.fontFamily,
     settings.terminal.fontSize,
     settings.terminal.lineHeight,
-  ]); // Re-run if connected status changes
+    settings.theme,
+  ]); // Re-run if connected status changes or theme changes
 
   if (!activeConnectionId) return <div className="p-8 text-gray-400">Please connect to a server first.</div>;
   if (!isConnected)
