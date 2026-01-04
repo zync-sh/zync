@@ -3,7 +3,7 @@ import { useConnections, Connection } from '../../context/ConnectionContext';
 import { useTransfers } from '../../context/TransferContext';
 import { getCurrentDragSource } from '../file-manager/FileGrid';
 import { useToast } from '../../context/ToastContext';
-import { Plus, Search, Server, PanelLeftClose, PanelLeftOpen, FileText, Terminal, Settings } from 'lucide-react';
+import { Plus, Search, Server, PanelLeftClose, PanelLeftOpen, FileText, Terminal, Settings, Database, Monitor, Cloud, Box, HardDrive, Globe, Code } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -41,10 +41,11 @@ export function Sidebar() {
             password: formData.password,
             privateKeyPath: formData.privateKeyPath,
             status: 'disconnected',
-            jumpServerId: formData.jumpServerId
+            jumpServerId: formData.jumpServerId,
+            icon: formData.icon
         } as Connection);
         setIsAddModalOpen(false);
-        setFormData({ name: '', host: '', username: '', port: 22, password: '', privateKeyPath: '', jumpServerId: undefined });
+        setFormData({ name: '', host: '', username: '', port: 22, password: '', privateKeyPath: '', jumpServerId: undefined, icon: 'Server' });
     };
 
     const filteredConnections = connections.filter(c =>
@@ -57,14 +58,22 @@ export function Sidebar() {
             isCollapsed ? "w-20" : "w-72"
         )}>
             {/* Header */}
+            {/* Header */}
             <div className={cn(
                 "h-16 flex items-center shrink-0 mb-4",
                 isCollapsed ? "justify-center px-2" : "justify-between px-6"
             )} style={{ WebkitAppRegion: 'drag' } as any}>
                 {!isCollapsed && (
-                    <div className="flex flex-col">
-                        <span className="text-sm font-bold text-app-text tracking-wide">Hosts</span>
-                        <span className="text-[10px] uppercase font-semibold text-app-accent/80 tracking-widest mt-0.5">Explorer</span>
+                    <div className="flex items-center gap-3">
+                        <svg width="32" height="32" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+                             <rect width="512" height="512" rx="128" className="fill-app-accent/10" />
+                             <path d="M128 170.667L213.333 256L128 341.333" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round"/>
+                             <path d="M256 341.333H384" className="stroke-app-text" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                        <div className="flex flex-col">
+                            <span className="text-sm font-bold text-app-text tracking-wide">Hosts</span>
+                            <span className="text-[10px] uppercase font-semibold text-app-accent/80 tracking-widest mt-0.5">Explorer</span>
+                        </div>
                     </div>
                 )}
 
@@ -77,7 +86,7 @@ export function Sidebar() {
                             </Button>
                         </div>
                     )}
-                    <Button variant="ghost" size="icon" onClick={() => setIsCollapsed(!isCollapsed)} className="h-8 w-8 text-app-muted hover:text-white transition-colors">
+                    <Button variant="ghost" size="icon" onClick={() => setIsCollapsed(!isCollapsed)} className="h-8 w-8 text-app-muted hover:text-[var(--color-app-text)] transition-colors">
                         {isCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
                     </Button>
                 </div>
@@ -119,7 +128,7 @@ export function Sidebar() {
                         "border-transparent hover:bg-app-surface/50",
                         activeConnectionId === 'local'
                             ? "bg-gradient-to-r from-app-accent/10 to-transparent border-app-accent/20 shadow-[0_0_15px_rgba(99,102,241,0.15)]"
-                            : "text-app-muted hover:text-app-text"
+                            : "text-app-muted hover:text-[var(--color-app-text)]"
                     )}
                     onClick={() => openTab('local')}
                     title="Open Local Terminal"
@@ -136,7 +145,7 @@ export function Sidebar() {
                         <div className="flex flex-col overflow-hidden">
                             <span className={cn(
                                 "font-medium truncate transition-colors duration-200",
-                                activeConnectionId === 'local' ? "text-app-accent" : "text-app-text group-hover:text-white"
+                                activeConnectionId === 'local' ? "text-app-accent" : "text-app-text group-hover:text-[var(--color-app-text)]"
                             )}>
                                 Local Terminal
                             </span>
@@ -161,10 +170,10 @@ export function Sidebar() {
                                 : "gap-3 p-3 rounded-xl mx-2",
                             // Default State
                             "border-transparent hover:bg-app-surface/50",
-                            // Active State (Glowing Pill)
+                            // Active State (Clean Pill)
                             activeConnectionId === conn.id
-                                ? "bg-gradient-to-r from-app-accent/10 to-transparent border-app-accent/20 shadow-[0_0_15px_rgba(99,102,241,0.15)]"
-                                : "text-app-muted hover:text-app-text",
+                                ? "bg-gradient-to-r from-app-accent/10 to-transparent border-app-accent/20"
+                                : "text-app-muted hover:text-[var(--color-app-text)]",
                             dropTargetId === conn.id && "bg-app-accent/20 border-app-accent ring-2 ring-app-accent/30"
                         )}
                         onClick={(e) => {
@@ -243,20 +252,24 @@ export function Sidebar() {
                     >
                         {/* Active Marker Line (Left) */}
                         {activeConnectionId === conn.id && (
-                            <div className="absolute left-0 top-3 bottom-3 w-1 rounded-r-lg bg-app-accent shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                            <div className="absolute left-0 top-3 bottom-3 w-1 rounded-r-lg bg-app-accent" />
                         )}
 
                         {/* Icon */}
                         <div className={cn(
                             "relative shrink-0 h-10 w-10 rounded-xl flex items-center justify-center transition-all duration-300",
                             activeConnectionId === conn.id
-                                ? "bg-app-accent text-white shadow-lg shadow-app-accent/20 scale-105"
+                                ? "bg-app-accent text-white shadow-md shadow-app-accent/20 scale-105"
                                 : "bg-app-surface border border-app-border/50 group-hover:border-app-accent/30 group-hover:bg-app-surface/80"
                         )}>
-                            <Server size={18} className={cn(
-                                "transition-transform duration-500",
-                                activeConnectionId === conn.id ? "text-white" : "text-app-muted group-hover:text-app-text group-hover:scale-110"
-                            )} />
+                            {(() => {
+                                const IconMap: any = { Server, Database, Monitor, Cloud, Box, HardDrive, Globe, Code, Terminal };
+                                const IconComp = IconMap[conn.icon || 'Server'] || Server;
+                                return <IconComp size={18} className={cn(
+                                    "transition-transform duration-500",
+                                    activeConnectionId === conn.id ? "text-white" : "text-app-muted group-hover:text-[var(--color-app-text)] group-hover:scale-110"
+                                )} />;
+                            })()}
 
                             {/* Status Dot */}
                             {conn.status === 'connected' && (
@@ -268,7 +281,7 @@ export function Sidebar() {
                             <div className="flex flex-col overflow-hidden min-w-0 flex-1">
                                 <span className={cn(
                                     "truncate font-semibold text-sm leading-tight transition-colors",
-                                    activeConnectionId === conn.id ? "text-white" : "text-app-text/90 group-hover:text-white"
+                                    activeConnectionId === conn.id ? "text-app-accent" : "text-app-text/90 group-hover:text-[var(--color-app-text)]"
                                 )}>
                                     {conn.name || conn.host}
                                 </span>
@@ -303,7 +316,7 @@ export function Sidebar() {
                     </div>
                     {!isCollapsed && (
                         <div className="flex-1 text-left overflow-hidden">
-                            <div className="text-sm font-semibold text-app-text group-hover:text-white transition-colors">Operator</div>
+                            <div className="text-sm font-semibold text-app-text group-hover:text-[var(--color-app-text)] transition-colors">Operator</div>
                             <div className="text-[10px] text-app-muted uppercase tracking-wider">Settings</div>
                         </div>
                     )}
@@ -320,6 +333,32 @@ export function Sidebar() {
                     <div className="grid grid-cols-2 gap-4">
                         <Input label="Username" placeholder="root" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })} />
                         <Input label="Port" type="number" placeholder="22" value={formData.port} onChange={e => setFormData({ ...formData, port: Number(e.target.value) })} />
+                    </div>
+
+                    <div className="pt-2">
+                         <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-2">Icon</label>
+                         <div className="flex gap-2 flex-wrap">
+                             {['Server', 'Database', 'Cloud', 'Terminal', 'Code', 'Box', 'Monitor', 'Globe'].map(iconName => {
+                                 const IconMap: any = { Server, Database, Cloud, Terminal, Code, Box, Monitor, Globe };
+                                 const I = IconMap[iconName];
+                                 const isSelected = (formData.icon || 'Server') === iconName;
+                                 return (
+                                     <button
+                                         key={iconName}
+                                         onClick={() => setFormData({ ...formData, icon: iconName })}
+                                         className={cn(
+                                             "p-2 rounded-lg border transition-all hover:bg-app-surface",
+                                             isSelected 
+                                                ? "bg-app-accent/20 border-app-accent text-app-accent" 
+                                                : "bg-app-bg border-app-border text-app-muted"
+                                         )}
+                                         title={iconName}
+                                     >
+                                         <I size={18} />
+                                     </button>
+                                 );
+                             })}
+                         </div>
                     </div>
 
                     <div className="pt-4 border-t border-app-border">

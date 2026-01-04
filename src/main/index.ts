@@ -20,10 +20,7 @@ function createWindow() {
   win = new BrowserWindow({
     icon: iconPath,
     titleBarStyle: 'hidden', // Sleek borderless look
-    titleBarOverlay: {
-      color: '#0f172a',
-      symbolColor: '#ffffff',
-    },
+    // titleBarOverlay: false,
     width: 1200,
     height: 800,
     backgroundColor: '#0f172a',

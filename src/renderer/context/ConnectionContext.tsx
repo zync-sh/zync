@@ -13,6 +13,7 @@ export interface Connection {
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     jumpServerId?: string;
     lastConnected?: number;
+    icon?: string;
 }
 
 export interface Tab {
@@ -124,8 +125,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // Save connections
     useEffect(() => {
         if (connections.length > 0) {
-            const toSave = connections.map(({ id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected }) => ({
-                id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected
+            const toSave = connections.map(({ id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon }) => ({
+                id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon
             }));
             connectionStorage.save(toSave);
         }

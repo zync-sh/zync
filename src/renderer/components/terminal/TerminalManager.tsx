@@ -86,7 +86,7 @@ export function TerminalManager({ connectionId }: { connectionId?: string }) {
                             className={cn(
                                 "flex items-center gap-2 px-4 py-2 text-sm border-r border-app-border cursor-pointer min-w-[120px] max-w-[200px] group select-none",
                                 activeTabId === tab.id
-                                    ? "bg-app-bg text-white border-t-2 border-t-app-accent"
+                                    ? "bg-app-bg text-app-accent border-t-2 border-t-app-accent"
                                     : "text-app-muted hover:bg-app-surface hover:text-app-text border-t-2 border-t-transparent"
                             )}
                         >

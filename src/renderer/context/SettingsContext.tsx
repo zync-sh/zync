@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useState, ReactNode } from 'react';
 
 export interface AppSettings {
-    theme: 'dark' | 'light' | 'dracula' | 'monokai';
+    theme: 'dark' | 'light' | 'dracula' | 'monokai' | 'warm';
     terminal: {
         fontSize: number;
         fontFamily: string;
@@ -47,6 +47,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         loadSettings();
     }, []);
+
+    useLayoutEffect(() => {
+        // Apply theme to body
+        document.body.classList.remove('dark', 'light', 'dracula', 'monokai', 'warm');
+        document.body.classList.add(settings.theme);
+    }, [settings.theme]);
 
     const loadSettings = async () => {
         try {

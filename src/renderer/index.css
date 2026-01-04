@@ -1,22 +1,22 @@
 @import "tailwindcss";
 
 @theme {
-    /* Premium Dark Theme */
-    --color-app-bg: #0f111a;
-    /* Deep rich dark */
-    --color-app-panel: #1a1d2d;
-    /* Slightly lighter blue-gray for sidebar */
-    --color-app-surface: #262a3b;
-    /* For cards/inputs/active states */
-    --color-app-border: #2f344a;
+    /* Standard Dark Theme (Default) */
+    --color-app-bg: #09090b;
+    /* Zinc-950 */
+    --color-app-panel: #18181b;
+    /* Zinc-900 */
+    --color-app-surface: #27272a;
+    /* Zinc-800 */
+    --color-app-border: #27272a;
     /* Subtle border */
 
-    --color-app-text: #e2e8f0;
-    /* Bright text (Slate-200) */
-    --color-app-muted: #94a3b8;
-    /* Muted text (Slate-400) */
+    --color-app-text: #e4e4e7;
+    /* Zinc-200 */
+    --color-app-muted: #a1a1aa;
+    /* Zinc-400 */
     --color-app-accent: #6366f1;
-    /* Indigo-500 - Vibrant primary */
+    /* Indigo-500 */
 
     --color-app-success: #10b981;
     /* Emerald-500 */
@@ -41,6 +41,14 @@
     .mask-linear-fade {
         mask-image: linear-gradient(to right, black 90%, transparent 100%);
         -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
+    }
+
+    .app-drag-region {
+        -webkit-app-region: drag;
+    }
+
+    .drag-none {
+        -webkit-app-region: no-drag;
     }
 }
 
@@ -111,6 +119,30 @@
     --color-app-text: #f8f8f2;
     --color-app-muted: #75715e;
     --color-app-accent: #a6e22e;
+}
+
+.midnight {
+    /* Classic Dark Blue */
+    --color-app-bg: #0f111a;
+    --color-app-panel: #1a1d2d;
+    --color-app-surface: #262a3b;
+    --color-app-border: #2f344a;
+    --color-app-text: #e2e8f0;
+    --color-app-muted: #94a3b8;
+    --color-app-accent: #6366f1;
+}
+
+.warm {
+    /* Dark Warm (Gruvbox/Espresso inspired) */
+    --color-app-bg: #1c1917;
+    /* Warm dark gray/brown */
+    --color-app-panel: #292524;
+    --color-app-surface: #44403c;
+    --color-app-border: #57534e;
+    --color-app-text: #f5f5f4;
+    --color-app-muted: #a8a29e;
+    --color-app-accent: #d97706;
+    /* Amber-600 */
 }
 
 /* Ensure background is applied */
