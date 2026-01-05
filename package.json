@@ -76,7 +76,6 @@
     },
     "linux": {
       "target": [
-        "AppImage",
         "tar.gz"
       ],
       "icon": "public/icon.png",
