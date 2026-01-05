@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import { Network, Play, Plus, Square, Trash2, ArrowRight, ArrowLeft, Laptop, Server as ServerIcon, Edit2, Zap, ExternalLink } from 'lucide-react';
-=======
 import { Network, Play, Plus, Square, Trash2, ArrowRight, Laptop, Server as ServerIcon, Edit2, Zap, ExternalLink } from 'lucide-react';
->>>>>>> development
 import { useEffect, useState } from 'react';
 import { useConnections } from '../../context/ConnectionContext';
 import { useToast } from '../../context/ToastContext';
@@ -34,11 +30,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   // Form State
   const [isCreating, setIsCreating] = useState(false);
   const [editingTunnelId, setEditingTunnelId] = useState<string | null>(null);
-<<<<<<< HEAD
-  
-=======
-
->>>>>>> development
   const [newTunnel, setNewTunnel] = useState({
     name: '',
     type: 'local' as 'local' | 'remote',
@@ -65,35 +56,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   }, [activeConnectionId]);
 
   const handleCreateNew = () => {
-<<<<<<< HEAD
-      setEditingTunnelId(null);
-      setNewTunnel({
-        name: '',
-        type: 'local',
-        localPort: '8080',
-        remoteHost: '127.0.0.1',
-        remotePort: '80',
-        autoStart: false,
-      });
-      setIsCreating(true);
-  };
-
-  const handleEditTunnel = (tunnel: TunnelConfig) => {
-      if (tunnel.status === 'active') {
-          showToast('error', 'Stop the tunnel before editing');
-          return;
-      }
-      setEditingTunnelId(tunnel.id);
-      setNewTunnel({
-          name: tunnel.name,
-          type: tunnel.type || 'local',
-          localPort: tunnel.localPort.toString(),
-          remoteHost: tunnel.remoteHost,
-          remotePort: tunnel.remotePort.toString(),
-          autoStart: !!tunnel.autoStart,
-      });
-      setIsCreating(true);
-=======
     setEditingTunnelId(null);
     setNewTunnel({
       name: '',
@@ -121,7 +83,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       autoStart: !!tunnel.autoStart,
     });
     setIsCreating(true);
->>>>>>> development
   };
 
   const handleSaveTunnel = async () => {
@@ -170,19 +131,11 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   };
 
   const handleOpenBrowser = async (port: number) => {
-<<<<<<< HEAD
-      try {
-          await window.ipcRenderer.invoke('shell:open', `http://localhost:${port}`);
-      } catch (e) {
-          console.error('Failed to open browser', e);
-      }
-=======
     try {
       await window.ipcRenderer.invoke('shell:open', `http://localhost:${port}`);
     } catch (e) {
       console.error('Failed to open browser', e);
     }
->>>>>>> development
   };
 
   const handleToggleTunnel = async (tunnel: TunnelConfig) => {
@@ -229,45 +182,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       {isCreating && (
         <div className="p-4 border-b border-app-border bg-app-surface/30 animate-in slide-in-from-top-2">
           <div className="flex flex-col gap-4">
-<<<<<<< HEAD
-            
-            {/* Top Row: Type & Name */}
-            <div className="flex items-start gap-4">
-               {/* Type Toggle */}
-               <div className="flex-shrink-0 p-1 bg-app-bg/50 rounded-lg border border-app-border">
-                  <div className="flex gap-1">
-                    <button 
-                        onClick={() => setNewTunnel({...newTunnel, type: 'local', remoteHost: '127.0.0.1'})}
-                        className={cn(
-                            "px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-2",
-                            newTunnel.type === 'local' ? "bg-app-accent text-white shadow-sm" : "text-app-muted hover:text-app-text hover:bg-white/5"
-                        )}
-                    >
-                        <Laptop size={14} />
-                        Local Forwarding
-                    </button>
-                    <button 
-                        onClick={() => setNewTunnel({...newTunnel, type: 'remote', remoteHost: '0.0.0.0'})}
-                        className={cn(
-                            "px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-2",
-                            newTunnel.type === 'remote' ? "bg-app-accent text-white shadow-sm" : "text-app-muted hover:text-app-text hover:bg-white/5"
-                        )}
-                    >
-                        <ServerIcon size={14} />
-                        Remote Forwarding
-                    </button>
-                  </div>
-              </div>
-
-               {/* Name Input - Takes remaining width */}
-               <div className="flex-1">
-                  <Input
-                    placeholder="Tunnel Name (Optional)"
-                    value={newTunnel.name}
-                    onChange={(e) => setNewTunnel({ ...newTunnel, name: e.target.value })}
-                  />
-               </div>
-=======
 
             {/* Top Row: Type & Name */}
             <div className="flex items-start gap-4">
@@ -305,76 +219,10 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                   onChange={(e) => setNewTunnel({ ...newTunnel, name: e.target.value })}
                 />
               </div>
->>>>>>> development
             </div>
 
             {/* Middle Row: Port Configuration */}
             <div className="grid grid-cols-12 gap-4 items-end bg-app-bg/30 p-3 rounded-md border border-app-border/50">
-<<<<<<< HEAD
-                {newTunnel.type === 'local' ? (
-                <>
-                    <div className="col-span-3">
-                      <Input
-                        label="Local Port"
-                        placeholder="8080"
-                        value={newTunnel.localPort}
-                        onChange={(e) => setNewTunnel({ ...newTunnel, localPort: e.target.value })}
-                      />
-                    </div>
-                    {/* Arrow/Visual */}
-                    <div className="col-span-1 flex justify-center items-center h-10 text-app-muted/50 pb-1">
-                        <ArrowRight size={16} />
-                    </div>
-                    <div className="col-span-5">
-                      <Input
-                        label="Destination Host"
-                        placeholder="127.0.0.1"
-                        value={newTunnel.remoteHost}
-                        onChange={(e) => setNewTunnel({ ...newTunnel, remoteHost: e.target.value })}
-                      />
-                    </div>
-                     <div className="col-span-3">
-                      <Input
-                        label="Dest Port"
-                        placeholder="80"
-                        value={newTunnel.remotePort}
-                        onChange={(e) => setNewTunnel({ ...newTunnel, remotePort: e.target.value })}
-                      />
-                    </div>
-                </>
-            ) : (
-                <>
-                    <div className="col-span-3">
-                      <Input
-                        label="Remote Port"
-                        placeholder="9090"
-                        value={newTunnel.remotePort}
-                        onChange={(e) => setNewTunnel({ ...newTunnel, remotePort: e.target.value })}
-                      />
-                    </div>
-                    {/* Arrow/Visual */}
-                    <div className="col-span-1 flex justify-center items-center h-10 text-app-muted/50 pb-1">
-                        <ArrowRight size={16} />
-                    </div>
-                     <div className="col-span-5">
-                      <Input
-                        label="Bind Address (on Server)"
-                        placeholder="0.0.0.0"
-                        value={newTunnel.remoteHost} 
-                        onChange={(e) => setNewTunnel({ ...newTunnel, remoteHost: e.target.value })}
-                      />
-                    </div>
-                    <div className="col-span-3">
-                      <Input
-                        label="Local Port"
-                        placeholder="3000"
-                        value={newTunnel.localPort}
-                        onChange={(e) => setNewTunnel({ ...newTunnel, localPort: e.target.value })}
-                      />
-                    </div>
-                </>
-            )}
-=======
               {newTunnel.type === 'local' ? (
                 <>
                   <div className="col-span-3">
@@ -438,59 +286,10 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                   </div>
                 </>
               )}
->>>>>>> development
             </div>
 
             {/* Footer Row: Helper Text & Actions */}
             <div className="flex justify-between items-center bg-app-panel/50 p-2 rounded-md">
-<<<<<<< HEAD
-                 {/* Helper Text */}
-               <div className="text-xs text-app-muted flex items-center gap-4 px-2">
-                   <div className="flex items-center gap-2">
-                       {newTunnel.type === 'local' ? (
-                           <>
-                               <Laptop size={12} className="text-app-accent" /> 
-                               <span className="font-medium text-app-text">This Computer</span>
-                               <span className="text-app-muted">(:{newTunnel.localPort || '8080'})</span>
-                               <ArrowRight size={12} /> 
-                               <ServerIcon size={12} /> 
-                               <span className="font-medium text-app-text">Remote Server</span>
-                               <span className="text-app-muted">({newTunnel.remoteHost || '127.0.0.1'}:{newTunnel.remotePort || '80'})</span>
-                           </>
-                       ) : (
-                           <>
-                                <ServerIcon size={12} className="text-app-accent" /> 
-                                <span className="font-medium text-app-text">Remote Server</span>
-                                <span className="text-app-muted">(:{newTunnel.remotePort || '9090'})</span>
-                                <ArrowRight size={12} /> 
-                                <Laptop size={12} /> 
-                                <span className="font-medium text-app-text">This Computer</span>
-                                <span className="text-app-muted">(127.0.0.1:{newTunnel.localPort || '3000'})</span>
-                           </>
-                       )}
-                   </div>
-
-                   {/* Auto Start Checkbox */}
-                   <label className="flex items-center gap-2 cursor-pointer hover:text-app-text transition-colors">
-                        <input 
-                            type="checkbox" 
-                            checked={newTunnel.autoStart}
-                            onChange={(e) => setNewTunnel({...newTunnel, autoStart: e.target.checked})}
-                            className="rounded border-app-border bg-app-bg text-app-accent focus:ring-app-accent/30 w-3.5 h-3.5"
-                        />
-                        <span>Auto-Start</span>
-                   </label>
-               </div>
-
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => { setIsCreating(false); setEditingTunnelId(null); }}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white min-w-[80px]" onClick={handleSaveTunnel} isLoading={loading}>
-                    {editingTunnelId ? 'Update' : 'Save'}
-                  </Button>
-                </div>
-=======
               {/* Helper Text */}
               <div className="text-xs text-app-muted flex items-center gap-4 px-2">
                 <div className="flex items-center gap-2">
@@ -537,7 +336,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                   {editingTunnelId ? 'Update' : 'Save'}
                 </Button>
               </div>
->>>>>>> development
             </div>
           </div>
         </div>
@@ -560,45 +358,12 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                 <div className="flex items-center gap-4">
                   <div
                     className={cn(
-<<<<<<< HEAD
-                        "w-2 h-2 rounded-full transition-all",
-                        tunnel.status === 'active' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'
-=======
                       "w-2 h-2 rounded-full transition-all",
                       tunnel.status === 'active' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-red-500'
->>>>>>> development
                     )}
                   />
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-<<<<<<< HEAD
-                        <span className="font-medium text-[var(--color-app-text)]">{tunnel.name}</span>
-                        <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wider",
-                            tunnel.type === 'remote' ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                        )}>
-                            {tunnel.type === 'remote' ? 'Remote' : 'Local'}
-                        </span>
-                        {tunnel.autoStart && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wider bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 flex items-center gap-1">
-                                <Zap size={8} fill="currentColor" /> Auto
-                            </span>
-                        )}
-                    </div>
-                    <div className="text-sm text-app-muted flex items-center gap-2 font-mono">
-                      {tunnel.type === 'local' ? (
-                          <>
-                            <span className="text-app-accent">Loc:{tunnel.localPort}</span>
-                            <ArrowRight size={12} />
-                            <span>Rem:{tunnel.remoteHost}:{tunnel.remotePort}</span>
-                          </>
-                      ) : (
-                          <>
-                            <span className="text-purple-400">Rem:{tunnel.remotePort}</span>
-                            <ArrowRight size={12} />
-                            <span>Loc:127.0.0.1:{tunnel.localPort}</span>
-                          </>
-=======
                       <span className="font-medium text-[var(--color-app-text)]">{tunnel.name}</span>
                       <span className={cn(
                         "text-[10px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wider",
@@ -625,28 +390,11 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                           <ArrowRight size={12} />
                           <span>Loc:127.0.0.1:{tunnel.localPort}</span>
                         </>
->>>>>>> development
                       )}
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-<<<<<<< HEAD
-                    {tunnel.error && (
-                        <div className="text-xs text-red-400 mr-2 max-w-[200px] truncate" title={tunnel.error}>
-                            {tunnel.error}
-                        </div>
-                    )}
-                  
-                  {/* Open in Browser (only for active local tunnels) */}
-                  {tunnel.type === 'local' && (
-                    <button 
-                        onClick={() => handleOpenBrowser(tunnel.localPort)}
-                        className="p-2 text-app-muted hover:text-blue-400 rounded hover:bg-app-surface transition-colors"
-                        title="Open in Browser"
-                    >
-                        <ExternalLink size={16} />
-=======
                   {tunnel.error && (
                     <div className="text-xs text-red-400 mr-2 max-w-[200px] truncate" title={tunnel.error}>
                       {tunnel.error}
@@ -661,7 +409,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                       title="Open in Browser"
                     >
                       <ExternalLink size={16} />
->>>>>>> development
                     </button>
                   )}
 
