@@ -76,19 +76,11 @@
     },
     "linux": {
       "target": [
-<<<<<<< HEAD
-        "AppImage",
-        "deb"
-      ],
-      "icon": "public/icon.png",
-      "category": "Development"
-=======
         "tar.gz"
       ],
       "icon": "public/icon.png",
       "category": "Development",
       "executableName": "zync"
->>>>>>> development
     },
     "win": {
       "target": "nsis",
