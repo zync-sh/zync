@@ -82,6 +82,12 @@
       "category": "Development",
       "executableName": "zync"
     },
+    "extraResources": [
+      {
+        "from": "public/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "public/icon.png",
