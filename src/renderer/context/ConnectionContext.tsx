@@ -14,6 +14,9 @@ export interface Connection {
     jumpServerId?: string;
     lastConnected?: number;
     icon?: string;
+    folder?: string;
+    theme?: string; // 'red', 'blue', 'green', 'orange', etc.
+    createdAt?: number;
 }
 
 export interface Tab {
@@ -31,6 +34,7 @@ interface ConnectionContextType {
     activeConnectionId: string | null; // Derived helper
 
     addConnection: (conn: Connection) => void;
+    editConnection: (conn: Connection) => void;
     importConnections: (conns: Connection[]) => void;
     deleteConnection: (id: string) => void;
     clearConnections: () => void;
@@ -44,96 +48,72 @@ interface ConnectionContextType {
     // Connection Actions
     connect: (id: string) => Promise<void>;
     disconnect: (id: string) => Promise<void>;
+
+    // Folders
+    folders: string[];
+    addFolder: (name: string) => void;
+    deleteFolder: (name: string) => void;
+    renameFolder: (oldName: string, newName: string) => void;
+    updateConnectionFolder: (connectionId: string, folderName: string) => void;
+
+    // UI State
+    isAddConnectionModalOpen: boolean;
+    openAddConnectionModal: () => void;
+    closeAddConnectionModal: () => void;
 }
 
 const ConnectionContext = createContext<ConnectionContextType | undefined>(undefined);
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
     const [connections, setConnections] = useState<Connection[]>([]);
+    const [customFolders, setCustomFolders] = useState<string[]>([]); // Explicitly created folders
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    const [isLoaded, setIsLoaded] = useState(false);
+    const [isAddConnectionModalOpen, setIsAddConnectionModalOpen] = useState(false);
 
     // Derived: The Active Connection ID is the one associated with the active Tab
     const activeConnectionId = tabs.find(t => t.id === activeTabId)?.connectionId || null;
 
     const { showToast } = useToast();
 
-    // Load connections and open Default Local Terminal
+    // Load connections and folders
     useEffect(() => {
-        const stored = connectionStorage.load();
-        if (stored.length > 0) {
-            setConnections(stored.map(c => ({ ...c, status: 'disconnected' as const })));
+        const loaded: any = connectionStorage.load();
+        if (loaded) {
+            if (Array.isArray(loaded)) {
+                // Legacy format (just connections)
+                setConnections(loaded.map((c: any) => ({ ...c, status: 'disconnected' as const })));
+            } else if (loaded.connections) {
+                // New format { connections, folders }
+                setConnections(loaded.connections.map((c: any) => ({ ...c, status: 'disconnected' as const })));
+                setCustomFolders(loaded.folders || []);
+            }
         }
-
-        // Open Local Terminal by default if no tabs exist -> DISABLED for Welcome Screen
-        // setTabs(prev => {
-        //     if (prev.length === 0) {
-        //         return [{
-        //             id: crypto.randomUUID(),
-        //             type: 'connection',
-        //             title: 'Local Terminal',
-        //             connectionId: 'local',
-        //             view: 'terminal'
-        //         }];
-        //     }
-        //     return prev;
-        // });
-
-        // Also set active if created
-        setActiveTabId(prev => prev || (tabs.length > 0 ? tabs[0].id : null)); // This might race. 
-        // Better to set activeTabId based on the newly created tab.
-        // But setState inside setState is tricky for side effects.
-        // I'll do it in a separate effect or just assume the user clicks.
-        // Actually, let's simplify:
+        setIsLoaded(true);
     }, []);
 
-    // Set active tab on mount if local was added (hacky but works for now)
+    // Save connections and folders
     useEffect(() => {
-        if (tabs.length > 0 && !activeTabId) {
-            setActiveTabId(tabs[0].id);
-        }
-    }, [tabs.length]); // Check when tabs change length (init)
+        if (!isLoaded) return;
+        // We always save as the new object format now
+        const toSaveConnections = connections.map(({ id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon, folder, theme }) => ({
+            id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon, folder, theme
+        }));
 
-    // Sync Loop: Periodically check if backend connections are still alive
-    // This handles cases where the backend process restarts (dev mode) or crashes
-    useEffect(() => {
-        const checkConnections = async () => {
-            const connectedIds = connections.filter(c => c.status === 'connected' || c.status === 'connecting').map(c => c.id);
-            if (connectedIds.length === 0) return;
-
-            for (const id of connectedIds) {
-                try {
-                    const isAlive = await window.ipcRenderer.invoke('ssh:status', id);
-                    if (!isAlive) {
-                        console.warn(`Connection ${id} lost in backend. Updating state.`);
-                        setConnections(prev => prev.map(c => c.id === id ? { ...c, status: 'disconnected' } : c));
-                        showToast('error', `Connection lost to host (Process restarted?)`);
-                    }
-                } catch (e) {
-                    console.error('Failed to check status for', id, e);
-                }
-            }
-        };
-
-        const interval = setInterval(checkConnections, 5000); // Check every 5 seconds
-        // Also run once immediately (or after short delay to allow init)
-        setTimeout(checkConnections, 1000);
-
-        return () => clearInterval(interval);
-    }, [connections]); // Depend on connections to know which to check
-
-    // Save connections
-    useEffect(() => {
-        if (connections.length > 0) {
-            const toSave = connections.map(({ id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon }) => ({
-                id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon
-            }));
-            connectionStorage.save(toSave);
-        }
-    }, [connections]);
+        connectionStorage.save({
+            connections: toSaveConnections,
+            folders: customFolders
+        });
+    }, [connections, customFolders]);
 
     const addConnection = (conn: Connection) => {
         setConnections([...connections, conn]);
+    };
+
+    const editConnection = (updatedConn: Connection) => {
+        setConnections(prev => prev.map(c => c.id === updatedConn.id ? updatedConn : c));
+        // If the connection name changed, we might want to update tabs, but ID references are stable.
     };
 
     const importConnections = (newConns: Connection[]) => {
@@ -198,8 +178,37 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         tabsToRemove.forEach(t => closeTab(t.id));
     };
 
+    // Folder Management
+    const addFolder = (name: string) => {
+        if (!name || customFolders.includes(name)) return;
+        setCustomFolders(prev => [...prev, name]);
+    };
+
+    const deleteFolder = (name: string) => {
+        setCustomFolders(prev => prev.filter(f => f !== name));
+        // Clear folder from connections that were in it
+        setConnections(prev => prev.map(c => c.folder === name ? { ...c, folder: '' } : c));
+    };
+
+    const renameFolder = (oldName: string, newName: string) => {
+        if (!newName || customFolders.includes(newName)) return;
+        setCustomFolders(prev => prev.map(f => f === oldName ? newName : f));
+        setConnections(prev => prev.map(c => c.folder === oldName ? { ...c, folder: newName } : c));
+    };
+
+    const updateConnectionFolder = (connectionId: string, folderName: string) => {
+        setConnections(prev => prev.map(c => c.id === connectionId ? { ...c, folder: folderName } : c));
+    };
+
+    // Computed list of all unique folders (implicit + explicit)
+    const allFolders = Array.from(new Set([
+        ...customFolders,
+        ...connections.map(c => c.folder).filter(Boolean) as string[]
+    ])).sort();
+
     const clearConnections = () => {
         setConnections([]);
+        setCustomFolders([]);
         setTabs([]);
         setActiveTabId(null);
     };
@@ -242,6 +251,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
 
     const closeTab = (tabId: string) => {
+        const tab = tabs.find(t => t.id === tabId);
+        if (tab && tab.connectionId && tab.connectionId !== 'local') {
+            const conn = connections.find(c => c.id === tab.connectionId);
+            if (conn && conn.status === 'connected') {
+                if (confirm(`Connection "${conn.name || conn.host}" is active. Do you want to disconnect and close the tab?`)) {
+                    disconnect(conn.id);
+                } else {
+                    return; // Cancel close
+                }
+            }
+        }
+
         setTabs(prev => {
             const newTabs = prev.filter(t => t.id !== tabId);
             if (activeTabId === tabId) {
@@ -251,11 +272,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             }
             return newTabs;
         });
-
-        // Note: Closing a tab does NOT strictly disconnect the session unless we want it to.
-        // For standard behavior, closing the tab *should* disconnect the SSH session if it's the last tab for that connection.
-        // But implementing that logic logic is complex.
-        // Let's keep it simple: Close Tab = Just UI close.
     };
 
     const activateTab = (tabId: string) => {
@@ -333,6 +349,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             activeTabId,
             activeConnectionId,
             addConnection,
+            editConnection,
             deleteConnection,
             openTab,
             closeTab,
@@ -341,7 +358,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             connect,
             disconnect,
             importConnections,
-            clearConnections
+            clearConnections,
+            folders: allFolders,
+            addFolder,
+            deleteFolder,
+            renameFolder,
+            updateConnectionFolder,
+            isAddConnectionModalOpen,
+            openAddConnectionModal: () => setIsAddConnectionModalOpen(true),
+            closeAddConnectionModal: () => setIsAddConnectionModalOpen(false)
         }}>
             {children}
         </ConnectionContext.Provider>

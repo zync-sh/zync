@@ -133,6 +133,10 @@ export class SSHManager {
   getClient(id: string): Client | undefined {
     return this.connections.get(id);
   }
+
+  getActiveConnectionCount(): number {
+    return this.connections.size;
+  }
 }
 
 export const sshManager = new SSHManager();

@@ -22,21 +22,27 @@ export function ResourceWidget({
   className,
 }: ResourceWidgetProps) {
   return (
-    <div className={cn('bg-app-panel border border-app-border rounded-lg p-4 flex flex-col h-40', className)}>
-      <div className="flex items-start justify-between mb-4">
+    <div className={cn(
+      'bg-app-panel border border-[var(--color-app-border)] rounded-2xl p-5 flex flex-col h-40 shadow-sm transition-all hover:border-[var(--color-app-accent)]/50 hover:shadow-md group relative overflow-hidden',
+      // Vibrancy handled by parent or global class usually, but let's add specific glass utility if needed
+      'backdrop-blur-xl bg-opacity-60', // Default glass-ish
+      className
+    )}
+    >
+      <div className="flex items-start justify-between mb-4 relative z-10">
         <div>
-          <h3 className="text-sm font-medium text-app-muted flex items-center gap-2">
-            <Icon size={14} className="text-app-muted" />
+          <h3 className="text-xs font-medium text-[var(--color-app-muted)] uppercase tracking-wider flex items-center gap-2 mb-1">
+            <Icon size={14} className={cn("text-[var(--color-app-muted)]/70 group-hover:text-[var(--color-app-accent)] transition-colors")} />
             {title}
           </h3>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-bold text-[var(--color-app-text)]">{value}</span>
-            <span className="text-xs text-app-muted">{subtext}</span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-[var(--color-app-text)] tracking-tight">{value}</span>
+            <span className="text-xs text-[var(--color-app-muted)]/70">{subtext}</span>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 -mx-2">
+      <div className="flex-1 -mx-2 -mb-2 relative z-0 opacity-80 group-hover:opacity-100 transition-opacity">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data}>
             <defs>
@@ -46,13 +52,15 @@ export function ResourceWidget({
               </linearGradient>
             </defs>
             <Area
-              type="monotone"
+              type="basis" // Smoother curve
               dataKey="value"
               stroke={color}
+              strokeWidth={2}
               fillOpacity={1}
               fill={`url(#gradient-${title})`}
-              strokeWidth={2}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={1500}
+              animationEasing="ease-in-out"
             />
           </AreaChart>
         </ResponsiveContainer>

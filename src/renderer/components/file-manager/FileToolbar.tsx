@@ -2,6 +2,7 @@ import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Up
 import { useState } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
+import { useSettings } from '../../context/SettingsContext';
 
 interface FileToolbarProps {
   currentPath: string;
@@ -27,13 +28,21 @@ export function FileToolbar({
   onSearch,
 }: FileToolbarProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const { settings } = useSettings();
+  const compactMode = settings.compactMode;
 
   const pathParts = currentPath.split('/').filter((p) => p);
 
   return (
-    <div className="h-16 border-b border-app-border/40 bg-app-panel/50 backdrop-blur-md flex items-center justify-between px-4 shrink-0 gap-4 z-20 relative">
+    <div className={cn(
+      "border-b border-app-border/40 bg-app-panel/50 backdrop-blur-md flex items-center justify-between px-4 shrink-0 gap-4 z-20 relative transition-all",
+      compactMode ? "h-11 custom-drag-region pt-[2px]" : "h-16"
+    )}>
       {/* Unified Command Bar (Address + Search) */}
-      <div className="flex-1 flex items-center bg-app-surface/40 border border-app-border/50 rounded-xl px-2 h-10 min-w-0 mr-auto transition-all focus-within:bg-app-surface/60 focus-within:border-app-accent/30 focus-within:ring-2 focus-within:ring-app-accent/10">
+      <div className={cn(
+        "flex-1 flex items-center bg-app-surface/40 border border-app-border/50 rounded-xl px-2 min-w-0 mr-auto transition-all focus-within:bg-app-surface/60 focus-within:border-app-accent/30 focus-within:ring-2 focus-within:ring-app-accent/10 no-drag",
+        compactMode ? "h-8" : "h-10"
+      )}>
         {/* Home Button */}
         <button
           onClick={() => onNavigate(homePath || '/')}
@@ -120,30 +129,39 @@ export function FileToolbar({
         <Button
           variant="ghost"
           size="icon"
-          className="h-10 w-10 rounded-xl text-app-muted hover:text-app-text hover:bg-app-surface/50"
+          className={cn(
+            "rounded-xl text-app-muted hover:text-app-text hover:bg-app-surface/50",
+            compactMode ? "h-8 w-8" : "h-10 w-10"
+          )}
           onClick={onRefresh}
         >
-          <RefreshCw size={18} />
+          <RefreshCw size={compactMode ? 14 : 18} />
         </Button>
 
         <div className="flex gap-2 ml-2">
           <Button
             variant="secondary"
             size="sm"
-            className="h-10 px-4 rounded-xl font-medium hidden md:flex"
+            className={cn(
+              "rounded-xl font-medium hidden md:flex transition-all",
+              compactMode ? "h-8 px-3 text-xs" : "h-10 px-4"
+            )}
             onClick={onNewFolder}
           >
-            <Plus size={16} className="mr-2" />
+            <Plus size={compactMode ? 14 : 16} className="mr-2" />
             New Folder
           </Button>
 
           <Button
             variant="primary"
             size="sm"
-            className="h-10 px-4 rounded-xl font-medium shadow-lg shadow-app-accent/20"
+            className={cn(
+              "rounded-xl font-medium shadow-lg shadow-app-accent/20 transition-all",
+              compactMode ? "h-8 px-3 text-xs" : "h-10 px-4"
+            )}
             onClick={onUpload}
           >
-            <Upload size={16} className="mr-2" />
+            <Upload size={compactMode ? 14 : 16} className="mr-2" />
             Upload
           </Button>
         </div>

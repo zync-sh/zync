@@ -18,6 +18,7 @@ import type React from 'react';
 import { cn } from '../../lib/utils';
 import { Skeleton } from '../ui/Skeleton';
 import type { FileEntry } from './types';
+import { useSettings } from '../../context/SettingsContext';
 
 // Global drag state (shared across all FileGrid instances)
 let currentDragSource: { connectionId: string; path: string } | null = null;
@@ -46,6 +47,9 @@ export function FileGrid({
   connectionId,
   currentPath,
 }: FileGridProps) {
+  const { settings } = useSettings();
+  const compactMode = settings.compactMode;
+
   if (isLoading) {
     return (
       <div className="p-4 grid grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4 animate-in fade-in duration-500">
@@ -100,7 +104,12 @@ export function FileGrid({
         className={cn(
           'animate-in slide-in-from-bottom-2 fade-in duration-300 ease-out', // Page transition
           viewMode === 'grid'
-            ? 'grid grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3 content-start'
+            ? cn(
+              "grid content-start",
+              compactMode
+                ? "grid-cols-5 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2"
+                : "grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3"
+            )
             : 'flex flex-col gap-1',
         )}
       >
@@ -150,12 +159,18 @@ export function FileGrid({
                 'group relative transition-all duration-200 cursor-pointer select-none overflow-hidden isolate',
                 'active:scale-95 active:duration-75', // Click feedback
                 viewMode === 'grid'
-                  ? 'flex flex-col aspect-[4/3] p-4 items-center justify-between rounded-2xl border bg-app-surface/30 border-app-border/40 hover:bg-app-surface hover:shadow-lg hover:shadow-black/20 hover:-translate-y-1 hover:border-app-border'
-                  : 'flex items-center p-3 rounded-xl border border-transparent hover:bg-app-surface/50',
+                  ? cn(
+                    "flex flex-col items-center justify-between rounded-2xl border bg-app-surface/30 border-app-border/40 hover:bg-app-surface hover:shadow-lg hover:shadow-black/20 hover:-translate-y-1 hover:border-app-border",
+                    compactMode ? "aspect-square p-2 text-[10px]" : "aspect-[4/3] p-4"
+                  )
+                  : cn(
+                    "flex items-center rounded-xl border border-transparent hover:bg-app-surface/50",
+                    compactMode ? "p-1.5" : "p-3"
+                  ),
                 isSelected &&
-                  (viewMode === 'grid'
-                    ? 'bg-gradient-to-br from-app-accent/20 to-app-accent/5 !border-app-accent !shadow-xl !shadow-app-accent/10 ring-1 ring-app-accent/50'
-                    : 'bg-app-accent/10 !border-app-accent/30'),
+                (viewMode === 'grid'
+                  ? 'bg-gradient-to-br from-app-accent/20 to-app-accent/5 !border-app-accent !shadow-xl !shadow-app-accent/10 ring-1 ring-app-accent/50'
+                  : 'bg-app-accent/10 !border-app-accent/30'),
               )}
             >
               {/* Folder Glow Effect */}
@@ -172,7 +187,7 @@ export function FileGrid({
                   isSelected && !isFolder && 'text-app-accent',
                 )}
               >
-                <FileIcon file={file} size={viewMode === 'grid' ? 48 : 22} />
+                <FileIcon file={file} size={viewMode === 'grid' ? (compactMode ? 32 : 48) : (compactMode ? 16 : 22)} />
               </div>
 
               {/* Text Area */}
