@@ -326,4 +326,17 @@ export function setupIPC() {
     const { autoUpdater } = require('electron-updater');
     autoUpdater.quitAndInstall();
   });
+
+  ipcMain.handle('update:check', async () => {
+    const { autoUpdater } = require('electron-updater');
+    // We can return the result, but the events are already wired in index.ts
+    // triggering this will fire the events which the UI listens to.
+    const result = await autoUpdater.checkForUpdates();
+    return result; 
+  });
+
+  ipcMain.handle('app:getVersion', () => {
+    const { app } = require('electron');
+    return app.getVersion();
+  });
 }

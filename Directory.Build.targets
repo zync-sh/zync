@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <SpectreMitigation>false</SpectreMitigation>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(VCToolsInstallDir)lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

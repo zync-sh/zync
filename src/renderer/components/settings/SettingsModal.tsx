@@ -1,27 +1,74 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettings } from '../../context/SettingsContext';
-import { X, Type, Monitor, FileText, Keyboard } from 'lucide-react';
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download } from 'lucide-react';
 
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-type Tab = 'terminal' | 'appearance' | 'fileManager' | 'shortcuts';
+type Tab = 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings } = useSettings();
     const [activeTab, setActiveTab] = useState<Tab>('terminal');
     const [wslDistros, setWslDistros] = useState<string[]>([]);
+    
+    // About / Update State
+    const [appVersion, setAppVersion] = useState('');
+    const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'not-available' | 'error' | 'downloading'>('idle');
+    const [updateInfo, setUpdateInfo] = useState<any>(null);
 
     useEffect(() => {
-        if (isOpen && window.navigator.userAgent.indexOf('Windows') !== -1) {
-            window.ipcRenderer.invoke('shell:getWslDistros').then((distros: string[]) => {
-                setWslDistros(distros);
-            }).catch(err => console.error('Failed to fetch WSL distros', err));
+        if (isOpen) {
+            if (window.navigator.userAgent.indexOf('Windows') !== -1) {
+                window.ipcRenderer.invoke('shell:getWslDistros').then((distros: string[]) => {
+                    setWslDistros(distros);
+                }).catch(err => console.error('Failed to fetch WSL distros', err));
+            }
+            
+            // Get Version
+            window.ipcRenderer.invoke('app:getVersion').then(ver => setAppVersion(ver));
         }
     }, [isOpen]);
+
+    // Update Listeners
+    useEffect(() => {
+        const onUpdateStatus = (_: any, status: string) => {
+           if (status === 'Checking for update...') setUpdateStatus('checking');
+           if (status === 'Update not available.') setUpdateStatus('not-available');
+        };
+        const onUpdateAvailable = (_: any, info: any) => {
+            setUpdateStatus('available');
+            setUpdateInfo(info);
+        };
+        const onUpdateProgress = () => {
+             setUpdateStatus('downloading');
+        };
+        const onUpdateError = () => setUpdateStatus('error');
+
+        window.ipcRenderer.on('update:status', onUpdateStatus);
+        window.ipcRenderer.on('update:available', onUpdateAvailable);
+        window.ipcRenderer.on('update:progress', onUpdateProgress);
+        window.ipcRenderer.on('update:error', onUpdateError);
+
+        return () => {
+            window.ipcRenderer.off('update:status', onUpdateStatus);
+            window.ipcRenderer.off('update:available', onUpdateAvailable);
+            window.ipcRenderer.off('update:progress', onUpdateProgress);
+            window.ipcRenderer.off('update:error', onUpdateError);
+        };
+    }, []);
+
+    const checkForUpdates = async () => {
+        setUpdateStatus('checking');
+        try {
+            await window.ipcRenderer.invoke('update:check');
+        } catch (e) {
+            setUpdateStatus('error');
+        }
+    };
 
     if (!isOpen) return null;
 
@@ -64,6 +111,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             icon={<Keyboard size={18} />}
                             label="Shortcuts"
                         />
+                        <div className="pt-4 mt-4 border-t border-[var(--color-app-border)]">
+                            <TabButton
+                                active={activeTab === 'about'}
+                                onClick={() => setActiveTab('about')}
+                                icon={<Info size={18} />}
+                                label="About"
+                            />
+                        </div>
                     </div>
 
                     {/* Content Area */}
@@ -311,6 +366,69 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <ShortcutRow keys={['Ctrl', 'Shift', 'C']} action="Copy" />
                                         <ShortcutRow keys={['Ctrl', 'Shift', 'V']} action="Paste" />
                                         <ShortcutRow keys={['Ctrl', 'F']} action="Find" />
+                                    </div>
+                                </Section>
+                            </div>
+                        )}
+
+                        {activeTab === 'about' && (
+                            <div className="space-y-8">
+                                <div className="flex flex-col items-center justify-center py-8 text-center bg-app-bg/30 rounded-2xl border border-app-border">
+                                    <div className="w-24 h-24 mb-6 rounded-2xl bg-linear-to-br from-indigo-500 to-purple-600 shadow-xl flex items-center justify-center">
+                                        <span className="text-4xl font-bold text-white">Z</span>
+                                    </div>
+                                    <h3 className="text-3xl font-bold text-app-text mb-2">Zync</h3>
+                                    <div className="text-app-muted text-sm mb-6">v{appVersion}</div>
+                                    
+                                    <div className="flex flex-col items-center gap-4 w-full max-w-sm px-4">
+                                        <button
+                                            onClick={checkForUpdates}
+                                            disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+                                            className={`
+                                                flex items-center gap-2 px-6 py-2.5 rounded-lg border font-medium transition-all w-full justify-center
+                                                ${updateStatus === 'available'
+                                                    ? 'bg-green-500/10 border-green-500/50 text-green-500 hover:bg-green-500/20'
+                                                    : 'bg-app-surface border-app-border text-app-text hover:bg-app-surface/80 hover:border-app-accent'
+                                                }
+                                                disabled:opacity-50 disabled:cursor-not-allowed
+                                            `}
+                                        >
+                                            {updateStatus === 'checking' && <RefreshCw className="animate-spin" size={18} />}
+                                            {updateStatus === 'idle' && <RefreshCw size={18} />}
+                                            {updateStatus === 'available' && <Download size={18} />}
+                                            {updateStatus === 'not-available' && <Check size={18} />}
+                                            {updateStatus === 'error' && <AlertTriangle size={18} />}
+                                            
+                                            <span>
+                                                {updateStatus === 'idle' && 'Check for Updates'}
+                                                {updateStatus === 'checking' && 'Checking...'}
+                                                {updateStatus === 'available' && 'Update Available'}
+                                                {updateStatus === 'not-available' && 'Up to Date'}
+                                                {updateStatus === 'error' && 'Check Failed'}
+                                            </span>
+                                        </button>
+                                        
+                                        {updateStatus === 'not-available' && (
+                                            <p className="text-xs text-app-muted animate-in fade-in">
+                                                You are running the latest version.
+                                            </p>
+                                        )}
+                                        
+                                         {updateStatus === 'available' && updateInfo && (
+                                             <div className="w-full bg-app-bg/50 p-3 rounded-lg border border-app-border text-left text-xs">
+                                                 <div className="font-semibold text-app-text mb-1">v{updateInfo.version} available</div>
+                                                 <div className="text-app-muted">Check the main window to download and install.</div>
+                                             </div>
+                                         )}
+                                    </div>
+                                </div>
+                                
+                                <Section title="Legal">
+                                    <div className="space-y-4">
+                                        <div className="p-4 bg-app-bg/30 rounded-lg border border-app-border text-sm text-app-muted">
+                                            <p>© 2026 Zync SSH Client. All rights reserved.</p>
+                                            <p className="mt-2">Made with ❤️ by Gajendra.</p>
+                                        </div>
                                     </div>
                                 </Section>
                             </div>
