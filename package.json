@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "build:linux": "npm run build && electron-builder --linux",
     "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
     "preview": "vite preview"
   },
   "keywords": [
@@ -82,6 +83,13 @@
       "icon": "public/icon.png",
       "category": "Development",
       "executableName": "zync"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "icon": "public/icon.png",
+      "category": "public.app-category.developer-tools"
     },
     "extraResources": [
       {
