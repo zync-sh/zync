@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettings } from '../../context/SettingsContext';
-import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download } from 'lucide-react';
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon } from 'lucide-react';
 
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-type Tab = 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
+type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings } = useSettings();
@@ -90,6 +90,60 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }
     };
 
+    // Data Path State
+    const [currentDataPath, setCurrentDataPath] = useState('');
+    const [isDefaultDataPath, setIsDefaultDataPath] = useState(true);
+
+    // Log Path State
+    const [currentLogPath, setCurrentLogPath] = useState('');
+    const [isDefaultLogPath, setIsDefaultLogPath] = useState(true);
+
+    useEffect(() => {
+        if (isOpen) {
+            // ... existing calls ...
+            window.ipcRenderer.invoke('config:get').then((config: any) => {
+                if (config) {
+                    setCurrentDataPath(config.dataPath || '');
+                    setIsDefaultDataPath(!config.dataPath);
+
+                    setCurrentLogPath(config.logPath || '');
+                    setIsDefaultLogPath(!config.logPath);
+                }
+            });
+        }
+    }, [isOpen]);
+
+    const handleChangeLocation = async () => {
+        const path = await window.ipcRenderer.invoke('config:select-folder');
+        if (path) {
+            await window.ipcRenderer.invoke('config:set', { dataPath: path });
+            setCurrentDataPath(path);
+            setIsDefaultDataPath(false);
+            // Optional: Trigger a toast or restart notification
+        }
+    };
+
+    const handleResetLocation = async () => {
+        await window.ipcRenderer.invoke('config:set', { dataPath: undefined });
+        setCurrentDataPath('');
+        setIsDefaultDataPath(true);
+    };
+
+    const handleChangeLogLocation = async () => {
+        const path = await window.ipcRenderer.invoke('config:select-folder');
+        if (path) {
+            await window.ipcRenderer.invoke('config:set', { logPath: path });
+            setCurrentLogPath(path);
+            setIsDefaultLogPath(false);
+        }
+    };
+
+    const handleResetLogLocation = async () => {
+        await window.ipcRenderer.invoke('config:set', { logPath: undefined });
+        setCurrentLogPath('');
+        setIsDefaultLogPath(true);
+    };
+
     if (!isOpen) return null;
 
     return createPortal(
@@ -107,6 +161,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <div className="flex flex-1 overflow-hidden">
                     {/* Sidebar Tabs */}
                     <div className="w-56 bg-[var(--color-app-bg)]/30 p-4 space-y-2 border-r border-[var(--color-app-border)] shrink-0">
+                        <TabButton
+                            active={activeTab === 'general'}
+                            onClick={() => setActiveTab('general')}
+                            icon={<SettingsIcon size={18} />}
+                            label="General"
+                        />
                         <TabButton
                             active={activeTab === 'terminal'}
                             onClick={() => setActiveTab('terminal')}
@@ -143,6 +203,96 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                     {/* Content Area */}
                     <div className="flex-1 p-8 overflow-y-auto bg-[var(--color-app-panel)]">
+
+                        {activeTab === 'general' && (
+                            <div className="space-y-8 animate-in fade-in duration-300">
+                                <Section title="Data Storage">
+                                    <div className="space-y-4">
+                                        <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
+                                            <div className="flex items-start gap-3">
+                                                <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                    <Folder size={20} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <h4 className="text-sm font-medium text-[var(--color-app-text)]">Storage Location</h4>
+                                                    <p className="text-xs text-[var(--color-app-muted)] mt-1 mb-3">
+                                                        Where Zync stores your connections, snippets, tunnels, and settings.
+                                                    </p>
+                                                    <div className="flex items-center gap-2 mb-3">
+                                                        <code className="px-2 py-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded text-xs font-mono text-[var(--color-app-text)] truncate max-w-full block">
+                                                            {isDefaultDataPath
+                                                                ? (isWindows ? '%APPDATA%\\zync' : '~/.config/zync')
+                                                                : currentDataPath}
+                                                        </code>
+                                                        {isDefaultDataPath && <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--color-app-muted)] border border-[var(--color-app-border)] px-1.5 py-0.5 rounded">Default</span>}
+                                                    </div>
+
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={handleChangeLocation}
+                                                            className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-text)] transition-colors flex items-center gap-2"
+                                                        >
+                                                            Change Location
+                                                        </button>
+                                                        {!isDefaultDataPath && (
+                                                            <button
+                                                                onClick={handleResetLocation}
+                                                                className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/30 border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-muted)] transition-colors"
+                                                            >
+                                                                Reset to Default
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Section>
+
+                                <Section title="Log Storage">
+                                    <div className="space-y-4">
+                                        <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
+                                            <div className="flex items-start gap-3">
+                                                <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                    <FileText size={20} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <h4 className="text-sm font-medium text-[var(--color-app-text)]">Log Location</h4>
+                                                    <p className="text-xs text-[var(--color-app-muted)] mt-1 mb-3">
+                                                        Where Zync stores application logs.
+                                                    </p>
+                                                    <div className="flex items-center gap-2 mb-3">
+                                                        <code className="px-2 py-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded text-xs font-mono text-[var(--color-app-text)] truncate max-w-full block">
+                                                            {isDefaultLogPath
+                                                                ? (isDefaultDataPath ? (isWindows ? '%APPDATA%\\zync\\logs' : '~/.config/zync/logs') : `${currentDataPath}/logs`)
+                                                                : currentLogPath}
+                                                        </code>
+                                                        {isDefaultLogPath && <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--color-app-muted)] border border-[var(--color-app-border)] px-1.5 py-0.5 rounded">Default</span>}
+                                                    </div>
+
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={handleChangeLogLocation}
+                                                            className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-text)] transition-colors flex items-center gap-2"
+                                                        >
+                                                            Change Location
+                                                        </button>
+                                                        {!isDefaultLogPath && (
+                                                            <button
+                                                                onClick={handleResetLogLocation}
+                                                                className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/30 border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-muted)] transition-colors"
+                                                            >
+                                                                Reset to Default
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Section>
+                            </div>
+                        )}
 
                         {activeTab === 'terminal' && (
                             <div className="space-y-8">
@@ -406,7 +556,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <div className="relative mb-6">
                                             <div className="w-24 h-24 flex items-center justify-center relative transform transition-transform duration-500 hover:scale-110 hover:rotate-3 mx-auto">
                                                 <img
-                                                    src="/icon.png"
+                                                    src="icon.png"
                                                     alt="Zync"
                                                     className="w-full h-full object-contain select-none drop-shadow-2xl"
                                                 />

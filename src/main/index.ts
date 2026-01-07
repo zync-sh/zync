@@ -2,7 +2,15 @@ import path from 'node:path';
 import { app, BrowserWindow, nativeImage, dialog } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
+import { appConfigManager } from './app-config-manager';
 
+// Configure Logs to use Data Path
+log.transports.file.resolvePathFn = () => path.join(appConfigManager.getLogPath(), 'main.log');
+log.transports.file.maxSize = 5 * 1024 * 1024; // 5MB limit
+log.transports.file.fileName = 'main.log'; // Explicit filename
+
+// Redirect console to log file
+Object.assign(console, log.functions);
 
 // Import SSH Manager
 import { sshManager } from './ssh-manager';
@@ -134,6 +142,12 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
+    log.info('==========================================');
+    log.info(`Zync App Started (v${app.getVersion()})`);
+    log.info(`Platform: ${process.platform} (${process.arch})`);
+    log.info(`Data Path: ${appConfigManager.getDataPath()}`);
+    log.info(`Log Path: ${appConfigManager.getLogPath()}`);
+    log.info('==========================================');
     createWindow();
 
     // Auto Updater Logic

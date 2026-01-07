@@ -20,11 +20,28 @@ interface TunnelStorage {
   tunnels: TunnelConfig[];
 }
 
+import { appConfigManager } from './app-config-manager';
+
 class TunnelManager extends EventEmitter {
-  private store = new Store<TunnelStorage>({
-    name: 'tunnels',
-    defaults: { tunnels: [] },
-  });
+  private store!: Store<TunnelStorage>;
+
+  constructor() {
+    super();
+    this.initStore();
+  }
+
+  private initStore() {
+    const cwd = appConfigManager.getDataPath();
+    this.store = new Store<TunnelStorage>({
+      name: 'tunnels',
+      cwd: cwd,
+      defaults: { tunnels: [] },
+    });
+  }
+
+  public reload() {
+    this.initStore();
+  }
 
   // Active servers/listeners: Map<tunnelId, { server?: net.Server; listener?: Function; client?: Client; error?: string }>
   private activeTunnels: Map<string, { server?: net.Server; listener?: (...args: any[]) => void; client?: Client; error?: string }> = new Map();

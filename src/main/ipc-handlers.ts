@@ -11,6 +11,7 @@ import { tunnelManager, TunnelConfig } from './tunnel-manager';
 import { snippetManager, Snippet } from './snippets-manager';
 import { SSHConfigParser } from './ssh-config-parser';
 import { connectionStoreManager } from './connection-store-manager';
+import { appConfigManager } from './app-config-manager';
 
 export function setupIPC() {
   // Snippets Operations
@@ -257,13 +258,15 @@ export function setupIPC() {
   });
 
   // Key Management
+  // Key Management
   ipcMain.handle('ssh:importKey', async (_, filePath: string) => {
     const { app } = require('electron');
     const fs = require('fs');
     const path = require('path');
 
     try {
-      const userDataPath = app.getPath('userData');
+      // Use the configured data path for portability
+      const userDataPath = appConfigManager.getDataPath();
       const keysDir = path.join(userDataPath, 'keys');
 
       if (!fs.existsSync(keysDir)) {
@@ -287,6 +290,16 @@ export function setupIPC() {
       throw error;
     }
   });
+
+  // ... (readConfig is unchanged) ...
+
+  // To save space, I will not include readConfig here if I can skip it, but replace_file_content needs contiguous block. 
+  // I will skip to the config:set part if it's far away. 
+  // ssh:importKey is around line 261. config:set is around 369. They are far apart.
+  // I should make TWO calls or use multi_replace. Use multi_replace for safety.
+
+  // Wait, I am using replace_file_content. I should ONLY update ssh:importKey here. I'll make a second call for config:set.
+
 
   ipcMain.handle('ssh:readConfig', async () => {
     try {
@@ -346,23 +359,105 @@ export function setupIPC() {
   });
 
   // Connection Storage Operations (Main Process Authority)
+  // Connection Storage Operations (Main Process Authority)
   ipcMain.handle('connections:get', async () => {
-    // Return data from Main Process Disk Store
     return connectionStoreManager.getData();
   });
 
   ipcMain.handle('connections:save', async (event, data) => {
-    // Save to Disk
     connectionStoreManager.saveData(data);
-
-    // Broadcast to ALL windows (including sender) to ensure UI is in sync
-    // Actually, sender presumably already has the state, but confirming it is good.
-    // Or we can broadcast to "others".
-    // Let's broadcast to ALL to be safe and simple: "Single Source of Truth updated".
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('connections:updated', data);
     });
-
     return { success: true };
+  });
+
+  // --- App Configuration & Onboarding ---
+
+  ipcMain.handle('config:get', async () => {
+    return appConfigManager.getConfig();
+  });
+
+  ipcMain.handle('config:set', async (event, config) => {
+    const fs = require('fs');
+    const path = require('path');
+
+    const oldPath = appConfigManager.getDataPath();
+    appConfigManager.setConfig(config);
+    const newPath = appConfigManager.getDataPath();
+
+    // If data path changed, migrate data and reload stores
+    if (oldPath !== newPath && oldPath && newPath) {
+      console.log(`[IPC] Data path changed from ${oldPath} to ${newPath}. Migrating data...`);
+
+      try {
+        // Ensure new directory exists
+        if (!fs.existsSync(newPath)) {
+          fs.mkdirSync(newPath, { recursive: true });
+        }
+
+        // Files to move
+        const filesToMove = [
+          'ssh-connections.json',
+          'snippets.json',
+          'tunnels.json',
+          'config.json' // Settings
+        ];
+
+        // 1. Copy JSON Files
+        for (const file of filesToMove) {
+          const src = path.join(oldPath, file);
+          const dest = path.join(newPath, file);
+          if (fs.existsSync(src)) {
+            // Only copy if destination doesn't exist to avoid overwriting existing data in target
+            if (!fs.existsSync(dest)) {
+              fs.copyFileSync(src, dest);
+              console.log(`[Migration] Copied ${file}`);
+            } else {
+              console.log(`[Migration] Skipped ${file} (exists in destination)`);
+            }
+          }
+        }
+        // 2. Copy 'keys' and 'logs' Directory
+        const dirsToMove = ['keys', 'logs'];
+        for (const dir of dirsToMove) {
+          const srcDir = path.join(oldPath, dir);
+          const destDir = path.join(newPath, dir);
+
+          if (fs.existsSync(srcDir)) {
+            // Use cpSync (Node 16.7+ / Electron)
+            if (fs.cpSync) {
+              // Check if dest dir exists
+              if (!fs.existsSync(destDir)) {
+                fs.mkdirSync(destDir, { recursive: true });
+              }
+              // Copy contents
+              fs.cpSync(srcDir, destDir, { recursive: true, force: false, errorOnExist: false });
+              console.log(`[Migration] Copied ${dir} directory`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Migration] Failed to migrate data:', err);
+      }
+
+      console.log('[IPC] Reloading all stores...');
+      connectionStoreManager.reload();
+      settingsManager.reload();
+      snippetManager.reload();
+      tunnelManager.reload();
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle('config:select-folder', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
+      title: 'Select Data Folder'
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
   });
 }

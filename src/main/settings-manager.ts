@@ -36,11 +36,26 @@ const defaultSettings: AppSettings = {
   },
 };
 
+import { appConfigManager } from './app-config-manager';
+
 class SettingsManager {
-  private store: Store<AppSettings>;
+  private store!: Store<AppSettings>;
 
   constructor() {
-    this.store = new Store({ defaults: defaultSettings });
+    this.initStore();
+  }
+
+  private initStore() {
+    const cwd = appConfigManager.getDataPath();
+    this.store = new Store({
+      name: 'config', // Preserving 'config.json' name from valid listing
+      cwd: cwd,
+      defaults: defaultSettings
+    });
+  }
+
+  public reload() {
+    this.initStore();
   }
 
   getSettings(): AppSettings {
@@ -48,11 +63,6 @@ class SettingsManager {
   }
 
   setSettings(settings: Partial<AppSettings>) {
-    // Electron Store set(object) might complain about Partial types, ensure safe merge
-    // Or cast/iterate.
-    // this.store.set(settings as AppSettings); // Unsafe if incomplete?
-    // Actually store.set(obj) merges. The type definition usually expects complete T.
-    // Let's iterate to be type-safe and support deep merge if needed (though top level here)
     for (const [key, value] of Object.entries(settings)) {
       this.store.set(key as any, value);
     }

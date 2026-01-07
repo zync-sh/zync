@@ -24,14 +24,27 @@ const defaultData: ConnectionStorageSchema = {
     folders: []
 };
 
+import { appConfigManager } from './app-config-manager';
+
 class ConnectionStoreManager {
-    private store: Store<ConnectionStorageSchema>;
+    private store!: Store<ConnectionStorageSchema>;
 
     constructor() {
+        this.initStore();
+    }
+
+    private initStore() {
+        const cwd = appConfigManager.getDataPath();
         this.store = new Store({
-            name: 'ssh-connections', // Separate file: ssh-connections.json
+            name: 'ssh-connections',
+            cwd: cwd, // Use custom directory if set
             defaults: defaultData
         });
+        console.log('[ConnectionStore] Initialized at:', this.store.path);
+    }
+
+    public reload() {
+        this.initStore();
     }
 
     getData(): ConnectionStorageSchema {
@@ -42,10 +55,10 @@ class ConnectionStoreManager {
         this.store.set(data);
     }
 
-    // Helper to get raw store path (for debugging)
     getPath(): string {
         return this.store.path;
     }
 }
 
 export const connectionStoreManager = new ConnectionStoreManager();
+

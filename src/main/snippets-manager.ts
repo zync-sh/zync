@@ -12,11 +12,27 @@ interface SnippetStorage {
   snippets: Snippet[];
 }
 
+import { appConfigManager } from './app-config-manager';
+
 class SnippetManager {
-  private store = new Store<SnippetStorage>({
-    name: 'snippets',
-    defaults: { snippets: [] },
-  });
+  private store!: Store<SnippetStorage>;
+
+  constructor() {
+    this.initStore();
+  }
+
+  private initStore() {
+    const cwd = appConfigManager.getDataPath();
+    this.store = new Store<SnippetStorage>({
+      name: 'snippets',
+      cwd: cwd,
+      defaults: { snippets: [] },
+    });
+  }
+
+  public reload() {
+    this.initStore();
+  }
 
   getAll(): Snippet[] {
     return this.store.get('snippets');

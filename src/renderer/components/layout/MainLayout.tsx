@@ -134,12 +134,38 @@ function TabContent({ tab, isActive }: {
 }
 
 
+import { useState, useEffect } from 'react';
+import { SetupWizard } from '../onboarding/SetupWizard';
+// @ts-ignore
+const ipc = window.ipcRenderer;
+
 export function MainLayout({ children }: { children: ReactNode }) {
     const { tabs, activeTabId } = useConnections();
+    const [showWizard, setShowWizard] = useState(false);
+    const [isLoading, setIsLoading] = useState(true);
 
+    useEffect(() => {
+        checkConfig();
+    }, []);
+
+    const checkConfig = async () => {
+        try {
+            const config = await ipc.invoke('config:get');
+            if (!config || !config.isConfigured) {
+                setShowWizard(true);
+            }
+        } catch (error) {
+            console.error('Failed to load config:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    if (isLoading) return null; // Or a splash screen
 
     return (
         <div className={cn("flex h-screen bg-app-bg text-app-text font-sans selection:bg-app-accent/30 overflow-hidden")}>
+            {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />
             <ShortcutManager />
             <Sidebar />
