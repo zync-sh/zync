@@ -10,6 +10,7 @@ import { settingsManager } from './settings-manager';
 import { tunnelManager, TunnelConfig } from './tunnel-manager';
 import { snippetManager, Snippet } from './snippets-manager';
 import { SSHConfigParser } from './ssh-config-parser';
+import { connectionStoreManager } from './connection-store-manager';
 
 export function setupIPC() {
   // Snippets Operations
@@ -332,11 +333,36 @@ export function setupIPC() {
     // We can return the result, but the events are already wired in index.ts
     // triggering this will fire the events which the UI listens to.
     const result = await autoUpdater.checkForUpdates();
-    return result; 
+    return result;
   });
 
   ipcMain.handle('app:getVersion', () => {
     const { app } = require('electron');
     return app.getVersion();
+  });
+
+  ipcMain.handle('app:isAppImage', () => {
+    return !!process.env.APPIMAGE;
+  });
+
+  // Connection Storage Operations (Main Process Authority)
+  ipcMain.handle('connections:get', async () => {
+    // Return data from Main Process Disk Store
+    return connectionStoreManager.getData();
+  });
+
+  ipcMain.handle('connections:save', async (event, data) => {
+    // Save to Disk
+    connectionStoreManager.saveData(data);
+
+    // Broadcast to ALL windows (including sender) to ensure UI is in sync
+    // Actually, sender presumably already has the state, but confirming it is good.
+    // Or we can broadcast to "others".
+    // Let's broadcast to ALL to be safe and simple: "Single Source of Truth updated".
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('connections:updated', data);
+    });
+
+    return { success: true };
   });
 }

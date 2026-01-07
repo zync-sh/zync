@@ -33,7 +33,7 @@ export function WelcomeScreen() {
             {/* Hero */}
             <div className="mb-12">
                 <h1 className="text-4xl font-bold bg-gradient-to-r from-[var(--color-app-text)] to-[var(--color-app-muted)] bg-clip-text text-transparent mb-2">
-                    {greeting}, Operator.
+                    {greeting}
                 </h1>
                 <div className="flex items-center gap-2 text-[var(--color-app-muted)] text-lg">
                     <Clock size={18} />

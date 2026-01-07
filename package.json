@@ -18,7 +18,7 @@
     "electron",
     "react"
   ],
-  "author": "Gajendra gajendravmy22@gmail.com",
+  "author": "Gajendra <gajendravmy22@gmail.com>",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
@@ -81,15 +81,16 @@
     "linux": {
       "target": [
         "AppImage",
-        "tar.gz"
+        "tar.gz",
+        "deb"
       ],
       "icon": "public/icon.png",
       "category": "Development",
-      "executableName": "zync"
+      "executableName": "zync",
+      "maintainer": "Gajendra <gajendravmy22@gmail.com>"
     },
     "mac": {
       "target": [
-        "dmg",
         "zip"
       ],
       "icon": "public/icon.png",
