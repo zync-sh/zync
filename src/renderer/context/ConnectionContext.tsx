@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { connectionStorage } from '../lib/storage';
+// import { connectionStorage } from '../lib/storage'; // Removed
 import { useToast } from './ToastContext';
 
 export interface Connection {
@@ -69,7 +69,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     const [customFolders, setCustomFolders] = useState<string[]>([]); // Explicitly created folders
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
-    const [isLoaded, setIsLoaded] = useState(false);
+    // const [isLoaded, setIsLoaded] = useState(false); // Unused with manual save strategy
     const [isAddConnectionModalOpen, setIsAddConnectionModalOpen] = useState(false);
 
     // Derived: The Active Connection ID is the one associated with the active Tab
@@ -78,101 +78,164 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     const { showToast } = useToast();
 
     // Load connections and folders
-    useEffect(() => {
-        const loaded: any = connectionStorage.load();
-        if (loaded) {
-            if (Array.isArray(loaded)) {
-                // Legacy format (just connections)
-                setConnections(loaded.map((c: any) => ({ ...c, status: 'disconnected' as const })));
-            } else if (loaded.connections) {
-                // New format { connections, folders }
-                setConnections(loaded.connections.map((c: any) => ({ ...c, status: 'disconnected' as const })));
-                setCustomFolders(loaded.folders || []);
+    const loadFromStorage = async () => {
+        try {
+            let loaded = await window.ipcRenderer.invoke('connections:get');
+            const hasMainData = loaded && ((loaded.connections && loaded.connections.length > 0) || (Array.isArray(loaded) && loaded.length > 0));
+
+            if (!hasMainData) {
+                // Sync Migration: Check legacy localStorage
+                const local = localStorage.getItem('ssh-connections');
+                if (local) {
+                    try {
+                        console.log('Migrating legacy localStorage to Main Process...');
+                        const parsed = JSON.parse(local);
+                        let conns: Connection[] = [];
+                        let folders: string[] = [];
+
+                        if (Array.isArray(parsed)) {
+                            conns = parsed;
+                        } else if (parsed.connections) {
+                            conns = parsed.connections;
+                            folders = parsed.folders || [];
+                        }
+
+                        if (conns.length > 0) {
+                            // Immediately save to Main/Disk to complete migration
+                            await saveToMain(conns, folders);
+                            loaded = { connections: conns, folders: folders };
+                        }
+                    } catch (e) {
+                        console.error('Migration failed:', e);
+                    }
+                }
             }
+
+            if (loaded) {
+                if (loaded.connections) {
+                    setConnections(loaded.connections.map((c: any) => ({ ...c, status: 'disconnected' as const })));
+                    setCustomFolders(loaded.folders || []);
+                } else if (Array.isArray(loaded)) { // Fallback for legacy format if any
+                    setConnections(loaded.map((c: any) => ({ ...c, status: 'disconnected' as const })));
+                }
+            }
+            // setIsLoaded(true);
+        } catch (error) {
+            console.error('Failed to load connections from main process:', error);
+            showToast('error', 'Failed to load connections');
         }
-        setIsLoaded(true);
+    };
+
+    useEffect(() => {
+        loadFromStorage();
+
+        // Listen for Real-Time Updates from Main Process (Single Source of Truth)
+        const handleSync = (_: any, data: any) => {
+            console.log('Received connection sync from main process');
+            if (data && data.connections) {
+                // Merge status? No, status is runtime. We only sync CONFIG data.
+                // But we need to preserve status of currently active connections!
+                setConnections(prev => {
+                    const statusMap = new Map(prev.map(c => [c.id, c.status]));
+
+                    return data.connections.map((remoteConn: Connection) => ({
+                        ...remoteConn,
+                        // Preserve local runtime state like status, unless it's a new connection
+                        status: statusMap.get(remoteConn.id) || 'disconnected',
+                    }));
+                });
+
+                if (data.folders) {
+                    setCustomFolders(data.folders);
+                }
+            }
+        };
+
+        window.ipcRenderer.on('connections:updated', handleSync);
+        return () => {
+            // @ts-ignore
+            window.ipcRenderer.off('connections:updated', handleSync);
+        };
     }, []);
 
-    // Save connections and folders
-    useEffect(() => {
-        if (!isLoaded) return;
-        // We always save as the new object format now
-        const toSaveConnections = connections.map(({ id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon, folder, theme }) => ({
-            id, name, host, username, port, privateKeyPath, jumpServerId, lastConnected, icon, folder, theme
-        }));
-
-        connectionStorage.save({
-            connections: toSaveConnections,
-            folders: customFolders
-        });
-    }, [connections, customFolders]);
+    // Helper to Save to Main Process
+    const saveToMain = async (newConnections: Connection[], newFolders: string[]) => {
+        try {
+            // Strip runtime status before saving
+            const toSave = newConnections.map(({ status, ...c }) => c);
+            await window.ipcRenderer.invoke('connections:save', {
+                connections: toSave,
+                folders: newFolders
+            });
+        } catch (error) {
+            console.error('Failed to save to main process:', error);
+            showToast('error', 'Failed to save changes');
+        }
+    };
 
     const addConnection = (conn: Connection) => {
-        setConnections([...connections, conn]);
+        const newConns = [...connections, conn];
+        setConnections(newConns);
+        saveToMain(newConns, customFolders);
     };
 
     const editConnection = (updatedConn: Connection) => {
-        setConnections(prev => prev.map(c => c.id === updatedConn.id ? updatedConn : c));
+        const newConns = connections.map(c => c.id === updatedConn.id ? updatedConn : c);
+        setConnections(newConns);
+        saveToMain(newConns, customFolders);
         // If the connection name changed, we might want to update tabs, but ID references are stable.
     };
 
     const importConnections = (newConns: Connection[]) => {
-        setConnections(prev => {
-            const existingMap = new Map(prev.map(c => [c.name, c.id]));
-            const remappedIds = new Map<string, string>(); // Map [ImportedID] -> [ExistingID]
-            const connsToAdd: Connection[] = [];
+        const existingMap = new Map(connections.map(c => [c.name, c.id]));
+        const remappedIds = new Map<string, string>(); // Map [ImportedID] -> [ExistingID]
+        const connsToAdd: Connection[] = [];
 
-            for (const conn of newConns) {
-                if (existingMap.has(conn.name)) {
-                    // Update existing connection with new details
-                    // We must keep the EXISTING ID so tabs remain valid
-                    const existingId = existingMap.get(conn.name)!;
+        for (const conn of newConns) {
+            if (existingMap.has(conn.name)) {
+                // Update existing connection with new details
+                // We must keep the EXISTING ID so tabs remain valid
+                const existingId = existingMap.get(conn.name)!;
 
-                    // Map the *imported* ID to the *existing* ID for jump server resolution later
-                    remappedIds.set(conn.id, existingId);
+                // Map the *imported* ID to the *existing* ID for jump server resolution later
+                remappedIds.set(conn.id, existingId);
 
-                    // Create updated connection object: Use Imported Data but Existing ID
-                    // We also need to be careful about 'status' - keep existing status?
-                    const existingConn = prev.find(c => c.id === existingId)!;
+                // Create updated connection object: Use Imported Data but Existing ID
+                // We also need to be careful about 'status' - keep existing status?
+                const existingConn = connections.find(c => c.id === existingId)!;
 
-                    connsToAdd.push({
-                        ...conn,
-                        id: existingId,
-                        status: existingConn.status, // Preserve status (e.g. connected)
-                        // jumpServerId will be resolved in the next step
-                    });
-                } else {
-                    connsToAdd.push(conn);
-                }
+                connsToAdd.push({
+                    ...conn,
+                    id: existingId,
+                    status: existingConn.status, // Preserve status (e.g. connected)
+                    // jumpServerId will be resolved in the next step
+                });
+            } else {
+                connsToAdd.push(conn);
             }
+        }
 
-            // Fix references in the newly formed list (mixed of updated and new)
-            // But wait, 'prev' still has the old ones. We need to REPLACE them.
-            // So we shouldn't return [...prev, ...cleanedConns]. We should structure the final list.
+        const importedNames = new Set(newConns.map(c => c.name));
+        const preservedOldConns = connections.filter(c => !importedNames.has(c.name));
 
-            // Strategy:
-            // 1. We have 'connsToAdd' which contains EVERYTHING we want to keep from the import (updates + new).
-            // 2. What about connections in 'prev' that were NOT in the import? We should keep them too.
-            // 3. So we start with 'prev' connections that are NOT in `existingMap` (wait, existingMap covers matches).
-            //    Actually, we want to KEEP connections that are NOT in the import.
-
-            const importedNames = new Set(newConns.map(c => c.name));
-            const preservedOldConns = prev.filter(c => !importedNames.has(c.name));
-
-            // Now resolve Jump IDs for everything in connsToAdd
-            const finalizedImportedConns = connsToAdd.map(c => {
-                if (c.jumpServerId && remappedIds.has(c.jumpServerId)) {
-                    return { ...c, jumpServerId: remappedIds.get(c.jumpServerId) };
-                }
-                return c;
-            });
-
-            return [...preservedOldConns, ...finalizedImportedConns];
+        // Now resolve Jump IDs for everything in connsToAdd
+        const finalizedImportedConns = connsToAdd.map(c => {
+            if (c.jumpServerId && remappedIds.has(c.jumpServerId)) {
+                return { ...c, jumpServerId: remappedIds.get(c.jumpServerId) };
+            }
+            return c;
         });
+
+        const finalConns = [...preservedOldConns, ...finalizedImportedConns];
+        setConnections(finalConns);
+        saveToMain(finalConns, customFolders);
     };
 
     const deleteConnection = (id: string) => {
-        setConnections(prev => prev.filter(c => c.id !== id));
+        const newConns = connections.filter(c => c.id !== id);
+        setConnections(newConns);
+        saveToMain(newConns, customFolders);
+
         // Also close tabs related to this connection
         const tabsToRemove = tabs.filter(t => t.connectionId === id);
         tabsToRemove.forEach(t => closeTab(t.id));
@@ -181,23 +244,35 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // Folder Management
     const addFolder = (name: string) => {
         if (!name || customFolders.includes(name)) return;
-        setCustomFolders(prev => [...prev, name]);
+        const newFolders = [...customFolders, name];
+        setCustomFolders(newFolders);
+        saveToMain(connections, newFolders);
     };
 
     const deleteFolder = (name: string) => {
-        setCustomFolders(prev => prev.filter(f => f !== name));
-        // Clear folder from connections that were in it
-        setConnections(prev => prev.map(c => c.folder === name ? { ...c, folder: '' } : c));
+        const newFolders = customFolders.filter(f => f !== name);
+        setCustomFolders(newFolders);
+        // Clear folder from connections
+        const newConns = connections.map(c => c.folder === name ? { ...c, folder: '' } : c);
+        setConnections(newConns);
+        saveToMain(newConns, newFolders);
     };
 
     const renameFolder = (oldName: string, newName: string) => {
         if (!newName || customFolders.includes(newName)) return;
-        setCustomFolders(prev => prev.map(f => f === oldName ? newName : f));
-        setConnections(prev => prev.map(c => c.folder === oldName ? { ...c, folder: newName } : c));
+        const newFolders = customFolders.map(f => f === oldName ? newName : f);
+        setCustomFolders(newFolders);
+
+        const newConns = connections.map(c => c.folder === oldName ? { ...c, folder: newName } : c);
+        setConnections(newConns);
+
+        saveToMain(newConns, newFolders);
     };
 
     const updateConnectionFolder = (connectionId: string, folderName: string) => {
-        setConnections(prev => prev.map(c => c.id === connectionId ? { ...c, folder: folderName } : c));
+        const newConns = connections.map(c => c.id === connectionId ? { ...c, folder: folderName } : c);
+        setConnections(newConns);
+        saveToMain(newConns, customFolders);
     };
 
     // Computed list of all unique folders (implicit + explicit)
@@ -211,6 +286,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         setCustomFolders([]);
         setTabs([]);
         setActiveTabId(null);
+        saveToMain([], []);
     };
 
     // --- Tab Management ---

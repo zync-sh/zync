@@ -14,11 +14,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings } = useSettings();
     const [activeTab, setActiveTab] = useState<Tab>('terminal');
     const [wslDistros, setWslDistros] = useState<string[]>([]);
-    
+
     // About / Update State
     const [appVersion, setAppVersion] = useState('');
     const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'not-available' | 'error' | 'downloading'>('idle');
     const [updateInfo, setUpdateInfo] = useState<any>(null);
+    const [isAppImage, setIsAppImage] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -27,24 +28,25 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     setWslDistros(distros);
                 }).catch(err => console.error('Failed to fetch WSL distros', err));
             }
-            
-            // Get Version
+
+            // Get Version & AppImage Status
             window.ipcRenderer.invoke('app:getVersion').then(ver => setAppVersion(ver));
+            window.ipcRenderer.invoke('app:isAppImage').then(is => setIsAppImage(is));
         }
     }, [isOpen]);
 
     // Update Listeners
     useEffect(() => {
         const onUpdateStatus = (_: any, status: string) => {
-           if (status === 'Checking for update...') setUpdateStatus('checking');
-           if (status === 'Update not available.') setUpdateStatus('not-available');
+            if (status === 'Checking for update...') setUpdateStatus('checking');
+            if (status === 'Update not available.') setUpdateStatus('not-available');
         };
         const onUpdateAvailable = (_: any, info: any) => {
             setUpdateStatus('available');
             setUpdateInfo(info);
         };
         const onUpdateProgress = () => {
-             setUpdateStatus('downloading');
+            setUpdateStatus('downloading');
         };
         const onUpdateError = () => setUpdateStatus('error');
 
@@ -67,6 +69,24 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             await window.ipcRenderer.invoke('update:check');
         } catch (e) {
             setUpdateStatus('error');
+        }
+    };
+
+    const isWindows = window.navigator.userAgent.indexOf('Windows') !== -1;
+    const canAutoUpdate = isWindows || isAppImage;
+
+    const handleUpdateAction = () => {
+        if (updateStatus === 'downloading') return;
+
+        if (updateStatus === 'available') {
+            if (canAutoUpdate) {
+                window.ipcRenderer.invoke('update:install');
+            } else {
+                // Manual Download Fallback
+                window.ipcRenderer.invoke('shell:open', 'https://github.com/FDgajju/zync/releases/latest');
+            }
+        } else {
+            checkForUpdates();
         }
     };
 
@@ -168,28 +188,30 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     </div>
                                 </Section>
 
-                                <Section title="Local Terminal (Windows)">
-                                    <div className="space-y-3">
-                                        <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Default Shell</label>
-                                        <select
-                                            className="w-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg p-2.5 text-[var(--color-app-text)] focus:ring-2 focus:ring-[var(--color-app-accent)] focus:border-transparent outline-none"
-                                            value={settings.localTerm?.windowsShell || 'default'}
-                                            onChange={(e) => updateLocalTermSettings({ windowsShell: e.target.value })}
-                                        >
-                                            <option value="default">Default (System Decision)</option>
-                                            <option value="powershell">PowerShell</option>
-                                            <option value="cmd">Command Prompt</option>
-                                            <option value="gitbash">Git Bash</option>
-                                            <option value="wsl">WSL (Default Distro)</option>
-                                            {wslDistros.map(distro => (
-                                                <option key={distro} value={`wsl:${distro}`}>WSL: {distro}</option>
-                                            ))}
-                                        </select>
-                                        <div className="text-xs text-[var(--color-app-muted)]">
-                                            Note: Changes take effect on new split panes or tabs.
+                                {window.navigator.userAgent.indexOf('Windows') !== -1 && (
+                                    <Section title="Local Terminal (Windows)">
+                                        <div className="space-y-3">
+                                            <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Default Shell</label>
+                                            <select
+                                                className="w-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg p-2.5 text-[var(--color-app-text)] focus:ring-2 focus:ring-[var(--color-app-accent)] focus:border-transparent outline-none"
+                                                value={settings.localTerm?.windowsShell || 'default'}
+                                                onChange={(e) => updateLocalTermSettings({ windowsShell: e.target.value })}
+                                            >
+                                                <option value="default">Default (System Decision)</option>
+                                                <option value="powershell">PowerShell</option>
+                                                <option value="cmd">Command Prompt</option>
+                                                <option value="gitbash">Git Bash</option>
+                                                <option value="wsl">WSL (Default Distro)</option>
+                                                {wslDistros.map(distro => (
+                                                    <option key={distro} value={`wsl:${distro}`}>WSL: {distro}</option>
+                                                ))}
+                                            </select>
+                                            <div className="text-xs text-[var(--color-app-muted)]">
+                                                Note: Changes take effect on new split panes or tabs.
+                                            </div>
                                         </div>
-                                    </div>
-                                </Section>
+                                    </Section>
+                                )}
 
                                 <Section title="Cursor">
                                     <div className="grid grid-cols-3 gap-4">
@@ -372,65 +394,133 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         )}
 
                         {activeTab === 'about' && (
-                            <div className="space-y-8">
-                                <div className="flex flex-col items-center justify-center py-8 text-center bg-app-bg/30 rounded-2xl border border-app-border">
-                                    <div className="w-24 h-24 mb-6 rounded-2xl bg-linear-to-br from-indigo-500 to-purple-600 shadow-xl flex items-center justify-center">
-                                        <span className="text-4xl font-bold text-white">Z</span>
-                                    </div>
-                                    <h3 className="text-3xl font-bold text-app-text mb-2">Zync</h3>
-                                    <div className="text-app-muted text-sm mb-6">v{appVersion}</div>
-                                    
-                                    <div className="flex flex-col items-center gap-4 w-full max-w-sm px-4">
-                                        <button
-                                            onClick={checkForUpdates}
-                                            disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
-                                            className={`
-                                                flex items-center gap-2 px-6 py-2.5 rounded-lg border font-medium transition-all w-full justify-center
-                                                ${updateStatus === 'available'
-                                                    ? 'bg-green-500/10 border-green-500/50 text-green-500 hover:bg-green-500/20'
-                                                    : 'bg-app-surface border-app-border text-app-text hover:bg-app-surface/80 hover:border-app-accent'
-                                                }
-                                                disabled:opacity-50 disabled:cursor-not-allowed
-                                            `}
-                                        >
-                                            {updateStatus === 'checking' && <RefreshCw className="animate-spin" size={18} />}
-                                            {updateStatus === 'idle' && <RefreshCw size={18} />}
-                                            {updateStatus === 'available' && <Download size={18} />}
-                                            {updateStatus === 'not-available' && <Check size={18} />}
-                                            {updateStatus === 'error' && <AlertTriangle size={18} />}
-                                            
-                                            <span>
-                                                {updateStatus === 'idle' && 'Check for Updates'}
-                                                {updateStatus === 'checking' && 'Checking...'}
-                                                {updateStatus === 'available' && 'Update Available'}
-                                                {updateStatus === 'not-available' && 'Up to Date'}
-                                                {updateStatus === 'error' && 'Check Failed'}
+                            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                {/* Hero Card */}
+                                <div className="relative overflow-hidden rounded-2xl border border-[var(--color-app-border)] bg-[var(--color-app-panel)] shadow-lg group">
+                                    {/* Decorative Gradient Blob */}
+                                    <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
+                                    <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" />
+
+                                    <div className="relative z-10 flex flex-col items-center justify-center py-12 text-center">
+                                        {/* Animated Logo */}
+                                        <div className="relative mb-6">
+                                            <div className="w-24 h-24 flex items-center justify-center relative transform transition-transform duration-500 hover:scale-110 hover:rotate-3 mx-auto">
+                                                <img
+                                                    src="/icon.png"
+                                                    alt="Zync"
+                                                    className="w-full h-full object-contain select-none drop-shadow-2xl"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Title & Version */}
+                                        <h3 className="text-4xl font-black text-[var(--color-app-text)] mb-2 tracking-tight">
+                                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 animate-gradient-x">
+                                                Zync
                                             </span>
-                                        </button>
-                                        
-                                        {updateStatus === 'not-available' && (
-                                            <p className="text-xs text-app-muted animate-in fade-in">
-                                                You are running the latest version.
-                                            </p>
-                                        )}
-                                        
-                                         {updateStatus === 'available' && updateInfo && (
-                                             <div className="w-full bg-app-bg/50 p-3 rounded-lg border border-app-border text-left text-xs">
-                                                 <div className="font-semibold text-app-text mb-1">v{updateInfo.version} available</div>
-                                                 <div className="text-app-muted">Check the main window to download and install.</div>
-                                             </div>
-                                         )}
-                                    </div>
-                                </div>
-                                
-                                <Section title="Legal">
-                                    <div className="space-y-4">
-                                        <div className="p-4 bg-app-bg/30 rounded-lg border border-app-border text-sm text-app-muted">
-                                            <p>© 2026 Zync SSH Client. All rights reserved.</p>
-                                            <p className="mt-2">Made with ❤️ by Gajendra.</p>
+                                        </h3>
+
+                                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[var(--color-app-surface)] border border-[var(--color-app-border)] text-[var(--color-app-muted)] text-xs font-mono mb-8 hover:border-[var(--color-app-accent)] transition-colors cursor-default">
+                                            <span className="font-semibold text-[var(--color-app-text)]">v{appVersion}</span>
+                                            <span className="w-1 h-1 rounded-full bg-[var(--color-app-border)]" />
+                                            <span>{isAppImage ? 'AppImage' : isWindows ? 'Windows' : 'Linux'}</span>
+                                            <span className="w-1 h-1 rounded-full bg-[var(--color-app-border)]" />
+                                            <span>Release</span>
+                                        </div>
+
+                                        {/* Update Button */}
+                                        <div className="w-full max-w-xs px-4">
+                                            <button
+                                                onClick={handleUpdateAction}
+                                                disabled={updateStatus === 'checking' || (canAutoUpdate && updateStatus === 'downloading')}
+                                                className={`
+                                                    group relative flex items-center justify-center gap-3 px-6 py-3.5 rounded-xl border font-semibold transition-all w-full overflow-hidden
+                                                    ${updateStatus === 'available'
+                                                        ? 'bg-gradient-to-r from-green-500/10 to-emerald-600/10 border-green-500/50 text-green-500 hover:from-green-500/20 hover:to-emerald-600/20 shadow-[0_0_20px_-5px_rgba(34,197,94,0.3)]'
+                                                        : 'bg-[var(--color-app-surface)] border-[var(--color-app-border)] text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]/80 hover:border-[var(--color-app-accent)] hover:shadow-[0_0_15px_-5px_var(--color-app-accent)]'
+                                                    }
+                                                    disabled:opacity-50 disabled:cursor-not-allowed
+                                                `}
+                                            >
+                                                <div className={`transition-transform duration-700 ${updateStatus === 'checking' ? 'animate-spin' : 'group-hover:scale-110'}`}>
+                                                    {updateStatus === 'checking' && <RefreshCw size={18} />}
+                                                    {updateStatus === 'idle' && <RefreshCw size={18} />}
+                                                    {updateStatus === 'available' && <Download size={18} />}
+                                                    {updateStatus === 'not-available' && <Check size={18} />}
+                                                    {updateStatus === 'error' && <AlertTriangle size={18} />}
+                                                </div>
+
+                                                <span className="relative z-10">
+                                                    {updateStatus === 'idle' && 'Check for Updates'}
+                                                    {updateStatus === 'checking' && 'Checking...'}
+                                                    {updateStatus === 'available' && (canAutoUpdate ? 'Install & Restart' : 'Download Update')}
+                                                    {updateStatus === 'not-available' && 'Up to Date'}
+                                                    {updateStatus === 'error' && 'Check Failed'}
+                                                </span>
+                                            </button>
+
+                                            {/* Status Messages */}
+                                            {updateStatus === 'not-available' && (
+                                                <p className="text-xs text-[var(--color-app-muted)] mt-3 animate-in fade-in slide-in-from-top-1">
+                                                    You are running the latest version.
+                                                </p>
+                                            )}
+
+                                            {updateStatus === 'available' && updateInfo && (
+                                                <div className="w-full bg-[var(--color-app-bg)]/50 p-3 rounded-lg border border-[var(--color-app-border)] text-left text-xs mt-3 animate-in zoom-in-95">
+                                                    <div className="font-semibold text-[var(--color-app-text)] mb-1 flex justify-between">
+                                                        <span>v{updateInfo.version} available</span>
+                                                        <span className="text-[var(--color-app-accent)]">New</span>
+                                                    </div>
+                                                    <div className="text-[var(--color-app-muted)]">
+                                                        {canAutoUpdate
+                                                            ? "Update will be installed automatically."
+                                                            : "Please download the update from GitHub."}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
-                                </Section>
+                                </div>
+
+                                {/* Links Grid */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <button
+                                        onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/FDgajju/zync')}
+                                        className="flex items-center gap-4 p-4 rounded-xl border border-[var(--color-app-border)] bg-[var(--color-app-surface)]/30 hover:bg-[var(--color-app-surface)] hover:border-[var(--color-app-accent)]/50 transition-all group text-left"
+                                    >
+                                        <div className="p-3 rounded-lg bg-[var(--color-app-bg)] group-hover:bg-[var(--color-app-text)] group-hover:text-[var(--color-app-bg)] transition-colors border border-[var(--color-app-border)]">
+                                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                                        </div>
+                                        <div>
+                                            <div className="font-semibold text-[var(--color-app-text)] group-hover:text-[var(--color-app-accent)] transition-colors">GitHub</div>
+                                            <div className="text-xs text-[var(--color-app-muted)]">Source Code & Issues</div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        onClick={() => window.ipcRenderer.invoke('shell:open', 'https://zync.thesudoer.in')}
+                                        className="flex items-center gap-4 p-4 rounded-xl border border-[var(--color-app-border)] bg-[var(--color-app-surface)]/30 hover:bg-[var(--color-app-surface)] hover:border-[var(--color-app-accent)]/50 transition-all group text-left"
+                                    >
+                                        <div className="p-3 rounded-lg bg-[var(--color-app-bg)] group-hover:bg-[var(--color-app-text)] group-hover:text-[var(--color-app-bg)] transition-colors border border-[var(--color-app-border)]">
+                                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
+                                        </div>
+                                        <div>
+                                            <div className="font-semibold text-[var(--color-app-text)] group-hover:text-[var(--color-app-accent)] transition-colors">Website</div>
+                                            <div className="text-xs text-[var(--color-app-muted)]">Documentation & Guides</div>
+                                        </div>
+                                    </button>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="text-center pt-8 pb-4">
+                                    <div className="flex items-center justify-center gap-1.5 text-sm text-[var(--color-app-muted)]">
+                                        <span>Made with</span>
+                                        <span className="text-red-500 animate-pulse text-lg leading-none">❤️</span>
+                                        <span>by Gajendra</span>
+                                    </div>
+                                    <p className="text-xs text-[var(--color-app-muted)]/50 mt-2 font-mono">© 2026 Zync SSH Client. All rights reserved.</p>
+                                </div>
                             </div>
                         )}
                     </div>
