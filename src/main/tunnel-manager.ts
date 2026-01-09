@@ -11,6 +11,7 @@ export interface TunnelConfig {
   localPort: number;
   remoteHost: string;
   remotePort: number;
+  bindToAny?: boolean; // NEW: Bind to 0.0.0.0 (Allow LAN access)
   autoStart?: boolean; // NEW
   status?: 'active' | 'error' | 'stopped';
   error?: string;
@@ -48,6 +49,19 @@ class TunnelManager extends EventEmitter {
 
   // ... Persistence Methods (getTunnelsForConnection, saveTunnel, getTunnelConfig, deleteTunnel) ...
   // (Assuming saveTunnel handles the new 'type' field automatically since it stores the whole object)
+
+  getAllTunnels(): TunnelConfig[] {
+    const allTunnels = this.store.get('tunnels');
+    return allTunnels.map((cfg) => {
+      const active = this.activeTunnels.get(cfg.id);
+      return {
+        ...cfg,
+        type: cfg.type || 'local',
+        status: active ? (active.error ? 'error' : 'active') : 'stopped',
+        error: active?.error,
+      };
+    });
+  }
 
   getTunnelsForConnection(connectionId: string): TunnelConfig[] {
     const allTunnels = this.store.get('tunnels');
@@ -218,8 +232,9 @@ class TunnelManager extends EventEmitter {
       });
 
       try {
-        server.listen(config.localPort, '127.0.0.1', () => {
-          console.log(`[Tunnel ${config.id}] Listening on 127.0.0.1:${config.localPort}`);
+        const bindAddress = config.bindToAny ? '0.0.0.0' : '127.0.0.1';
+        server.listen(config.localPort, bindAddress, () => {
+          console.log(`[Tunnel ${config.id}] Listening on ${bindAddress}:${config.localPort}`);
           this.activeTunnels.set(tunnelId, { server });
           resolve();
         });

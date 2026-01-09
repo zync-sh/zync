@@ -29,7 +29,7 @@ export function setupIPC() {
   });
 
   // Tunnel Operations
-  ipcMain.handle('tunnel:start', async (_, id: string) => {
+  ipcMain.handle('tunnel:start', async (event, id: string) => {
     try {
       const config = tunnelManager.getTunnelConfig(id);
       if (!config) throw new Error('Tunnel not found');
@@ -38,15 +38,22 @@ export function setupIPC() {
       if (!client) throw new Error('SSH Client not connected');
 
       await tunnelManager.startTunnel(client, id);
+
+      // Broadcast update
+      event.sender.send('tunnel:status-change', { id, status: 'active', error: undefined });
+
       return { success: true };
     } catch (e: any) {
       console.error('Tunnel Start Error', e);
+      // We might want to broadcast error status too?
+      // event.sender.send('tunnel:status-change', { id, status: 'error', error: e.message });
       throw e;
     }
   });
 
-  ipcMain.handle('tunnel:stop', async (_, id: string) => {
+  ipcMain.handle('tunnel:stop', async (event, id: string) => {
     await tunnelManager.stopTunnel(id);
+    event.sender.send('tunnel:status-change', { id, status: 'stopped', error: undefined });
     return { success: true };
   });
 
@@ -61,6 +68,10 @@ export function setupIPC() {
 
   ipcMain.handle('tunnel:list', async (_, connectionId: string) => {
     return tunnelManager.getTunnelsForConnection(connectionId);
+  });
+
+  ipcMain.handle('tunnel:getAll', async () => {
+    return tunnelManager.getAllTunnels();
   });
 
   // Settings Operations
@@ -97,6 +108,9 @@ export function setupIPC() {
           console.error('Failed to auto-start tunnels:', err);
         });
       }
+
+      // Auto-detect OS Icon (Background)
+      detectAndSaveOS(config.id).catch((err: any) => console.error('OS Detection failed', err));
 
     } catch (error) {
       console.error('Connection Failed:', error);
@@ -326,6 +340,23 @@ export function setupIPC() {
     }
   });
 
+  // Zoom Controls
+  ipcMain.handle('app:zoomIn', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    const current = win.webContents.getZoomFactor();
+    win.webContents.setZoomFactor(current + 0.1);
+  });
+
+  ipcMain.handle('app:zoomOut', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    const current = win.webContents.getZoomFactor();
+    if (current > 0.5) {
+      win.webContents.setZoomFactor(current - 0.1);
+    }
+  });
+
   ipcMain.on('window:close', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.close();
@@ -460,4 +491,65 @@ export function setupIPC() {
     }
     return result.filePaths[0];
   });
+}
+
+/**
+ * Helper to detect remote OS and update connection icon
+ */
+async function detectAndSaveOS(connectionId: string) {
+  try {
+    const storeData = connectionStoreManager.getData();
+    const connIndex = storeData.connections.findIndex(c => c.id === connectionId);
+    if (connIndex === -1) return;
+
+    const conn = storeData.connections[connIndex];
+    // Only update if icon is missing or default 'Server'
+    if (conn.icon && conn.icon !== 'Server') return;
+
+    // 1. Try /etc/os-release (Linux)
+    try {
+      const output = await sshManager.execCommand(connectionId, 'cat /etc/os-release');
+      const match = output.match(/^ID="?([^"\n]+)"?/m);
+      if (match && match[1]) {
+        const id = match[1].toLowerCase();
+        let icon = 'Linux'; // Default Linux
+
+        if (id.includes('ubuntu') || id.includes('pop') || id.includes('mint')) icon = 'Ubuntu';
+        else if (id.includes('debian') || id.includes('kali') || id.includes('raspbian')) icon = 'Debian';
+        else if (id.includes('centos') || id.includes('fedora') || id.includes('rhel') || id.includes('alma') || id.includes('rocky') || id.includes('amazon')) icon = 'CentOS';
+        else if (id.includes('arch') || id.includes('manjaro')) icon = 'Arch';
+        else if (id.includes('alpine')) icon = 'Box';
+
+        updateIcon(connectionId, icon);
+        return;
+      }
+    } catch (e) { /* Ignore */ }
+
+    // 2. Try uname -s (Mac/BSD/Other)
+    try {
+      const uname = await sshManager.execCommand(connectionId, 'uname -s');
+      const sysName = uname.trim();
+      if (sysName === 'Darwin') {
+        updateIcon(connectionId, 'Apple');
+      } else if (sysName === 'Linux') {
+        updateIcon(connectionId, 'Linux');
+      }
+    } catch (e) { /* Ignore */ }
+
+  } catch (err) {
+    console.warn('Auto-OS Detection Error:', err);
+  }
+}
+
+function updateIcon(connectionId: string, icon: string) {
+  const storeData = connectionStoreManager.getData();
+  const conn = storeData.connections.find(c => c.id === connectionId);
+  if (conn) {
+    conn.icon = icon;
+    connectionStoreManager.saveData(storeData);
+    // Broadcast update
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('connections:updated', storeData);
+    });
+  }
 }

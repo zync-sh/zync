@@ -17,8 +17,8 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md' }: 
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
-    if (isOpen) window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
+    if (isOpen) window.addEventListener('keydown', handleEsc, { capture: true });
+    return () => window.removeEventListener('keydown', handleEsc, { capture: true });
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;

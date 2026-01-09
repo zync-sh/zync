@@ -22,6 +22,34 @@ export interface AppSettings {
     localTerm: {
         windowsShell: string;
     };
+    keybindings: {
+        toggleSidebar: string;
+        openNewConnection: string;
+        newLocalTerminal: string;
+        newHostTerminal: string;
+        toggleSettings: string;
+        closeTab: string;
+        commandPalette: string;
+        switchTabNext: string;
+        switchTabPrev: string;
+        // Terminal
+        termCopy: string;
+        termPaste: string;
+        termFind: string;
+        // View
+        zoomIn: string;
+        zoomOut: string;
+        // Tab Jumping (1-9)
+        switchTab1: string;
+        switchTab2: string;
+        switchTab3: string;
+        switchTab4: string;
+        switchTab5: string;
+        switchTab6: string;
+        switchTab7: string;
+        switchTab8: string;
+        switchTab9: string;
+    };
 }
 
 const defaultSettings: AppSettings = {
@@ -45,6 +73,34 @@ const defaultSettings: AppSettings = {
     },
     localTerm: {
         windowsShell: 'default'
+    },
+    keybindings: {
+        toggleSidebar: 'Mod+B',
+        openNewConnection: 'Mod+N',
+        newLocalTerminal: 'Mod+T',
+        newHostTerminal: 'Mod+Shift+T',
+        toggleSettings: 'Mod+,',
+        closeTab: 'Mod+W',
+        commandPalette: 'Mod+P',
+        switchTabNext: 'Ctrl+Tab',
+        switchTabPrev: 'Ctrl+Shift+Tab',
+        // Terminal
+        termCopy: 'Mod+Shift+C',
+        termPaste: 'Mod+Shift+V',
+        termFind: 'Mod+F',
+        // View
+        zoomIn: 'Mod+=', // Plus usually requires Shift, but = is the key
+        zoomOut: 'Mod+-',
+        // Tab Jumping
+        switchTab1: 'Mod+1',
+        switchTab2: 'Mod+2',
+        switchTab3: 'Mod+3',
+        switchTab4: 'Mod+4',
+        switchTab5: 'Mod+5',
+        switchTab6: 'Mod+6',
+        switchTab7: 'Mod+7',
+        switchTab8: 'Mod+8',
+        switchTab9: 'Mod+9',
     }
 };
 
@@ -55,6 +111,7 @@ interface SettingsContextType {
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
+    updateKeybindings: (updates: Partial<AppSettings['keybindings']>) => Promise<void>;
     isSettingsOpen: boolean;
     openSettings: () => void;
     closeSettings: () => void;
@@ -127,7 +184,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 ...loaded,
                 terminal: { ...defaultSettings.terminal, ...(loaded?.terminal || {}) },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
-                localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) }
+                localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
+                keybindings: { ...defaultSettings.keybindings, ...(loaded?.keybindings || {}) }
             };
             setSettings(merged);
         } catch (error) {
@@ -178,6 +236,16 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    const updateKeybindings = async (updates: Partial<AppSettings['keybindings']>) => {
+        const newKeys = { ...settings.keybindings, ...updates };
+        setSettings(prev => ({ ...prev, keybindings: newKeys }));
+        try {
+            await window.ipcRenderer.invoke('settings:set', { keybindings: newKeys });
+        } catch (error) {
+            console.error('Failed to save keybindings:', error);
+        }
+    };
+
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const openSettings = () => setIsSettingsOpen(true);
@@ -191,6 +259,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             updateTerminalSettings,
             updateLocalTermSettings,
             updateFileManagerSettings,
+            updateKeybindings,
             isSettingsOpen,
             openSettings,
             closeSettings

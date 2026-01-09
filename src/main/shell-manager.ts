@@ -13,7 +13,7 @@ export class SSHShellManager {
 
       if (os.platform() === 'win32') {
         const configuredShell = settings.localTerm?.windowsShell || 'default';
-        
+
         switch (configuredShell) {
           case 'powershell':
             shell = 'powershell.exe';
@@ -31,17 +31,17 @@ export class SSHShellManager {
               'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
               'C:\\Users\\' + os.userInfo().username + '\\AppData\\Local\\Programs\\Git\\bin\\bash.exe'
             ];
-            shell = 'C:\\Program Files\\Git\\bin\\bash.exe'; 
+            shell = 'C:\\Program Files\\Git\\bin\\bash.exe';
             break;
           default:
             // Custom path or 'default' or 'wsl:DistroName'
             if (configuredShell.startsWith('wsl:')) {
-                shell = 'wsl.exe';
-                // We need to pass arguments to node-pty.
-                // The current spawn method uses `shell` as command and `[]` as args.
-                // We need to change the logic to support args.
+              shell = 'wsl.exe';
+              // We need to pass arguments to node-pty.
+              // The current spawn method uses `shell` as command and `[]` as args.
+              // We need to change the logic to support args.
             } else if (configuredShell !== 'default') {
-               shell = configuredShell;
+              shell = configuredShell;
             }
             break;
         }
@@ -50,13 +50,13 @@ export class SSHShellManager {
       // Prepare args if needed (WSL specific)
       let args: string[] = [];
       if (os.platform() === 'win32') {
-          const configuredShell = settings.localTerm?.windowsShell || 'default';
-          if (configuredShell.startsWith('wsl:')) {
-             const distro = configuredShell.split('wsl:')[1];
-             if (distro) {
-                 args = ['-d', distro];
-             }
+        const configuredShell = settings.localTerm?.windowsShell || 'default';
+        if (configuredShell.startsWith('wsl:')) {
+          const distro = configuredShell.split('wsl:')[1];
+          if (distro) {
+            args = ['-d', distro];
           }
+        }
       }
 
       try {

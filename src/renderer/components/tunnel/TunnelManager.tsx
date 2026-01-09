@@ -14,6 +14,7 @@ interface TunnelConfig {
   localPort: number;
   remoteHost: string;
   remotePort: number;
+  bindToAny?: boolean; // NEW: Bind to 0.0.0.0 (Allow LAN access)
   status: 'active' | 'error' | 'stopped';
   autoStart?: boolean;
   error?: string;
@@ -37,6 +38,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     remoteHost: '127.0.0.1',
     remotePort: '80',
     autoStart: false,
+    bindToAny: false,
   });
 
   const loadTunnels = async () => {
@@ -52,6 +54,16 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   useEffect(() => {
     if (activeConnectionId) {
       loadTunnels();
+
+      const handleStatusChange = (_: any, { id, status, error }: any) => {
+        setTunnels(prev => prev.map(t => t.id === id ? { ...t, status, error } : t));
+      };
+
+      window.ipcRenderer.on('tunnel:status-change', handleStatusChange);
+
+      return () => {
+        window.ipcRenderer.off('tunnel:status-change', handleStatusChange);
+      };
     }
   }, [activeConnectionId]);
 
@@ -64,6 +76,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       remoteHost: '127.0.0.1',
       remotePort: '80',
       autoStart: false,
+      bindToAny: false,
     });
     setIsCreating(true);
   };
@@ -81,6 +94,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       remoteHost: tunnel.remoteHost,
       remotePort: tunnel.remotePort.toString(),
       autoStart: !!tunnel.autoStart,
+      bindToAny: !!tunnel.bindToAny,
     });
     setIsCreating(true);
   };
@@ -105,6 +119,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       remoteHost: newTunnel.remoteHost,
       remotePort,
       autoStart: newTunnel.autoStart,
+      bindToAny: newTunnel.bindToAny,
       status: 'stopped',
     };
 
@@ -121,6 +136,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         remoteHost: '127.0.0.1',
         remotePort: '',
         autoStart: false,
+        bindToAny: false,
       });
       loadTunnels();
     } catch (error: any) {
@@ -253,6 +269,19 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                       onChange={(e) => setNewTunnel({ ...newTunnel, remotePort: e.target.value })}
                     />
                   </div>
+
+                  {/* Allow LAN Access Checkbox (Local Only) */}
+                  <div className="col-span-12 flex items-center gap-2 mt-2">
+                    <label className="flex items-center gap-2 cursor-pointer hover:text-app-text transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={newTunnel.bindToAny}
+                        onChange={(e) => setNewTunnel({ ...newTunnel, bindToAny: e.target.checked })}
+                        className="rounded border-app-border bg-app-bg text-app-accent focus:ring-app-accent/30 w-3.5 h-3.5"
+                      />
+                      <span className="text-xs text-app-muted">Allow LAN Access (Bind to 0.0.0.0)</span>
+                    </label>
+                  </div>
                 </>
               ) : (
                 <>
@@ -311,7 +340,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                       <ArrowRight size={12} />
                       <Laptop size={12} />
                       <span className="font-medium text-app-text">This Computer</span>
-                      <span className="text-app-muted">(127.0.0.1:{newTunnel.localPort || '3000'})</span>
+                      <span className="text-app-muted">({newTunnel.bindToAny ? '0.0.0.0' : '127.0.0.1'}:{newTunnel.localPort || '3000'})</span>
                     </>
                   )}
                 </div>

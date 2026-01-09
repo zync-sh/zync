@@ -16,6 +16,34 @@ export interface AppSettings {
   localTerm: {
     windowsShell: string;
   };
+  keybindings: {
+    toggleSidebar: string;
+    openNewConnection: string;
+    newLocalTerminal: string;
+    newHostTerminal: string;
+    toggleSettings: string;
+    closeTab: string;
+    commandPalette: string;
+    switchTabNext: string;
+    switchTabPrev: string;
+    // Terminal
+    termCopy: string;
+    termPaste: string;
+    termFind: string;
+    // View
+    zoomIn: string;
+    zoomOut: string;
+    // Tab Jumping (1-9)
+    switchTab1: string;
+    switchTab2: string;
+    switchTab3: string;
+    switchTab4: string;
+    switchTab5: string;
+    switchTab6: string;
+    switchTab7: string;
+    switchTab8: string;
+    switchTab9: string;
+  };
 }
 
 const defaultSettings: AppSettings = {
@@ -33,6 +61,34 @@ const defaultSettings: AppSettings = {
   },
   localTerm: {
     windowsShell: 'default',
+  },
+  keybindings: {
+    toggleSidebar: 'Mod+B',
+    openNewConnection: 'Mod+N',
+    newLocalTerminal: 'Mod+T',
+    newHostTerminal: 'Mod+Shift+T',
+    toggleSettings: 'Mod+,',
+    closeTab: 'Mod+W',
+    commandPalette: 'Mod+P',
+    switchTabNext: 'Ctrl+Tab',
+    switchTabPrev: 'Ctrl+Shift+Tab',
+    // Terminal
+    termCopy: 'Mod+Shift+C',
+    termPaste: 'Mod+Shift+V',
+    termFind: 'Mod+F',
+    // View
+    zoomIn: 'Mod+=', // Plus usually requires Shift, but = is the key
+    zoomOut: 'Mod+-',
+    // Tab Jumping
+    switchTab1: 'Mod+1',
+    switchTab2: 'Mod+2',
+    switchTab3: 'Mod+3',
+    switchTab4: 'Mod+4',
+    switchTab5: 'Mod+5',
+    switchTab6: 'Mod+6',
+    switchTab7: 'Mod+7',
+    switchTab8: 'Mod+8',
+    switchTab9: 'Mod+9',
   },
 };
 

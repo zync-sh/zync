@@ -1,6 +1,7 @@
 import { MainLayout } from './components/layout/MainLayout';
 import { UpdateNotification } from './components/UpdateNotification';
 import { ConnectionProvider } from './context/ConnectionContext';
+import { SettingsProvider } from './context/SettingsContext';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { TransferProvider } from './context/TransferContext';
 import { FileManager } from './components/FileManager';
@@ -16,13 +17,15 @@ function AppContent() {
 
     return (
         <ConnectionProvider>
-            <TransferProvider>
-                <MainLayout>
-                    <UpdateNotification />
-                    <FileManager />
-                </MainLayout>
-                <TransferManager />
-            </TransferProvider>
+            <SettingsProvider>
+                <TransferProvider>
+                    <MainLayout>
+                        <UpdateNotification />
+                        <FileManager />
+                    </MainLayout>
+                    <TransferManager />
+                </TransferProvider>
+            </SettingsProvider>
         </ConnectionProvider>
     );
 }

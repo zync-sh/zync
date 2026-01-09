@@ -1,6 +1,6 @@
 {
   "name": "zync",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "A modern, beautiful SSH client for the web generation.",
   "main": "dist-electron/index.js",
   "homepage": "https://github.com/FDgajju/zync",
@@ -88,7 +88,10 @@
       "icon": "public/icon.png",
       "category": "Development",
       "executableName": "zync",
-      "maintainer": "Gajendra <gajendravmy22@gmail.com>"
+      "maintainer": "Gajendra <gajendravmy22@gmail.com>",
+      "desktop": {
+        "StartupWMClass": "zync"
+      }
     },
     "mac": {
       "target": [
@@ -107,6 +110,11 @@
       "target": "nsis",
       "icon": "public/icon.png",
       "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
     },
     "files": [
       "dist-electron/**/*",

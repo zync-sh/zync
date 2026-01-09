@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect, useMemo } from 'react';
 // import { connectionStorage } from '../lib/storage'; // Removed
 import { useToast } from './ToastContext';
 
@@ -16,22 +16,32 @@ export interface Connection {
     icon?: string;
     folder?: string;
     theme?: string; // 'red', 'blue', 'green', 'orange', etc.
+    tags?: string[]; // Array of tag IDs or Colors
+    // ... existing fields
+
     createdAt?: number;
 }
 
+export interface Folder {
+    name: string;
+    tags?: string[];
+}
+
+// ... existing imports
+
 export interface Tab {
     id: string;
-    type: 'connection' | 'settings';
+    type: 'connection' | 'settings' | 'tunnels'; // Added tunnels
     title: string;
     connectionId?: string;
-    view: 'dashboard' | 'files' | 'tunnels' | 'snippets' | 'terminal'; // Per-tab view state
+    view: 'dashboard' | 'files' | 'tunnels' | 'snippets' | 'terminal';
 }
 
 interface ConnectionContextType {
     connections: Connection[];
     tabs: Tab[];
     activeTabId: string | null;
-    activeConnectionId: string | null; // Derived helper
+    activeConnectionId: string | null;
 
     addConnection: (conn: Connection) => void;
     editConnection: (conn: Connection) => void;
@@ -41,6 +51,7 @@ interface ConnectionContextType {
 
     // Tab Actions
     openTab: (connectionId: string) => void;
+    openTunnelsTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     setTabView: (tabId: string, view: 'dashboard' | 'files' | 'tunnels' | 'snippets' | 'terminal') => void;
@@ -50,10 +61,10 @@ interface ConnectionContextType {
     disconnect: (id: string) => Promise<void>;
 
     // Folders
-    folders: string[];
-    addFolder: (name: string) => void;
+    folders: Folder[];
+    addFolder: (name: string, tags?: string[]) => void;
     deleteFolder: (name: string) => void;
-    renameFolder: (oldName: string, newName: string) => void;
+    renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
     updateConnectionFolder: (connectionId: string, folderName: string) => void;
 
     // UI State
@@ -66,7 +77,7 @@ const ConnectionContext = createContext<ConnectionContextType | undefined>(undef
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
     const [connections, setConnections] = useState<Connection[]>([]);
-    const [customFolders, setCustomFolders] = useState<string[]>([]); // Explicitly created folders
+    const [customFolders, setCustomFolders] = useState<Folder[]>([]); // Explicitly created folders
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     // const [isLoaded, setIsLoaded] = useState(false); // Unused with manual save strategy
@@ -102,8 +113,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
                         if (conns.length > 0) {
                             // Immediately save to Main/Disk to complete migration
-                            await saveToMain(conns, folders);
-                            loaded = { connections: conns, folders: folders };
+                            // Convert legacy folders to object folders if needed
+                            const folderObjects = folders.map(f => typeof f === 'string' ? { name: f } : f);
+                            await saveToMain(conns, folderObjects);
+                            loaded = { connections: conns, folders: folderObjects };
                         }
                     } catch (e) {
                         console.error('Migration failed:', e);
@@ -114,7 +127,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             if (loaded) {
                 if (loaded.connections) {
                     setConnections(loaded.connections.map((c: any) => ({ ...c, status: 'disconnected' as const })));
-                    setCustomFolders(loaded.folders || []);
+
+                    // Migration: Convert loaded folders (string[] | Folder[]) to Folder[]
+                    const loadedFolders = loaded.folders || [];
+                    const normalizedFolders = loadedFolders.map((f: any) => typeof f === 'string' ? { name: f } : f);
+                    setCustomFolders(normalizedFolders);
                 } else if (Array.isArray(loaded)) { // Fallback for legacy format if any
                     setConnections(loaded.map((c: any) => ({ ...c, status: 'disconnected' as const })));
                 }
@@ -146,7 +163,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
                 });
 
                 if (data.folders) {
-                    setCustomFolders(data.folders);
+                    const loadedFolders = data.folders || [];
+                    const normalizedFolders = loadedFolders.map((f: any) => typeof f === 'string' ? { name: f } : f);
+                    setCustomFolders(normalizedFolders);
                 }
             }
         };
@@ -159,7 +178,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }, []);
 
     // Helper to Save to Main Process
-    const saveToMain = async (newConnections: Connection[], newFolders: string[]) => {
+    const saveToMain = async (newConnections: Connection[], newFolders: Folder[]) => {
         try {
             // Strip runtime status before saving
             const toSave = newConnections.map(({ status, ...c }) => c);
@@ -242,30 +261,95 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
 
     // Folder Management
-    const addFolder = (name: string) => {
-        if (!name || customFolders.includes(name)) return;
-        const newFolders = [...customFolders, name];
+    const addFolder = (name: string, tags: string[] = []) => {
+        if (!name || customFolders.some(f => f.name === name)) return;
+        const newFolders = [...customFolders, { name, tags }];
         setCustomFolders(newFolders);
         saveToMain(connections, newFolders);
     };
 
-    const deleteFolder = (name: string) => {
-        const newFolders = customFolders.filter(f => f !== name);
+    const deleteFolder = (folderToDelete: string) => {
+        // 1. Identify Parent Path
+        const parentPath = folderToDelete.includes('/')
+            ? folderToDelete.substring(0, folderToDelete.lastIndexOf('/'))
+            : '';
+
+        // 2. Update Sub-Folders
+        // We keep all folders EXCEPT the one being deleted.
+        // But we RENAME the ones that were inside it to move them UP.
+        const newFolders = customFolders
+            .filter(f => f.name !== folderToDelete) // Remove the specific folder
+            .map(f => {
+                if (f.name.startsWith(folderToDelete + '/')) {
+                    // Promote: "Target/Child" -> "Parent/Child"
+                    // If Parent is empty: "Child"
+                    const suffix = f.name.substring(folderToDelete.length + 1);
+                    return {
+                        ...f,
+                        name: parentPath ? `${parentPath}/${suffix}` : suffix
+                    };
+                }
+                return f;
+            });
+
         setCustomFolders(newFolders);
-        // Clear folder from connections
-        const newConns = connections.map(c => c.folder === name ? { ...c, folder: '' } : c);
-        setConnections(newConns);
-        saveToMain(newConns, newFolders);
+
+        // 3. Update Connections
+        // Move connections inside this folder (or sub-folders) UP one level
+        let connectionsUpdated = false;
+        const newConns = connections.map(c => {
+            if (c.folder === folderToDelete) {
+                // Direct child -> Move to Parent
+                connectionsUpdated = true;
+                return { ...c, folder: parentPath };
+            }
+            if (c.folder?.startsWith(folderToDelete + '/')) {
+                // Nested child -> Promote path
+                connectionsUpdated = true;
+                const suffix = c.folder.substring(folderToDelete.length + 1);
+                return {
+                    ...c,
+                    folder: parentPath ? `${parentPath}/${suffix}` : suffix
+                };
+            }
+            return c;
+        });
+
+        if (connectionsUpdated) {
+            setConnections(newConns);
+            saveToMain(newConns, newFolders);
+        } else {
+            saveToMain(connections, newFolders);
+        }
     };
 
-    const renameFolder = (oldName: string, newName: string) => {
-        if (!newName || customFolders.includes(newName)) return;
-        const newFolders = customFolders.map(f => f === oldName ? newName : f);
+    const renameFolder = (oldName: string, newName: string, newTags?: string[]) => {
+        if (!newName || (newName !== oldName && customFolders.some(f => f.name === newName))) return; // Prevent renaming to an existing folder name
+
+        // Update folders: Rename the target folder AND all its sub-folders
+        const newFolders = customFolders.map(f => {
+            if (f.name === oldName) {
+                return { ...f, name: newName, tags: newTags !== undefined ? newTags : f.tags };
+            }
+            if (f.name.startsWith(oldName + '/')) {
+                // Rename sub-folder: Replace the prefix
+                // e.g. "Parent/Child" -> "NewParent/Child"
+                return { ...f, name: newName + f.name.substring(oldName.length) };
+            }
+            return f;
+        });
         setCustomFolders(newFolders);
 
-        const newConns = connections.map(c => c.folder === oldName ? { ...c, folder: newName } : c);
-        setConnections(newConns);
+        // Update all connections in this folder
+        const newConns = connections.map(c => {
+            if (c.folder === oldName) return { ...c, folder: newName };
 
+            if (c.folder?.startsWith(oldName + '/')) {
+                return { ...c, folder: newName + c.folder.substring(oldName.length) };
+            }
+            return c;
+        });
+        setConnections(newConns);
         saveToMain(newConns, newFolders);
     };
 
@@ -276,10 +360,21 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
 
     // Computed list of all unique folders (implicit + explicit)
-    const allFolders = Array.from(new Set([
-        ...customFolders,
-        ...connections.map(c => c.folder).filter(Boolean) as string[]
-    ])).sort();
+    const allFolders = useMemo(() => {
+        const folderMap = new Map<string, Folder>();
+
+        // 1. Add explicit folders (source of truth for tags)
+        customFolders.forEach(f => folderMap.set(f.name, f));
+
+        // 2. Add implicit folders from connections
+        connections.forEach(c => {
+            if (c.folder && !folderMap.has(c.folder)) {
+                folderMap.set(c.folder, { name: c.folder });
+            }
+        });
+
+        return Array.from(folderMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    }, [customFolders, connections]);
 
     const clearConnections = () => {
         setConnections([]);
@@ -292,7 +387,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // --- Tab Management ---
 
     const openTab = (connectionId: string) => {
-        // Handle Local Terminal Special Case
+        // ... (existing implementation)
         if (connectionId === 'local') {
             const newTab: Tab = {
                 id: crypto.randomUUID(),
@@ -315,7 +410,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             type: 'connection',
             title: conn.name || conn.host,
             connectionId: conn.id,
-            view: 'dashboard'
+            view: 'terminal'
         };
 
         setTabs(prev => [...prev, newTab]);
@@ -324,6 +419,22 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (conn.status === 'disconnected') {
             connect(conn.id);
         }
+    };
+
+    const openTunnelsTab = () => {
+        const existing = tabs.find(t => t.type === 'tunnels');
+        if (existing) {
+            setActiveTabId(existing.id);
+            return;
+        }
+        const newTab: Tab = {
+            id: crypto.randomUUID(),
+            type: 'tunnels',
+            title: 'Global Tunnels',
+            view: 'tunnels'
+        };
+        setTabs(prev => [...prev, newTab]);
+        setActiveTabId(newTab.id);
     };
 
     const closeTab = (tabId: string) => {
@@ -428,6 +539,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             editConnection,
             deleteConnection,
             openTab,
+            openTunnelsTab,
             closeTab,
             activateTab,
             setTabView,

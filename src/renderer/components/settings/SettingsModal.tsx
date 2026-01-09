@@ -11,7 +11,7 @@ interface SettingsModalProps {
 type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-    const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings } = useSettings();
+    const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings, updateKeybindings } = useSettings();
     const [activeTab, setActiveTab] = useState<Tab>('terminal');
     const [wslDistros, setWslDistros] = useState<string[]>([]);
 
@@ -520,24 +520,98 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         )}
 
                         {activeTab === 'shortcuts' && (
-                            <div className="space-y-8">
+                            <div className="space-y-8 animate-in fade-in duration-300">
                                 <Section title="Global Shortcuts">
                                     <div className="space-y-2">
-                                        <ShortcutRow keys={['Ctrl', 'N']} action="New Connection" />
-                                        <ShortcutRow keys={['Ctrl', 'B']} action="Toggle Sidebar" />
-                                        <ShortcutRow keys={['Ctrl', 'T']} action="Local Terminal" />
-                                        <ShortcutRow keys={['Ctrl', ',']} action="Settings" />
-                                        <ShortcutRow keys={['Ctrl', 'W']} action="Close Tab" />
-                                        <ShortcutRow keys={['Ctrl', 'Tab']} action="Next Tab" />
-                                        <ShortcutRow keys={['Ctrl', '1-9']} action="Switch Tab" />
+                                        <KeybindingRow
+                                            label="New Connection"
+                                            binding={settings.keybindings?.openNewConnection || 'Mod+N'}
+                                            onChange={(val) => updateKeybindings({ openNewConnection: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Toggle Sidebar"
+                                            binding={settings.keybindings?.toggleSidebar || 'Mod+B'}
+                                            onChange={(val) => updateKeybindings({ toggleSidebar: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Local Terminal"
+                                            binding={settings.keybindings?.newLocalTerminal || 'Mod+T'}
+                                            onChange={(val) => updateKeybindings({ newLocalTerminal: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Settings"
+                                            binding={settings.keybindings?.toggleSettings || 'Mod+,'}
+                                            onChange={(val) => updateKeybindings({ toggleSettings: val })}
+                                        />
                                     </div>
                                 </Section>
 
-                                <Section title="Terminal">
+                                <Section title="Tabs">
                                     <div className="space-y-2">
-                                        <ShortcutRow keys={['Ctrl', 'Shift', 'C']} action="Copy" />
-                                        <ShortcutRow keys={['Ctrl', 'Shift', 'V']} action="Paste" />
-                                        <ShortcutRow keys={['Ctrl', 'F']} action="Find" />
+                                        <KeybindingRow
+                                            label="New Terminal (Current Host)"
+                                            binding={settings.keybindings?.newHostTerminal || 'Mod+Shift+T'}
+                                            onChange={(val) => updateKeybindings({ newHostTerminal: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Close Tab"
+                                            binding={settings.keybindings?.closeTab || 'Mod+W'}
+                                            onChange={(val) => updateKeybindings({ closeTab: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Next Tab"
+                                            binding={settings.keybindings?.switchTabNext || 'Ctrl+Tab'}
+                                            onChange={(val) => updateKeybindings({ switchTabNext: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Previous Tab"
+                                            binding={settings.keybindings?.switchTabPrev || 'Ctrl+Shift+Tab'}
+                                            onChange={(val) => updateKeybindings({ switchTabPrev: val })}
+                                        />
+                                        <div className="h-px bg-[var(--color-app-border)]/50 my-2" />
+                                        {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(n => (
+                                            <KeybindingRow
+                                                key={n}
+                                                label={`Switch to Tab ${n}`}
+                                                binding={(settings.keybindings as any)?.[`switchTab${n}`] || `Mod+${n}`}
+                                                onChange={(val) => updateKeybindings({ [`switchTab${n}`]: val } as any)}
+                                            />
+                                        ))}
+                                    </div>
+                                </Section>
+
+                                <Section title="Terminal (Active)">
+                                    <div className="space-y-2">
+                                        <KeybindingRow
+                                            label="Copy"
+                                            binding={settings.keybindings?.termCopy || 'Mod+Shift+C'}
+                                            onChange={(val) => updateKeybindings({ termCopy: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Paste"
+                                            binding={settings.keybindings?.termPaste || 'Mod+Shift+V'}
+                                            onChange={(val) => updateKeybindings({ termPaste: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Find"
+                                            binding={settings.keybindings?.termFind || 'Mod+F'}
+                                            onChange={(val) => updateKeybindings({ termFind: val })}
+                                        />
+                                    </div>
+                                </Section>
+
+                                <Section title="View">
+                                    <div className="space-y-2">
+                                        <KeybindingRow
+                                            label="Zoom In"
+                                            binding={settings.keybindings?.zoomIn || 'Mod+='}
+                                            onChange={(val) => updateKeybindings({ zoomIn: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Zoom Out"
+                                            binding={settings.keybindings?.zoomOut || 'Mod+-'}
+                                            onChange={(val) => updateKeybindings({ zoomOut: val })}
+                                        />
                                     </div>
                                 </Section>
                             </div>
@@ -724,20 +798,64 @@ function Toggle({ label, description, checked, onChange }: { label: string, desc
 }
 
 
-function ShortcutRow({ keys, action }: { keys: string[], action: string }) {
+// Helper Component for Keybinding Recording
+function KeybindingRow({ label, binding, onChange }: { label: string, binding: string, onChange: (val: string) => void }) {
+    const [isRecording, setIsRecording] = useState(false);
+
+    // Safety check for binding
+    const displayBinding = binding || '';
+
+    useEffect(() => {
+        if (!isRecording) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const parts = [];
+            if (e.ctrlKey) parts.push('Ctrl');
+            if (e.metaKey) parts.push('Mod'); // Simplify Meta to Mod for UI consistency
+            if (e.altKey) parts.push('Alt');
+            if (e.shiftKey) parts.push('Shift');
+
+            // Don't capture just modifiers
+            if (['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) return;
+
+            let key = e.key;
+            if (key === ' ') key = 'Space';
+            if (key.length === 1) key = key.toUpperCase();
+
+            parts.push(key);
+
+            const newBinding = parts.join('+');
+
+            // Finish recording on key release usually, but for simplicity, finish on valid combo press
+            onChange(newBinding);
+            setIsRecording(false);
+        };
+
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    }, [isRecording, onChange]);
+
     return (
         <div className="flex items-center justify-between p-3 bg-[var(--color-app-bg)]/30 rounded-lg border border-[var(--color-app-border)] hover:border-[var(--color-app-accent)]/50 transition-colors">
-            <span className="text-[var(--color-app-text)] font-medium">{action}</span>
-            <div className="flex items-center gap-1">
-                {keys.map((k, i) => (
-                    <div key={i} className="flex items-center">
-                        <kbd className="px-2 py-1 min-w-[24px] text-center bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded text-xs font-mono text-[var(--color-app-text)] shadow-sm">
-                            {k}
-                        </kbd>
-                        {i < keys.length - 1 && <span className="text-[var(--color-app-muted)] text-xs mx-1">+</span>}
-                    </div>
+            <span className="text-[var(--color-app-text)] font-medium">{label}</span>
+            <button
+                onClick={() => setIsRecording(true)}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-mono border transition-all min-w-[100px] justify-center
+                    ${isRecording
+                        ? 'bg-[var(--color-app-accent)] text-white border-[var(--color-app-accent)] animate-pulse'
+                        : 'bg-[var(--color-app-surface)] border-[var(--color-app-border)] text-[var(--color-app-text)] hover:border-[var(--color-app-accent)]'
+                    }`}
+            >
+                {isRecording ? 'Recording...' : displayBinding.split('+').map((k, i) => (
+                    <span key={i} className="flex items-center">
+                        {k}
+                        {i < displayBinding.split('+').length - 1 && <span className="mx-1 opacity-50">+</span>}
+                    </span>
                 ))}
-            </div>
+            </button>
         </div>
     );
 }

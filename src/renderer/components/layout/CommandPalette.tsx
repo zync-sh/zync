@@ -2,22 +2,15 @@ import { useEffect, useState } from "react";
 import { Command } from "cmdk";
 import {
     Settings,
-    Server,
-    Globe,
     Terminal,
     Search,
-    Monitor,
-    Database,
-    Cloud,
-    Box,
-    HardDrive,
-    Code,
     RefreshCw,
     Plus
 } from "lucide-react";
 import { useConnections } from "../../context/ConnectionContext";
 import { useSettings } from "../../context/SettingsContext";
-import { clsx } from "clsx"; // or use your cn utility
+import { clsx } from "clsx";
+import { OSIcon } from "../icons/OSIcon";
 
 // You can move this to a separate CSS file or use Tailwind directly in the components
 // cmdk styling is usually headless, so we need to style it.
@@ -25,21 +18,24 @@ import { clsx } from "clsx"; // or use your cn utility
 
 export function CommandPalette() {
     const [open, setOpen] = useState(false);
-    const { connections, connect, activateTab, openAddConnectionModal } = useConnections();
+    const { connections, openTab, openAddConnectionModal } = useConnections();
     const { openSettings } = useSettings();
 
-    // Toggle the menu when ⌘K is pressed
+    // Listen for global toggle event
     useEffect(() => {
-        const down = (e: KeyboardEvent) => {
-            if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                setOpen((open) => !open);
-            }
-        };
+        const handleToggle = () => setOpen((o) => !o);
+        window.addEventListener('ssh-ui:toggle-command-palette', handleToggle);
 
-        document.addEventListener("keydown", down);
-        return () => document.removeEventListener("keydown", down);
-    }, []);
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && open) setOpen(false);
+        };
+        if (open) window.addEventListener('keydown', handleEsc, { capture: true });
+
+        return () => {
+            window.removeEventListener('ssh-ui:toggle-command-palette', handleToggle);
+            window.removeEventListener('keydown', handleEsc, { capture: true });
+        };
+    }, [open]);
 
     const runCommand = (command: () => void) => {
         setOpen(false);
@@ -80,36 +76,7 @@ export function CommandPalette() {
                             No results found.
                         </Command.Empty>
 
-                        <Command.Group heading="Connections" className="text-xs font-semibold text-app-muted uppercase tracking-wider mb-2 px-2">
-                            {connections.map((conn) => (
-                                <Command.Item
-                                    key={conn.id}
-                                    onSelect={() => runCommand(() => {
-                                        connect(conn.id);
-                                        activateTab(conn.id); // Typically connecting also activates
-                                    })}
-                                    className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-2.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-1"
-                                >
-                                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-app-surface border border-app-border mr-3 group-data-[selected=true]:border-app-accent/50 group-data-[selected=true]:bg-app-accent/10">
-                                        {/* Quick icon map based on connection icon */}
-                                        {(() => {
-                                            const IconMap: any = { Server, Database, Monitor, Cloud, Box, HardDrive, Globe, Code, Terminal };
-                                            const IconComp = IconMap[conn.icon || 'Server'] || Server;
-                                            return <IconComp size={16} />;
-                                        })()}
-                                    </div>
-                                    <div className="flex flex-col">
-                                        <span className="font-medium">{conn.name || conn.host}</span>
-                                        <span className="text-xs text-app-muted/70">{conn.username}@{conn.host}</span>
-                                    </div>
-                                    {conn.status === 'connected' && (
-                                        <span className="ml-auto text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded animate-pulse">Connected</span>
-                                    )}
-                                </Command.Item>
-                            ))}
-                        </Command.Group>
-
-                        <Command.Group heading="Actions" className="text-xs font-semibold text-app-muted uppercase tracking-wider mb-2 px-2 mt-4">
+                        <Command.Group heading="Actions" className="text-xs font-semibold text-app-muted uppercase tracking-wider mb-2 px-2">
                             <Command.Item
                                 onSelect={() => runCommand(openAddConnectionModal)}
                                 className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-2.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-1"
@@ -120,7 +87,7 @@ export function CommandPalette() {
                             </Command.Item>
 
                             <Command.Item
-                                onSelect={() => runCommand(() => activateTab('local'))}
+                                onSelect={() => runCommand(() => openTab('local'))}
                                 className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-2.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-1"
                             >
                                 <Terminal className="mr-3 h-5 w-5 opacity-70" />
@@ -143,6 +110,29 @@ export function CommandPalette() {
                                 <RefreshCw className="mr-3 h-5 w-5 opacity-70" />
                                 <span>Reload Window</span>
                             </Command.Item>
+                        </Command.Group>
+
+                        <Command.Group heading="Connections" className="text-xs font-semibold text-app-muted uppercase tracking-wider mb-2 px-2 mt-4">
+                            {connections.map((conn) => (
+                                <Command.Item
+                                    key={conn.id}
+                                    onSelect={() => runCommand(() => {
+                                        openTab(conn.id);
+                                    })}
+                                    className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-2.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-1"
+                                >
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-app-surface border border-app-border mr-3 group-data-[selected=true]:border-app-accent/50 group-data-[selected=true]:bg-app-accent/10">
+                                        <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span className="font-medium">{conn.name || conn.host}</span>
+                                        <span className="text-xs text-app-muted/70">{conn.username}@{conn.host}</span>
+                                    </div>
+                                    {conn.status === 'connected' && (
+                                        <span className="ml-auto text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded animate-pulse">Connected</span>
+                                    )}
+                                </Command.Item>
+                            ))}
                         </Command.Group>
                     </Command.List>
 
