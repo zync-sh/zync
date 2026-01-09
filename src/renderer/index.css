@@ -15,8 +15,8 @@
     /* Zinc-200 */
     --color-app-muted: #a1a1aa;
     /* Zinc-400 */
-    --color-app-accent: #6366f1;
-    /* Indigo-500 */
+    --color-app-accent: #797bce;
+    /* Muted Indigo */
 
     --color-app-success: #10b981;
     /* Emerald-500 */
@@ -31,11 +31,11 @@
 
 @layer utilities {
     .glass {
-        @apply backdrop-blur-md bg-app-panel/80 border border-app-border/50;
+        @apply backdrop-blur-md bg-app-panel/95 border border-app-border/50;
     }
 
     .glass-surface {
-        @apply backdrop-blur-sm bg-app-surface/70 border border-app-border/30;
+        @apply backdrop-blur-sm bg-app-surface/90 border border-app-border/30;
     }
 
     .mask-linear-fade {
@@ -139,7 +139,7 @@
     --color-app-border: #e5e7eb;
     --color-app-text: #24292f;
     --color-app-muted: #57606a;
-    --color-app-accent: #0969da;
+    --color-app-accent: #4c82c9;
 }
 
 .dracula {
@@ -150,7 +150,7 @@
     --color-app-border: #6272a4;
     --color-app-text: #f8f8f2;
     --color-app-muted: #6272a4;
-    --color-app-accent: #ff79c6;
+    --color-app-accent: #d282af;
 }
 
 .monokai {
@@ -160,7 +160,7 @@
     --color-app-border: #49483e;
     --color-app-text: #f8f8f2;
     --color-app-muted: #75715e;
-    --color-app-accent: #a6e22e;
+    --color-app-accent: #9ebf52;
 }
 
 .midnight {
@@ -171,7 +171,7 @@
     --color-app-border: #2f344a;
     --color-app-text: #e2e8f0;
     --color-app-muted: #94a3b8;
-    --color-app-accent: #6366f1;
+    --color-app-accent: #797bce;
 }
 
 .warm {
@@ -183,8 +183,8 @@
     --color-app-border: #57534e;
     --color-app-text: #f5f5f4;
     --color-app-muted: #a8a29e;
-    --color-app-accent: #d97706;
-    /* Amber-600 */
+    --color-app-accent: #c08535;
+    /* Muted Amber */
 }
 
 .light-warm {
@@ -201,8 +201,8 @@
     /* Stone-700 (Softer than black) */
     --color-app-muted: #a8a29e;
     /* Stone-400 */
-    --color-app-accent: #d97706;
-    /* Amber-600 */
+    --color-app-accent: #c08535;
+    /* Muted Amber */
 }
 
 /* Ensure background is applied */

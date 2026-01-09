@@ -9,7 +9,7 @@ interface TerminalTab {
     title: string;
 }
 
-export function TerminalManager({ connectionId }: { connectionId?: string }) {
+export function TerminalManager({ connectionId, isVisible }: { connectionId?: string; isVisible?: boolean }) {
     const { activeConnectionId: globalActiveId } = useConnections();
     const activeConnectionId = connectionId || globalActiveId;
 
@@ -40,14 +40,25 @@ export function TerminalManager({ connectionId }: { connectionId?: string }) {
     // Event Listener for external commands (Snippets)
     useEffect(() => {
         const handleRunCommand = (e: any) => { // CustomEvent is generic
-             const { connectionId: targetConnId, command } = e.detail;
-             if (targetConnId === activeConnectionId && activeTabId) {
-                 window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: command });
-             }
+            const { connectionId: targetConnId, command } = e.detail;
+            if (targetConnId === activeConnectionId && activeTabId) {
+                window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: command });
+            }
+        };
+
+        const handleTriggerNewTab = (e: any) => {
+            const { connectionId: targetConnId } = e.detail;
+            if (targetConnId === activeConnectionId) {
+                handleNewTab();
+            }
         };
 
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
-        return () => window.removeEventListener('ssh-ui:run-command', handleRunCommand);
+        window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+        return () => {
+            window.removeEventListener('ssh-ui:run-command', handleRunCommand);
+            window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+        };
     }, [activeConnectionId, activeTabId]);
 
     const handleCloseTab = (id: string, e: React.MouseEvent) => {
@@ -144,7 +155,12 @@ export function TerminalManager({ connectionId }: { connectionId?: string }) {
                                 but display:none is safer for layout. Let's try display:none via 'hidden' class if visibility fails sizing.
                             */}
                             <div className={cn("h-full w-full", activeTabId !== tab.id && "hidden")}>
-                                <TerminalComponent connectionId={activeConnectionId} termId={tab.id} />
+                                <TerminalComponent
+                                    connectionId={activeConnectionId}
+                                    termId={tab.id}
+                                    // Pass isVisible only if parent said so, AND this internal tab is active
+                                    isVisible={(isVisible !== false) && activeTabId === tab.id}
+                                />
                             </div>
                         </div>
                     ))
