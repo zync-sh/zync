@@ -1,6 +1,6 @@
 {
   "name": "zync",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "A modern, beautiful SSH client for the web generation.",
   "main": "dist-electron/index.js",
   "homepage": "https://github.com/FDgajju/zync",
