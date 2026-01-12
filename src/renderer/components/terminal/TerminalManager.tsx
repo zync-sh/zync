@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { TerminalComponent } from '../Terminal';
 import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useConnections } from '../../context/ConnectionContext';
+import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 interface TerminalTab {
     id: string;
@@ -10,7 +10,7 @@ interface TerminalTab {
 }
 
 export function TerminalManager({ connectionId, isVisible }: { connectionId?: string; isVisible?: boolean }) {
-    const { activeConnectionId: globalActiveId } = useConnections();
+    const globalActiveId = useAppStore(state => state.activeConnectionId);
     const activeConnectionId = connectionId || globalActiveId;
 
     // We maintain a list of tabs. 
@@ -21,7 +21,7 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
     // Initialize/Reset when connection changes
     useEffect(() => {
         if (activeConnectionId) {
-            const initialTabId = `term-${Date.now()}`;
+            const initialTabId = `term-${crypto.randomUUID()}`;
             setTabs([{ id: initialTabId, title: 'Terminal 1' }]);
             setActiveTabId(initialTabId);
         } else {
@@ -31,7 +31,7 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
     }, [activeConnectionId]);
 
     const handleNewTab = () => {
-        const newId = `term-${Date.now()}`;
+        const newId = `term-${crypto.randomUUID()}`;
         const newTab = { id: newId, title: `Terminal ${tabs.length + 1}` };
         setTabs(prev => [...prev, newTab]);
         setActiveTabId(newId);

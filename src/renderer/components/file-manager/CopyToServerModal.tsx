@@ -1,8 +1,6 @@
 import { Copy, Server } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
-import { useToast } from '../../context/ToastContext';
-import { useTransfers } from '../../context/TransferContext';
+import { useAppStore, type Connection } from '../../store/useAppStore'; // Updated Import
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
@@ -18,9 +16,11 @@ interface CopyToServerModalProps {
 }
 
 export function CopyToServerModal({ isOpen, onClose, sourceFile }: CopyToServerModalProps) {
-  const { connections } = useConnections();
-  const { addTransfer, completeTransfer, failTransfer } = useTransfers();
-  const { showToast } = useToast();
+  const connections = useAppStore(state => state.connections);
+  const addTransfer = useAppStore(state => state.addTransfer);
+  const completeTransfer = useAppStore(state => state.completeTransfer);
+  const failTransfer = useAppStore(state => state.failTransfer);
+  const showToast = useAppStore((state) => state.showToast);
   const [selectedServerId, setSelectedServerId] = useState('');
   const [destinationPath, setDestinationPath] = useState('');
   const [fileName, setFileName] = useState('');
@@ -36,7 +36,7 @@ export function CopyToServerModal({ isOpen, onClose, sourceFile }: CopyToServerM
   }, [sourceFile]);
 
   // Get list of all servers excluding the source
-  const availableServers = connections.filter((conn) => conn.id !== sourceFile?.connectionId);
+  const availableServers = connections.filter((conn: Connection) => conn.id !== sourceFile?.connectionId);
 
   const handleCopy = async () => {
     if (!sourceFile || !selectedServerId || !destinationPath || !fileName) {
@@ -62,7 +62,7 @@ export function CopyToServerModal({ isOpen, onClose, sourceFile }: CopyToServerM
     (async () => {
       try {
         // Connect destination server if not connected
-        const destServer = connections.find((c) => c.id === selectedServerId);
+        const destServer = connections.find((c: Connection) => c.id === selectedServerId);
         if (destServer && destServer.status !== 'connected') {
           await window.ipcRenderer.invoke('ssh:connect', {
             id: selectedServerId,
@@ -112,7 +112,7 @@ export function CopyToServerModal({ isOpen, onClose, sourceFile }: CopyToServerM
           <div className="text-xs text-app-muted mb-1">Source</div>
           <div className="text-sm text-app-text font-medium">{sourceFile.name}</div>
           <div className="text-xs text-app-muted mt-1">
-            {connections.find((c) => c.id === sourceFile.connectionId)?.name}
+            {connections.find((c: Connection) => c.id === sourceFile.connectionId)?.name}
           </div>
         </div>
 
@@ -134,7 +134,7 @@ export function CopyToServerModal({ isOpen, onClose, sourceFile }: CopyToServerM
               className="w-full px-3 py-2 bg-app-bg border border-app-border rounded-md text-app-text focus:outline-none focus:ring-2 focus:ring-app-accent"
             >
               <option value="">Select a server...</option>
-              {availableServers.map((conn) => (
+              {availableServers.map((conn: Connection) => (
                 <option key={conn.id} value={conn.id}>
                   {conn.name} ({conn.username}@{conn.host})
                 </option>

@@ -2,6 +2,7 @@ import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import electron from 'vite-plugin-electron/simple';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -28,6 +29,11 @@ export default defineConfig({
       // Ployfill the Electron and Node.js built-in modules for Renderer process.
       // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
       renderer: {},
+    }),
+    visualizer({
+      open: false,
+      gzipSize: true,
+      brotliSize: true,
     }),
   ],
 });

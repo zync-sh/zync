@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useSettings } from '../../context/SettingsContext';
+import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -11,7 +11,12 @@ interface SettingsModalProps {
 type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-    const { settings, updateSettings, updateTerminalSettings, updateFileManagerSettings, updateLocalTermSettings, updateKeybindings } = useSettings();
+    const settings = useAppStore(state => state.settings);
+    const updateSettings = useAppStore(state => state.updateSettings);
+    const updateTerminalSettings = useAppStore(state => state.updateTerminalSettings);
+    const updateFileManagerSettings = useAppStore(state => state.updateFileManagerSettings);
+    const updateLocalTermSettings = useAppStore(state => state.updateLocalTermSettings);
+    const updateKeybindings = useAppStore(state => state.updateKeybindings);
     const [activeTab, setActiveTab] = useState<Tab>('terminal');
     const [wslDistros, setWslDistros] = useState<string[]>([]);
 

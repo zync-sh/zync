@@ -57,9 +57,9 @@ export function UpdateNotification() {
                 <div className="flex items-start gap-4">
                     <div className="p-2.5 bg-app-accent/10 rounded-xl text-app-accent shrink-0">
                         {status === 'downloading' ? <Download size={24} className="animate-bounce" /> :
-                         status === 'ready' ? <RefreshCw size={24} className="animate-spin-slow" /> :
-                         status === 'error' ? <AlertTriangle size={24} className="text-red-500" /> :
-                         <Download size={24} />}
+                            status === 'ready' ? <RefreshCw size={24} className="animate-spin-slow" /> :
+                                status === 'error' ? <AlertTriangle size={24} className="text-red-500" /> :
+                                    <Download size={24} />}
                     </div>
                     <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between mb-1">
@@ -74,7 +74,7 @@ export function UpdateNotification() {
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                             </button>
                         </div>
-                        
+
                         <p className="text-xs text-app-muted mb-3 leading-relaxed">
                             {status === 'available' && 'A new version of Zync is available. Downloading now in the background.'}
                             {status === 'downloading' && `${Math.round(progress)}% downloaded. You can keep working while we prepare the update.`}
@@ -84,7 +84,7 @@ export function UpdateNotification() {
 
                         {status === 'downloading' && (
                             <div className="h-1.5 w-full bg-app-surface rounded-full overflow-hidden mb-1">
-                                <div 
+                                <div
                                     className="h-full bg-app-accent transition-all duration-300 ease-out"
                                     style={{ width: `${progress}%` }}
                                 />

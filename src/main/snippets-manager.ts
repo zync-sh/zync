@@ -6,6 +6,7 @@ export interface Snippet {
   command: string;
   category?: string;
   tags?: string[];
+  connectionId?: string;
 }
 
 interface SnippetStorage {

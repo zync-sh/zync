@@ -5,10 +5,105 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zync</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      /* background-color: #0f172a; Removed hardcoded color */
+      overflow: hidden;
+    }
+
+    .app-loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      animation: fadeOut 0.3s ease-out forwards;
+      animation-play-state: paused;
+      /* Controlled by JS if needed, or just removed by React */
+    }
+
+    .app-loading svg {
+      width: 120px;
+      height: 120px;
+      animation: pulse 2s infinite ease-in-out;
+      filter: drop-shadow(0 10px 15px rgba(0, 0, 0, 0.5));
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.05);
+        opacity: 0.8;
+      }
+    }
+  </style>
+  <script>
+    (function () {
+      // Define theme colors matching index.css
+      const themes = {
+        'dark': { bg: '#09090b', accent: '#797bce', text: '#e4e4e7', panel: '#18181b' },
+        'light': { bg: '#ffffff', accent: '#4c82c9', text: '#24292f', panel: '#f3f4f6' },
+        'dracula': { bg: '#282a36', accent: '#d282af', text: '#f8f8f2', panel: '#282a36' },
+        'monokai': { bg: '#272822', accent: '#9ebf52', text: '#f8f8f2', panel: '#272822' },
+        'midnight': { bg: '#0f111a', accent: '#797bce', text: '#e2e8f0', panel: '#1a1d2d' },
+        'warm': { bg: '#1c1917', accent: '#c08535', text: '#f5f5f4', panel: '#292524' },
+        'light-warm': { bg: '#f9f5eb', accent: '#c08535', text: '#44403c', panel: '#f0ebe2' }
+      };
+
+      try {
+        let themeName = localStorage.getItem('zync-theme') || 'system';
+
+        if (themeName === 'system') {
+          themeName = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+
+        // Default to dark if invalid or missing
+        const theme = themes[themeName] || themes['dark'];
+
+        // 1. Inject Styles (Safe in head)
+        const style = document.createElement('style');
+        style.innerHTML = `
+          .splash-bg { fill: ${theme.panel} !important; }
+          .splash-mark { stroke: ${theme.accent} !important; }
+          .splash-line { stroke: ${theme.text} !important; }
+        `;
+        document.head.appendChild(style);
+
+        // 2. Apply Background to HTML (Safe in head)
+        document.documentElement.style.backgroundColor = theme.bg;
+
+        // 3. Defer body operations
+        window.addEventListener('DOMContentLoaded', () => {
+          document.body.classList.add(themeName);
+          document.body.style.backgroundColor = theme.bg;
+        });
+
+      } catch (e) {
+        console.error('Failed to load theme for splash:', e);
+      }
+    })();
+  </script>
 </head>
 
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div class="app-loading">
+      <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect class="splash-bg" width="512" height="512" rx="128" fill="#18181b" />
+        <path class="splash-mark" d="M128 170.667L213.333 256L128 341.333" stroke="#797bce" stroke-width="64"
+          stroke-linecap="round" stroke-linejoin="round" />
+        <path class="splash-line" d="M256 341.333H384" stroke="#e4e4e7" stroke-width="64" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+    </div>
+  </div>
   <script type="module" src="/src/renderer/main.tsx"></script>
 </body>
 

@@ -4,8 +4,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import { SearchAddon } from 'xterm-addon-search';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
-import { useConnections } from '../context/ConnectionContext';
-import { useSettings } from '../context/SettingsContext';
+import { useAppStore, Connection } from '../store/useAppStore';
 import { Search, ArrowUp, ArrowDown, X, Copy, Clipboard as ClipboardIcon, Trash2, Scissors } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ContextMenu } from './ui/ContextMenu';
@@ -41,13 +40,22 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     termRef.current?.focus();
   }, []);
 
-  const { activeConnectionId: globalActiveId, connections, connect } = useConnections();
-  const { settings, updateTerminalSettings } = useSettings();
+  const globalActiveId = useAppStore(state => state.activeConnectionId);
+  const connections = useAppStore(state => state.connections);
+  const connect = useAppStore(state => state.connect);
+  const settings = useAppStore(state => state.settings);
+  const updateSettings = useAppStore(state => state.updateSettings);
+
+  // Helper for terminal settings update if needed, though usually we update global settings
+  const updateTerminalSettings = (newSettings: Partial<typeof settings.terminal>) => {
+    updateSettings({ terminal: { ...settings.terminal, ...newSettings } });
+  };
+
   const activeConnectionId = connectionId || globalActiveId;
 
   // Find connection status
   const isLocal = activeConnectionId === 'local';
-  const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
+  const connection = !isLocal ? connections.find((c: Connection) => c.id === activeConnectionId) : null;
   const isConnected = isLocal || connection?.status === 'connected';
 
   // Use termId if provided, otherwise fallback to connectionId
@@ -246,6 +254,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
     return () => {
       window.ipcRenderer.off('terminal:data', handleTerminalData);
+
+      // CRITICAL FIX: Kill backend process on unmount to prevent channel leaks
+      // This was causing 2x channel usage in Strict Mode and leaks on settings changes
+      window.ipcRenderer.send('terminal:kill', { termId: sessionId });
+
       resizeObserver.disconnect();
       term.dispose();
       termRef.current = null;
@@ -256,11 +269,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     activeConnectionId,
     sessionId,
     isConnected,
-    settings.terminal.cursorStyle,
-    settings.terminal.fontFamily,
-    settings.terminal.fontSize,
-    settings.terminal.lineHeight,
-    // settings.theme is handled by the dedicated theme effect to avoid re-creation
+    // Settings dependecies removed to prevent re-spawning on theme/font changes.
+    // Use the separate useEffect above for updates.
   ]);
 
   // Handle Global Shortcuts (Copy, Paste, Find)

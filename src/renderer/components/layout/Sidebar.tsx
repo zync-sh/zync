@@ -1,20 +1,18 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useConnections, Connection, Folder } from '../../context/ConnectionContext';
-import { useTransfers } from '../../context/TransferContext';
+import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useAppStore, Connection, Folder } from '../../store/useAppStore'; // Updated Import
 import { getCurrentDragSource } from '../file-manager/FileGrid';
-import { useToast } from '../../context/ToastContext';
-import { useSettings } from '../../context/SettingsContext';
 import { FolderOpen, Trash2, Pencil, ChevronRight, Network, Plus, Folder as FolderIcon, Search, PanelLeftOpen, ChevronDown, Laptop, FolderPlus, PanelLeftClose, Terminal, Settings, FileText } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
-import { SettingsModal } from '../settings/SettingsModal';
 import { ContextMenu } from '../ui/ContextMenu';
 
-import { AddTunnelModal } from '../modals/AddTunnelModal';
-import { ConnectionDetailsModal } from '../modals/ConnectionDetailsModal';
+// Lazy Load Modals
+const SettingsModal = lazy(() => import('../settings/SettingsModal').then(show => ({ default: show.SettingsModal })));
+const AddTunnelModal = lazy(() => import('../modals/AddTunnelModal').then(show => ({ default: show.AddTunnelModal })));
+const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(show => ({ default: show.ConnectionDetailsModal })));
 
 interface TreeNode {
     name: string;
@@ -114,18 +112,18 @@ function buildTree(conns: Connection[], allFolders: Folder[], searchTerm: string
     if (!searchTerm) {
         allFolders.forEach(f => getNode(f.name));
     } else {
-        allFolders.filter(f =>
+        allFolders.filter((f: Folder) =>
             f.name.toLowerCase().includes(normalizedSearch) ||
-            (f.tags && f.tags.some(t => t.toLowerCase().includes(normalizedSearch)))
-        ).forEach(f => getNode(f.name));
+            (f.tags && f.tags.some((t: string) => t.toLowerCase().includes(normalizedSearch)))
+        ).forEach((f: Folder) => getNode(f.name));
     }
 
     // 2. Populate Connections
-    conns.forEach(conn => {
+    conns.forEach((conn: Connection) => {
         // Search Filter: Check Name, Host, and Tags
         const matchesSearch = !searchTerm ||
             (conn.name || conn.host).toLowerCase().includes(normalizedSearch) ||
-            (conn.tags && conn.tags.some(t => t.toLowerCase().includes(normalizedSearch)));
+            (conn.tags && conn.tags.some((t: string) => t.toLowerCase().includes(normalizedSearch)));
 
         if (matchesSearch) {
             if (conn.folder) {
@@ -142,8 +140,31 @@ function buildTree(conns: Connection[], allFolders: Folder[], searchTerm: string
 
 export function Sidebar() {
     const [viewingDetailsId, setViewingDetailsId] = useState<string | null>(null);
-    const { connections, activeConnectionId, addConnection, editConnection, importConnections, openTab, openTunnelsTab, folders, addFolder, updateConnectionFolder, deleteFolder, renameFolder, isAddConnectionModalOpen, openAddConnectionModal, closeAddConnectionModal } = useConnections();
-    const { settings, updateSettings, isSettingsOpen, openSettings, closeSettings } = useSettings();
+
+    // Connection Store Hooks
+    const connections = useAppStore(state => state.connections);
+    const activeConnectionId = useAppStore(state => state.activeConnectionId);
+    const addConnection = useAppStore(state => state.addConnection);
+    const editConnection = useAppStore(state => state.editConnection);
+    const importConnections = useAppStore(state => state.importConnections);
+    const openTab = useAppStore(state => state.openTab);
+    const openTunnelsTab = useAppStore(state => state.openTunnelsTab);
+    const folders = useAppStore(state => state.folders);
+    const addFolder = useAppStore(state => state.addFolder);
+    const updateConnectionFolder = useAppStore(state => state.updateConnectionFolder);
+    const deleteFolder = useAppStore(state => state.deleteFolder);
+    const renameFolder = useAppStore(state => state.renameFolder);
+    const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
+    const openAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(true);
+    const closeAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(false);
+
+    // Settings Store Hooks
+    const settings = useAppStore(state => state.settings);
+    const updateSettings = useAppStore(state => state.updateSettings);
+    const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
+    const openSettings = useAppStore(state => state.openSettings);
+    const closeSettings = useAppStore(state => state.closeSettings);
+
     const compactMode = settings.compactMode;
     // const [isAddModalOpen, setIsAddModalOpen] = useState(false); // Moved to context
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false); // State for Create Folder Modal
@@ -158,6 +179,7 @@ export function Sidebar() {
     // Add Menu State
     const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
+
     const addMenuRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -217,8 +239,9 @@ export function Sidebar() {
     }, [isResizing, width, updateSettings]);
 
     // Compute Active Connections
+    // Compute Active Connections
     const activeConnections = useMemo(() => {
-        return connections.filter(c => c.status === 'connected');
+        return connections.filter((c: Connection) => c.status === 'connected');
     }, [connections]);
 
 
@@ -249,7 +272,7 @@ export function Sidebar() {
             port: formData.port || 22,
             password: formData.password,
             privateKeyPath: formData.privateKeyPath,
-            status: editingConnectionId ? (connections.find(c => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
+            status: editingConnectionId ? (connections.find((c: Connection) => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
             jumpServerId: formData.jumpServerId,
             icon: formData.icon,
             theme: formData.theme,
@@ -284,9 +307,11 @@ export function Sidebar() {
 
     // Filter out active connections for the main tree if NO search term is active
     // If searching, we want to search everything
+    // Filter out active connections for the main tree if NO search term is active
+    // If searching, we want to search everything
     const treeConnections = useMemo(() => {
         if (searchTerm) return connections;
-        return connections.filter(c => c.status !== 'connected');
+        return connections.filter((c: Connection) => c.status !== 'connected');
     }, [connections, searchTerm]);
 
     // Build Recursive Tree
@@ -313,7 +338,7 @@ export function Sidebar() {
     useEffect(() => {
         if (searchTerm) {
             // Expand all folders that have matches
-            setExpandedFolders(new Set(folders.map(f => f.name)));
+            setExpandedFolders(new Set(folders.map((f: Folder) => f.name)));
         }
     }, [searchTerm, folders]);
 
@@ -340,28 +365,33 @@ export function Sidebar() {
                     <div className="absolute inset-y-0 right-0 w-4 -z-10" /> {/* Larger hit area */}
                 </div>
             )}
-            {/* Header */}
-            {/* Header */}
-            <div className={cn(
-                "flex items-center justify-between shrink-0",
-                compactMode ? "p-3 pb-2" : "p-5 pb-4" // Increased bottom padding
-            )}>
-                {!isCollapsed && (
-                    <div className="flex items-center gap-3 overflow-hidden"> {/* Increased gap */}
+
+            {/* Content Wrapper - Prevents reflow during collapse */}
+            <div
+                style={{ width: width, minWidth: width }}
+                className={cn(
+                    "flex flex-col h-full transition-opacity duration-300",
+                    isCollapsed ? "opacity-0 invisible pointer-events-none" : "opacity-100"
+                )}
+            >
+                {/* Header */}
+                <div className={cn(
+                    "flex items-center justify-between shrink-0",
+                    compactMode ? "p-3 pb-2" : "p-5 pb-4"
+                )}>
+                    <div className="flex items-center gap-3 overflow-hidden">
                         <svg width={compactMode ? "24" : "32"} height={compactMode ? "24" : "32"} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
                             <rect width="512" height="512" rx="128" className="fill-app-accent/10" />
                             <path d="M128 170.667L213.333 256L128 341.333" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                             <path d="M256 341.333H384" className="stroke-app-text" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
-                        <div className="flex flex-col">
+                        <div className="flex flex-col whitespace-nowrap">
                             <span className="font-bold text-sm tracking-tight text-app-text leading-none">Hosts</span>
                             <span className="text-[10px] font-bold text-app-muted/60 tracking-widest uppercase mt-0.5">Explorer</span>
                         </div>
                     </div>
-                )}
 
-                <div className="flex items-center gap-1">
-                    {!isCollapsed && (
+                    <div className="flex items-center gap-1">
                         <div className="relative" ref={addMenuRef}>
                             <Button
                                 variant="ghost"
@@ -412,17 +442,13 @@ export function Sidebar() {
                                 </div>
                             )}
                         </div>
-                    )}
-                    <Button variant="ghost" size="icon" onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })} className="h-8 w-8 text-app-muted hover:text-[var(--color-app-text)] transition-colors">
-                        {isCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-                    </Button>
+                        <Button variant="ghost" size="icon" onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })} className="h-8 w-8 text-app-muted hover:text-[var(--color-app-text)] transition-colors">
+                            {isCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+                        </Button>
+                    </div>
                 </div>
-            </div>
 
-
-
-            {/* Quick Connect / Search */}
-            {!isCollapsed && (
+                {/* Quick Connect / Search */}
                 <div className={compactMode ? "px-2 mb-2" : "px-4 mb-4"}>
                     <div className="relative group">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -445,173 +471,165 @@ export function Sidebar() {
                         </div>
                     </div>
                 </div>
-            )}
 
-            {/* Tag Filter Bar Removed */}
 
-            {/* System Bar (Pinned) */}
-            <div className={cn(compactMode ? "px-2 mb-2" : "px-3 mb-2")}>
-                <div className="bg-app-surface/25 p-1 rounded-xl flex items-center gap-1 border border-app-border/20 flex-row">
-                    {/* Local Terminal */}
-                    <button
-                        className={cn(
-                            "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
-                            activeConnectionId === 'local'
-                                ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
-                                : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
-                        )}
-                        onClick={() => openTab('local')}
-                        title="Local Terminal"
-                    >
-                        <Terminal className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'local' ? "text-app-accent" : "")} />
-                        {!isCollapsed && <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Term</span>}
-                    </button>
-
-                    {/* Global Tunnels */}
-                    <button
-                        className={cn(
-                            "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
-                            activeConnectionId === 'tunnels'
-                                ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
-                                : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
-                        )}
-                        onClick={() => openTunnelsTab()}
-                        title="Global Tunnels"
-                    >
-                        <Network className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'tunnels' ? "text-app-accent" : "")} />
-                        {!isCollapsed && <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Tunnels</span>}
-                    </button>
-                </div>
-            </div>
-
-            <div className="h-px bg-app-border/30 mb-2 mx-4" />
-
-            {/* List */}
-            <div className={cn(
-                "flex-1 overflow-y-auto pb-4 scrollbar-hide",
-                compactMode ? "px-2 space-y-0.5" : "px-3 space-y-2"
-            )}>
-                {/* VISUAL SECTIONS LOGIC */}
-                {!searchTerm && activeConnections.length > 0 ? (
-                    <>
-                        <SidebarSection title="Active" count={activeConnections.length} compactMode={compactMode}>
-                            <div className={cn("space-y-1 mb-2 pl-1", compactMode && "space-y-0.5")}>
-                                {activeConnections.map(conn => (
-                                    <ConnectionItem
-                                        key={`active-${conn.id}`}
-                                        conn={conn}
-                                        isCollapsed={isCollapsed}
-                                        onEdit={openEditConnection}
-                                        onViewDetails={(c) => setViewingDetailsId(c.id)}
-                                    />
-                                ))}
-                            </div>
-                        </SidebarSection>
-
-                        <SidebarSection
-                            title="All Hosts"
-                            compactMode={compactMode}
-                            onDrop={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const connId = e.dataTransfer.getData('connection-id');
-                                const folderPath = e.dataTransfer.getData('folder-path');
-
-                                if (connId) {
-                                    updateConnectionFolder(connId, '');
-                                } else if (folderPath) {
-                                    // Move folder to root -> Rename to just its basename
-                                    const baseName = folderPath.split('/').pop();
-                                    if (baseName && baseName !== folderPath) {
-                                        renameFolder(folderPath, baseName);
-                                    }
-                                }
-                            }}
+                {/* System Bar (Pinned) */}
+                <div className={cn(compactMode ? "px-2 mb-2" : "px-3 mb-2")}>
+                    <div className="bg-app-surface/25 p-1 rounded-xl flex items-center gap-1 border border-app-border/20 flex-row">
+                        {/* Local Terminal */}
+                        <button
+                            className={cn(
+                                "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
+                                activeConnectionId === 'local'
+                                    ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
+                                    : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
+                            )}
+                            onClick={() => openTab('local')}
+                            title="Local Terminal"
                         >
-                            <div className="pl-1">
-                                {/* Render Recursive Tree (Filtered to exclude active if not searching) */}
-                                {Object.keys(treeRoot.children).sort().map(key => (
-                                    <FolderItem
-                                        key={key}
-                                        node={treeRoot.children[key]}
-                                        isCollapsed={isCollapsed}
-                                        compactMode={compactMode}
-                                        expandedFolders={expandedFolders}
-                                        toggleFolder={toggleFolder}
-                                        updateConnectionFolder={updateConnectionFolder}
-                                        deleteFolder={deleteFolder}
-                                        onRenameFolder={handleRenameFolder}
-                                        renameFolder={renameFolder}
-                                        connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
-                                    />
-                                ))}
-                                {treeRoot.connections.map(conn => (
-                                    <ConnectionItem
-                                        key={conn.id}
-                                        conn={conn}
-                                        isCollapsed={isCollapsed}
-                                        onEdit={openEditConnection}
-                                        onViewDetails={c => setViewingDetailsId(c.id)}
-                                    />
-                                ))}
-                            </div>
-                        </SidebarSection>
-                    </>
-                ) : (
-                    /* Default / Search View: No sections, just the tree */
-                    <>
-                        {Object.keys(treeRoot.children).sort().map(key => (
-                            <FolderItem
-                                key={key}
-                                node={treeRoot.children[key]}
-                                isCollapsed={isCollapsed}
-                                compactMode={compactMode}
-                                expandedFolders={expandedFolders}
-                                toggleFolder={toggleFolder}
-                                updateConnectionFolder={updateConnectionFolder}
-                                deleteFolder={deleteFolder}
-                                onRenameFolder={handleRenameFolder}
-                                renameFolder={renameFolder}
-                                connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
-                            />
-                        ))}
-                        {treeRoot.connections.map(conn => (
-                            <ConnectionItem
-                                key={conn.id}
-                                conn={conn}
-                                isCollapsed={isCollapsed}
-                                onEdit={openEditConnection}
-                                onViewDetails={c => setViewingDetailsId(c.id)}
-                            />
-                        ))}
-                    </>
-                )}
-            </div>
+                            <Terminal className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'local' ? "text-app-accent" : "")} />
+                            <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Term</span>
+                        </button>
 
-            {/* Footer / User */}
-            <div className={cn("p-4 border-t border-app-border/30 backdrop-blur-md bg-app-panel/50", isCollapsed && "p-2")}>
-                <button
-                    onClick={openSettings}
-                    className={cn(
-                        "flex items-center gap-3 w-full p-2.5 rounded-xl transition-all duration-200 group",
-                        "hover:bg-app-surface/80 border border-transparent hover:border-app-border/50",
-                        isCollapsed && "justify-center p-0 h-12 w-12 rounded-2xl bg-app-surface/30"
-                    )}
-                >
-                    <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-shadow">
-                        {/* Show Gear icon on hover or always? Let's show Gear on hover, OP otherwise for fun? Or just Settings Icon? */}
-                        {/* actually, let's just use a Settings Icon for the button itself if it's the settings button */}
-                        {/* The user currently has an 'Operator' avatar. Let's keep that but add a small gear or change it to a gear if they want 'Settings' */}
-                        {/* If the user is asking "why the icon is not visible", they might be looking for the GEAR. */}
-                        <Settings className="text-white w-5 h-5" />
+                        {/* Global Tunnels */}
+                        <button
+                            className={cn(
+                                "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
+                                activeConnectionId === 'tunnels'
+                                    ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
+                                    : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
+                            )}
+                            onClick={() => openTunnelsTab()}
+                            title="Global Tunnels"
+                        >
+                            <Network className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'tunnels' ? "text-app-accent" : "")} />
+                            <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Tunnels</span>
+                        </button>
                     </div>
-                    {!isCollapsed && (
+                </div>
+
+                <div className="h-px bg-app-border/30 mb-2 mx-4" />
+
+                {/* List */}
+                <div className={cn(
+                    "flex-1 overflow-y-auto pb-4 scrollbar-hide",
+                    compactMode ? "px-2 space-y-0.5" : "px-3 space-y-2"
+                )}>
+                    {/* VISUAL SECTIONS LOGIC */}
+                    {!searchTerm && activeConnections.length > 0 ? (
+                        <>
+                            <SidebarSection title="Active" count={activeConnections.length} compactMode={compactMode}>
+                                <div className={cn("space-y-1 mb-2 pl-1", compactMode && "space-y-0.5")}>
+                                    {activeConnections.map((conn: Connection) => (
+                                        <ConnectionItem
+                                            key={`active-${conn.id}`}
+                                            conn={conn}
+                                            isCollapsed={false} // Always render as if expanded inside the wrapper
+                                            onEdit={openEditConnection}
+                                            onViewDetails={(c: Connection) => setViewingDetailsId(c.id)}
+                                        />
+                                    ))}
+                                </div>
+                            </SidebarSection>
+
+                            <SidebarSection
+                                title="All Hosts"
+                                compactMode={compactMode}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const connId = e.dataTransfer.getData('connection-id');
+                                    const folderPath = e.dataTransfer.getData('folder-path');
+
+                                    if (connId) {
+                                        updateConnectionFolder(connId, '');
+                                    } else if (folderPath) {
+                                        // Move folder to root -> Rename to just its basename
+                                        const baseName = folderPath.split('/').pop();
+                                        if (baseName && baseName !== folderPath) {
+                                            renameFolder(folderPath, baseName);
+                                        }
+                                    }
+                                }}
+                            >
+                                <div className="pl-1">
+                                    {/* Render Recursive Tree (Filtered to exclude active if not searching) */}
+                                    {Object.keys(treeRoot.children).sort().map(key => (
+                                        <FolderItem
+                                            key={key}
+                                            node={treeRoot.children[key]}
+                                            isCollapsed={false}
+                                            compactMode={compactMode}
+                                            expandedFolders={expandedFolders}
+                                            toggleFolder={toggleFolder}
+                                            updateConnectionFolder={updateConnectionFolder}
+                                            deleteFolder={deleteFolder}
+                                            onRenameFolder={handleRenameFolder}
+                                            renameFolder={renameFolder}
+                                            connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
+                                        />
+                                    ))}
+                                    {treeRoot.connections.map(conn => (
+                                        <ConnectionItem
+                                            key={conn.id}
+                                            conn={conn}
+                                            isCollapsed={false}
+                                            onEdit={openEditConnection}
+                                            onViewDetails={c => setViewingDetailsId(c.id)}
+                                        />
+                                    ))}
+                                </div>
+                            </SidebarSection>
+                        </>
+                    ) : (
+                        /* Default / Search View: No sections, just the tree */
+                        <>
+                            {Object.keys(treeRoot.children).sort().map(key => (
+                                <FolderItem
+                                    key={key}
+                                    node={treeRoot.children[key]}
+                                    isCollapsed={false}
+                                    compactMode={compactMode}
+                                    expandedFolders={expandedFolders}
+                                    toggleFolder={toggleFolder}
+                                    updateConnectionFolder={updateConnectionFolder}
+                                    deleteFolder={deleteFolder}
+                                    onRenameFolder={handleRenameFolder}
+                                    renameFolder={renameFolder}
+                                    connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
+                                />
+                            ))}
+                            {treeRoot.connections.map(conn => (
+                                <ConnectionItem
+                                    key={conn.id}
+                                    conn={conn}
+                                    isCollapsed={false}
+                                    onEdit={openEditConnection}
+                                    onViewDetails={c => setViewingDetailsId(c.id)}
+                                />
+                            ))}
+                        </>
+                    )}
+                </div>
+
+                {/* Footer / User */}
+                <div className={cn("p-4 border-t border-app-border/30 backdrop-blur-md bg-app-panel/50")}>
+                    <button
+                        onClick={openSettings}
+                        className={cn(
+                            "flex items-center gap-3 w-full p-2.5 rounded-xl transition-all duration-200 group",
+                            "hover:bg-app-surface/80 border border-transparent hover:border-app-border/50",
+                        )}
+                    >
+                        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-shadow">
+                            <Settings className="text-white w-5 h-5" />
+                        </div>
                         <div className="flex-1 text-left overflow-hidden">
                             <div className="text-sm font-semibold text-app-text group-hover:text-[var(--color-app-text)] transition-colors">Settings</div>
                             <div className="text-[10px] text-app-muted uppercase tracking-wider">Preferences</div>
                         </div>
-                    )}
-                </button>
+                    </button>
+                </div>
             </div>
 
             {/* Modals */}
@@ -635,7 +653,7 @@ export function Sidebar() {
                             list="folder-suggestions"
                         />
                         <datalist id="folder-suggestions">
-                            {folders.map(f => (
+                            {folders.map((f: Folder) => (
                                 <option key={f.name} value={f.name} />
                             ))}
                         </datalist>
@@ -714,7 +732,7 @@ export function Sidebar() {
                             onChange={e => setFormData({ ...formData, jumpServerId: e.target.value === '' ? undefined : e.target.value })}
                         >
                             <option value="">None (Direct Connection)</option>
-                            {connections.map(c => (
+                            {connections.map((c: Connection) => (
                                 <option key={c.id} value={c.id}>
                                     {c.name || c.host} ({c.username}@{c.host})
                                 </option>
@@ -769,11 +787,11 @@ export function Sidebar() {
                                 />
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                {formData.tags?.map(tag => (
+                                {formData.tags?.map((tag: string) => (
                                     <span key={tag} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-app-surface border border-app-border text-xs font-medium text-app-text">
                                         {tag}
                                         <button
-                                            onClick={() => setFormData({ ...formData, tags: formData.tags?.filter(t => t !== tag) })}
+                                            onClick={() => setFormData({ ...formData, tags: formData.tags?.filter((t: string) => t !== tag) })}
                                             className="hover:text-red-400 transition-colors"
                                         >
                                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -832,19 +850,21 @@ export function Sidebar() {
             />
 
             {/* Modals */}
-            <AddTunnelModal
-                isOpen={isAddTunnelModalOpen}
-                onClose={() => setIsAddTunnelModalOpen(false)}
-                initialConnectionId={activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'tunnels' ? activeConnectionId : undefined}
-            />
+            <Suspense fallback={null}>
+                <AddTunnelModal
+                    isOpen={isAddTunnelModalOpen}
+                    onClose={() => setIsAddTunnelModalOpen(false)}
+                    initialConnectionId={activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'tunnels' ? activeConnectionId : undefined}
+                />
 
-            <ConnectionDetailsModal
-                isOpen={!!viewingDetailsId}
-                onClose={() => setViewingDetailsId(null)}
-                connection={connections.find(c => c.id === viewingDetailsId) || null}
-            />
+                <ConnectionDetailsModal
+                    isOpen={!!viewingDetailsId}
+                    onClose={() => setViewingDetailsId(null)}
+                    connection={connections.find((c: Connection) => c.id === viewingDetailsId) || null}
+                />
 
-            <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
+                <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
+            </Suspense>
 
             {/* Folder Context Menu */}
             {folderContextMenu && (
@@ -881,7 +901,7 @@ export function Sidebar() {
                 isOpen={isRenameFolderModalOpen}
                 onClose={() => setIsRenameFolderModalOpen(false)}
                 currentName={folderToRename || ''}
-                currentTags={folders.find(f => f.name === folderToRename)?.tags || []}
+                currentTags={folders.find((f: Folder) => f.name === folderToRename)?.tags || []}
                 onRename={(newName, newTags) => {
                     // We need a renameFolder that accepts tags, or updateFolder?
                     // renameFolder logic in context primarily handles name, but checking if it can update tags too
@@ -999,15 +1019,21 @@ function CreateFolderModal({ isOpen, onClose, onCreate }: { isOpen: boolean; onC
 
 // Helper Component for Connection Items
 function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Connection; isCollapsed: boolean; onEdit: (c: Connection) => void; onViewDetails: (c: Connection) => void }) {
-    const { activeConnectionId, openTab, connect, disconnect, deleteConnection, tabs } = useConnections();
+    // Zustand Hooks
+    const activeConnectionId = useAppStore(state => state.activeConnectionId);
+    const openTab = useAppStore(state => state.openTab);
+    const connect = useAppStore(state => state.connect);
+    const disconnect = useAppStore(state => state.disconnect);
+    const deleteConnection = useAppStore(state => state.deleteConnection);
+    const tabs = useAppStore(state => state.tabs);
 
-    const hasTab = useMemo(() => tabs.some(t => t.connectionId === conn.id), [tabs, conn.id]);
+    const hasTab = useMemo(() => tabs.some((t: any) => t.connectionId === conn.id), [tabs, conn.id]);
 
-    const { showToast } = useToast();
-    const { addTransfer } = useTransfers();
+    const showToast = useAppStore((state) => state.showToast);
+    const addTransfer = useAppStore(state => state.addTransfer);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; connectionId: string } | null>(null);
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-    const { settings } = useSettings();
+    const settings = useAppStore(state => state.settings);
     const compactMode = settings.compactMode;
 
     return (
@@ -1431,7 +1457,7 @@ function FolderItem({
                                 connectionItemProps={connectionItemProps}
                             />
                         ))}
-                        {node.connections.map(conn => (
+                        {node.connections.map((conn: Connection) => (
                             <ConnectionItem
                                 key={conn.id}
                                 conn={conn}

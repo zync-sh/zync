@@ -96,9 +96,10 @@ export function setupIPC() {
     await sshManager.connect(config);
 
     try {
-      // Then connect SFTP (file manager)
-      // Sequential execution prevents potential race conditions or auth rate limiting on some servers
-      await sftpManager.connect(config);
+      // Then connect SFTP (file manager) - LAZY LOADED NOW
+      // We removed explicit connection to save a channel. 
+      // Channels are precious (MaxSessions limit).
+      // sftpManager.connect(config) is removed.
 
       // Auto-start Tunnels
       const client = sshManager.getClient(config.id);

@@ -18,7 +18,7 @@ import type React from 'react';
 import { cn } from '../../lib/utils';
 import { Skeleton } from '../ui/Skeleton';
 import type { FileEntry } from './types';
-import { useSettings } from '../../context/SettingsContext';
+import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 // Global drag state (shared across all FileGrid instances)
 let currentDragSource: { connectionId: string; path: string } | null = null;
@@ -47,7 +47,7 @@ export function FileGrid({
   connectionId,
   currentPath,
 }: FileGridProps) {
-  const { settings } = useSettings();
+  const settings = useAppStore(state => state.settings);
   const compactMode = settings.compactMode;
 
   if (isLoading) {
