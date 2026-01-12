@@ -1,24 +1,47 @@
-import { ReactNode } from 'react';
+import { ReactNode, lazy, Suspense } from 'react';
 import { Sidebar } from './Sidebar';
-import { useConnections, Tab } from '../../context/ConnectionContext';
+import { useAppStore, Tab } from '../../store/useAppStore';
 import { cn } from '../../lib/utils';
 import { Terminal as TerminalIcon, LayoutDashboard, Files, Network, Code } from 'lucide-react';
 import { StatusBar } from './StatusBar';
-import { FileManager } from '../FileManager';
-import { Dashboard } from '../dashboard/Dashboard';
-import { TunnelManager } from '../tunnel/TunnelManager';
-import { SnippetsManager } from '../snippets/SnippetsManager';
 import { TabBar } from './TabBar';
-import { TerminalManager } from '../terminal/TerminalManager';
 import { ShortcutManager } from '../managers/ShortcutManager';
 import { CommandPalette } from './CommandPalette';
-import { GlobalTunnelList } from '../tunnel/GlobalTunnelList';
+
+// Lazy Load Heavy Components
+const FileManager = lazy(() => import('../FileManager').then(module => ({ default: module.FileManager })));
+const Dashboard = lazy(() => import('../dashboard/Dashboard').then(module => ({ default: module.Dashboard })));
+const TunnelManager = lazy(() => import('../tunnel/TunnelManager').then(module => ({ default: module.TunnelManager })));
+const SnippetsManager = lazy(() => import('../snippets/SnippetsManager').then(module => ({ default: module.SnippetsManager })));
+const TerminalManager = lazy(() => import('../terminal/TerminalManager').then(module => ({ default: module.TerminalManager })));
+const GlobalTunnelList = lazy(() => import('../tunnel/GlobalTunnelList').then(module => ({ default: module.GlobalTunnelList })));
+
+// Loading Component
+const TabLoading = () => (
+    <div className="absolute inset-0 flex items-center justify-center bg-app-bg">
+        <div className="w-6 h-6 border-2 border-app-accent/30 border-t-app-accent rounded-full animate-spin" />
+    </div>
+);
+
+const SplashScreen = () => (
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-app-bg transition-colors duration-300">
+        <div className="flex flex-col items-center">
+            <svg width="128" height="128" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-pulse drop-shadow-2xl">
+                <rect width="512" height="512" rx="128" className="fill-app-panel" />
+                <path d="M128 170.667L213.333 256L128 341.333" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" className="stroke-app-accent" />
+                <path d="M256 341.333H384" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" className="stroke-app-text" />
+            </svg>
+        </div>
+    </div>
+);
 
 function TabContent({ tab, isActive }: {
     tab: Tab;
     isActive: boolean;
 }) {
-    const { setTabView, connections, connect } = useConnections();
+    const setTabView = useAppStore(state => state.setTabView); // Updated Hook
+    const connections = useAppStore(state => state.connections); // Updated Hook
+    const connect = useAppStore(state => state.connect); // Updated Hook
     // Global Tunnels Tab
     if (tab.type === 'tunnels') {
         return (
@@ -27,12 +50,14 @@ function TabContent({ tab, isActive }: {
                 !isActive && "hidden",
                 isActive && "animate-in fade-in zoom-in-95 duration-200"
             )}>
-                <GlobalTunnelList />
+                <Suspense fallback={<TabLoading />}>
+                    <GlobalTunnelList />
+                </Suspense>
             </div>
         );
     }
 
-    const connection = connections.find(c => c.id === tab.connectionId);
+    const connection = connections.find((c: any) => c.id === tab.connectionId);
     const isConnecting = connection?.status === 'connecting';
     const isError = connection?.status === 'error';
 
@@ -115,34 +140,36 @@ function TabContent({ tab, isActive }: {
 
                     {/* Content Area */}
                     <div className="flex-1 overflow-hidden relative flex flex-col">
-                        <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'files' ? "block" : "hidden")}>
-                            <FileManager connectionId={tab.connectionId} />
-                        </div>
-                        <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'dashboard' ? "block" : "hidden")}>
-                            <Dashboard connectionId={tab.connectionId} />
-                        </div>
-                        {/* Tunnels & Snippets */}
-                        {tab.view === 'tunnels' && (
-                            <div className="absolute inset-0 z-10 bg-app-bg">
-                                <TunnelManager connectionId={tab.connectionId} />
+                        <Suspense fallback={<TabLoading />}>
+                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'files' ? "block" : "hidden")}>
+                                <FileManager connectionId={tab.connectionId} />
                             </div>
-                        )}
-                        {tab.view === 'snippets' && (
-                            <div className="absolute inset-0 z-10 bg-app-bg">
-                                <SnippetsManager />
+                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'dashboard' ? "block" : "hidden")}>
+                                <Dashboard connectionId={tab.connectionId} />
                             </div>
-                        )}
+                            {/* Tunnels & Snippets */}
+                            {tab.view === 'tunnels' && (
+                                <div className="absolute inset-0 z-10 bg-app-bg">
+                                    <TunnelManager connectionId={tab.connectionId} />
+                                </div>
+                            )}
+                            {tab.view === 'snippets' && (
+                                <div className="absolute inset-0 z-10 bg-app-bg">
+                                    <SnippetsManager connectionId={tab.connectionId} />
+                                </div>
+                            )}
 
-                        {/* 
-                            Terminal View: MUST be kept alive (hidden, not unmounted) to preserve Xterm state/buffer. 
-                            We render it always but control visibility.
-                        */}
-                        <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'terminal' ? "block" : "hidden")}>
-                            <TerminalManager
-                                connectionId={tab.connectionId}
-                                isVisible={isActive && tab.view === 'terminal'}
-                            />
-                        </div>
+                            {/* 
+                                Terminal View: MUST be kept alive (hidden, not unmounted) to preserve Xterm state/buffer. 
+                                We render it always but control visibility.
+                            */}
+                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'terminal' ? "block" : "hidden")}>
+                                <TerminalManager
+                                    connectionId={tab.connectionId}
+                                    isVisible={isActive && tab.view === 'terminal'}
+                                />
+                            </div>
+                        </Suspense>
                     </div>
                 </>
             )}
@@ -157,13 +184,32 @@ import { SetupWizard } from '../onboarding/SetupWizard';
 const ipc = window.ipcRenderer;
 
 export function MainLayout({ children }: { children: ReactNode }) {
-    const { tabs, activeTabId } = useConnections();
+    const tabs = useAppStore(state => state.tabs); // Updated Hook
+    const activeTabId = useAppStore(state => state.activeTabId); // Updated Hook
+    const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const [showWizard, setShowWizard] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         checkConfig();
     }, []);
+
+    // Theme Application Effect
+    const theme = useAppStore(state => state.settings.theme);
+    useEffect(() => {
+        // Persist for splash screen
+        localStorage.setItem('zync-theme', theme);
+
+        // Remove old theme classes
+        document.body.classList.remove('light', 'dark', 'dracula', 'monokai', 'midnight', 'warm', 'light-warm');
+
+        if (theme === 'system') {
+            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            document.body.classList.add(systemTheme);
+        } else {
+            document.body.classList.add(theme);
+        }
+    }, [theme]);
 
     const checkConfig = async () => {
         try {
@@ -178,7 +224,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     };
 
-    if (isLoading) return null; // Or a splash screen
+    if (isLoading || isLoadingSettings) return <SplashScreen />;
 
     return (
         <div className={cn("flex h-screen bg-app-bg text-app-text font-sans selection:bg-app-accent/30 overflow-hidden")}>
@@ -194,7 +240,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 {/* Main Content Area */}
                 <div className="flex-1 overflow-hidden relative flex flex-col">
                     {tabs.length > 0 ? (
-                        tabs.map(tab => (
+                        tabs.map((tab: Tab) => (
                             <TabContent
                                 key={tab.id}
                                 tab={tab}

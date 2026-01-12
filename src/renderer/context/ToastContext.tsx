@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 pointer-events-none">
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onClose={() => removeToast(toast.id)} />
         ))}
@@ -51,23 +51,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const icons = {
-    success: <CheckCircle className="h-5 w-5 text-green-400" />,
-    error: <XCircle className="h-5 w-5 text-red-400" />,
-    warning: <AlertCircle className="h-5 w-5 text-yellow-400" />,
-    info: <Info className="h-5 w-5 text-blue-400" />,
+    success: <CheckCircle className="h-5 w-5" style={{ color: 'var(--color-app-success)' }} />,
+    error: <XCircle className="h-5 w-5" style={{ color: 'var(--color-app-danger)' }} />,
+    warning: <AlertCircle className="h-5 w-5" style={{ color: 'var(--color-app-warning)' }} />,
+    info: <Info className="h-5 w-5" style={{ color: 'var(--color-app-accent)' }} />,
   };
 
   const styles = {
-    success: 'bg-green-900/20 border-green-500/50 text-green-100',
-    error: 'bg-red-900/20 border-red-500/50 text-red-100',
-    warning: 'bg-yellow-900/20 border-yellow-500/50 text-yellow-100',
-    info: 'bg-blue-900/20 border-blue-500/50 text-blue-100',
+    success: 'bg-app-surface border-app-success/30 text-app-text',
+    error: 'bg-app-surface border-app-danger/30 text-app-text',
+    warning: 'bg-app-surface border-app-warning/30 text-app-text',
+    info: 'bg-app-surface border-app-accent/30 text-app-text',
   };
 
   return (
     <div
       className={cn(
-        'flex items-center gap-3 px-4 py-3 rounded-lg border backdrop-blur-sm shadow-lg animate-in slide-in-from-right duration-200 pointer-events-auto min-w-[300px] max-w-md',
+        'flex items-center gap-3 px-4 py-3 rounded-lg border backdrop-blur-sm shadow-lg animate-in slide-in-from-bottom duration-200 pointer-events-auto min-w-[300px] max-w-md',
         styles[toast.type],
       )}
     >

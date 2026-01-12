@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
+import { useAppStore } from '../../store/useAppStore';
 import { Terminal, Server, Plus, Clock, Network } from 'lucide-react';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
+import { OSIcon } from '../icons/OSIcon';
 
 export function WelcomeScreen() {
-    const { connections, openTab, openAddConnectionModal } = useConnections();
+    const connections = useAppStore(state => state.connections);
+    const openTab = useAppStore(state => state.openTab);
+    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const openAddConnectionModal = () => setAddConnectionModalOpen(true);
     const [greeting, setGreeting] = useState('');
     const [time, setTime] = useState('');
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
@@ -122,7 +126,7 @@ export function WelcomeScreen() {
                                     <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 
                                         ${conn.status === 'connected' ? 'bg-[var(--color-app-success)]/10 text-[var(--color-app-success)]' : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)] group-hover:text-[var(--color-app-text)]'}
                                     `}>
-                                        <Server size={14} />
+                                        <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
                                     </div>
                                     <div className="overflow-hidden min-w-0">
                                         <div className="font-medium truncate text-[var(--color-app-text)] text-sm">{conn.name || conn.host}</div>

@@ -19,21 +19,28 @@ export interface FileEntry {
 export class SFTPManager {
   private wrappers: Map<string, SFTPWrapper> = new Map();
 
-  async connect(config: SSHConfig): Promise<void> {
-    // Local connection doesn't need explicit SFTP connection
-    if (config.id === 'local') return;
+  // Changed to take ID only, and makes it idempotent
+  async connect(id: string): Promise<void> {
+    if (id === 'local') return;
+    if (this.wrappers.has(id)) return;
 
     // Reuse existing SSH connection
-    const client = sshManager.getClient(config.id);
+    const client = sshManager.getClient(id);
     if (!client) throw new Error('SSH Client disjointed. Please connect SSH first.');
 
     return new Promise((resolve, reject) => {
       client.sftp((err, sftp) => {
         if (err) return reject(err);
-        this.wrappers.set(config.id, sftp);
+        this.wrappers.set(id, sftp);
         resolve();
       });
     });
+  }
+
+  private async ensureConnection(id: string): Promise<void> {
+    if (id !== 'local' && !this.wrappers.has(id)) {
+      await this.connect(id);
+    }
   }
 
   async disconnect(id: string) {
@@ -84,6 +91,7 @@ export class SFTPManager {
       }
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.readdir(dirPath, (err, list) => {
@@ -116,6 +124,7 @@ export class SFTPManager {
       return os.homedir();
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.realpath('.', (err, path) => {
@@ -132,6 +141,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.fastGet(remotePath, localPath, (err) => {
@@ -147,6 +157,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.fastPut(localPath, remotePath, (err) => {
@@ -162,6 +173,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.mkdir(path, (err) => {
@@ -177,6 +189,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.rename(oldPath, newPath, (err) => {
@@ -192,6 +205,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     // We need to know if it is a directory or file first
     // Use stat
@@ -220,6 +234,7 @@ export class SFTPManager {
       return await fsp.readFile(path, 'utf-8');
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.readFile(path, (err, buffer) => {
@@ -235,6 +250,7 @@ export class SFTPManager {
       return;
     }
 
+    await this.ensureConnection(id);
     const sftp = this.getWrapper(id);
     return new Promise((resolve, reject) => {
       sftp.writeFile(path, content, (err) => {
@@ -254,6 +270,10 @@ export class SFTPManager {
     onProgress?: (transferred: number, total: number) => void,
     transferId?: string,
   ): Promise<void> {
+    // Ensure connections
+    await this.ensureConnection(sourceId);
+    await this.ensureConnection(destId);
+
     // Stats Logic
     let totalSize = 0;
     if (sourceId === 'local') {

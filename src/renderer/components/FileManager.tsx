@@ -11,10 +11,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { useConnections } from '../context/ConnectionContext';
-import { useSettings } from '../context/SettingsContext';
-import { useToast } from '../context/ToastContext';
-import { useTransfers } from '../context/TransferContext';
+import { useAppStore, Connection } from '../store/useAppStore'; // Updated Import
 import { FileEditor } from './FileEditor';
 import { CopyToServerModal } from './file-manager/CopyToServerModal';
 import { FileGrid, getCurrentDragSource } from './file-manager/FileGrid';
@@ -26,21 +23,23 @@ import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 
 export function FileManager({ connectionId }: { connectionId?: string }) {
-  const { activeConnectionId: globalActiveId, connections, connect } = useConnections();
+  const globalActiveId = useAppStore(state => state.activeConnectionId);
+  const connections = useAppStore(state => state.connections);
+  const connect = useAppStore(state => state.connect);
   const activeConnectionId = connectionId || globalActiveId;
-  const { addTransfer } = useTransfers();
+  const addTransfer = useAppStore(state => state.addTransfer);
 
   // Find the actual connection object to check status
   const isLocal = activeConnectionId === 'local';
-  const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
+  const connection = !isLocal ? connections.find((c: Connection) => c.id === activeConnectionId) : null;
   // Local is always "connected" for file operations
   const isConnected = isLocal || connection?.status === 'connected';
 
-  const { settings } = useSettings();
+  const settings = useAppStore(state => state.settings);
   const [currentPath, setCurrentPath] = useState(''); // Empty initially
   const [homePath, setHomePath] = useState(''); // Initial home directory
   const [files, setFiles] = useState<FileEntry[]>([]);
-  const { showToast } = useToast();
+  const showToast = useAppStore((state) => state.showToast);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -172,6 +171,10 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
       setHomePath(path);
       loadFiles(path);
     } catch (error: any) {
+      if (error.message?.includes('Connection not found')) {
+        useAppStore.getState().disconnect(activeConnectionId);
+        return;
+      }
       console.error('Failed to get home dir:', error);
       setCurrentPath('/');
       setHomePath('/');
@@ -213,6 +216,10 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
       setFiles(mappedEntries);
       setCurrentPath(path); // Ensure path is updated
     } catch (error: any) {
+      if (error.message?.includes('Connection not found')) {
+        useAppStore.getState().disconnect(activeConnectionId);
+        return;
+      }
       console.error('Failed to load files', error);
       showToast('error', `Failed to load directory: ${error.message}`);
     } finally {

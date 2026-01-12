@@ -115,6 +115,15 @@ if (!gotTheLock) {
     }
   });
 
+  app.on('before-quit', () => {
+    try {
+      sshManager.disconnectAll();
+      log.info('Forcefully disconnected all SSH sessions on quit.');
+    } catch (e) {
+      log.error('Error disconnecting sessions on quit:', e);
+    }
+  });
+
   app.on('activate', () => {
     // On OS X it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.

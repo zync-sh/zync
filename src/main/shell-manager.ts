@@ -85,27 +85,54 @@ export class SSHShellManager {
       return;
     }
 
-    const client = sshManager.getClient(connectionId);
-    if (!client) throw new Error('Client not connected');
+    const pool = sshManager.getClientPool(connectionId);
+    if (!pool || pool.length === 0) throw new Error('Client not connected');
 
-    // Allow multiple shells per connection (Channels)
-    client.shell({ term: 'xterm', rows, cols }, (err, stream) => {
-      if (err) throw err;
+    // Helper to spawn on a specific client
+    const spawnOnClient = (client: any): Promise<void> => {
+      return new Promise<void>((resolve, reject) => {
+        client.shell({ term: 'xterm', rows, cols }, (err: any, stream: any) => {
+          if (err) return reject(err);
 
-      this.streams.set(termId, stream);
+          this.streams.set(termId, stream);
 
-      stream.on('data', (data: any) => {
-        win.webContents.send('terminal:data', {
-          termId,
-          data: data.toString(),
+          stream.on('data', (data: any) => {
+            win.webContents.send('terminal:data', {
+              termId,
+              data: data.toString(),
+            });
+          });
+
+          stream.on('close', () => {
+            win.webContents.send('terminal:closed', { termId });
+            this.streams.delete(termId);
+          });
+
+          resolve();
         });
       });
+    };
 
-      stream.on('close', () => {
-        win.webContents.send('terminal:closed', { termId });
-        this.streams.delete(termId);
-      });
-    });
+    // Try last client first, then iterate backwards
+    for (let i = pool.length - 1; i >= 0; i--) {
+      try {
+        await spawnOnClient(pool[i]);
+        return;
+      } catch (err: any) {
+        // console.debug(`[SSH] Spawn failed on client ${i}: ${err.message}. Trying next...`);
+        continue;
+      }
+    }
+
+    // All failed? Add new connection and try once more
+    console.log(`[SSH] Scaling pool for shell spawn ${connectionId} (Active: ${pool.length})...`);
+    try {
+      const newClient = await sshManager.addPoolConnection(connectionId);
+      await spawnOnClient(newClient);
+    } catch (err) {
+      console.error('Failed to spawn shell even after scaling:', err);
+      throw err;
+    }
   }
 
   write(termId: string, data: string) {
@@ -133,7 +160,7 @@ export class SSHShellManager {
       if (typeof stream.kill === 'function') {
         stream.kill(); // PTY
       } else {
-        stream.end(); // SSH
+        stream.close(); // SSH - Force Close Channel
       }
       this.streams.delete(termId);
     }

@@ -1,7 +1,6 @@
 import { Network, Play, Plus, Square, Trash2, ArrowRight, Laptop, Server as ServerIcon, Edit2, Zap, ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
-import { useToast } from '../../context/ToastContext';
+import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { cn } from '../../lib/utils';
@@ -21,9 +20,9 @@ interface TunnelConfig {
 }
 
 export function TunnelManager({ connectionId }: { connectionId?: string }) {
-  const { activeConnectionId: globalId } = useConnections();
+  const globalId = useAppStore(state => state.activeConnectionId);
   const activeConnectionId = connectionId || globalId;
-  const { showToast } = useToast();
+  const showToast = useAppStore((state) => state.showToast);
 
   const [tunnels, setTunnels] = useState<TunnelConfig[]>([]);
   const [loading, setLoading] = useState(false);
@@ -46,7 +45,11 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     try {
       const list = await window.ipcRenderer.invoke('tunnel:list', activeConnectionId);
       setTunnels(list);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message && error.message.includes('Connection not found')) {
+        useAppStore.getState().disconnect(activeConnectionId);
+        return;
+      }
       console.error('Failed to load tunnels', error);
     }
   };

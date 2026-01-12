@@ -1,7 +1,6 @@
 import { Code, Plus, Trash2, Edit2, Copy } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
-import { useToast } from '../../context/ToastContext';
+import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
@@ -11,11 +10,12 @@ export interface Snippet {
   name: string;
   command: string;
   category?: string;
+  connectionId?: string;
 }
 
-export function SnippetsManager() {
-  const { showToast } = useToast();
-  const { activeConnectionId } = useConnections();
+export function SnippetsManager({ connectionId }: { connectionId?: string }) {
+  const showToast = useAppStore((state) => state.showToast);
+  const activeConnectionId = connectionId || useAppStore(state => state.activeConnectionId);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
 
   // Modal
@@ -23,7 +23,8 @@ export function SnippetsManager() {
   const [editingSnippet, setEditingSnippet] = useState<Partial<Snippet>>({
     name: '',
     command: '',
-    category: ''
+    category: '',
+    connectionId: undefined // Default to global
   });
 
 
@@ -49,12 +50,13 @@ export function SnippetsManager() {
       name: editingSnippet.name,
       command: editingSnippet.command,
       category: editingSnippet.category || 'General',
+      connectionId: editingSnippet.connectionId
     };
 
     await window.ipcRenderer.invoke('snippets:save', snippet);
     showToast('success', 'Snippet saved');
     setIsModalOpen(false);
-    setEditingSnippet({ name: '', command: '', category: '' });
+    setEditingSnippet({ name: '', command: '', category: '', connectionId: undefined });
     loadSnippets();
   };
 
@@ -68,15 +70,15 @@ export function SnippetsManager() {
   };
 
   const handleEdit = (snippet: Snippet, e: React.MouseEvent) => {
-      e.stopPropagation();
-      setEditingSnippet(snippet);
-      setIsModalOpen(true);
+    e.stopPropagation();
+    setEditingSnippet(snippet);
+    setIsModalOpen(true);
   };
 
   const handleCopy = (command: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      navigator.clipboard.writeText(command);
-      showToast('success', 'Copied to clipboard');
+    e.stopPropagation();
+    navigator.clipboard.writeText(command);
+    showToast('success', 'Copied to clipboard');
   };
 
   const handleRun = (command: string) => {
@@ -88,21 +90,27 @@ export function SnippetsManager() {
 
     // Dispatch event for TerminalManager to pick up
     const event = new CustomEvent('ssh-ui:run-command', {
-        detail: { 
-            connectionId: activeConnectionId, 
-            command: command + '\r' // Append return to execute
-        }
+      detail: {
+        connectionId: activeConnectionId,
+        command: command + '\r' // Append return to execute
+      }
     });
     window.dispatchEvent(event);
     showToast('success', 'Command sent to terminal');
   };
 
+  // Filter snippets based on connection scope
+  const filteredSnippets = snippets.filter(s => {
+    // Show if global (no connectionId) OR if it matches current connection
+    return !s.connectionId || s.connectionId === activeConnectionId;
+  });
+
   // Group snippets by category
-  const groupedSnippets = snippets.reduce((acc, snippet) => {
-      const cat = snippet.category || 'General';
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push(snippet);
-      return acc;
+  const groupedSnippets = filteredSnippets.reduce((acc, snippet) => {
+    const cat = snippet.category || 'General';
+    if (!acc[cat]) acc[cat] = [];
+    acc[cat].push(snippet);
+    return acc;
   }, {} as Record<string, Snippet[]>);
 
   return (
@@ -114,7 +122,9 @@ export function SnippetsManager() {
         </h2>
         <Button
           onClick={() => {
-            setEditingSnippet({ name: '', command: '', category: '' });
+            // Default to current host/local if available, otherwise global
+            const defaultScope = activeConnectionId ? activeConnectionId : undefined;
+            setEditingSnippet({ name: '', command: '', category: '', connectionId: defaultScope });
             setIsModalOpen(true);
           }}
         >
@@ -123,7 +133,7 @@ export function SnippetsManager() {
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-6">
-        {snippets.length === 0 && (
+        {filteredSnippets.length === 0 && (
           <div className="text-center text-app-muted mt-20">
             <p>No snippets found.</p>
             <p className="text-sm">Save your frequently used commands here.</p>
@@ -131,52 +141,57 @@ export function SnippetsManager() {
         )}
 
         {Object.entries(groupedSnippets).map(([category, items]) => (
-            <div key={category}>
-                <h3 className="text-xs font-bold text-app-muted uppercase tracking-wider mb-2 ml-1">{category}</h3>
-                <div className="grid gap-3">
-                    {items.map((snippet) => (
-                      <div
-                        key={snippet.id}
-                        className="bg-app-panel border border-app-border rounded-lg p-3 hover:border-app-accent transition-colors cursor-pointer group relative"
-                        onClick={() => handleRun(snippet.command)}
+          <div key={category}>
+            <h3 className="text-xs font-bold text-app-muted uppercase tracking-wider mb-2 ml-1">{category}</h3>
+            <div className="grid gap-3">
+              {items.map((snippet) => (
+                <div
+                  key={snippet.id}
+                  className="bg-app-panel border border-app-border rounded-lg p-3 hover:border-app-accent transition-colors cursor-pointer group relative"
+                  onClick={() => handleRun(snippet.command)}
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium text-app-text text-sm">{snippet.name}</h4>
+                      {snippet.connectionId && (
+                        <span className="text-[10px] bg-app-accent/20 text-app-accent px-1.5 py-0.5 rounded-full">Host Only</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => handleCopy(snippet.command, e)}
+                        className="text-app-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                        title="Copy to Clipboard"
                       >
-                        <div className="flex justify-between items-start mb-1">
-                          <h4 className="font-medium text-app-text text-sm">{snippet.name}</h4>
-                          <div className="flex gap-1">
-                              <button
-                                onClick={(e) => handleCopy(snippet.command, e)}
-                                className="text-app-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                title="Copy to Clipboard"
-                              >
-                                <Copy size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => handleEdit(snippet, e)}
-                                className="text-app-muted hover:text-app-accent opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                title="Edit"
-                              >
-                                <Edit2 size={14} />
-                              </button>
-                              <button
-                                onClick={(e) => handleDelete(snippet.id, e)}
-                                className="text-app-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                title="Delete"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                          </div>
-                        </div>
-                        <div className="bg-app-bg/50 p-1.5 rounded border border-app-border/50 font-mono text-[10px] text-app-muted/80 truncate">
-                          {snippet.command}
-                        </div>
-                        <div className="absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                             {/* Play icon or similar status could go here */}
-                             <div className="text-[10px] text-app-accent font-medium bg-app-accent/10 px-2 py-0.5 rounded">Run</div>
-                        </div>
-                      </div>
-                    ))}
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => handleEdit(snippet, e)}
+                        className="text-app-muted hover:text-app-accent opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                        title="Edit"
+                      >
+                        <Edit2 size={14} />
+                      </button>
+                      <button
+                        onClick={(e) => handleDelete(snippet.id, e)}
+                        className="text-app-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="bg-app-bg/50 p-1.5 rounded border border-app-border/50 font-mono text-[10px] text-app-muted/80 truncate">
+                    {snippet.command}
+                  </div>
+                  <div className="absolute right-3 bottom-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Play icon or similar status could go here */}
+                    <div className="text-[10px] text-app-accent font-medium bg-app-accent/10 px-2 py-0.5 rounded">Run</div>
+                  </div>
                 </div>
+              ))}
             </div>
+          </div>
         ))}
       </div>
 
@@ -193,11 +208,40 @@ export function SnippetsManager() {
             placeholder="e.g. Check Disk Space"
           />
           <Input
-             label="Category"
-             value={editingSnippet.category || ''}
-             onChange={(e) => setEditingSnippet({ ...editingSnippet, category: e.target.value })}
-             placeholder="e.g. System, Logs (Optional)"
+            label="Category"
+            value={editingSnippet.category || ''}
+            onChange={(e) => setEditingSnippet({ ...editingSnippet, category: e.target.value })}
+            placeholder="e.g. System, Logs (Optional)"
           />
+
+          {/* Scope Selection */}
+          <div className="p-3 bg-app-surface/30 rounded-lg border border-app-border">
+            <span className="text-xs font-medium text-app-text block mb-2">Scope</span>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm text-app-muted cursor-pointer hover:text-app-text">
+                <input
+                  type="radio"
+                  name="scope"
+                  checked={!editingSnippet.connectionId}
+                  onChange={() => setEditingSnippet({ ...editingSnippet, connectionId: undefined })}
+                  className="accent-app-accent"
+                />
+                Global (All Hosts)
+              </label>
+              {activeConnectionId && (
+                <label className="flex items-center gap-2 text-sm text-app-muted cursor-pointer hover:text-app-text">
+                  <input
+                    type="radio"
+                    name="scope"
+                    checked={editingSnippet.connectionId === activeConnectionId}
+                    onChange={() => setEditingSnippet({ ...editingSnippet, connectionId: activeConnectionId })}
+                    className="accent-app-accent"
+                  />
+                  {activeConnectionId === 'local' ? 'Local Terminal Only' : 'This Host Only'}
+                </label>
+              )}
+            </div>
+          </div>
           <div className="space-y-1">
             <label className="text-xs font-medium text-app-muted uppercase tracking-wider">Command</label>
             <textarea

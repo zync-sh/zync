@@ -2,7 +2,7 @@ import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Up
 import { useState } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
-import { useSettings } from '../../context/SettingsContext';
+import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 interface FileToolbarProps {
   currentPath: string;
@@ -28,7 +28,7 @@ export function FileToolbar({
   onSearch,
 }: FileToolbarProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const { settings } = useSettings();
+  const settings = useAppStore(state => state.settings);
   const compactMode = settings.compactMode;
 
   const pathParts = currentPath.split('/').filter((p) => p);
