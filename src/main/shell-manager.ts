@@ -61,7 +61,7 @@ export class SSHShellManager {
 
       try {
         const ptyProcess = spawnPty(shell, args, {
-          name: 'xterm-color',
+          name: 'xterm-256color',
           cols: cols || 80,
           rows: rows || 24,
           cwd: process.env.HOME || process.cwd(),
@@ -91,7 +91,7 @@ export class SSHShellManager {
     // Helper to spawn on a specific client
     const spawnOnClient = (client: any): Promise<void> => {
       return new Promise<void>((resolve, reject) => {
-        client.shell({ term: 'xterm', rows, cols }, (err: any, stream: any) => {
+        client.shell({ term: 'xterm-256color', rows, cols }, (err: any, stream: any) => {
           if (err) return reject(err);
 
           this.streams.set(termId, stream);

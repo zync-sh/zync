@@ -5,7 +5,10 @@ import {
     Terminal,
     Search,
     RefreshCw,
-    Plus
+    Plus,
+    Code,
+    Network,
+    FolderPlus
 } from "lucide-react";
 import { useAppStore, Connection } from "../../store/useAppStore";
 import { clsx } from "clsx";
@@ -112,6 +115,40 @@ export function CommandPalette() {
                             >
                                 <RefreshCw className="mr-2 h-4 w-4 opacity-70" />
                                 <span>Reload Window</span>
+                            </Command.Item>
+                        </Command.Group>
+
+                        <Command.Group heading="Tools" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
+                            <Command.Item
+                                onSelect={() => runCommand(() => useAppStore.getState().openTunnelsTab())}
+                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                            >
+                                <Network className="mr-2 h-4 w-4 opacity-70" />
+                                <span>Open Tunnels</span>
+                            </Command.Item>
+
+                            <Command.Item
+                                onSelect={() => runCommand(() => useAppStore.getState().openSnippetsTab())}
+                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                            >
+                                <Code className="mr-2 h-4 w-4 opacity-70" />
+                                <span>Global Snippets</span>
+                            </Command.Item>
+
+                            <Command.Item
+                                onSelect={() => runCommand(() => window.dispatchEvent(new Event('ssh-ui:open-new-tunnel')))}
+                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                            >
+                                <Plus className="mr-2 h-4 w-4 opacity-70" />
+                                <span>New Tunnel</span>
+                            </Command.Item>
+
+                            <Command.Item
+                                onSelect={() => runCommand(() => window.dispatchEvent(new Event('ssh-ui:open-folder-modal')))}
+                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                            >
+                                <FolderPlus className="mr-2 h-4 w-4 opacity-70" />
+                                <span>New Folder</span>
                             </Command.Item>
                         </Command.Group>
 

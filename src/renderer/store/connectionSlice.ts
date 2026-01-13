@@ -44,7 +44,7 @@ export interface ConnectionSlice {
     setAddConnectionModalOpen: (open: boolean) => void;
 
     // Actions
-    addConnection: (conn: Connection) => void;
+    addConnection: (conn: Connection, isTemp?: boolean) => void;
     editConnection: (conn: Connection) => void;
     deleteConnection: (id: string) => void;
     importConnections: (conns: Connection[]) => void;
@@ -57,6 +57,7 @@ export interface ConnectionSlice {
     // Tab Actions
     openTab: (connectionId: string) => void;
     openTunnelsTab: () => void;
+    openSnippetsTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     setTabView: (tabId: string, view: 'dashboard' | 'files' | 'tunnels' | 'snippets' | 'terminal') => void;
@@ -66,6 +67,9 @@ export interface ConnectionSlice {
     deleteFolder: (name: string) => void;
     renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
     updateConnectionFolder: (connectionId: string, folderName: string) => void;
+
+    // Tab Reordering
+    reorderTabs: (oldIndex: number, newIndex: number) => void;
 
     // Initialization
     loadConnections: () => Promise<void>;
@@ -108,10 +112,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
-    addConnection: (conn) => {
+    addConnection: (conn, isTemp = false) => {
         set(state => {
             const newConns = [...state.connections, conn];
-            saveToMain(newConns, state.folders);
+            if (!isTemp) {
+                saveToMain(newConns, state.folders);
+            }
             return { connections: newConns };
         });
     },
@@ -273,6 +279,23 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         });
     },
 
+    openSnippetsTab: () => {
+        set(state => {
+            // Check if we already have a Global Snippets tab (local connection + snippets view)
+            const existing = state.tabs.find(t => t.connectionId === 'local' && t.view === 'snippets');
+            if (existing) return { activeTabId: existing.id };
+
+            const newTab: Tab = {
+                id: crypto.randomUUID(),
+                type: 'connection',
+                title: 'Global Snippets',
+                connectionId: 'local',
+                view: 'snippets'
+            };
+            return { tabs: [...state.tabs, newTab], activeTabId: newTab.id, activeConnectionId: 'local' };
+        });
+    },
+
     closeTab: (tabId) => {
         const state = get();
         const tab = state.tabs.find(t => t.id === tabId);
@@ -359,6 +382,15 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const newConns = state.connections.map(c => c.id === connectionId ? { ...c, folder: folderName } : c);
             saveToMain(newConns, state.folders);
             return { connections: newConns };
+        });
+    },
+
+    reorderTabs: (oldIndex, newIndex) => {
+        set(state => {
+            const newTabs = [...state.tabs];
+            const [movedTab] = newTabs.splice(oldIndex, 1);
+            newTabs.splice(newIndex, 0, movedTab);
+            return { tabs: newTabs };
         });
     }
 });

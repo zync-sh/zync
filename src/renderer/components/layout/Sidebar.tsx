@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useAppStore, Connection, Folder } from '../../store/useAppStore'; // Updated Import
 import { getCurrentDragSource } from '../file-manager/FileGrid';
-import { FolderOpen, Trash2, Pencil, ChevronRight, Network, Plus, Folder as FolderIcon, Search, PanelLeftOpen, ChevronDown, Laptop, FolderPlus, PanelLeftClose, Terminal, Settings, FileText } from 'lucide-react';
+import { FolderOpen, Trash2, Pencil, ChevronRight, Network, Plus, Folder as FolderIcon, Search, PanelLeftOpen, ChevronDown, Laptop, FolderPlus, PanelLeftClose, Settings, FileText, TerminalIcon } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -297,13 +297,25 @@ export function Sidebar() {
             privateKeyPath: conn.privateKeyPath || '',
             jumpServerId: conn.jumpServerId,
             icon: conn.icon,
-            folder: conn.folder,
-            theme: conn.theme,
             tags: conn.tags || []
         });
         setAuthMethod(conn.privateKeyPath ? 'key' : 'password');
         openAddConnectionModal();
     };
+
+    // Listen for global events (Command Palette)
+    useEffect(() => {
+        const handleOpenFolder = () => setIsFolderModalOpen(true);
+        const handleOpenTunnel = () => setIsAddTunnelModalOpen(true);
+
+        window.addEventListener('ssh-ui:open-folder-modal', handleOpenFolder);
+        window.addEventListener('ssh-ui:open-new-tunnel', handleOpenTunnel);
+
+        return () => {
+            window.removeEventListener('ssh-ui:open-folder-modal', handleOpenFolder);
+            window.removeEventListener('ssh-ui:open-new-tunnel', handleOpenTunnel);
+        };
+    }, []);
 
     // Filter out active connections for the main tree if NO search term is active
     // If searching, we want to search everything
@@ -377,7 +389,7 @@ export function Sidebar() {
                 {/* Header */}
                 <div className={cn(
                     "flex items-center justify-between shrink-0",
-                    compactMode ? "p-3 pb-2" : "p-5 pb-4"
+                    compactMode ? "p-4 pb-2" : "p-5 pb-4"
                 )}>
                     <div className="flex items-center gap-3 overflow-hidden">
                         <svg width={compactMode ? "24" : "32"} height={compactMode ? "24" : "32"} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
@@ -398,8 +410,8 @@ export function Sidebar() {
                                 size="icon"
                                 onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
                                 className={cn(
-                                    "h-8 w-8 transition-colors",
-                                    isAddMenuOpen ? "text-app-accent bg-app-accent/10" : "text-app-muted hover:text-[var(--color-app-text)]"
+                                    "h-7 w-7 transition-colors rounded-lg",
+                                    isAddMenuOpen ? "text-app-text bg-app-surface" : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50"
                                 )}
                                 title="Add New..."
                             >
@@ -408,107 +420,95 @@ export function Sidebar() {
 
                             {/* Add Dropdown */}
                             {isAddMenuOpen && (
-                                <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                                    <div className="p-1 space-y-0.5">
-                                        <button
-                                            onClick={() => { openAddConnectionModal(); setIsAddMenuOpen(false); }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                        >
-                                            <Laptop size={14} className="text-app-muted" />
-                                            <span>New Host</span>
-                                        </button>
-                                        <button
-                                            onClick={() => { setIsFolderModalOpen(true); setIsAddMenuOpen(false); }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                        >
-                                            <FolderPlus size={14} className="text-app-muted" />
-                                            <span>New Folder</span>
-                                        </button>
+                                <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200 p-1">
+                                    <button
+                                        onClick={() => { openAddConnectionModal(); setIsAddMenuOpen(false); }}
+                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
+                                    >
+                                        <Laptop size={14} className="text-app-muted" />
+                                        <span>New Host</span>
+                                    </button>
+                                    <button
+                                        onClick={() => { setIsFolderModalOpen(true); setIsAddMenuOpen(false); }}
+                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
+                                    >
+                                        <FolderPlus size={14} className="text-app-muted" />
+                                        <span>New Folder</span>
+                                    </button>
 
-                                        <div className="h-px bg-app-border/50 my-1 mx-2" />
+                                    <div className="h-px bg-app-border/50 my-1 mx-2" />
 
-                                        <button
-                                            onClick={() => {
-                                                setIsAddTunnelModalOpen(true);
-                                                setIsAddMenuOpen(false);
-                                            }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                            title="Create a new tunnel"
-                                        >
-                                            <Network size={14} className="text-app-muted" />
-                                            <span>New Tunnel</span>
-                                        </button>
-                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setIsAddTunnelModalOpen(true);
+                                            setIsAddMenuOpen(false);
+                                        }}
+                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
+                                        title="Create a new tunnel"
+                                    >
+                                        <Network size={14} className="text-app-muted" />
+                                        <span>New Tunnel</span>
+                                    </button>
                                 </div>
                             )}
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })} className="h-8 w-8 text-app-muted hover:text-[var(--color-app-text)] transition-colors">
-                            {isCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })}
+                            className="h-7 w-7 text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 rounded-lg transition-colors"
+                        >
+                            {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                         </Button>
                     </div>
                 </div>
 
-                {/* Quick Connect / Search */}
-                <div className={compactMode ? "px-2 mb-2" : "px-4 mb-4"}>
+                {/* Search */}
+                <div className={compactMode ? "px-3 mb-2" : "px-4 mb-4"}>
                     <div className="relative group">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Search className="h-3.5 w-3.5 text-app-muted group-focus-within:text-app-accent transition-colors" />
+                            <Search className="h-3.5 w-3.5 text-app-muted group-focus-within:text-app-text transition-colors" />
                         </div>
                         <input
                             className={cn(
-                                "w-full bg-app-surface/40 hover:bg-app-surface/60 border border-app-border/40 rounded-xl text-app-text focus:border-app-accent/40 focus:ring-4 focus:ring-app-accent/10 focus:outline-none placeholder:text-app-muted/50 transition-all font-medium",
-                                compactMode ? "px-3 py-1.5 pl-9 text-xs" : "px-3 py-2.5 pl-9 text-sm"
+                                "w-full bg-app-surface/50 hover:bg-app-surface border border-transparent focus:border-app-border/50 rounded-lg text-app-text focus:outline-none placeholder:text-app-muted/40 transition-all font-medium",
+                                compactMode ? "px-3 py-2 pl-9 text-xs" : "px-3 py-2.5 pl-9 text-sm"
                             )}
-                            placeholder="Search by tag, host/folder name..."
+                            placeholder="Search..."
                             value={searchTerm}
                             onChange={e => setSearchTerm(e.target.value)}
                         />
-                        {/* Shortcut Hint */}
-                        <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                            <kbd className="hidden group-focus-within:inline-flex h-5 items-center gap-1 rounded border border-app-border bg-app-surface px-1.5 font-mono text-[10px] text-app-muted font-medium text-opacity-70">
-                                ↵
-                            </kbd>
-                        </div>
                     </div>
                 </div>
 
-
-                {/* System Bar (Pinned) */}
-                <div className={cn(compactMode ? "px-2 mb-2" : "px-3 mb-2")}>
-                    <div className="bg-app-surface/25 p-1 rounded-xl flex items-center gap-1 border border-app-border/20 flex-row">
-                        {/* Local Terminal */}
+                {/* System Actions Column */}
+                <div className={cn(compactMode ? "px-3 mb-2" : "px-4 mb-2")}>
+                    <div className="flex flex-col gap-1.5 w-full">
                         <button
                             className={cn(
-                                "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
-                                activeConnectionId === 'local'
-                                    ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
-                                    : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
+                                "group relative flex items-center transition-all cursor-pointer select-none outline-none w-full py-2 px-3 rounded-lg border border-transparent",
+                                "bg-app-surface/30 hover:bg-app-surface hover:border-app-border/30 text-app-muted hover:text-app-text"
                             )}
                             onClick={() => openTab('local')}
-                            title="Local Terminal"
                         >
-                            <Terminal className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'local' ? "text-app-accent" : "")} />
-                            <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Term</span>
+                            <TerminalIcon size={13} className="opacity-70 group-hover:opacity-100" />
+                            <span className="ml-3 font-medium text-[10px] uppercase tracking-wider opacity-80 group-hover:opacity-100">New Terminal</span>
                         </button>
 
-                        {/* Global Tunnels */}
                         <button
                             className={cn(
-                                "group relative flex items-center justify-center transition-all cursor-pointer select-none outline-none flex-1 py-1.5 rounded-lg",
-                                activeConnectionId === 'tunnels'
-                                    ? "bg-app-panel text-app-text shadow-sm border border-app-border/10"
-                                    : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 border border-transparent"
+                                "group relative flex items-center transition-all cursor-pointer select-none outline-none w-full py-2 px-3 rounded-lg border border-transparent",
+                                "bg-app-surface/30 hover:bg-app-surface hover:border-app-border/30 text-app-muted hover:text-app-text"
                             )}
                             onClick={() => openTunnelsTab()}
-                            title="Global Tunnels"
                         >
-                            <Network className={cn(compactMode ? "w-3.5 h-3.5" : "w-4 h-4", activeConnectionId === 'tunnels' ? "text-app-accent" : "")} />
-                            <span className="ml-2 font-medium text-[11px] uppercase tracking-wide opacity-90">Tunnels</span>
+                            <Network size={13} className="opacity-70 group-hover:opacity-100" />
+                            <span className="ml-3 font-medium text-[10px] uppercase tracking-wider opacity-80 group-hover:opacity-100">Tunnels</span>
                         </button>
                     </div>
                 </div>
 
-                <div className="h-px bg-app-border/30 mb-2 mx-4" />
+                <div className="h-px bg-app-border/20 mb-2 mx-4" />
 
                 {/* List */}
                 <div className={cn(
@@ -613,20 +613,20 @@ export function Sidebar() {
                 </div>
 
                 {/* Footer / User */}
-                <div className={cn("p-4 border-t border-app-border/30 backdrop-blur-md bg-app-panel/50")}>
+                <div className={cn("p-4 border-t border-app-border/30 backdrop-blur-md bg-app-panel")}>
                     <button
                         onClick={openSettings}
                         className={cn(
-                            "flex items-center gap-3 w-full p-2.5 rounded-xl transition-all duration-200 group",
-                            "hover:bg-app-surface/80 border border-transparent hover:border-app-border/50",
+                            "flex items-center gap-3 w-full p-2 rounded-xl transition-all duration-200 group",
+                            "hover:bg-app-surface/80 border border-transparent hover:border-app-border/30",
                         )}
                     >
-                        <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-shadow">
+                        <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0 shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
                             <Settings className="text-white w-5 h-5" />
                         </div>
                         <div className="flex-1 text-left overflow-hidden">
                             <div className="text-sm font-semibold text-app-text group-hover:text-[var(--color-app-text)] transition-colors">Settings</div>
-                            <div className="text-[10px] text-app-muted uppercase tracking-wider">Preferences</div>
+                            <div className="text-[9px] text-app-muted uppercase tracking-wider font-medium">Preferences</div>
                         </div>
                     </button>
                 </div>
@@ -1164,28 +1164,37 @@ function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Co
 
                 {!isCollapsed && (
                     <div className="flex flex-col overflow-hidden min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                            <span className={cn(
+                                "truncate font-medium leading-tight transition-colors",
+                                compactMode ? "text-sm" : "text-[14px]",
+                                activeConnectionId === conn.id ? "text-app-text font-semibold" : "text-app-text/80 group-hover:text-app-text"
+                            )}>
+                                {conn.name || conn.host}
+                            </span>
+
+                            {/* Hover Actions */}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                    className="p-1 rounded hover:bg-app-surface hover:text-app-text text-app-muted transition-colors"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onEdit(conn);
+                                    }}
+                                    title="Edit Connection"
+                                >
+                                    <Settings size={10} />
+                                </button>
+                            </div>
+                        </div>
                         <span className={cn(
-                            "truncate font-semibold leading-tight transition-colors",
-                            compactMode ? "text-sm" : "text-[15px]",
-                            activeConnectionId === conn.id ? "text-app-accent" : "text-app-text/90 group-hover:text-[var(--color-app-text)]"
-                        )}>
-                            {conn.name || conn.host}
-                        </span>
-                        <span className={cn(
-                            "truncate leading-tight group-hover:text-app-muted/80",
-                            compactMode ? "text-[10px] mt-0" : "text-xs mt-0.5",
-                            "text-app-muted/40 font-mono" // Mono and lighter
+                            "truncate leading-tight",
+                            compactMode ? "text-[10px] mt-0.5" : "text-xs mt-0.5",
+                            "text-app-muted/50 font-mono group-hover:text-app-muted/70 transition-colors"
                         )}>
                             {conn.username}@{conn.host}
                         </span>
 
-                    </div>
-                )}
-
-                {/* Hover Chevron (Subtle hint) */}
-                {!isCollapsed && activeConnectionId !== conn.id && (
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity -mr-1">
-                        <div className="h-1.5 w-1.5 rounded-full bg-app-border/80" />
                     </div>
                 )}
             </div>

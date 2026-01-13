@@ -4,6 +4,7 @@ import type { AppStore } from './useAppStore';
 export interface AppSettings {
     theme: 'dark' | 'light' | 'dracula' | 'monokai' | 'warm' | 'light-warm' | 'midnight' | 'system';
     accentColor?: string;
+    windowOpacity: number;
     enableVibrancy: boolean;
     compactMode: boolean;
     sidebarWidth: number;
@@ -30,6 +31,7 @@ export interface AppSettings {
         newHostTerminal: string;
         toggleSettings: string;
         closeTab: string;
+        closeTerminalTab: string;
         commandPalette: string;
         switchTabNext: string;
         switchTabPrev: string;
@@ -56,6 +58,7 @@ export interface AppSettings {
 const defaultSettings: AppSettings = {
     theme: 'dark',
     accentColor: undefined,
+    windowOpacity: 0.95,
     enableVibrancy: false,
     compactMode: true,
     sidebarWidth: 288,
@@ -82,6 +85,7 @@ const defaultSettings: AppSettings = {
         newHostTerminal: 'Mod+Shift+T',
         toggleSettings: 'Mod+,',
         closeTab: 'Mod+W',
+        closeTerminalTab: 'Mod+Shift+W',
         commandPalette: 'Mod+P',
         switchTabNext: 'Ctrl+Tab',
         switchTabPrev: 'Ctrl+Shift+Tab',

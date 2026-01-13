@@ -411,7 +411,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         ].map(theme => (
                                             <button
                                                 key={theme.id}
-                                                onClick={() => updateSettings({ theme: theme.id as any })}
+                                                onClick={() => updateSettings({ theme: theme.id as any, accentColor: undefined })}
                                                 className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === theme.id
                                                     ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                     : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -460,6 +460,22 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     onChange={(e) => updateSettings({ accentColor: e.target.value })}
                                                     className="w-8 h-8 rounded-lg overflow-hidden border-0 p-0 cursor-pointer"
                                                 />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-3 pt-4 border-t border-[var(--color-app-border)]/50">
+                                            <div className="flex justify-between">
+                                                <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Window Opacity</label>
+                                                <span className="text-sm text-[var(--color-app-accent)] font-mono">{Math.round((settings.windowOpacity ?? 0.95) * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range" min="50" max="100" step="1"
+                                                className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
+                                                value={(settings.windowOpacity ?? 0.95) * 100}
+                                                onChange={(e) => updateSettings({ windowOpacity: parseInt(e.target.value) / 100 })}
+                                            />
+                                            <div className="text-xs text-[var(--color-app-muted)]">
+                                                Note: Requires app restart to enable transparency support if currently disabled.
                                             </div>
                                         </div>
                                     </div>
@@ -601,6 +617,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             label="Find"
                                             binding={settings.keybindings?.termFind || 'Mod+F'}
                                             onChange={(val) => updateKeybindings({ termFind: val })}
+                                        />
+                                        <KeybindingRow
+                                            label="Close Terminal Tab"
+                                            binding={settings.keybindings?.closeTerminalTab || 'Mod+Shift+W'}
+                                            onChange={(val) => updateKeybindings({ closeTerminalTab: val })}
                                         />
                                     </div>
                                 </Section>

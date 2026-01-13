@@ -21,9 +21,18 @@ process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public');
 
 // Disable GPU Acceleration for Linux/Remote stability
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
-app.disableHardwareAcceleration();
+// Note: Transparency on Linux requires GPU acceleration in many cases.
+// app.commandLine.appendSwitch('disable-gpu');
+// app.commandLine.appendSwitch('disable-software-rasterizer');
+// app.disableHardwareAcceleration();
+
+// Enable Transparency Flags for Linux
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-transparent-visuals');
+  app.commandLine.appendSwitch('disable-gpu'); // Try keeping this disabled for now as it causes flicker on some drivers, but if transparency fails, we might need to enable it.
+  // Actually, for many Linux compositors, we DO need hardware acceleration. 
+  // Let's try re-enabling HW accel by commenting out the disable calls above.
+}
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -60,7 +69,8 @@ if (!gotTheLock) {
       // titleBarOverlay: false,
       width: 1200,
       height: 800,
-      backgroundColor: '#0f172a',
+      transparent: true,
+      backgroundColor: '#00000000',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
       },

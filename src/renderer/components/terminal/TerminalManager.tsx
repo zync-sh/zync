@@ -53,11 +53,50 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
             }
         };
 
+        const handleTriggerCloseTab = (e: any) => {
+            const { connectionId: targetConnId } = e.detail;
+            if (targetConnId === activeConnectionId && activeTabId) {
+                // Call handleCloseTab logic directly. Using synthetic event mock or extracting logic.
+                // Since handleCloseTab expects a MouseEvent, let's extract logic or just mock it.
+                // Refactoring handleCloseTab would be cleaner, but for now we basically replicate the logic or change handleCloseTab signature.
+                // Let's call the setState logic directly here to avoid refactor overhead for now.
+
+                // Kill backend process
+                window.ipcRenderer.send('terminal:kill', { termId: activeTabId });
+
+                setTabs(prev => {
+                    const newTabs = prev.filter(t => t.id !== activeTabId);
+                    // Determine new active tab
+                    if (newTabs.length === 0) {
+                        return newTabs;
+                    }
+                    // If we are closing active tab (which we are), switch to last
+                    return newTabs;
+                });
+
+                // Update active tab ID separately since we need the *next* state of tabs which is hard inside setTabs
+                // Actually setTabs logic for `activeTabId` in handleCloseTab was doing it inside.
+                // Let's implement active ID update:
+                setTabs(prev => {
+                    const newTabs = prev.filter(t => t.id !== activeTabId);
+                    if (newTabs.length === 0) {
+                        setActiveTabId(null);
+                    } else {
+                        // Switch to last available
+                        setActiveTabId(newTabs[newTabs.length - 1].id);
+                    }
+                    return newTabs;
+                });
+            }
+        };
+
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
         window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+        window.addEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         return () => {
             window.removeEventListener('ssh-ui:run-command', handleRunCommand);
             window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+            window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         };
     }, [activeConnectionId, activeTabId]);
 
@@ -100,27 +139,27 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
 
     return (
         <div className="flex flex-col h-full bg-app-bg">
-            {/* Tab Bar */}
-            <div className="flex items-center bg-app-panel border-b border-app-border">
-                <div className="flex-1 flex overflow-x-auto scrollbar-hide">
+            {/* Tab Bar for Terminals */}
+            <div className="flex items-center w-full bg-app-panel border-b border-app-border px-1 h-8 shrink-0 overflow-x-auto scrollbar-hide gap-1">
+                <div className="flex-1 flex overflow-x-auto scrollbar-hide h-full items-center gap-1">
                     {tabs.map(tab => (
                         <div
                             key={tab.id}
                             onClick={() => setActiveTabId(tab.id)}
                             className={cn(
-                                "flex items-center gap-2 px-4 py-2 text-sm border-r border-app-border cursor-pointer min-w-[120px] max-w-[200px] group select-none",
+                                "flex items-center gap-1.5 px-2 py-0.5 h-6 text-[11px] font-medium rounded-sm transition-all cursor-pointer min-w-[80px] max-w-[160px] group select-none shrink-0 border",
                                 activeTabId === tab.id
-                                    ? "bg-app-bg text-app-accent border-t-2 border-t-app-accent"
-                                    : "text-app-muted hover:bg-app-surface hover:text-app-text border-t-2 border-t-transparent"
+                                    ? "bg-app-surface border-app-border/50 text-app-text shadow-sm"
+                                    : "bg-transparent border-transparent text-app-muted hover:bg-app-surface/50 hover:text-app-text"
                             )}
                         >
-                            <TerminalIcon size={14} />
+                            <TerminalIcon size={11} className={cn(activeTabId === tab.id ? "text-app-accent" : "text-app-muted group-hover:text-app-text opacity-70 group-hover:opacity-100")} />
                             <span className="truncate flex-1">{tab.title}</span>
                             <button
                                 onClick={(e) => handleCloseTab(tab.id, e)}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 text-app-muted hover:text-white transition-all"
+                                className="opacity-0 group-hover:opacity-100 hover:bg-app-bg p-0.5 rounded text-app-muted hover:text-red-400 transition-all"
                             >
-                                <X size={12} />
+                                <X size={10} />
                             </button>
                         </div>
                     ))}
@@ -128,10 +167,10 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
 
                 <button
                     onClick={handleNewTab}
-                    className="p-2 text-app-muted hover:text-white hover:bg-app-surface border-l border-app-border transition-colors h-full aspect-square flex items-center justify-center"
+                    className="h-6 w-6 flex items-center justify-center rounded text-app-muted hover:text-white hover:bg-app-surface transition-colors"
                     title="New Terminal Tab"
                 >
-                    <Plus size={16} />
+                    <Plus size={14} />
                 </button>
             </div>
 

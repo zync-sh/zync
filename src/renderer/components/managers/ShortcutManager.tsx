@@ -82,6 +82,15 @@ export function ShortcutManager() {
                     window.dispatchEvent(event);
                 }
             }
+            else if (matchShortcut(e, kb.closeTerminalTab || 'Mod+Shift+W')) {
+                e.preventDefault();
+                if (activeConnectionId) {
+                    const event = new CustomEvent('ssh-ui:close-terminal-tab', {
+                        detail: { connectionId: activeConnectionId }
+                    });
+                    window.dispatchEvent(event);
+                }
+            }
             else if (matchShortcut(e, kb.toggleSettings)) {
                 e.preventDefault();
                 if (isSettingsOpen) closeSettings();

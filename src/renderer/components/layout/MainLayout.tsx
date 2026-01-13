@@ -89,52 +89,56 @@ function TabContent({ tab, isActive }: {
                 </div>
             ) : (
                 <>
-                    {/* Tab Toolbar (View Switcher) */}
-                    <div className="h-10 shrink-0 border-b border-app-border flex items-center px-4 bg-app-panel gap-4">
+                    {/* Slim Tab Toolbar (View Switcher) */}
+                    <div className="h-8 shrink-0 border-b border-app-border flex items-center px-2 bg-app-panel gap-2 select-none overflow-x-auto scrollbar-hide">
                         <button
                             onClick={() => setTabView(tab.id, 'terminal')}
                             className={cn(
-                                "flex items-center gap-2 text-sm px-2 py-1 rounded transition-colors",
-                                tab.view === 'terminal' ? "bg-app-accent/10 text-app-accent" : "text-app-muted hover:text-app-text"
+                                "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded transition-colors h-6 shrink-0 whitespace-nowrap",
+                                tab.view === 'terminal' ? "bg-app-accent/10 text-app-accent font-medium" : "text-app-muted hover:text-app-text hover:bg-app-surface"
                             )}
                         >
-                            <TerminalIcon size={14} /> Terminal
-                        </button>
-                        <button
-                            onClick={() => setTabView(tab.id, 'snippets')}
-                            className={cn(
-                                "flex items-center gap-2 text-sm px-2 py-1 rounded transition-colors",
-                                tab.view === 'snippets' ? "bg-app-accent/10 text-app-accent" : "text-app-muted hover:text-app-text"
-                            )}
-                        >
-                            <Code size={14} /> Snippets
-                        </button>
-                        <button
-                            onClick={() => setTabView(tab.id, 'tunnels')}
-                            className={cn(
-                                "flex items-center gap-2 text-sm px-2 py-1 rounded transition-colors",
-                                tab.view === 'tunnels' ? "bg-app-accent/10 text-app-accent" : "text-app-muted hover:text-app-text"
-                            )}
-                        >
-                            <Network size={14} /> Tunnels
+                            <TerminalIcon size={12} /> Terminal
                         </button>
                         <button
                             onClick={() => setTabView(tab.id, 'files')}
                             className={cn(
-                                "flex items-center gap-2 text-sm px-2 py-1 rounded transition-colors",
-                                tab.view === 'files' ? "bg-app-accent/10 text-app-accent" : "text-app-muted hover:text-app-text"
+                                "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded transition-colors h-6 shrink-0 whitespace-nowrap",
+                                tab.view === 'files' ? "bg-app-accent/10 text-app-accent font-medium" : "text-app-muted hover:text-app-text hover:bg-app-surface"
                             )}
                         >
-                            <Files size={14} /> Files
+                            <Files size={12} /> Files
                         </button>
+                        <button
+                            onClick={() => setTabView(tab.id, 'tunnels')}
+                            className={cn(
+                                "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded transition-colors h-6 shrink-0 whitespace-nowrap",
+                                tab.view === 'tunnels' ? "bg-app-accent/10 text-app-accent font-medium" : "text-app-muted hover:text-app-text hover:bg-app-surface"
+                            )}
+                        >
+                            <Network size={12} /> Tunnels
+                        </button>
+                        <button
+                            onClick={() => setTabView(tab.id, 'snippets')}
+                            className={cn(
+                                "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded transition-colors h-6 shrink-0 whitespace-nowrap",
+                                tab.view === 'snippets' ? "bg-app-accent/10 text-app-accent font-medium" : "text-app-muted hover:text-app-text hover:bg-app-surface"
+                            )}
+                        >
+                            <Code size={12} /> Snippets
+                        </button>
+
+                        {/* Spacer - collapses on small screens */}
+                        <div className="flex-1 min-w-[20px]" />
+
                         <button
                             onClick={() => setTabView(tab.id, 'dashboard')}
                             className={cn(
-                                "flex items-center gap-2 text-sm px-2 py-1 rounded transition-colors",
-                                tab.view === 'dashboard' ? "bg-app-accent/10 text-app-accent" : "text-app-muted hover:text-app-text"
+                                "flex items-center gap-1.5 text-xs px-2 py-0.5 rounded transition-colors h-6 shrink-0 whitespace-nowrap",
+                                tab.view === 'dashboard' ? "bg-app-accent/10 text-app-accent font-medium" : "text-app-muted hover:text-app-text hover:bg-app-surface"
                             )}
                         >
-                            <LayoutDashboard size={14} /> Dashboard
+                            <LayoutDashboard size={12} /> Dashboard
                         </button>
                     </div>
 
@@ -160,9 +164,9 @@ function TabContent({ tab, isActive }: {
                             )}
 
                             {/* 
-                                Terminal View: MUST be kept alive (hidden, not unmounted) to preserve Xterm state/buffer. 
-                                We render it always but control visibility.
-                            */}
+                            Terminal View: MUST be kept alive (hidden, not unmounted) to preserve Xterm state/buffer. 
+                            We render it always but control visibility.
+                        */}
                             <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'terminal' ? "block" : "hidden")}>
                                 <TerminalManager
                                     connectionId={tab.connectionId}
@@ -196,6 +200,8 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);
+    const accentColor = useAppStore(state => state.settings.accentColor);
+
     useEffect(() => {
         // Persist for splash screen
         localStorage.setItem('zync-theme', theme);
@@ -209,7 +215,35 @@ export function MainLayout({ children }: { children: ReactNode }) {
         } else {
             document.body.classList.add(theme);
         }
-    }, [theme]);
+
+        // Apply Custom Accent
+        if (accentColor) {
+            document.body.style.setProperty('--color-app-accent', accentColor);
+        } else {
+            document.body.style.removeProperty('--color-app-accent');
+        }
+
+        // Apply Window Opacity
+        // We need to make the body background transparent to let the window transparency show
+        // But we need the app-bg color to be applied with opacity
+        document.body.style.backgroundColor = 'transparent'; // Let Electron window handle transparency
+
+        // This is a bit tricky. The theme sets --color-app-bg. We want that color but with alpha.
+        // We can't easily modify the variable itself without knowing its value.
+        // However, we can set the root div's background to be the theme color with forced opacity if we use color-mix (modern browsers)
+        // or we rely on the user to pick a theme and we apply opacity to the main container.
+
+    }, [theme, accentColor]);
+
+    // Apply Opacity Dynamic Effect
+    const windowOpacity = useAppStore(state => state.settings.windowOpacity ?? 0.95);
+
+    // We use a style block to override the background color with opacity
+    // Using color-mix to mix with transparent: color-mix(in srgb, var(--color-app-bg), transparent 10%)
+    // 1 - opacity = transparent amount. e.g. 0.9 opacity = 10% transparent.
+    const transparentBgStyle = {
+        backgroundColor: `color-mix(in srgb, var(--color-app-bg) ${windowOpacity * 100}%, transparent)`
+    };
 
     const checkConfig = async () => {
         try {
@@ -227,7 +261,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
     if (isLoading || isLoadingSettings) return <SplashScreen />;
 
     return (
-        <div className={cn("flex h-screen bg-app-bg text-app-text font-sans selection:bg-app-accent/30 overflow-hidden")}>
+        <div
+            className={cn("flex h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden")}
+            style={transparentBgStyle}
+        >
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />
             <ShortcutManager />

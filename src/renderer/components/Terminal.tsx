@@ -161,8 +161,17 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     // Custom Key Handler
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown') {
-        // Handlers removed: Search (Ctrl+F), Copy/Paste (Ctrl+Shift+C/V)
-        // These are now handled globally by ShortcutManager -> Event Dispatch
+        // Smart Copy: Ctrl+C
+        // If text is selected, copy it. Otherwise, allow it to pass (sending SIGINT).
+        if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+          if (term.hasSelection()) {
+            const selection = term.getSelection();
+            navigator.clipboard.writeText(selection);
+            term.clearSelection();
+            return false; // Handled, do not send ^C
+          }
+          // If no selection, return true to let xterm handle it (sends \x03)
+        }
 
         // Zoom In: Ctrl + = or Ctrl + +
         if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
@@ -364,7 +373,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
     termRef.current.options.theme = themeObj;
 
-  }, [settings.theme, connection?.theme, activeConnectionId]);
+  }, [settings.theme, settings.accentColor, connection?.theme, activeConnectionId]);
 
   if (!activeConnectionId) return <div className="p-8 text-gray-400">Please connect to a server first.</div>;
 
