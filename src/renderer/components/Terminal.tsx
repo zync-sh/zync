@@ -21,6 +21,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const initializedRef = useRef(false);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -209,17 +210,21 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     termRef.current = term;
 
     // Spawn shell via IPC
-    window.ipcRenderer
-      .invoke('terminal:spawn', {
-        connectionId: activeConnectionId,
-        termId: sessionId,
-        rows: term.rows,
-        cols: term.cols,
-      })
-      .catch((err) => {
-        console.error('Failed to spawn terminal:', err);
-        term.write(`\r\n\x1b[31mFailed to start terminal session: ${err.message}\x1b[0m\r\n`);
-      });
+    // Guard against double spawning in Strict Mode
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      window.ipcRenderer
+        .invoke('terminal:spawn', {
+          connectionId: activeConnectionId,
+          termId: sessionId,
+          rows: term.rows,
+          cols: term.cols,
+        })
+        .catch((err) => {
+          console.error('Failed to spawn terminal:', err);
+          term.write(`\r\n\x1b[31mFailed to start terminal session: ${err.message}\x1b[0m\r\n`);
+        });
+    }
 
     // Handle data
     term.onData((data) => {

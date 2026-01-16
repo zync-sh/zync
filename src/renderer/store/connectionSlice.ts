@@ -246,6 +246,19 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const conn = state.connections.find(c => c.id === connectionId);
             if (!conn) return state;
 
+            // Check for existing tab for this connection (excluding generic or other views if needed, but here we want main connection tab)
+            // We specifically look for a tab with type 'connection' and matching connectionId
+            // We might also want to check if the view is 'terminal' to be specific, but usually one main tab per connection is desired.
+            const existingTab = state.tabs.find(t => t.connectionId === conn.id && t.type === 'connection' && t.view === 'terminal');
+
+            if (existingTab) {
+                // Auto connect if disconnected even if tab exists (e.g. user clicked to reconnect)
+                if (conn.status === 'disconnected') {
+                    get().connect(conn.id);
+                }
+                return { activeTabId: existingTab.id, activeConnectionId: conn.id };
+            }
+
             const newTab: Tab = {
                 id: crypto.randomUUID(),
                 type: 'connection',

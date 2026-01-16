@@ -1,45 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { TerminalComponent } from '../Terminal';
 import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
-interface TerminalTab {
-    id: string;
-    title: string;
-}
+// TerminalTab interface is now in store/terminalSlice
+// export interface TerminalTab ... removed
 
 export function TerminalManager({ connectionId, isVisible }: { connectionId?: string; isVisible?: boolean }) {
     const globalActiveId = useAppStore(state => state.activeConnectionId);
     const activeConnectionId = connectionId || globalActiveId;
 
-    // We maintain a list of tabs. 
-    // Initial state: One tab.
-    const [tabs, setTabs] = useState<TerminalTab[]>([]);
-    const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    // Zustand Store Hooks
+    const terminalsMap = useAppStore(state => state.terminals);
+    const activeTerminalIdsMap = useAppStore(state => state.activeTerminalIds);
+    const createTerminal = useAppStore(state => state.createTerminal);
+    const ensureTerminal = useAppStore(state => state.ensureTerminal);
+    const closeTerminal = useAppStore(state => state.closeTerminal);
+    const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
+
+
+    // Derived State
+    const tabs = activeConnectionId ? (terminalsMap[activeConnectionId] || []) : [];
+    const activeTabId = activeConnectionId ? (activeTerminalIdsMap[activeConnectionId] || null) : null;
+
 
     // Initialize/Reset when connection changes
     useEffect(() => {
         if (activeConnectionId) {
-            const initialTabId = `term-${crypto.randomUUID()}`;
-            setTabs([{ id: initialTabId, title: 'Terminal 1' }]);
-            setActiveTabId(initialTabId);
-        } else {
-            setTabs([]);
-            setActiveTabId(null);
+            ensureTerminal(activeConnectionId);
         }
     }, [activeConnectionId]);
 
     const handleNewTab = () => {
-        const newId = `term-${crypto.randomUUID()}`;
-        const newTab = { id: newId, title: `Terminal ${tabs.length + 1}` };
-        setTabs(prev => [...prev, newTab]);
-        setActiveTabId(newId);
+        if (activeConnectionId) {
+            createTerminal(activeConnectionId);
+        }
     };
+
 
     // Event Listener for external commands (Snippets)
     useEffect(() => {
-        const handleRunCommand = (e: any) => { // CustomEvent is generic
+        const handleRunCommand = (e: any) => {
             const { connectionId: targetConnId, command } = e.detail;
             if (targetConnId === activeConnectionId && activeTabId) {
                 window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: command });
@@ -56,37 +58,7 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
         const handleTriggerCloseTab = (e: any) => {
             const { connectionId: targetConnId } = e.detail;
             if (targetConnId === activeConnectionId && activeTabId) {
-                // Call handleCloseTab logic directly. Using synthetic event mock or extracting logic.
-                // Since handleCloseTab expects a MouseEvent, let's extract logic or just mock it.
-                // Refactoring handleCloseTab would be cleaner, but for now we basically replicate the logic or change handleCloseTab signature.
-                // Let's call the setState logic directly here to avoid refactor overhead for now.
-
-                // Kill backend process
-                window.ipcRenderer.send('terminal:kill', { termId: activeTabId });
-
-                setTabs(prev => {
-                    const newTabs = prev.filter(t => t.id !== activeTabId);
-                    // Determine new active tab
-                    if (newTabs.length === 0) {
-                        return newTabs;
-                    }
-                    // If we are closing active tab (which we are), switch to last
-                    return newTabs;
-                });
-
-                // Update active tab ID separately since we need the *next* state of tabs which is hard inside setTabs
-                // Actually setTabs logic for `activeTabId` in handleCloseTab was doing it inside.
-                // Let's implement active ID update:
-                setTabs(prev => {
-                    const newTabs = prev.filter(t => t.id !== activeTabId);
-                    if (newTabs.length === 0) {
-                        setActiveTabId(null);
-                    } else {
-                        // Switch to last available
-                        setActiveTabId(newTabs[newTabs.length - 1].id);
-                    }
-                    return newTabs;
-                });
+                closeTerminal(activeConnectionId, activeTabId);
             }
         };
 
@@ -100,34 +72,14 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
         };
     }, [activeConnectionId, activeTabId]);
 
+
     const handleCloseTab = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-
-        // Kill backend process
-        window.ipcRenderer.send('terminal:kill', { termId: id });
-
-        setTabs(prev => {
-            const newTabs = prev.filter(t => t.id !== id);
-            if (newTabs.length === 0) {
-                // If last tab closed, maybe create a new empty one or just leave empty?
-                // Let's create a new one to mimic standard behavior
-                /* 
-                const newId = `term-${Date.now()}`;
-                setActiveTabId(newId);
-                return [{ id: newId, title: 'Terminal 1' }];
-                */
-                // Or just empty state
-                setActiveTabId(null);
-                return newTabs;
-            }
-
-            // If we closed the active tab, switch to the last one
-            if (id === activeTabId) {
-                setActiveTabId(newTabs[newTabs.length - 1].id);
-            }
-            return newTabs;
-        });
+        if (activeConnectionId) {
+            closeTerminal(activeConnectionId, id);
+        }
     };
+
 
     if (!activeConnectionId) {
         return (
@@ -145,7 +97,8 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
                     {tabs.map(tab => (
                         <div
                             key={tab.id}
-                            onClick={() => setActiveTabId(tab.id)}
+                            onClick={() => activeConnectionId && setActiveTerminal(activeConnectionId, tab.id)}
+
                             className={cn(
                                 "flex items-center gap-1.5 px-2 py-0.5 h-6 text-[11px] font-medium rounded-sm transition-all cursor-pointer min-w-[80px] max-w-[160px] group select-none shrink-0 border",
                                 activeTabId === tab.id

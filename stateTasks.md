@@ -18,7 +18,7 @@ Transform components that fetch and hold global/shared data in local state to us
     - **Actions**: `loadSnippets()` (calls `snippets:getAll`), `addSnippet()`, `updateSnippet()`, `deleteSnippet()` (call `snippets:save`/`delete`). (Completed)
 - [x] **Refactor `SnippetsManager.tsx`**:
     - Remove local `useState` for snippets.
-    - Use `useAppStore` to access and modify snippets.
+    - Use store `snippets` for list and `isLoadingSnippets` for loading state.
     - **Target**: `src/renderer/components/snippets/SnippetsManager.tsx` (Completed)
 
 ### Tunnel Management
