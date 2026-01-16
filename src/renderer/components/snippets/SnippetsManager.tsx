@@ -4,19 +4,22 @@ import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import type { Snippet } from '../../store/useAppStore';
 
-export interface Snippet {
-  id: string;
-  name: string;
-  command: string;
-  category?: string;
-  connectionId?: string;
-}
+// Snippet interface is now imported from store
+// export interface Snippet ... removed
+
 
 export function SnippetsManager({ connectionId }: { connectionId?: string }) {
   const showToast = useAppStore((state) => state.showToast);
   const activeConnectionId = connectionId || useAppStore(state => state.activeConnectionId);
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
+
+  // Zustand State
+  const snippets = useAppStore(state => state.snippets);
+  const addSnippet = useAppStore(state => state.addSnippet);
+  const deleteSnippet = useAppStore(state => state.deleteSnippet);
+  const loadSnippets = useAppStore(state => state.loadSnippets);
+
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -29,14 +32,13 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
 
 
 
-  const loadSnippets = async () => {
-    const list = await window.ipcRenderer.invoke('snippets:getAll');
-    setSnippets(list);
-  };
-
+  // Initial Load
   useEffect(() => {
     loadSnippets();
   }, []); // Only run on mount
+
+
+
 
 
   const handleSave = async () => {
@@ -53,20 +55,20 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
       connectionId: editingSnippet.connectionId
     };
 
-    await window.ipcRenderer.invoke('snippets:save', snippet);
+    await addSnippet(snippet);
     showToast('success', 'Snippet saved');
     setIsModalOpen(false);
     setEditingSnippet({ name: '', command: '', category: '', connectionId: undefined });
-    loadSnippets();
+
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('Delete this snippet?')) return;
 
-    await window.ipcRenderer.invoke('snippets:delete', id);
+    await deleteSnippet(id);
     showToast('success', 'Snippet deleted');
-    loadSnippets();
+
   };
 
   const handleEdit = (snippet: Snippet, e: React.MouseEvent) => {
