@@ -102,6 +102,8 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   // ... existing Drag Drop State ...
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const completeTransfer = useAppStore(state => state.completeTransfer);
+  const failTransfer = useAppStore(state => state.failTransfer);
 
   // Combine store loading and local processing
   const isLoading = loading || isProcessing;
@@ -172,7 +174,18 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
           destinationConnectionId: activeConnectionId,
           destinationPath: destPath, // target path needs filename
           transferId,
-        });
+        })
+          .then(() => {
+            completeTransfer(transferId);
+            showToast('success', `Transfer of ${file.name} complete`);
+            // Refresh if we are viewing the destination
+            if (activeConnectionId) refreshFiles(activeConnectionId);
+          })
+          .catch((error: any) => {
+            console.error('Transfer failed', error);
+            failTransfer(transferId, error.message);
+            showToast('error', `Transfer of ${file.name} failed: ${error.message}`);
+          });
       }
       showToast('info', 'Transfer started in background');
       setClipboard(null);
