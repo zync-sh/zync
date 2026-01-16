@@ -22,14 +22,14 @@ Transform components that fetch and hold global/shared data in local state to us
     - **Target**: `src/renderer/components/snippets/SnippetsManager.tsx` (Completed)
 
 ### Tunnel Management
-- [ ] **Create `tunnelSlice.ts`**:
+- [x] **Create `tunnelSlice.ts`**:
     - **State**: `tunnels: Record<connectionId, TunnelConfig[]>`
     - **Actions**: `loadTunnels(connId)`, `saveTunnel(connId, tunnel)`, `deleteTunnel(tunnelId)`, `toggleTunnel(tunnelId)`.
-    - **Persistence**: Ensure `tunnel:save`, `tunnel:start`, `tunnel:stop` IPC calls are made within actions.
-- [ ] **Refactor `TunnelManager.tsx`**:
+    - **Persistence**: Ensure `tunnel:save`, `tunnel:start`, `tunnel:stop` IPC calls are made within actions. (Completed)
+- [x] **Refactor `TunnelManager.tsx`**:
     - Remove local `useState` for tunnels.
     - Use store to manage tunnel status and list.
-    - **Target**: `src/renderer/components/tunnel/TunnelManager.tsx`
+    - **Target**: `src/renderer/components/tunnel/TunnelManager.tsx` (Completed)
 
 ## 3. Complex Component State (UI Persistence)
 
