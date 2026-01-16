@@ -71,7 +71,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         }
     },
 
-    deleteTunnel: async (id, connectionId) => {
+    deleteTunnel: async (id, _connectionId) => {
         const oldTunnels = get().tunnels;
         const newTunnels = oldTunnels.filter(t => t.id !== id);
         set({ tunnels: newTunnels });
@@ -86,7 +86,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         }
     },
 
-    startTunnel: async (id, connectionId) => {
+    startTunnel: async (id, _connectionId) => {
         try {
             await ipc.invoke('tunnel:start', id);
             // Status update will likely come via IPC event, but we can optimistically set it?
@@ -99,7 +99,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         }
     },
 
-    stopTunnel: async (id, connectionId) => {
+    stopTunnel: async (id, _connectionId) => {
         try {
             await ipc.invoke('tunnel:stop', id);
             get().updateTunnelStatus(id, 'stopped');
