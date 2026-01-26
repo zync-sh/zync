@@ -17,6 +17,7 @@ export interface Connection {
     theme?: string;
     tags?: string[];
     createdAt?: number;
+    isFavorite?: boolean;
 }
 
 export interface Folder {
@@ -67,6 +68,9 @@ export interface ConnectionSlice {
     deleteFolder: (name: string) => void;
     renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
     updateConnectionFolder: (connectionId: string, folderName: string) => void;
+
+    // Favorite Actions
+    toggleFavorite: (connectionId: string) => void;
 
     // Tab Reordering
     reorderTabs: (oldIndex: number, newIndex: number) => void;
@@ -215,9 +219,19 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             }));
         } catch (error) {
             console.error('Connection failed:', error);
-            set(state => ({
-                connections: state.connections.map(c => c.id === id ? { ...c, status: 'error' } : c)
-            }));
+            // Only update to error state if not already in error to prevent loops
+            set(state => {
+                const currentConn = state.connections.find(c => c.id === id);
+                // Avoid setting error if already error (prevents reconnection loops)
+                if (currentConn?.status !== 'error') {
+                    return {
+                        connections: state.connections.map(c =>
+                            c.id === id ? { ...c, status: 'error' } : c
+                        )
+                    };
+                }
+                return state;
+            });
         }
     },
 
@@ -404,6 +418,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const [movedTab] = newTabs.splice(oldIndex, 1);
             newTabs.splice(newIndex, 0, movedTab);
             return { tabs: newTabs };
+        });
+    },
+
+    toggleFavorite: (connectionId) => {
+        set(state => {
+            const newConns = state.connections.map(c =>
+                c.id === connectionId ? { ...c, isFavorite: !c.isFavorite } : c
+            );
+            saveToMain(newConns, state.folders);
+            return { connections: newConns };
         });
     }
 });

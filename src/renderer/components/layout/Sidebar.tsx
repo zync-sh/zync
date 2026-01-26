@@ -365,32 +365,33 @@ export function Sidebar() {
             ref={sidebarRef}
             className={cn(
                 "bg-app-panel/95 backdrop-blur-xl border-r border-app-border/50 flex flex-col h-full shrink-0 relative z-50",
-                // Only use transition when NOT resizing to ensure smooth drag
-                !isResizing && "transition-all duration-300 ease-in-out"
+                // Smooth GPU-accelerated transition for transform, but we also want to animate margin for the sibling
+                // Using a custom cubic-bezier for a more "premium" feel (easeOutQuart-ish)
+                !isResizing ? "transition-all duration-400 ease-[cubic-bezier(0.2,0,0,1)]" : ""
             )}
             style={{
-                width: isCollapsed ? 0 : width,
-                borderRight: isCollapsed ? 'none' : undefined,
-                overflow: 'hidden' // Ensure content doesn't leak during animation
+                width: width,
+                transform: isCollapsed ? `translateX(-${width}px)` : 'translateX(0)',
+                marginRight: isCollapsed ? `-${width}px` : '0px', // Prevent layout shift
+                willChange: isResizing ? 'auto' : 'transform, margin-right, width'
             }}
         >
             {/* Resize Handle */}
-            {!isCollapsed && (
-                <div
-                    className="absolute right-0 top-0 bottom-0 w-1 hover:w-1.5 cursor-col-resize hover:bg-app-accent/50 transition-all z-[100] group"
-                    onMouseDown={startResizing}
-                >
-                    <div className="absolute inset-y-0 right-0 w-4 -z-10" /> {/* Larger hit area */}
-                </div>
-            )}
+            {
+                !isCollapsed && (
+                    <div
+                        className="absolute right-0 top-0 bottom-0 w-1 hover:w-1.5 cursor-col-resize hover:bg-app-accent/50 transition-all z-[100] group"
+                        onMouseDown={startResizing}
+                    >
+                        <div className="absolute inset-y-0 right-0 w-4 -z-10" /> {/* Larger hit area */}
+                    </div>
+                )
+            }
 
-            {/* Content Wrapper - Prevents reflow during collapse */}
+            {/* Content Wrapper */}
             <div
                 style={{ width: width, minWidth: width }}
-                className={cn(
-                    "flex flex-col h-full transition-opacity duration-300",
-                    isCollapsed ? "opacity-0 invisible pointer-events-none" : "opacity-100"
-                )}
+                className="flex flex-col h-full"
             >
                 {/* Header */}
                 <div className={cn(
@@ -873,35 +874,37 @@ export function Sidebar() {
             </Suspense>
 
             {/* Folder Context Menu */}
-            {folderContextMenu && (
-                <ContextMenu
-                    x={folderContextMenu.x}
-                    y={folderContextMenu.y}
-                    onClose={() => setFolderContextMenu(null)}
-                    items={[
-                        {
-                            label: 'Rename Folder',
-                            icon: <Pencil size={14} />,
-                            action: () => {
-                                setFolderToRename(folderContextMenu.folderName);
-                                setIsRenameFolderModalOpen(true);
-                                setFolderContextMenu(null);
-                            }
-                        },
-                        {
-                            label: 'Delete Folder',
-                            icon: <Trash2 size={14} />,
-                            variant: 'danger',
-                            action: () => {
-                                if (confirm(`Delete folder "${folderContextMenu.folderName}"? Connections will be ungrouped.`)) {
-                                    deleteFolder(folderContextMenu.folderName);
+            {
+                folderContextMenu && (
+                    <ContextMenu
+                        x={folderContextMenu.x}
+                        y={folderContextMenu.y}
+                        onClose={() => setFolderContextMenu(null)}
+                        items={[
+                            {
+                                label: 'Rename Folder',
+                                icon: <Pencil size={14} />,
+                                action: () => {
+                                    setFolderToRename(folderContextMenu.folderName);
+                                    setIsRenameFolderModalOpen(true);
+                                    setFolderContextMenu(null);
                                 }
-                                setFolderContextMenu(null);
+                            },
+                            {
+                                label: 'Delete Folder',
+                                icon: <Trash2 size={14} />,
+                                variant: 'danger',
+                                action: () => {
+                                    if (confirm(`Delete folder "${folderContextMenu.folderName}"? Connections will be ungrouped.`)) {
+                                        deleteFolder(folderContextMenu.folderName);
+                                    }
+                                    setFolderContextMenu(null);
+                                }
                             }
-                        }
-                    ]}
-                />
-            )}
+                        ]}
+                    />
+                )
+            }
 
             <RenameFolderModal
                 isOpen={isRenameFolderModalOpen}
@@ -925,7 +928,7 @@ export function Sidebar() {
                     setIsRenameFolderModalOpen(false);
                 }}
             />
-        </div>
+        </div >
     );
 }
 

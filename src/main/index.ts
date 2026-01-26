@@ -63,14 +63,16 @@ if (!gotTheLock) {
     console.log('Loading icon from:', iconPath);
     const icon = nativeImage.createFromPath(iconPath);
 
+    const isMac = process.platform === 'darwin';
+
     win = new BrowserWindow({
       icon: icon,
-      titleBarStyle: 'hidden', // Sleek borderless look
-      // titleBarOverlay: false,
+      titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+      frame: !isMac, // macOS uses titleBarStyle, Windows/Linux need frameless
       width: 1200,
       height: 800,
-      transparent: true,
-      backgroundColor: '#00000000',
+      transparent: !isMac, // Transparent only on non-macOS
+      backgroundColor: isMac ? undefined : '#00000000',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
       },

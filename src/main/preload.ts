@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
   },
 });
 
+
 contextBridge.exposeInMainWorld('electronUtils', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  platform: process.platform,
 });

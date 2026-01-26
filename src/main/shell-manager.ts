@@ -71,11 +71,15 @@ export class SSHShellManager {
         this.streams.set(termId, ptyProcess);
 
         ptyProcess.onData((data) => {
-          win.webContents.send('terminal:data', { termId, data });
+          if (!win.isDestroyed()) {
+            win.webContents.send('terminal:data', { termId, data });
+          }
         });
 
         ptyProcess.onExit(() => {
-          win.webContents.send('terminal:closed', { termId });
+          if (!win.isDestroyed()) {
+            win.webContents.send('terminal:closed', { termId });
+          }
           this.streams.delete(termId);
         });
       } catch (err) {
@@ -97,14 +101,18 @@ export class SSHShellManager {
           this.streams.set(termId, stream);
 
           stream.on('data', (data: any) => {
-            win.webContents.send('terminal:data', {
-              termId,
-              data: data.toString(),
-            });
+            if (!win.isDestroyed()) {
+              win.webContents.send('terminal:data', {
+                termId,
+                data: data.toString(),
+              });
+            }
           });
 
           stream.on('close', () => {
-            win.webContents.send('terminal:closed', { termId });
+            if (!win.isDestroyed()) {
+              win.webContents.send('terminal:closed', { termId });
+            }
             this.streams.delete(termId);
           });
 

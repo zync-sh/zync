@@ -61,7 +61,7 @@ function SortableTab({
             {...listeners}
             onClick={() => onActivate(tab.id)}
             className={cn(
-                "group flex items-center gap-2 px-2.5 py-1.5 h-8 text-sm rounded-md cursor-pointer select-none border border-transparent shrink-0 outline-none",
+                "group flex items-center gap-2 px-2.5 py-1.5 h-8 text-sm rounded-md cursor-pointer select-none border border-transparent shrink-0 outline-none drag-none",
                 isActive
                     ? "bg-app-surface text-app-text shadow-sm font-medium"
                     : "text-app-muted hover:bg-app-surface hover:text-app-text border-transparent"
@@ -205,7 +205,12 @@ export function TabBar() {
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
                 >
-                    <div className="flex items-center gap-2 flex-1 overflow-x-auto no-scrollbar min-w-0 drag-none">
+                    <div
+                        className="flex items-center gap-2 flex-1 overflow-x-auto no-scrollbar min-w-0 h-full"
+                        onDoubleClick={() => {
+                            window.ipcRenderer?.send('window:maximize');
+                        }}
+                    >
                         <SortableContext
                             items={tabs.map(t => t.id)}
                             strategy={horizontalListSortingStrategy}
@@ -249,9 +254,13 @@ export function TabBar() {
                     </DragOverlay>
                 </DndContext>
 
-                <div className="shrink-0 pl-2 border-l border-app-border/20">
-                    <WindowControls />
-                </div>
+                {/* Show custom controls only on non-macOS */}
+                {window.electronUtils?.platform !== 'darwin' && (
+                    <div className="shrink-0 pl-2 border-l border-app-border/20 self-stretch flex flex-col justify-center">
+                        <WindowControls />
+                    </div>
+                )}
+
             </div>
 
             <Modal

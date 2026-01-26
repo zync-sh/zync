@@ -431,6 +431,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
   if (!isConnected) {
     const isConnecting = connection?.status === 'connecting';
+    const hasError = connection?.status === 'error';
+
     return (
       <div className="flex flex-col h-full items-center justify-center p-8 text-app-muted gap-4">
         {isConnecting ? (
@@ -444,10 +446,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
               <Terminal size={24} />
             </div>
             <div className="text-center">
-              <p className="text-sm font-medium text-app-text mb-1">Disconnected</p>
-              <p className="text-xs text-app-muted mb-4 opacity-70">The connection to this terminal was closed.</p>
+              <p className="text-sm font-medium text-app-text mb-1">
+                {hasError ? 'Connection Error' : 'Disconnected'}
+              </p>
+              <p className="text-xs text-app-muted mb-4 opacity-70">
+                {hasError
+                  ? 'Failed to establish connection. Please check credentials and try again.'
+                  : 'The connection to this terminal was closed.'}
+              </p>
               <Button onClick={() => activeConnectionId && connect(activeConnectionId)}>
-                Reconnect
+                {hasError ? 'Retry Connection' : 'Reconnect'}
               </Button>
             </div>
           </div>

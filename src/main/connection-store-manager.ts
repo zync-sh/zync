@@ -12,6 +12,7 @@ export interface StoredConnection {
     lastConnected?: number;
     icon?: string;
     folder?: string;
+    isFavorite?: boolean;
 }
 
 export interface ConnectionStorageSchema {
