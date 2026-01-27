@@ -1,6 +1,7 @@
 import { Network, Play, Plus, Square, Trash2, ArrowRight, Laptop, Server as ServerIcon, Edit2, Zap, ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore, type TunnelConfig } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { cn } from '../../lib/utils';
@@ -13,8 +14,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   const activeConnectionId = connectionId || globalId;
   const showToast = useAppStore((state) => state.showToast);
 
-  // Store Hooks
-  const tunnels = useAppStore(state => state.tunnels);
+  // Store Hooks - Optimized Selectors
+  const tunnels = useAppStore(useShallow(state => state.tunnels[activeConnectionId || ''] || []));
   const isLoadingTunnels = useAppStore(state => state.isLoadingTunnels);
   const loadTunnels = useAppStore(state => state.loadTunnels);
   const saveTunnel = useAppStore(state => state.saveTunnel);
@@ -44,7 +45,10 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       loadTunnels(activeConnectionId);
 
       const handleStatusChange = (_: any, { id, status, error }: any) => {
-        updateTunnelStatus(id, status, error);
+        // Warning: This assumes the event is for the CURRENT connection.
+        // If backends sends events globally, we ideally need connectionId in the event.
+        // For now, updating the active connection's state is consistent with the slice change.
+        updateTunnelStatus(id, activeConnectionId, status, error);
       };
 
       window.ipcRenderer.on('tunnel:status-change', handleStatusChange);

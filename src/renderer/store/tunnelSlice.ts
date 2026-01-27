@@ -16,7 +16,7 @@ export interface TunnelConfig {
 }
 
 export interface TunnelSlice {
-    tunnels: TunnelConfig[];
+    tunnels: Record<string, TunnelConfig[]>;
     isLoadingTunnels: boolean;
 
     // Actions
@@ -25,21 +25,27 @@ export interface TunnelSlice {
     deleteTunnel: (id: string, connectionId: string) => Promise<void>;
     startTunnel: (id: string, connectionId: string) => Promise<void>;
     stopTunnel: (id: string, connectionId: string) => Promise<void>;
-    updateTunnelStatus: (id: string, status: TunnelConfig['status'], error?: string) => void;
+    updateTunnelStatus: (id: string, connectionId: string, status: TunnelConfig['status'], error?: string) => void;
 }
 
 // @ts-ignore
 const ipc = window.ipcRenderer;
 
 export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (set, get) => ({
-    tunnels: [],
+    tunnels: {},
     isLoadingTunnels: false,
 
     loadTunnels: async (connectionId) => {
         set({ isLoadingTunnels: true });
         try {
             const list = await ipc.invoke('tunnel:list', connectionId);
-            set({ tunnels: list || [], isLoadingTunnels: false });
+            set(state => ({
+                tunnels: {
+                    ...state.tunnels,
+                    [connectionId]: list || []
+                },
+                isLoadingTunnels: false
+            }));
         } catch (error) {
             console.error('Failed to load tunnels:', error);
             set({ isLoadingTunnels: false });
@@ -47,62 +53,84 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
     },
 
     saveTunnel: async (tunnel) => {
-        // Optimistic Update
-        const oldTunnels = get().tunnels;
-        const exists = oldTunnels.some(t => t.id === tunnel.id);
+        const connectionId = tunnel.connectionId;
+        const oldList = get().tunnels[connectionId] || [];
+        const exists = oldList.some(t => t.id === tunnel.id);
 
-        let newTunnels;
+        let newList;
         if (exists) {
-            newTunnels = oldTunnels.map(t => t.id === tunnel.id ? tunnel : t);
+            newList = oldList.map(t => t.id === tunnel.id ? tunnel : t);
         } else {
-            newTunnels = [...oldTunnels, tunnel];
+            newList = [...oldList, tunnel];
         }
 
-        set({ tunnels: newTunnels });
+        // Optimistic
+        set(state => ({
+            tunnels: {
+                ...state.tunnels,
+                [connectionId]: newList
+            }
+        }));
 
         try {
             await ipc.invoke('tunnel:save', tunnel);
-            // Optionally reload to ensure consistency
         } catch (error) {
             console.error('Failed to save tunnel:', error);
-            set({ tunnels: oldTunnels }); // Revert
+            // Revert
+            set(state => ({
+                tunnels: {
+                    ...state.tunnels,
+                    [connectionId]: oldList
+                }
+            }));
             get().showToast('error', 'Failed to save tunnel');
             throw error;
         }
     },
 
-    deleteTunnel: async (id, _connectionId) => {
-        const oldTunnels = get().tunnels;
-        const newTunnels = oldTunnels.filter(t => t.id !== id);
-        set({ tunnels: newTunnels });
+    deleteTunnel: async (id, connectionId) => {
+        const oldList = get().tunnels[connectionId] || [];
+        const newList = oldList.filter(t => t.id !== id);
+
+        // Optimistic
+        set(state => ({
+            tunnels: {
+                ...state.tunnels,
+                [connectionId]: newList
+            }
+        }));
 
         try {
             await ipc.invoke('tunnel:delete', id);
         } catch (error) {
             console.error('Failed to delete tunnel:', error);
-            set({ tunnels: oldTunnels }); // Revert
+            // Revert
+            set(state => ({
+                tunnels: {
+                    ...state.tunnels,
+                    [connectionId]: oldList
+                }
+            }));
             get().showToast('error', 'Failed to delete tunnel');
             throw error;
         }
     },
 
-    startTunnel: async (id, _connectionId) => {
+    startTunnel: async (id, connectionId) => {
         try {
             await ipc.invoke('tunnel:start', id);
-            // Status update will likely come via IPC event, but we can optimistically set it?
-            // Better to wait for event or just set it to 'active' if successful.
-            get().updateTunnelStatus(id, 'active');
+            get().updateTunnelStatus(id, connectionId, 'active');
         } catch (error: any) {
             console.error('Failed to start tunnel:', error);
-            get().updateTunnelStatus(id, 'error', error.message);
+            get().updateTunnelStatus(id, connectionId, 'error', error.message);
             throw error;
         }
     },
 
-    stopTunnel: async (id, _connectionId) => {
+    stopTunnel: async (id, connectionId) => {
         try {
             await ipc.invoke('tunnel:stop', id);
-            get().updateTunnelStatus(id, 'stopped');
+            get().updateTunnelStatus(id, connectionId, 'stopped');
         } catch (error: any) {
             console.error('Failed to stop tunnel:', error);
             get().showToast('error', 'Failed to stop tunnel');
@@ -110,9 +138,15 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         }
     },
 
-    updateTunnelStatus: (id, status, error) => {
-        set(state => ({
-            tunnels: state.tunnels.map(t => t.id === id ? { ...t, status, error } : t)
-        }));
+    updateTunnelStatus: (id, connectionId, status, error) => {
+        set(state => {
+            const currentList = state.tunnels[connectionId] || [];
+            return {
+                tunnels: {
+                    ...state.tunnels,
+                    [connectionId]: currentList.map(t => t.id === id ? { ...t, status, error } : t)
+                }
+            };
+        });
     }
 });
