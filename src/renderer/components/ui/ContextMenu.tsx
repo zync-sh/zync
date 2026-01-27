@@ -58,7 +58,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     <div
       ref={ref}
       style={style}
-      className="fixed z-50 w-48 rounded-xl border border-app-border/50 bg-app-panel/95 backdrop-blur-xl shadow-2xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5"
+      className="fixed z-50 w-48 rounded-xl border border-app-border/50 bg-app-panel/95 backdrop-blur-xl shadow-2xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5 context-menu-container"
     >
       <div className="p-1">
         {items.map((item, i) => (

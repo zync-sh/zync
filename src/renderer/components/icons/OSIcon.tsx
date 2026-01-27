@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Server, Database, Monitor, Cloud, Box, HardDrive, Globe, Code, Terminal, Cpu } from 'lucide-react';
 
 interface OSIconProps {
@@ -5,7 +6,7 @@ interface OSIconProps {
     className?: string;
 }
 
-export function OSIcon({ icon, className }: OSIconProps) {
+export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
     // Normalization
     const type = icon?.toLowerCase() || 'server';
 
@@ -54,6 +55,6 @@ export function OSIcon({ icon, className }: OSIconProps) {
 
     const IconComp = IconMap[type] || Server;
     return <IconComp className={className} />;
-}
+});
 
 

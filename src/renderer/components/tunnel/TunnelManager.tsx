@@ -1,32 +1,29 @@
 import { Network, Play, Plus, Square, Trash2, ArrowRight, Laptop, Server as ServerIcon, Edit2, Zap, ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
-import { useToast } from '../../context/ToastContext';
+import { useAppStore, type TunnelConfig } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { cn } from '../../lib/utils';
 
-interface TunnelConfig {
-  id: string;
-  connectionId: string;
-  name: string;
-  type: 'local' | 'remote';
-  localPort: number;
-  remoteHost: string;
-  remotePort: number;
-  bindToAny?: boolean; // NEW: Bind to 0.0.0.0 (Allow LAN access)
-  status: 'active' | 'error' | 'stopped';
-  autoStart?: boolean;
-  error?: string;
-}
+// TunnelConfig interface imported from store in next step
+
 
 export function TunnelManager({ connectionId }: { connectionId?: string }) {
-  const { activeConnectionId: globalId } = useConnections();
+  const globalId = useAppStore(state => state.activeConnectionId);
   const activeConnectionId = connectionId || globalId;
-  const { showToast } = useToast();
+  const showToast = useAppStore((state) => state.showToast);
 
-  const [tunnels, setTunnels] = useState<TunnelConfig[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Store Hooks - Optimized Selectors
+  const tunnels = useAppStore(useShallow(state => state.tunnels[activeConnectionId || ''] || []));
+  const isLoadingTunnels = useAppStore(state => state.isLoadingTunnels);
+  const loadTunnels = useAppStore(state => state.loadTunnels);
+  const saveTunnel = useAppStore(state => state.saveTunnel);
+  const deleteTunnel = useAppStore(state => state.deleteTunnel);
+  const startTunnel = useAppStore(state => state.startTunnel);
+  const stopTunnel = useAppStore(state => state.stopTunnel);
+  const updateTunnelStatus = useAppStore(state => state.updateTunnelStatus);
+
 
   // Form State
   const [isCreating, setIsCreating] = useState(false);
@@ -41,22 +38,17 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     bindToAny: false,
   });
 
-  const loadTunnels = async () => {
-    if (!activeConnectionId) return;
-    try {
-      const list = await window.ipcRenderer.invoke('tunnel:list', activeConnectionId);
-      setTunnels(list);
-    } catch (error) {
-      console.error('Failed to load tunnels', error);
-    }
-  };
+
 
   useEffect(() => {
     if (activeConnectionId) {
-      loadTunnels();
+      loadTunnels(activeConnectionId);
 
       const handleStatusChange = (_: any, { id, status, error }: any) => {
-        setTunnels(prev => prev.map(t => t.id === id ? { ...t, status, error } : t));
+        // Warning: This assumes the event is for the CURRENT connection.
+        // If backends sends events globally, we ideally need connectionId in the event.
+        // For now, updating the active connection's state is consistent with the slice change.
+        updateTunnelStatus(id, activeConnectionId, status, error);
       };
 
       window.ipcRenderer.on('tunnel:status-change', handleStatusChange);
@@ -123,26 +115,26 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       status: 'stopped',
     };
 
-    setLoading(true);
+    // setLoading(true); // Handled by store or optimistic
     try {
-      await window.ipcRenderer.invoke('tunnel:save', config);
+      await saveTunnel(config);
       showToast('success', editingTunnelId ? 'Tunnel updated' : 'Tunnel saved');
       setIsCreating(false);
       setEditingTunnelId(null);
       setNewTunnel({
         name: '',
         type: 'local',
-        localPort: '',
+        localPort: '8080',
         remoteHost: '127.0.0.1',
-        remotePort: '',
+        remotePort: '80',
         autoStart: false,
         bindToAny: false,
       });
-      loadTunnels();
+      // loadTunnels(activeConnectionId); // Optimistic update, no reload needed usually
     } catch (error: any) {
       showToast('error', `Failed to save tunnel: ${error.message}`);
     } finally {
-      setLoading(false);
+      // setLoading(false);
     }
   };
 
@@ -155,29 +147,30 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   };
 
   const handleToggleTunnel = async (tunnel: TunnelConfig) => {
+    if (!activeConnectionId) return;
     try {
       if (tunnel.status === 'active') {
-        await window.ipcRenderer.invoke('tunnel:stop', tunnel.id);
+        await stopTunnel(tunnel.id, activeConnectionId);
         showToast('info', 'Tunnel stopped');
       } else {
-        await window.ipcRenderer.invoke('tunnel:start', tunnel.id);
+        await startTunnel(tunnel.id, activeConnectionId);
         const port = tunnel.type === 'local' ? tunnel.localPort : tunnel.remotePort;
         showToast('success', `Tunnel started on port ${port}`);
       }
-      loadTunnels();
     } catch (error: any) {
+      // Toast handled in slice for errors, or we can handle here if we re-throw
       showToast('error', `Tunnel action failed: ${error.message}`);
     }
   };
 
   const handleDeleteTunnel = async (id: string) => {
+    if (!activeConnectionId) return;
     if (!confirm('Are you sure you want to delete this tunnel?')) return;
     try {
-      await window.ipcRenderer.invoke('tunnel:delete', id);
+      await deleteTunnel(id, activeConnectionId);
       showToast('success', 'Tunnel deleted');
-      loadTunnels();
     } catch (error: any) {
-      showToast('error', `Failed to delete tunnel: ${error.message}`);
+      // Error toast handled in slice
     }
   };
 
@@ -361,7 +354,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                 <Button variant="ghost" size="sm" onClick={() => { setIsCreating(false); setEditingTunnelId(null); }}>
                   Cancel
                 </Button>
-                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white min-w-[80px]" onClick={handleSaveTunnel} isLoading={loading}>
+                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white min-w-[80px]" onClick={handleSaveTunnel} isLoading={isLoadingTunnels}>
                   {editingTunnelId ? 'Update' : 'Save'}
                 </Button>
               </div>

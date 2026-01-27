@@ -1,9 +1,8 @@
 import { useEffect } from 'react';
-import { useConnections } from '../../context/ConnectionContext';
-import { useSettings } from '../../context/SettingsContext';
+import { useAppStore, type Tab } from '../../store/useAppStore';
 
 // Helper to check if event matches "Mod+Shift+T" or "Ctrl+B" etc.
-function matchShortcut(e: KeyboardEvent, shortcut: string): boolean {
+export function matchShortcut(e: KeyboardEvent, shortcut: string): boolean {
     if (!shortcut) return false;
     const parts = shortcut.toLowerCase().split('+');
     const key = parts[parts.length - 1];
@@ -34,8 +33,21 @@ function matchShortcut(e: KeyboardEvent, shortcut: string): boolean {
 }
 
 export function ShortcutManager() {
-    const { openTab, activeTabId, closeTab, openAddConnectionModal, activeConnectionId, tabs, activateTab } = useConnections();
-    const { openSettings, isSettingsOpen, closeSettings, updateSettings, settings } = useSettings();
+    const openTab = useAppStore(state => state.openTab);
+    const activeTabId = useAppStore(state => state.activeTabId);
+    // const closeTab = useAppStore(state => state.closeTab); // Removed to avoid conflict with TabBar
+    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const activeConnectionId = useAppStore(state => state.activeConnectionId);
+    const tabs = useAppStore(state => state.tabs);
+    const activateTab = useAppStore(state => state.activateTab);
+
+    const openSettings = useAppStore(state => state.openSettings);
+    const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
+    const closeSettings = useAppStore(state => state.closeSettings);
+    const updateSettings = useAppStore(state => state.updateSettings);
+    const settings = useAppStore(state => state.settings);
+
+    const openAddConnectionModal = () => setAddConnectionModalOpen(true);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -70,15 +82,21 @@ export function ShortcutManager() {
                     window.dispatchEvent(event);
                 }
             }
+            else if (matchShortcut(e, kb.closeTerminalTab || 'Mod+Shift+W')) {
+                e.preventDefault();
+                if (activeConnectionId) {
+                    const event = new CustomEvent('ssh-ui:close-terminal-tab', {
+                        detail: { connectionId: activeConnectionId }
+                    });
+                    window.dispatchEvent(event);
+                }
+            }
             else if (matchShortcut(e, kb.toggleSettings)) {
                 e.preventDefault();
                 if (isSettingsOpen) closeSettings();
                 else openSettings();
             }
-            else if (matchShortcut(e, kb.closeTab)) {
-                e.preventDefault();
-                if (activeTabId) closeTab(activeTabId);
-            }
+            // closeTab handled in TabBar.tsx to support confirmation modal
             else if (matchShortcut(e, kb.commandPalette || 'Mod+P')) {
                 e.preventDefault();
                 window.dispatchEvent(new CustomEvent('ssh-ui:toggle-command-palette'));
@@ -87,7 +105,7 @@ export function ShortcutManager() {
                 e.preventDefault();
                 e.stopPropagation(); // Stop propagation to prevent browser/electron defaults
                 if (tabs.length > 1) {
-                    const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+                    const currentIndex = tabs.findIndex((t: Tab) => t.id === activeTabId);
                     if (currentIndex !== -1) {
                         const nextIndex = (currentIndex + 1) % tabs.length;
                         activateTab(tabs[nextIndex].id);
@@ -98,7 +116,7 @@ export function ShortcutManager() {
                 e.preventDefault();
                 e.stopPropagation();
                 if (tabs.length > 1) {
-                    const currentIndex = tabs.findIndex(t => t.id === activeTabId);
+                    const currentIndex = tabs.findIndex((t: Tab) => t.id === activeTabId);
                     if (currentIndex !== -1) {
                         const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
                         activateTab(tabs[prevIndex].id);
@@ -143,7 +161,7 @@ export function ShortcutManager() {
 
         window.addEventListener('keydown', handleKeyDown, { capture: true });
         return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-    }, [openTab, closeTab, activeTabId, activeConnectionId, isSettingsOpen, openSettings, closeSettings, openAddConnectionModal, settings.sidebarCollapsed, settings.keybindings, updateSettings, tabs, activateTab]);
+    }, [openTab, activeTabId, activeConnectionId, isSettingsOpen, openSettings, closeSettings, setAddConnectionModalOpen, settings.sidebarCollapsed, settings.keybindings, updateSettings, tabs, activateTab]);
 
     return null;
 }

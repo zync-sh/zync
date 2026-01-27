@@ -1,8 +1,9 @@
 import { Wifi, WifiOff } from 'lucide-react';
-import { useConnections } from '../../context/ConnectionContext';
+import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 export function StatusBar() {
-  const { activeConnectionId, connections } = useConnections();
+  const activeConnectionId = useAppStore(state => state.activeConnectionId);
+  const connections = useAppStore(state => state.connections);
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
 
   return (

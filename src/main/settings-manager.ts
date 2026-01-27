@@ -15,6 +15,8 @@ export interface AppSettings {
   };
   localTerm: {
     windowsShell: string;
+    macShell?: string;
+    linuxShell?: string;
   };
   keybindings: {
     toggleSidebar: string;
@@ -61,6 +63,8 @@ const defaultSettings: AppSettings = {
   },
   localTerm: {
     windowsShell: 'default',
+    macShell: 'default',
+    linuxShell: 'default',
   },
   keybindings: {
     toggleSidebar: 'Mod+B',
@@ -120,7 +124,11 @@ class SettingsManager {
 
   setSettings(settings: Partial<AppSettings>) {
     for (const [key, value] of Object.entries(settings)) {
-      this.store.set(key as any, value);
+      if (value === undefined) {
+        this.store.delete(key as any);
+      } else {
+        this.store.set(key as any, value);
+      }
     }
   }
 

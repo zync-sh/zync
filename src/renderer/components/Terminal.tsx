@@ -4,13 +4,36 @@ import { FitAddon } from 'xterm-addon-fit';
 import { SearchAddon } from 'xterm-addon-search';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
-import { useConnections } from '../context/ConnectionContext';
-import { useSettings } from '../context/SettingsContext';
+import { useAppStore, Connection } from '../store/useAppStore';
 import { Search, ArrowUp, ArrowDown, X, Copy, Clipboard as ClipboardIcon, Trash2, Scissors } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { ContextMenu } from './ui/ContextMenu';
 import { Button } from './ui/Button';
 import { Terminal } from 'lucide-react';
+
+// Module-level cache to preserve xterm instances across component remounts
+// This ensures terminal history is maintained during tab reordering
+interface TerminalCache {
+  term: XTerm;
+  fitAddon: FitAddon;
+  searchAddon: SearchAddon;
+  spawned: boolean;
+  dataHandler?: (event: any, payload: { termId: string; data: string }) => void;
+}
+const terminalCache = new Map<string, TerminalCache>();
+
+// Export for cleanup from terminalSlice when terminal is explicitly closed
+export function destroyTerminalInstance(termId: string) {
+  const cached = terminalCache.get(termId);
+  if (cached) {
+    // Remove the IPC listener if it exists
+    if (cached.dataHandler) {
+      window.ipcRenderer.off('terminal:data', cached.dataHandler);
+    }
+    cached.term.dispose();
+    terminalCache.delete(termId);
+  }
+}
 
 export function TerminalComponent({ connectionId, termId, isVisible }: { connectionId?: string; termId?: string; isVisible?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,13 +64,22 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     termRef.current?.focus();
   }, []);
 
-  const { activeConnectionId: globalActiveId, connections, connect } = useConnections();
-  const { settings, updateTerminalSettings } = useSettings();
+  const globalActiveId = useAppStore(state => state.activeConnectionId);
+  const connections = useAppStore(state => state.connections);
+  const connect = useAppStore(state => state.connect);
+  const settings = useAppStore(state => state.settings);
+  const updateSettings = useAppStore(state => state.updateSettings);
+
+  // Helper for terminal settings update if needed, though usually we update global settings
+  const updateTerminalSettings = (newSettings: Partial<typeof settings.terminal>) => {
+    updateSettings({ terminal: { ...settings.terminal, ...newSettings } });
+  };
+
   const activeConnectionId = connectionId || globalActiveId;
 
   // Find connection status
   const isLocal = activeConnectionId === 'local';
-  const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
+  const connection = !isLocal ? connections.find((c: Connection) => c.id === activeConnectionId) : null;
   const isConnected = isLocal || connection?.status === 'connected';
 
   // Use termId if provided, otherwise fallback to connectionId
@@ -97,91 +129,121 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   useEffect(() => {
     if (!containerRef.current || !activeConnectionId || !sessionId || !isConnected) return;
 
-    // Initialize Xterm with settings
-    const computedStyle = getComputedStyle(document.body);
-    const appBg = computedStyle.getPropertyValue('--color-app-bg').trim();
-    const appText = computedStyle.getPropertyValue('--color-app-text').trim();
-    const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
+    let term: XTerm;
+    let fitAddon: FitAddon;
+    let searchAddon: SearchAddon;
+    let isNewTerminal = false;
 
-    const term = new XTerm({
-      cursorBlink: true,
-      fontSize: settings.terminal.fontSize,
-      fontFamily: settings.terminal.fontFamily,
-      cursorStyle: settings.terminal.cursorStyle,
-      lineHeight: settings.terminal.lineHeight,
-      allowProposedApi: true,
-      theme: {
-        background: appBg || '#0f111a',
-        foreground: appText || '#e2e8f0',
-        cursor: appAccent || '#6366f1',
-        selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
-        black: '#000000',
-        red: '#ef4444',
-        green: '#10b981',
-        yellow: '#f59e0b',
-        blue: '#3b82f6',
-        magenta: '#d946ef',
-        cyan: '#06b6d4',
-        white: '#ffffff',
-        brightBlack: '#64748b',
-        brightRed: '#fca5a5',
-        brightGreen: '#86efac',
-        brightYellow: '#fcd34d',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#f0abfc',
-        brightCyan: '#67e8f9',
-        brightWhite: '#f8fafc',
-      },
-    });
+    // Check if we have a cached terminal instance
+    const cached = terminalCache.get(sessionId);
+    if (cached) {
+      // Reuse existing terminal - preserves history!
+      term = cached.term;
+      fitAddon = cached.fitAddon;
+      searchAddon = cached.searchAddon;
 
-    // Initialize Addons
-    const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
-    const searchAddon = new SearchAddon();
+      // Re-open in new container (reattaches to DOM)
+      if (containerRef.current && term.element && !containerRef.current.contains(term.element)) {
+        term.open(containerRef.current);
+      }
+    } else {
+      // Create new terminal instance
+      isNewTerminal = true;
 
-    term.loadAddon(fitAddon);
-    term.loadAddon(webLinksAddon);
-    term.loadAddon(searchAddon);
+      const computedStyle = getComputedStyle(document.body);
+      const appBg = computedStyle.getPropertyValue('--color-app-bg').trim();
+      const appText = computedStyle.getPropertyValue('--color-app-text').trim();
+      const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
+
+      term = new XTerm({
+        cursorBlink: true,
+        fontSize: settings.terminal.fontSize,
+        fontFamily: settings.terminal.fontFamily,
+        cursorStyle: settings.terminal.cursorStyle,
+        lineHeight: settings.terminal.lineHeight,
+        allowProposedApi: true,
+        theme: {
+          background: appBg || '#0f111a',
+          foreground: appText || '#e2e8f0',
+          cursor: appAccent || '#6366f1',
+          selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
+          black: '#000000',
+          red: '#ef4444',
+          green: '#10b981',
+          yellow: '#f59e0b',
+          blue: '#3b82f6',
+          magenta: '#d946ef',
+          cyan: '#06b6d4',
+          white: '#ffffff',
+          brightBlack: '#64748b',
+          brightRed: '#fca5a5',
+          brightGreen: '#86efac',
+          brightYellow: '#fcd34d',
+          brightBlue: '#93c5fd',
+          brightMagenta: '#f0abfc',
+          brightCyan: '#67e8f9',
+          brightWhite: '#f8fafc',
+        },
+      });
+
+      // Initialize Addons
+      fitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon();
+      searchAddon = new SearchAddon();
+
+      term.loadAddon(fitAddon);
+      term.loadAddon(webLinksAddon);
+      term.loadAddon(searchAddon);
+
+      term.open(containerRef.current);
+
+      // Custom Key Handler
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown') {
+          // Smart Copy: Ctrl+C
+          if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+            if (term.hasSelection()) {
+              const selection = term.getSelection();
+              navigator.clipboard.writeText(selection);
+              term.clearSelection();
+              return false;
+            }
+          }
+
+          // Zoom In: Ctrl + = or Ctrl + +
+          if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+            e.preventDefault();
+            const currentSize = settings.terminal.fontSize;
+            updateTerminalSettings({ fontSize: Math.min(currentSize + 1, 32) });
+            return false;
+          }
+
+          // Zoom Out: Ctrl + -
+          if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+            e.preventDefault();
+            const currentSize = settings.terminal.fontSize;
+            updateTerminalSettings({ fontSize: Math.max(currentSize - 1, 8) });
+            return false;
+          }
+
+          if (e.key === 'Escape') {
+            if (isSearchOpen) {
+              setIsSearchOpen(false);
+              term.focus();
+              return false;
+            }
+          }
+        }
+        return true;
+      });
+
+      // Store in cache
+      terminalCache.set(sessionId, { term, fitAddon, searchAddon, spawned: false });
+    }
 
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
-
-    term.open(containerRef.current);
-
-    // Clipboard handlers removed (now handled globally or inline in context menu)
-
-    // Custom Key Handler
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type === 'keydown') {
-        // Handlers removed: Search (Ctrl+F), Copy/Paste (Ctrl+Shift+C/V)
-        // These are now handled globally by ShortcutManager -> Event Dispatch
-
-        // Zoom In: Ctrl + = or Ctrl + +
-        if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
-          e.preventDefault();
-          const currentSize = settings.terminal.fontSize;
-          updateTerminalSettings({ fontSize: Math.min(currentSize + 1, 32) });
-          return false;
-        }
-
-        // Zoom Out: Ctrl + -
-        if ((e.ctrlKey || e.metaKey) && e.key === '-') {
-          e.preventDefault();
-          const currentSize = settings.terminal.fontSize;
-          updateTerminalSettings({ fontSize: Math.max(currentSize - 1, 8) });
-          return false;
-        }
-
-        if (e.key === 'Escape') {
-          if (isSearchOpen) {
-            setIsSearchOpen(false);
-            term.focus();
-            return false;
-          }
-        }
-      }
-      return true;
-    });
+    termRef.current = term;
 
     try {
       fitAddon.fit();
@@ -189,43 +251,49 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       console.warn('Failed to fit terminal', e);
     }
 
-    termRef.current = term;
+    // Spawn shell via IPC - only for new terminals that haven't been spawned yet
+    const cachedEntry = terminalCache.get(sessionId);
+    if (cachedEntry && !cachedEntry.spawned) {
+      cachedEntry.spawned = true;
+      window.ipcRenderer
+        .invoke('terminal:spawn', {
+          connectionId: activeConnectionId,
+          termId: sessionId,
+          rows: term.rows,
+          cols: term.cols,
+        })
+        .catch((err) => {
+          console.error('Failed to spawn terminal:', err);
+          term.write(`\r\n\x1b[31mFailed to start terminal session: ${err.message}\x1b[0m\r\n`);
+        });
+    }
 
-    // Spawn shell via IPC
-    window.ipcRenderer
-      .invoke('terminal:spawn', {
-        connectionId: activeConnectionId,
-        termId: sessionId,
-        rows: term.rows,
-        cols: term.cols,
-      })
-      .catch((err) => {
-        console.error('Failed to spawn terminal:', err);
-        term.write(`\r\n\x1b[31mFailed to start terminal session: ${err.message}\x1b[0m\r\n`);
+    // Handle data from user input - only set up for new terminals
+    if (isNewTerminal) {
+      term.onData((data) => {
+        window.ipcRenderer.send('terminal:write', { termId: sessionId, data });
       });
+    }
 
-    // Handle data
-    term.onData((data) => {
-      window.ipcRenderer.send('terminal:write', { termId: sessionId, data });
-    });
-
-    // Define the listener
-    const handleTerminalData = (_: any, { termId: incomingTermId, data }: { termId: string; data: string }) => {
-      if (incomingTermId === sessionId) {
-        term.write(data);
-      }
-    };
-
-    window.ipcRenderer.on('terminal:data', handleTerminalData);
+    // Set up IPC listener for incoming terminal data - only once per terminal
+    const cachedForListener = terminalCache.get(sessionId);
+    if (cachedForListener && !cachedForListener.dataHandler) {
+      // Create and store the handler so we only have one per terminal
+      const handleTerminalData = (_: any, { termId: incomingTermId, data }: { termId: string; data: string }) => {
+        if (incomingTermId === sessionId) {
+          term.write(data);
+        }
+      };
+      cachedForListener.dataHandler = handleTerminalData;
+      window.ipcRenderer.on('terminal:data', handleTerminalData);
+    }
 
     const resizeObserver = new ResizeObserver(() => {
       try {
         requestAnimationFrame(() => {
           if (!term.element || !containerRef.current) return;
 
-          // CRITICAL FIX: Prevent resizing if dimensions are invalid/hidden (0x0).
-          // This happens when tabs are switched (display: none).
-          // If we allow fit() here, cols/rows become 1 or 2, causing massive wrapping issues.
+          // Prevent resizing if dimensions are invalid/hidden (0x0)
           if (containerRef.current.clientWidth === 0 || containerRef.current.clientHeight === 0) return;
 
           fitAddon.fit();
@@ -245,9 +313,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     }
 
     return () => {
-      window.ipcRenderer.off('terminal:data', handleTerminalData);
+      // NOTE: We do NOT remove the IPC listener here - it's stored in the cache
+      // and will be cleaned up when destroyTerminalInstance() is called.
+      // This prevents duplicate listeners when the component remounts.
       resizeObserver.disconnect();
-      term.dispose();
+
+      // NOTE: We do NOT dispose the terminal here!
+      // The terminal instance stays in cache to preserve history.
+      // It will only be disposed when destroyTerminalInstance() is called
+      // from terminalSlice.closeTerminal()
+
       termRef.current = null;
       fitAddonRef.current = null;
       searchAddonRef.current = null;
@@ -256,11 +331,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     activeConnectionId,
     sessionId,
     isConnected,
-    settings.terminal.cursorStyle,
-    settings.terminal.fontFamily,
-    settings.terminal.fontSize,
-    settings.terminal.lineHeight,
-    // settings.theme is handled by the dedicated theme effect to avoid re-creation
+    // Settings dependencies removed to prevent re-spawning on theme/font changes.
   ]);
 
   // Handle Global Shortcuts (Copy, Paste, Find)
@@ -354,12 +425,14 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
     termRef.current.options.theme = themeObj;
 
-  }, [settings.theme, connection?.theme, activeConnectionId]);
+  }, [settings.theme, settings.accentColor, connection?.theme, activeConnectionId]);
 
   if (!activeConnectionId) return <div className="p-8 text-gray-400">Please connect to a server first.</div>;
 
   if (!isConnected) {
     const isConnecting = connection?.status === 'connecting';
+    const hasError = connection?.status === 'error';
+
     return (
       <div className="flex flex-col h-full items-center justify-center p-8 text-app-muted gap-4">
         {isConnecting ? (
@@ -373,10 +446,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
               <Terminal size={24} />
             </div>
             <div className="text-center">
-              <p className="text-sm font-medium text-app-text mb-1">Disconnected</p>
-              <p className="text-xs text-app-muted mb-4 opacity-70">The connection to this terminal was closed.</p>
+              <p className="text-sm font-medium text-app-text mb-1">
+                {hasError ? 'Connection Error' : 'Disconnected'}
+              </p>
+              <p className="text-xs text-app-muted mb-4 opacity-70">
+                {hasError
+                  ? 'Failed to establish connection. Please check credentials and try again.'
+                  : 'The connection to this terminal was closed.'}
+              </p>
               <Button onClick={() => activeConnectionId && connect(activeConnectionId)}>
-                Reconnect
+                {hasError ? 'Retry Connection' : 'Reconnect'}
               </Button>
             </div>
           </div>

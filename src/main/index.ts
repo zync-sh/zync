@@ -21,9 +21,18 @@ process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public');
 
 // Disable GPU Acceleration for Linux/Remote stability
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
-app.disableHardwareAcceleration();
+// Note: Transparency on Linux requires GPU acceleration in many cases.
+// app.commandLine.appendSwitch('disable-gpu');
+// app.commandLine.appendSwitch('disable-software-rasterizer');
+// app.disableHardwareAcceleration();
+
+// Enable Transparency Flags for Linux
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('enable-transparent-visuals');
+  app.commandLine.appendSwitch('disable-gpu'); // Try keeping this disabled for now as it causes flicker on some drivers, but if transparency fails, we might need to enable it.
+  // Actually, for many Linux compositors, we DO need hardware acceleration. 
+  // Let's try re-enabling HW accel by commenting out the disable calls above.
+}
 
 // Single Instance Lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -54,13 +63,16 @@ if (!gotTheLock) {
     console.log('Loading icon from:', iconPath);
     const icon = nativeImage.createFromPath(iconPath);
 
+    const isMac = process.platform === 'darwin';
+
     win = new BrowserWindow({
       icon: icon,
-      titleBarStyle: 'hidden', // Sleek borderless look
-      // titleBarOverlay: false,
+      titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+      frame: !isMac, // macOS uses titleBarStyle, Windows/Linux need frameless
       width: 1200,
       height: 800,
-      backgroundColor: '#0f172a',
+      transparent: !isMac, // Transparent only on non-macOS
+      backgroundColor: isMac ? undefined : '#00000000',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
       },
@@ -112,6 +124,15 @@ if (!gotTheLock) {
     if (process.platform !== 'darwin') {
       app.quit();
       win = null;
+    }
+  });
+
+  app.on('before-quit', () => {
+    try {
+      sshManager.disconnectAll();
+      log.info('Forcefully disconnected all SSH sessions on quit.');
+    } catch (e) {
+      log.error('Error disconnecting sessions on quit:', e);
     }
   });
 

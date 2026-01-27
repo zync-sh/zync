@@ -1,6 +1,6 @@
 {
   "name": "zync",
-  "version": "1.4.1",
+  "version": "1.5.1",
   "description": "A modern, beautiful SSH client for the web generation.",
   "main": "dist-electron/index.js",
   "homepage": "https://github.com/FDgajju/zync",
@@ -31,6 +31,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@types/react-window": "^1.8.8",
     "@uiw/codemirror-theme-github": "^4.25.4",
     "@uiw/react-codemirror": "^4.25.4",
     "clsx": "^2.1.1",
@@ -44,6 +45,8 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-is": "^19.2.3",
+    "react-virtualized-auto-sizer": "^2.0.2",
+    "react-window": "^2.2.5",
     "recharts": "^3.6.0",
     "ssh2": "^1.17.0",
     "ssh2-sftp-client": "^12.0.1",
@@ -53,7 +56,8 @@
     "xterm-addon-fit": "^0.8.0",
     "xterm-addon-search": "^0.13.0",
     "xterm-addon-web-links": "^0.9.0",
-    "xterm-addon-webgl": "^0.16.0"
+    "xterm-addon-webgl": "^0.16.0",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
@@ -67,6 +71,7 @@
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
     "postcss": "^8.5.6",
+    "rollup-plugin-visualizer": "^6.0.5",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.3.0",

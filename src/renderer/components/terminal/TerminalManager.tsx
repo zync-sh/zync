@@ -1,45 +1,49 @@
-import { useState, useEffect } from 'react';
+
+import { useEffect } from 'react';
 import { TerminalComponent } from '../Terminal';
-import { Plus, X, Terminal as TerminalIcon } from 'lucide-react';
+import { useAppStore } from '../../store/useAppStore';
+import { useShallow } from 'zustand/react/shallow';
+import { Terminal as TerminalIcon, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useConnections } from '../../context/ConnectionContext';
 
-interface TerminalTab {
-    id: string;
-    title: string;
-}
+// TerminalTab interface is now in store/terminalSlice
+// export interface TerminalTab ... removed
 
-export function TerminalManager({ connectionId, isVisible }: { connectionId?: string; isVisible?: boolean }) {
-    const { activeConnectionId: globalActiveId } = useConnections();
+export function TerminalManager({ connectionId, isVisible, hideTabs = false }: { connectionId?: string; isVisible?: boolean, hideTabs?: boolean }) {
+    const globalActiveId = useAppStore(state => state.activeConnectionId);
     const activeConnectionId = connectionId || globalActiveId;
 
-    // We maintain a list of tabs. 
-    // Initial state: One tab.
-    const [tabs, setTabs] = useState<TerminalTab[]>([]);
-    const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    // Zustand Store Hooks - Optimized
+    const tabs = useAppStore(useShallow(state => activeConnectionId ? (state.terminals[activeConnectionId] || []) : []));
+    const activeTabId = useAppStore(state => activeConnectionId ? (state.activeTerminalIds[activeConnectionId] || null) : null);
+
+    // Actions (stable)
+    const createTerminal = useAppStore(state => state.createTerminal);
+    const ensureTerminal = useAppStore(state => state.ensureTerminal);
+    const closeTerminal = useAppStore(state => state.closeTerminal);
+    const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
+
+
+    // Derived State - Removed (now selected directly)
+
 
     // Initialize/Reset when connection changes
     useEffect(() => {
         if (activeConnectionId) {
-            const initialTabId = `term-${Date.now()}`;
-            setTabs([{ id: initialTabId, title: 'Terminal 1' }]);
-            setActiveTabId(initialTabId);
-        } else {
-            setTabs([]);
-            setActiveTabId(null);
+            ensureTerminal(activeConnectionId);
         }
     }, [activeConnectionId]);
 
     const handleNewTab = () => {
-        const newId = `term-${Date.now()}`;
-        const newTab = { id: newId, title: `Terminal ${tabs.length + 1}` };
-        setTabs(prev => [...prev, newTab]);
-        setActiveTabId(newId);
+        if (activeConnectionId) {
+            createTerminal(activeConnectionId);
+        }
     };
+
 
     // Event Listener for external commands (Snippets)
     useEffect(() => {
-        const handleRunCommand = (e: any) => { // CustomEvent is generic
+        const handleRunCommand = (e: any) => {
             const { connectionId: targetConnId, command } = e.detail;
             if (targetConnId === activeConnectionId && activeTabId) {
                 window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: command });
@@ -53,42 +57,31 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
             }
         };
 
+        const handleTriggerCloseTab = (e: any) => {
+            const { connectionId: targetConnId } = e.detail;
+            if (targetConnId === activeConnectionId && activeTabId) {
+                closeTerminal(activeConnectionId!, activeTabId as string);
+            }
+        };
+
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
         window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+        window.addEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         return () => {
             window.removeEventListener('ssh-ui:run-command', handleRunCommand);
             window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
+            window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         };
     }, [activeConnectionId, activeTabId]);
 
+
     const handleCloseTab = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-
-        // Kill backend process
-        window.ipcRenderer.send('terminal:kill', { termId: id });
-
-        setTabs(prev => {
-            const newTabs = prev.filter(t => t.id !== id);
-            if (newTabs.length === 0) {
-                // If last tab closed, maybe create a new empty one or just leave empty?
-                // Let's create a new one to mimic standard behavior
-                /* 
-                const newId = `term-${Date.now()}`;
-                setActiveTabId(newId);
-                return [{ id: newId, title: 'Terminal 1' }];
-                */
-                // Or just empty state
-                setActiveTabId(null);
-                return newTabs;
-            }
-
-            // If we closed the active tab, switch to the last one
-            if (id === activeTabId) {
-                setActiveTabId(newTabs[newTabs.length - 1].id);
-            }
-            return newTabs;
-        });
+        if (activeConnectionId) {
+            closeTerminal(activeConnectionId, id);
+        }
     };
+
 
     if (!activeConnectionId) {
         return (
@@ -100,40 +93,43 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
 
     return (
         <div className="flex flex-col h-full bg-app-bg">
-            {/* Tab Bar */}
-            <div className="flex items-center bg-app-panel border-b border-app-border">
-                <div className="flex-1 flex overflow-x-auto scrollbar-hide">
-                    {tabs.map(tab => (
-                        <div
-                            key={tab.id}
-                            onClick={() => setActiveTabId(tab.id)}
-                            className={cn(
-                                "flex items-center gap-2 px-4 py-2 text-sm border-r border-app-border cursor-pointer min-w-[120px] max-w-[200px] group select-none",
-                                activeTabId === tab.id
-                                    ? "bg-app-bg text-app-accent border-t-2 border-t-app-accent"
-                                    : "text-app-muted hover:bg-app-surface hover:text-app-text border-t-2 border-t-transparent"
-                            )}
-                        >
-                            <TerminalIcon size={14} />
-                            <span className="truncate flex-1">{tab.title}</span>
-                            <button
-                                onClick={(e) => handleCloseTab(tab.id, e)}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 text-app-muted hover:text-white transition-all"
-                            >
-                                <X size={12} />
-                            </button>
-                        </div>
-                    ))}
-                </div>
+            {/* Tab Bar for Terminals - Conditionally Hidden */}
+            {!hideTabs && (
+                <div className="flex items-center w-full bg-app-panel border-b border-app-border px-1 h-8 shrink-0 overflow-x-auto scrollbar-hide gap-1">
+                    <div className="flex-1 flex overflow-x-auto scrollbar-hide h-full items-center gap-1">
+                        {tabs.map(tab => (
+                            <div
+                                key={tab.id}
+                                onClick={() => activeConnectionId && setActiveTerminal(activeConnectionId, tab.id)}
 
-                <button
-                    onClick={handleNewTab}
-                    className="p-2 text-app-muted hover:text-white hover:bg-app-surface border-l border-app-border transition-colors h-full aspect-square flex items-center justify-center"
-                    title="New Terminal Tab"
-                >
-                    <Plus size={16} />
-                </button>
-            </div>
+                                className={cn(
+                                    "flex items-center gap-1.5 px-2 py-0.5 h-6 text-[11px] font-medium rounded-sm transition-all cursor-pointer min-w-[80px] max-w-[160px] group select-none shrink-0 border",
+                                    activeTabId === tab.id
+                                        ? "bg-app-surface border-app-border/50 text-app-text shadow-sm"
+                                        : "bg-transparent border-transparent text-app-muted hover:bg-app-surface/50 hover:text-app-text"
+                                )}
+                            >
+                                <TerminalIcon size={11} className={cn(activeTabId === tab.id ? "text-app-accent" : "text-app-muted group-hover:text-app-text opacity-70 group-hover:opacity-100")} />
+                                <span className="truncate flex-1">{tab.title}</span>
+                                <button
+                                    onClick={(e) => handleCloseTab(tab.id, e)}
+                                    className="opacity-0 group-hover:opacity-100 hover:bg-app-bg p-0.5 rounded text-app-muted hover:text-red-400 transition-all"
+                                >
+                                    <X size={10} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    <button
+                        onClick={handleNewTab}
+                        className="h-6 w-6 flex items-center justify-center rounded text-app-muted hover:text-white hover:bg-app-surface transition-colors"
+                        title="New Terminal Tab"
+                    >
+                        <Plus size={14} />
+                    </button>
+                </div>
+            )}
 
             {/* Terminal Content Area */}
             <div className="flex-1 overflow-hidden relative bg-app-bg">
@@ -151,8 +147,6 @@ export function TerminalManager({ connectionId, isVisible }: { connectionId?: st
                         >
                             {/* We keep the component mounted but use CSS visibility to hide it.
                                 This perserves the XTerm state/buffer but stops it from rendering.
-                                Note: 'invisible' is better than display:none for some canvas sizing reasons in xterm potentially,
-                                but display:none is safer for layout. Let's try display:none via 'hidden' class if visibility fails sizing.
                             */}
                             <div className={cn("h-full w-full", activeTabId !== tab.id && "hidden")}>
                                 <TerminalComponent

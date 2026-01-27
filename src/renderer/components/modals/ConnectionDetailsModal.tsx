@@ -1,6 +1,6 @@
 import { Monitor, Calendar, Key, Shield, Server, Box, Code } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
-import { Connection } from '../../context/ConnectionContext';
+import { Connection } from '../../store/useAppStore'; // Updated Import
 import { Modal } from '../ui/Modal';
 import { cn } from '../../lib/utils';
 
@@ -91,7 +91,7 @@ export function ConnectionDetailsModal({ connection, isOpen, onClose }: Connecti
                             <div className="flex gap-2 pt-1 border-t border-app-border/50 mt-2">
                                 <span className="opacity-50 select-none pt-0.5">TAGS:</span>
                                 <div className="flex flex-wrap gap-1.5">
-                                    {connection.tags.map(tag => (
+                                    {connection.tags.map((tag: string) => (
                                         <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-app-surface border border-app-border text-app-text/80">
                                             {tag}
                                         </span>
