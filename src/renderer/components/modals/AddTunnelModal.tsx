@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Server, ArrowRight } from 'lucide-react';
-import { useAppStore, type Connection } from '../../store/useAppStore'; // Updated Import
+import { useConnections } from '../../context/ConnectionContext';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { useToast } from '../../context/ToastContext';
 import { Modal } from '../ui/Modal';
 
 interface AddTunnelModalProps {
@@ -12,8 +13,8 @@ interface AddTunnelModalProps {
 }
 
 export function AddTunnelModal({ isOpen, onClose, initialConnectionId }: AddTunnelModalProps) {
-    const connections = useAppStore(state => state.connections);
-    const showToast = useAppStore((state) => state.showToast);
+    const { connections } = useConnections();
+    const { showToast } = useToast();
 
     // Form State
     const [selectedConnectionId, setSelectedConnectionId] = useState(initialConnectionId || '');
@@ -73,7 +74,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId }: AddTunn
     };
 
     // Filter only valid SSH connections (ignore groups/folders if any, though context returns connections)
-    const validConnections = connections.filter((c: Connection) => c.host);
+    const validConnections = connections.filter(c => c.host);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="Create New Tunnel">
@@ -88,7 +89,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId }: AddTunn
                             className="w-full bg-app-surface/50 border border-app-border rounded-lg pl-3 pr-8 py-2 text-sm text-app-text appearance-none focus:border-app-accent focus:outline-none"
                         >
                             <option value="" disabled>Select a Host...</option>
-                            {validConnections.map((conn: Connection) => (
+                            {validConnections.map(conn => (
                                 <option key={conn.id} value={conn.id}>
                                     {conn.name || conn.host} ({conn.username}@{conn.host})
                                 </option>

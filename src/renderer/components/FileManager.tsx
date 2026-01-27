@@ -11,7 +11,10 @@ import {
   Upload,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { useAppStore, Connection } from '../store/useAppStore';
+import { useConnections } from '../context/ConnectionContext';
+import { useSettings } from '../context/SettingsContext';
+import { useToast } from '../context/ToastContext';
+import { useTransfers } from '../context/TransferContext';
 import { FileEditor } from './FileEditor';
 import { CopyToServerModal } from './file-manager/CopyToServerModal';
 import { FileGrid, getCurrentDragSource } from './file-manager/FileGrid';
@@ -23,39 +26,22 @@ import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 
 export function FileManager({ connectionId }: { connectionId?: string }) {
-  const globalActiveId = useAppStore(state => state.activeConnectionId);
-  const connections = useAppStore(state => state.connections);
-  const connect = useAppStore(state => state.connect);
+  const { activeConnectionId: globalActiveId, connections, connect } = useConnections();
   const activeConnectionId = connectionId || globalActiveId;
-  const addTransfer = useAppStore(state => state.addTransfer);
+  const { addTransfer } = useTransfers();
 
   // Find the actual connection object to check status
   const isLocal = activeConnectionId === 'local';
-  const connection = !isLocal ? connections.find((c: Connection) => c.id === activeConnectionId) : null;
+  const connection = !isLocal ? connections.find((c) => c.id === activeConnectionId) : null;
   // Local is always "connected" for file operations
   const isConnected = isLocal || connection?.status === 'connected';
 
-  const settings = useAppStore(state => state.settings);
-  const showToast = useAppStore((state) => state.showToast);
-
-  // Zustand Store Hooks
-  const filesMap = useAppStore(state => state.files);
-  const currentPathMap = useAppStore(state => state.currentPath);
-  const loadingMap = useAppStore(state => state.isLoading);
-  const loadFiles = useAppStore(state => state.loadFiles);
-  const refreshFiles = useAppStore(state => state.refreshFiles);
-  const createFolder = useAppStore(state => state.createFolder);
-  const renameEntry = useAppStore(state => state.renameEntry);
-  const deleteEntries = useAppStore(state => state.deleteEntries);
-  const uploadAction = useAppStore(state => state.uploadFiles);
-  // const downloadAction = useAppStore(state => state.downloadFiles); // Not implemented fully yet
-
-  // Derived State
-  const files = activeConnectionId ? (filesMap[activeConnectionId] || []) : [];
-  const currentPath = activeConnectionId ? (currentPathMap[activeConnectionId] || '') : '';
-  const homePath = ''; // We can probably store this in the store too or just rely on init? For now kept local or derived.
-  const loading = activeConnectionId ? (loadingMap[activeConnectionId] || false) : false;
-
+  const { settings } = useSettings();
+  const [currentPath, setCurrentPath] = useState(''); // Empty initially
+  const [homePath, setHomePath] = useState(''); // Initial home directory
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const { showToast } = useToast();
+  const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -101,13 +87,6 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
 
   // ... existing Drag Drop State ...
 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const completeTransfer = useAppStore(state => state.completeTransfer);
-  const failTransfer = useAppStore(state => state.failTransfer);
-
-  // Combine store loading and local processing
-  const isLoading = loading || isProcessing;
-
   // --- Copy / Paste Logic ---
   const handleCopy = (cut = false) => {
     if (!activeConnectionId || !contextMenu?.file) return;
@@ -126,7 +105,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
 
     // Same Server Paste
     if (clipboard.connectionId === activeConnectionId) {
-      setIsProcessing(true);
+      setLoading(true);
       try {
         for (const file of clipboard.files) {
           const srcPath = clipboard.path === '/' ? `/${file.name}` : `${clipboard.path}/${file.name}`;
@@ -142,12 +121,12 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
           });
         }
         showToast('success', `${clipboard.op === 'cut' ? 'Move' : 'Paste'} complete`);
-        loadFiles(activeConnectionId, currentPath);
+        loadFiles(currentPath);
         if (clipboard.op === 'cut') setClipboard(null); // Clear clipboard after move
       } catch (error: any) {
         showToast('error', `${clipboard.op === 'cut' ? 'Move' : 'Paste'} failed: ` + error.message);
       } finally {
-        setIsProcessing(false);
+        setLoading(false);
       }
     } else {
       // Different Server Paste (Cross-Server Transfer)
@@ -174,18 +153,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
           destinationConnectionId: activeConnectionId,
           destinationPath: destPath, // target path needs filename
           transferId,
-        })
-          .then(() => {
-            completeTransfer(transferId);
-            showToast('success', `Transfer of ${file.name} complete`);
-            // Refresh if we are viewing the destination
-            if (activeConnectionId) refreshFiles(activeConnectionId);
-          })
-          .catch((error: any) => {
-            console.error('Transfer failed', error);
-            failTransfer(transferId, error.message);
-            showToast('error', `Transfer of ${file.name} failed: ${error.message}`);
-          });
+        });
       }
       showToast('info', 'Transfer started in background');
       setClipboard(null);
@@ -195,48 +163,65 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
 
   const initHomeDirectory = useCallback(async () => {
     if (!activeConnectionId || !isConnected) return;
-
-    // If we already have a path for this connection, just ensure it's loaded
-    // If not, fetch home dir
-    if (!currentPath) {
-      try {
-        const path = await window.ipcRenderer.invoke('sftp:cwd', {
-          id: activeConnectionId,
-        });
-        loadFiles(activeConnectionId, path);
-      } catch (error: any) {
-        if (error.message?.includes('Connection not found')) {
-          useAppStore.getState().disconnect(activeConnectionId);
-          return;
-        }
-        console.error('Failed to get home dir:', error);
-        loadFiles(activeConnectionId, '/');
-      }
-    } else {
-      // Already have a path, maybe refresh?
-      if (files.length === 0) {
-        loadFiles(activeConnectionId, currentPath);
-      }
+    setLoading(true);
+    try {
+      const path = await window.ipcRenderer.invoke('sftp:cwd', {
+        id: activeConnectionId,
+      });
+      setCurrentPath(path);
+      setHomePath(path);
+      loadFiles(path);
+    } catch (error: any) {
+      console.error('Failed to get home dir:', error);
+      setCurrentPath('/');
+      setHomePath('/');
+      loadFiles('/');
     }
-  }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles]);
+  }, [activeConnectionId, isConnected]);
 
   useEffect(() => {
+    // ... (existing useEffect) ...
     if (activeConnectionId && isConnected) {
       initHomeDirectory();
+    } else {
+      setFiles([]);
+      setCurrentPath('');
+      setHomePath('');
     }
   }, [activeConnectionId, isConnected, initHomeDirectory]);
 
-
+  // update loadFiles to not depend on 'loading' state recursion
+  const loadFiles = async (path: string) => {
+    if (!activeConnectionId) return;
+    setLoading(true);
+    try {
+      const entries = await window.ipcRenderer.invoke('sftp:list', {
+        id: activeConnectionId,
+        path,
+      });
+      // ... (mapping logic)
+      const mappedEntries: FileEntry[] = entries.map((e: any) => ({
+        name: e.name,
+        type: e.type,
+        size: e.size,
+        modifyTime: e.modifyTime,
+        accessTime: e.accessTime || 0,
+        rights: e.rights || {},
+        owner: e.owner || 0,
+        group: e.group || 0,
+      }));
+      setFiles(mappedEntries);
+      setCurrentPath(path); // Ensure path is updated
+    } catch (error: any) {
+      console.error('Failed to load files', error);
+      showToast('error', `Failed to load directory: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleNavigate = (pathOrName: string) => {
-    if (!activeConnectionId) return;
-
-    if (pathOrName === '..') {
-      // Use useAppStore navUp or custom logic
-      useAppStore.getState().navigateUp(activeConnectionId);
-      return;
-    }
-
+    // ... (existing logic) ...
     const isPath = pathOrName.startsWith('/');
 
     if (!isPath) {
@@ -251,13 +236,13 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
     if (!isPath) {
       newPath = currentPath === '/' ? `/${pathOrName}` : `${currentPath}/${pathOrName}`;
     }
-    loadFiles(activeConnectionId, newPath);
+    loadFiles(newPath);
   };
 
   const handleOpenFile = async (file: FileEntry) => {
     // ... (existing logic) ...
     if (!activeConnectionId) return;
-    setIsProcessing(true);
+    setLoading(true);
     try {
       const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
       const content = await window.ipcRenderer.invoke('sftp:readFile', {
@@ -269,7 +254,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
     } catch (error: any) {
       showToast('error', `Failed to open file: ${error.message}`);
     } finally {
-      setIsProcessing(false);
+      setLoading(false);
     }
   };
 
@@ -327,17 +312,45 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   // --- Action Handlers (Create, Rename, Upload, Delete, Download) ---
 
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim() || !activeConnectionId) return;
-    await createFolder(activeConnectionId, newFolderName);
-    setIsNewFolderModalOpen(false);
-    setNewFolderName('');
+    // ... (existing logic) ...
+    if (!newFolderName.trim()) return;
+    try {
+      setLoading(true);
+      const path = currentPath === '/' ? `/${newFolderName}` : `${currentPath}/${newFolderName}`;
+      await window.ipcRenderer.invoke('sftp:mkdir', {
+        id: activeConnectionId,
+        path,
+      });
+      showToast('success', `Folder "${newFolderName}" created`);
+      setIsNewFolderModalOpen(false);
+      setNewFolderName('');
+      loadFiles(currentPath);
+    } catch (error: any) {
+      showToast('error', `Failed to create folder: ${error.message}`);
+      setLoading(false);
+    }
   };
 
   const handleRename = async () => {
-    if (!renameNewName.trim() || renameNewName === renameOldName || !activeConnectionId) return;
-    await renameEntry(activeConnectionId, renameOldName, renameNewName);
-    setIsRenameModalOpen(false);
-    setRenameNewName('');
+    // ... (existing logic) ...
+    if (!renameNewName.trim() || renameNewName === renameOldName) return;
+    try {
+      setLoading(true);
+      const oldPath = currentPath === '/' ? `/${renameOldName}` : `${currentPath}/${renameOldName}`;
+      const newPath = currentPath === '/' ? `/${renameNewName}` : `${currentPath}/${renameNewName}`;
+      await window.ipcRenderer.invoke('sftp:rename', {
+        id: activeConnectionId,
+        oldPath,
+        newPath,
+      });
+      showToast('success', `Renamed to "${renameNewName}"`);
+      setIsRenameModalOpen(false);
+      setRenameNewName('');
+      loadFiles(currentPath);
+    } catch (error: any) {
+      showToast('error', `Failed to rename: ${error.message}`);
+      setLoading(false);
+    }
   };
 
   const openRenameModal = (filename: string) => {
@@ -358,19 +371,35 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
   };
 
   const performUpload = async (filePaths: string[]) => {
-    if (!activeConnectionId) return;
-    await uploadAction(activeConnectionId, filePaths);
+    // ... (existing logic) ...
+    setLoading(true);
+    showToast('info', `Uploading ${filePaths.length} file(s)...`);
+    try {
+      for (const localPath of filePaths) {
+        const fileName = localPath.split(/[/\\]/).pop();
+        const remotePath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+        await window.ipcRenderer.invoke('sftp:put', {
+          id: activeConnectionId,
+          localPath,
+          remotePath,
+        });
+      }
+      showToast('success', 'Upload complete');
+      loadFiles(currentPath);
+    } catch (error: any) {
+      showToast('error', `Upload failed: ${error.message}`);
+      setLoading(false);
+    }
   };
 
   const handleDownload = async () => {
-    if (selectedFiles.length === 0 || !activeConnectionId) return;
+    // ... (existing logic) ...
+    if (selectedFiles.length === 0) return;
     try {
       const { filePaths, canceled } = await window.ipcRenderer.invoke('dialog:openDirectory');
       if (canceled || filePaths.length === 0) return;
       const targetDir = filePaths[0];
-
-      // We process download locally in component for now as it involves local FS dialog
-      setIsProcessing(true);
+      setLoading(true);
       showToast('info', `Downloading ${selectedFiles.length} file(s)...`);
       for (const fileName of selectedFiles) {
         const remotePath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
@@ -382,23 +411,37 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
         });
       }
       showToast('success', 'Download complete');
-      setIsProcessing(false);
+      setLoading(false);
     } catch (error: any) {
       showToast('error', `Download failed: ${error.message}`);
-      setIsProcessing(false);
+      setLoading(false);
     }
   };
 
   const handleDelete = async () => {
-    if (selectedFiles.length === 0 || !activeConnectionId) return;
+    // ... (existing logic) ...
+    if (selectedFiles.length === 0) return;
 
     if (settings.fileManager.confirmDelete) {
       if (!confirm(`Are you sure you want to delete ${selectedFiles.length} item(s)?`)) return;
     }
 
-    const paths = selectedFiles.map(name => currentPath === '/' ? `/${name}` : `${currentPath}/${name}`);
-    await deleteEntries(activeConnectionId, paths);
-    setSelectedFiles([]);
+    try {
+      setLoading(true);
+      for (const fileName of selectedFiles) {
+        const remotePath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+        await window.ipcRenderer.invoke('sftp:delete', {
+          id: activeConnectionId,
+          path: remotePath,
+        });
+      }
+      showToast('success', 'Items deleted');
+      setSelectedFiles([]);
+      loadFiles(currentPath);
+    } catch (error: any) {
+      showToast('error', `Delete failed: ${error.message}`);
+      setLoading(false);
+    }
   };
 
   // Drag and Drop
@@ -651,7 +694,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
         currentPath={currentPath}
         homePath={homePath}
         onNavigate={handleNavigate}
-        onRefresh={() => activeConnectionId && refreshFiles(activeConnectionId)}
+        onRefresh={() => loadFiles(currentPath)}
         onUpload={handleUpload}
         onNewFolder={() => setIsNewFolderModalOpen(true)}
         viewMode={viewMode}
@@ -668,7 +711,7 @@ export function FileManager({ connectionId }: { connectionId?: string }) {
           onNavigate={handleNavigate}
           onContextMenu={handleContextMenu}
           viewMode={viewMode}
-          isLoading={isLoading}
+          isLoading={loading}
           connectionId={activeConnectionId}
           currentPath={currentPath}
         />

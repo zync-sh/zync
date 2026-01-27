@@ -10,7 +10,6 @@ declare global {
     };
     electronUtils: {
       getPathForFile(file: File): string;
-      platform: string;
     };
   }
 }

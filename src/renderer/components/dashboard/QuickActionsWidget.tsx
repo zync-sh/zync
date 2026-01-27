@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Play, Terminal, Shield, RefreshCw, Activity, Layers, Server } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
-import { useAppStore } from '../../store/useAppStore';
+import { useConnections } from '../../context/ConnectionContext';
+import { useToast } from '../../context/ToastContext';
 import { Modal } from '../ui/Modal';
 
 interface QuickAction {
@@ -33,8 +34,8 @@ const WINDOWS_ACTIONS: QuickAction[] = [
 ];
 
 export function QuickActionsWidget({ className, connectionId }: { className?: string; connectionId: string }) {
-    const openTab = useAppStore(state => state.openTab);
-    const showToast = useAppStore((state) => state.showToast);
+    const { openTab } = useConnections();
+    const { showToast } = useToast();
     const [running, setRunning] = useState<string | null>(null);
     const [outputModal, setOutputModal] = useState<{ title: string; output: string } | null>(null);
 

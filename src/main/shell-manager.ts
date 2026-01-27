@@ -45,37 +45,6 @@ export class SSHShellManager {
             }
             break;
         }
-      } else if (os.platform() === 'darwin') {
-        // macOS Specific Fallback to fix 'posix_spawnp failed'
-        // Electron apps launched from Finder/Dock often have issues with process.env.SHELL
-        const fs = require('node:fs');
-        const macShell = settings.localTerm?.macShell || 'default';
-
-        if (macShell !== 'default') {
-          shell = macShell;
-        } else {
-          // If process.env.SHELL looks valid, use it. Otherwise find a safe default.
-          const envShell = process.env.SHELL;
-          if (envShell && fs.existsSync(envShell)) {
-            shell = envShell;
-          } else {
-            // Priority list of standard shells
-            const candidates = [
-              '/bin/zsh',        // Default since Catalina
-              '/bin/bash',       // Legacy default
-              '/usr/local/bin/zsh', // Homebrew
-              '/usr/local/bin/bash', // Homebrew
-              '/bin/sh'
-            ];
-
-            for (const candidate of candidates) {
-              if (fs.existsSync(candidate)) {
-                shell = candidate;
-                break;
-              }
-            }
-          }
-        }
       }
 
       // Prepare args if needed (WSL specific)
@@ -90,29 +59,23 @@ export class SSHShellManager {
         }
       }
 
-      const cwd = os.homedir();
-
       try {
         const ptyProcess = spawnPty(shell, args, {
-          name: 'xterm-256color',
+          name: 'xterm-color',
           cols: cols || 80,
           rows: rows || 24,
-          cwd: cwd,
+          cwd: process.env.HOME || process.cwd(),
           env: process.env as any,
         });
 
         this.streams.set(termId, ptyProcess);
 
         ptyProcess.onData((data) => {
-          if (!win.isDestroyed()) {
-            win.webContents.send('terminal:data', { termId, data });
-          }
+          win.webContents.send('terminal:data', { termId, data });
         });
 
         ptyProcess.onExit(() => {
-          if (!win.isDestroyed()) {
-            win.webContents.send('terminal:closed', { termId });
-          }
+          win.webContents.send('terminal:closed', { termId });
           this.streams.delete(termId);
         });
       } catch (err) {
@@ -122,58 +85,27 @@ export class SSHShellManager {
       return;
     }
 
-    const pool = sshManager.getClientPool(connectionId);
-    if (!pool || pool.length === 0) throw new Error('Client not connected');
+    const client = sshManager.getClient(connectionId);
+    if (!client) throw new Error('Client not connected');
 
-    // Helper to spawn on a specific client
-    const spawnOnClient = (client: any): Promise<void> => {
-      return new Promise<void>((resolve, reject) => {
-        client.shell({ term: 'xterm-256color', rows, cols }, (err: any, stream: any) => {
-          if (err) return reject(err);
+    // Allow multiple shells per connection (Channels)
+    client.shell({ term: 'xterm', rows, cols }, (err, stream) => {
+      if (err) throw err;
 
-          this.streams.set(termId, stream);
+      this.streams.set(termId, stream);
 
-          stream.on('data', (data: any) => {
-            if (!win.isDestroyed()) {
-              win.webContents.send('terminal:data', {
-                termId,
-                data: data.toString(),
-              });
-            }
-          });
-
-          stream.on('close', () => {
-            if (!win.isDestroyed()) {
-              win.webContents.send('terminal:closed', { termId });
-            }
-            this.streams.delete(termId);
-          });
-
-          resolve();
+      stream.on('data', (data: any) => {
+        win.webContents.send('terminal:data', {
+          termId,
+          data: data.toString(),
         });
       });
-    };
 
-    // Try last client first, then iterate backwards
-    for (let i = pool.length - 1; i >= 0; i--) {
-      try {
-        await spawnOnClient(pool[i]);
-        return;
-      } catch (err: any) {
-        // console.debug(`[SSH] Spawn failed on client ${i}: ${err.message}. Trying next...`);
-        continue;
-      }
-    }
-
-    // All failed? Add new connection and try once more
-    console.log(`[SSH] Scaling pool for shell spawn ${connectionId} (Active: ${pool.length})...`);
-    try {
-      const newClient = await sshManager.addPoolConnection(connectionId);
-      await spawnOnClient(newClient);
-    } catch (err) {
-      console.error('Failed to spawn shell even after scaling:', err);
-      throw err;
-    }
+      stream.on('close', () => {
+        win.webContents.send('terminal:closed', { termId });
+        this.streams.delete(termId);
+      });
+    });
   }
 
   write(termId: string, data: string) {
@@ -201,7 +133,7 @@ export class SSHShellManager {
       if (typeof stream.kill === 'function') {
         stream.kill(); // PTY
       } else {
-        stream.close(); // SSH - Force Close Channel
+        stream.end(); // SSH
       }
       this.streams.delete(termId);
     }

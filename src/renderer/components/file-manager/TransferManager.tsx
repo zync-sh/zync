@@ -1,14 +1,11 @@
 import { ArrowRight, CheckCircle, Loader2, X, XCircle } from 'lucide-react';
 import { useEffect } from 'react';
-import { useAppStore, Transfer, Connection } from '../../store/useAppStore';
+import { useConnections } from '../../context/ConnectionContext';
+import { useTransfers } from '../../context/TransferContext';
 
 export function TransferManager() {
-  const transfers = useAppStore(state => state.transfers);
-  const removeTransfer = useAppStore(state => state.removeTransfer);
-  const updateTransferProgress = useAppStore(state => state.updateTransferProgress);
-  const cancelTransfer = useAppStore(state => state.cancelTransfer);
-
-  const connections = useAppStore(state => state.connections);
+  const { transfers, removeTransfer, updateTransferProgress, cancelTransfer } = useTransfers();
+  const { connections } = useConnections();
 
   // Listen for progress events
   useEffect(() => {
@@ -31,7 +28,7 @@ export function TransferManager() {
         });
       } else {
         // Fallback: find first pending/transferring transfer
-        const transfer = transfers.find((t: Transfer) => t.status === 'pending' || t.status === 'transferring');
+        const transfer = transfers.find((t) => t.status === 'pending' || t.status === 'transferring');
         if (transfer) {
           updateTransferProgress(transfer.id, {
             transferred: data.transferred,
@@ -50,7 +47,7 @@ export function TransferManager() {
   useEffect(() => {
     const timers: NodeJS.Timeout[] = [];
 
-    transfers.forEach((transfer: Transfer) => {
+    transfers.forEach((transfer) => {
       if (transfer.status === 'completed' || transfer.status === 'failed' || transfer.status === 'cancelled') {
         const timer = setTimeout(() => {
           removeTransfer(transfer.id);
@@ -63,11 +60,11 @@ export function TransferManager() {
   }, [transfers, removeTransfer]);
 
   const activeTransfers = transfers.filter(
-    (t: Transfer) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled',
+    (t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled',
   );
 
   const recentTransfers = transfers
-    .filter((t: Transfer) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled')
+    .filter((t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled')
     .slice(-3);
 
   const formatBytes = (bytes: number): string => {
@@ -79,7 +76,7 @@ export function TransferManager() {
   };
 
   const getConnectionName = (id: string) => {
-    return connections.find((c: Connection) => c.id === id)?.name || 'Unknown';
+    return connections.find((c) => c.id === id)?.name || 'Unknown';
   };
 
   const getFileName = (path: string) => {
@@ -93,7 +90,7 @@ export function TransferManager() {
   return (
     <div className="fixed bottom-4 right-4 w-96 space-y-2 z-50">
       {/* Active Transfers */}
-      {activeTransfers.map((transfer: Transfer) => (
+      {activeTransfers.map((transfer) => (
         <div
           key={transfer.id}
           className="bg-app-panel border border-app-border rounded-lg shadow-xl p-4 backdrop-blur-sm"
@@ -155,7 +152,7 @@ export function TransferManager() {
       ))}
 
       {/* Recent Completed/Failed */}
-      {recentTransfers.map((transfer: Transfer) => (
+      {recentTransfers.map((transfer) => (
         <div
           key={transfer.id}
           className="bg-app-panel border border-app-border rounded-lg shadow-xl p-3 backdrop-blur-sm opacity-90"

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useAppStore, type Connection, type Tab } from '../../store/useAppStore';
+import { useConnections } from '../../context/ConnectionContext';
+import { useToast } from '../../context/ToastContext';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 import { Network, Play, Square, ExternalLink, ArrowRight } from 'lucide-react';
@@ -19,12 +20,8 @@ interface TunnelConfig {
 }
 
 export function GlobalTunnelList() {
-    const connections = useAppStore(state => state.connections);
-    const connect = useAppStore(state => state.connect);
-    const tabs = useAppStore(state => state.tabs);
-    const openTab = useAppStore(state => state.openTab);
-
-    const showToast = useAppStore((state) => state.showToast);
+    const { connections, connect, tabs, openTab } = useConnections();
+    const { showToast } = useToast();
     const [tunnels, setTunnels] = useState<TunnelConfig[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -133,9 +130,9 @@ export function GlobalTunnelList() {
                 ) : (
                     <div className="divide-y divide-app-border/30 border border-app-border rounded-xl bg-app-panel overflow-hidden">
                         {tunnels.map(tunnel => {
-                            const conn = connections.find((c: Connection) => c.id === tunnel.connectionId);
+                            const conn = connections.find(c => c.id === tunnel.connectionId);
                             const isConnected = conn?.status === 'connected';
-                            const hasTab = isConnected && tabs.some((t: Tab) => t.connectionId === conn?.id);
+                            const hasTab = isConnected && tabs.some(t => t.connectionId === conn?.id);
 
                             return (
                                 <div key={tunnel.id} className="p-4 flex items-center justify-between hover:bg-app-surface/30 transition-colors group">
