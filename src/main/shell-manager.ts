@@ -45,6 +45,37 @@ export class SSHShellManager {
             }
             break;
         }
+      } else if (os.platform() === 'darwin') {
+        // macOS Specific Fallback to fix 'posix_spawnp failed'
+        // Electron apps launched from Finder/Dock often have issues with process.env.SHELL
+        const fs = require('node:fs');
+        const macShell = settings.localTerm?.macShell || 'default';
+
+        if (macShell !== 'default') {
+          shell = macShell;
+        } else {
+          // If process.env.SHELL looks valid, use it. Otherwise find a safe default.
+          const envShell = process.env.SHELL;
+          if (envShell && fs.existsSync(envShell)) {
+            shell = envShell;
+          } else {
+            // Priority list of standard shells
+            const candidates = [
+              '/bin/zsh',        // Default since Catalina
+              '/bin/bash',       // Legacy default
+              '/usr/local/bin/zsh', // Homebrew
+              '/usr/local/bin/bash', // Homebrew
+              '/bin/sh'
+            ];
+
+            for (const candidate of candidates) {
+              if (fs.existsSync(candidate)) {
+                shell = candidate;
+                break;
+              }
+            }
+          }
+        }
       }
 
       // Prepare args if needed (WSL specific)
@@ -59,12 +90,14 @@ export class SSHShellManager {
         }
       }
 
+      const cwd = os.homedir();
+
       try {
         const ptyProcess = spawnPty(shell, args, {
           name: 'xterm-256color',
           cols: cols || 80,
           rows: rows || 24,
-          cwd: process.env.HOME || process.cwd(),
+          cwd: cwd,
           env: process.env as any,
         });
 

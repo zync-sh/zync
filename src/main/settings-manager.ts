@@ -15,6 +15,8 @@ export interface AppSettings {
   };
   localTerm: {
     windowsShell: string;
+    macShell?: string;
+    linuxShell?: string;
   };
   keybindings: {
     toggleSidebar: string;
@@ -61,6 +63,8 @@ const defaultSettings: AppSettings = {
   },
   localTerm: {
     windowsShell: 'default',
+    macShell: 'default',
+    linuxShell: 'default',
   },
   keybindings: {
     toggleSidebar: 'Mod+B',
