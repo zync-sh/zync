@@ -30,8 +30,10 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('enable-transparent-visuals');
   app.commandLine.appendSwitch('disable-gpu'); // Try keeping this disabled for now as it causes flicker on some drivers, but if transparency fails, we might need to enable it.
-  // Actually, for many Linux compositors, we DO need hardware acceleration. 
-  // Let's try re-enabling HW accel by commenting out the disable calls above.
+
+  // Set the desktop name to match the .desktop file for icon association
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (app as any).desktopName = 'zync.desktop';
 }
 
 // Single Instance Lock
@@ -180,8 +182,22 @@ if (!gotTheLock) {
 
       // Check for updates after a short delay to ensure window is ready
       setTimeout(() => {
-        log.info('Checking for updates...');
-        autoUpdater.checkForUpdates(); // Just check, don't notify/download yet
+        const config = appConfigManager.getConfig();
+
+        // Configure auto-download behavior:
+        // Toggle ON: Check + Auto-download
+        // Toggle OFF: Check + Notify only
+
+        // MacOS: Always disable auto-download (requires manual update via browser due to signing)
+        if (process.platform === 'darwin') {
+          autoUpdater.autoDownload = false;
+        } else {
+          autoUpdater.autoDownload = config.autoUpdateCheck !== false;
+        }
+
+        // Always check for updates on startup
+        log.info(`Checking for updates (auto-download: ${autoUpdater.autoDownload})...`);
+        autoUpdater.checkForUpdates();
       }, 3000);
     }
   });

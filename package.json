@@ -1,6 +1,6 @@
 {
   "name": "zync",
-  "version": "1.5.2",
+  "version": "1.5.4",
   "description": "A modern, beautiful SSH client for the web generation.",
   "main": "dist-electron/index.js",
   "homepage": "https://github.com/FDgajju/zync",
@@ -45,6 +45,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-is": "^19.2.3",
+    "react-markdown": "^10.1.0",
     "react-virtualized-auto-sizer": "^2.0.2",
     "react-window": "^2.2.5",
     "recharts": "^3.6.0",
@@ -86,31 +87,33 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "tar.gz",
-        "deb"
+        "AppImage"
       ],
-      "icon": "public/icon.png",
+      "icon": "build/icon.png",
       "category": "Development",
       "executableName": "zync",
-      "maintainer": "Gajendra <gajendravmy22@gmail.com>"
+      "maintainer": "Gajendra <gajendravmy22@gmail.com>",
+      "desktop": {
+        "Icon": "zync",
+        "StartupWMClass": "zync"
+      }
     },
     "mac": {
       "target": [
         "zip"
       ],
-      "icon": "public/icon.png",
+      "icon": "build/icon.png",
       "category": "public.app-category.developer-tools"
     },
     "extraResources": [
       {
-        "from": "public/icon.png",
+        "from": "build/icon.png",
         "to": "icon.png"
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "public/icon.png",
+      "icon": "build/icon.png",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {

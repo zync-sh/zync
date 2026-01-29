@@ -7,6 +7,7 @@ export interface AppConfigSchema {
     logPath?: string; // Explicit log path override
     isConfigured: boolean; // For onboarding
     theme?: string; // Cache theme preference
+    autoUpdateCheck: boolean;
 }
 
 class AppConfigManager {
@@ -14,9 +15,9 @@ class AppConfigManager {
 
     constructor() {
         this.store = new Store({
-            name: 'app-config', // app-config.json
             defaults: {
-                isConfigured: false
+                isConfigured: false,
+                autoUpdateCheck: false
             }
         });
     }

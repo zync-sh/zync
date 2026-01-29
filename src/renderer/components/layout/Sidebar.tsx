@@ -164,6 +164,7 @@ export function Sidebar() {
     const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
     const openSettings = useAppStore(state => state.openSettings);
     const closeSettings = useAppStore(state => state.closeSettings);
+    const updateStatus = useAppStore(state => state.updateStatus);
 
     const compactMode = settings.compactMode;
     // const [isAddModalOpen, setIsAddModalOpen] = useState(false); // Moved to context
@@ -624,7 +625,7 @@ export function Sidebar() {
                     <button
                         onClick={openSettings}
                         className={cn(
-                            "flex items-center gap-2.5 w-full px-3 py-2 rounded-lg transition-all duration-150 group",
+                            "flex items-center gap-2.5 w-full px-3 py-2 rounded-lg transition-all duration-150 group relative",
                             "hover:bg-app-surface/50 border border-transparent hover:border-app-border/20",
                         )}
                     >
@@ -635,6 +636,9 @@ export function Sidebar() {
                             <div className="text-sm font-medium text-app-text">Settings</div>
                             <div className="text-[10px] text-app-muted/60 tracking-wide">Preferences</div>
                         </div>
+                        {(updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready') && (
+                            <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-app-accent animate-pulse shadow-[0_0_8px_var(--color-app-accent)]" />
+                        )}
                     </button>
                 </div>
             </div>

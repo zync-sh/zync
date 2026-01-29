@@ -15,6 +15,7 @@ APP_NAME="Zync"
 BIN_DIR="$HOME/.local/bin"
 APP_DIR="$HOME/.local/share/zync"
 DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
 
 # Uninstall Logic
 if [[ "$1" == "--uninstall" ]]; then
@@ -28,6 +29,7 @@ if [[ "$1" == "--uninstall" ]]; then
     
     echo "Removing desktop entry..."
     rm -f "$DESKTOP_DIR/$APP_NAME.desktop"
+    rm -f "$DESKTOP_DIR/zync.desktop"
     
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database "$DESKTOP_DIR"
@@ -36,6 +38,9 @@ if [[ "$1" == "--uninstall" ]]; then
     echo -e "${GREEN}✔ Uninstalled Zync locally!${NC}"
     exit 0
 fi
+
+# Cleanup old desktop entries before install
+rm -f "$DESKTOP_DIR/Zync.desktop"
 
 # 1. Get Version from package.json
 if [ ! -f "package.json" ]; then
@@ -72,30 +77,34 @@ chmod +x "$APP_DIR/Zync.AppImage"
 # Symlink
 ln -sf "$APP_DIR/Zync.AppImage" "$BIN_DIR/zync"
 
-# Copy Icon
-if [ -f "public/icon.png" ]; then
-    cp "public/icon.png" "$APP_DIR/icon.png"
+# Copy Icon to system icon theme
+mkdir -p "$ICON_DIR"
+if [ -f "build/icon.png" ]; then
+    cp "build/icon.png" "$ICON_DIR/zync.png"
+elif [ -f "public/icon.png" ]; then
+    cp "public/icon.png" "$ICON_DIR/zync.png"
 fi
 
 # 4. Desktop Entry
-# Try to find icon
-# Point to the installed icon
-ICON_ABS_PATH="$APP_DIR/icon.png"
-
-cat > "$DESKTOP_DIR/$APP_NAME.desktop" <<EOF
+cat > "$DESKTOP_DIR/zync.desktop" <<EOF
 [Desktop Entry]
-Name=$APP_NAME (Local)
+Name=Zync
 Exec=$APP_DIR/Zync.AppImage --no-sandbox %U
-Icon=$ICON_ABS_PATH
+Icon=zync
 Type=Application
 Categories=Development;Utility;
 Terminal=false
-StartupWMClass=Zync
+StartupWMClass=zync
 EOF
 
 # Update desktop db
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "$DESKTOP_DIR"
+fi
+
+# Update icon cache
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor"
 fi
 
 echo -e "${GREEN}✔ Installed Zync (v$VERSION) locally!${NC}"
