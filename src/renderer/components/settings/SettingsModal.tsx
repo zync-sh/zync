@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight } from 'lucide-react';
-import { ToastContainer } from '../ui/Toast';
+import ReactMarkdown from 'react-markdown';
+import { ToastContainer, showToast } from '../ui/Toast';
 
 
 interface SettingsModalProps {
@@ -25,13 +26,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     // About / Update State
     const [appVersion, setAppVersion] = useState('');
-    const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'not-available' | 'error' | 'downloading'>('idle');
-    const [updateInfo, setUpdateInfo] = useState<any>(null);
+    // Global Update State
+    // Global Update State
+    const updateStatus = useAppStore(state => state.updateStatus);
+    const updateInfo = useAppStore(state => state.updateInfo);
+    const setUpdateStatus = useAppStore(state => state.setUpdateStatus);
+    const setUpdateInfo = useAppStore(state => state.setUpdateInfo);
     const [isAppImage, setIsAppImage] = useState(false);
     const [contributors, setContributors] = useState<any[]>([]);
     const [stars, setStars] = useState<number | null>(null);
     const [showReleaseNotes, setShowReleaseNotes] = useState(false);
     const [releaseNotes, setReleaseNotes] = useState('');
+    const [autoUpdateCheck, setAutoUpdateCheck] = useState(false);
+    const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
     // 3D Tilt State Removed - Moved to TiltLogo component
 
@@ -101,33 +108,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }
     }, [isOpen]);
 
-    // Update Listeners
-    useEffect(() => {
-        const onUpdateStatus = (_: any, status: string) => {
-            if (status === 'Checking for update...') setUpdateStatus('checking');
-            if (status === 'Update not available.') setUpdateStatus('not-available');
-        };
-        const onUpdateAvailable = (_: any, info: any) => {
-            setUpdateStatus('available');
-            setUpdateInfo(info);
-        };
-        const onUpdateProgress = () => {
-            setUpdateStatus('downloading');
-        };
-        const onUpdateError = () => setUpdateStatus('error');
+    // Version comparison helper
+    const isNewer = (v1: string) => {
+        if (!appVersion || !v1) return false;
+        try {
+            const v1Parts = v1.replace('v', '').split('.').map(Number);
+            const appParts = appVersion.replace('v', '').split('.').map(Number);
+            for (let i = 0; i < Math.max(v1Parts.length, appParts.length); i++) {
+                const a = v1Parts[i] || 0;
+                const b = appParts[i] || 0;
+                if (a > b) return true;
+                if (a < b) return false;
+            }
+        } catch (e) { return false; }
+        return false;
+    };
 
-        window.ipcRenderer.on('update:status', onUpdateStatus);
-        window.ipcRenderer.on('update:available', onUpdateAvailable);
-        window.ipcRenderer.on('update:progress', onUpdateProgress);
-        window.ipcRenderer.on('update:error', onUpdateError);
-
-        return () => {
-            window.ipcRenderer.off('update:status', onUpdateStatus);
-            window.ipcRenderer.off('update:available', onUpdateAvailable);
-            window.ipcRenderer.off('update:progress', onUpdateProgress);
-            window.ipcRenderer.off('update:error', onUpdateError);
-        };
-    }, []);
+    // Note: Update listeners moved to UpdateNotification.tsx (Global Store)
 
     // Keyboard Navigation
     useEffect(() => {
@@ -178,9 +175,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const checkForUpdates = async () => {
         setUpdateStatus('checking');
         try {
-            await window.ipcRenderer.invoke('update:check');
+            const result = await window.ipcRenderer.invoke('update:check');
+
+            // Handle result directly in case events fail / dev mode
+            if (result && result.updateInfo && isNewer(result.updateInfo.version)) {
+                setUpdateStatus('available');
+                setUpdateInfo(result.updateInfo);
+                showToast(`Update v${result.updateInfo.version} available!`, 'info');
+            } else {
+                setUpdateStatus('not-available');
+            }
         } catch (e) {
             setUpdateStatus('error');
+            console.error('Update check failed', e);
         }
     };
 
@@ -192,14 +199,24 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         if (updateStatus === 'available') {
             if (canAutoUpdate) {
-                window.ipcRenderer.invoke('update:install');
+                // Fix: Must download first!
+                window.ipcRenderer.invoke('update:download');
+                setUpdateStatus('downloading');
             } else {
                 // Manual Download Fallback
                 window.ipcRenderer.invoke('shell:open', 'https://github.com/FDgajju/zync/releases/latest');
             }
+        } else if (updateStatus === 'ready') {
+            // Install & Restart - Show Confirmation First
+            setShowRestartConfirm(true);
         } else {
             checkForUpdates();
         }
+    };
+
+    const handleConfirmRestart = () => {
+        window.ipcRenderer.invoke('update:install');
+        setShowRestartConfirm(false); // Just in case
     };
 
     // Data Path State
@@ -220,6 +237,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                     setCurrentLogPath(config.logPath || '');
                     setIsDefaultLogPath(!config.logPath);
+
+                    setAutoUpdateCheck(config.autoUpdateCheck !== false);
                 }
             });
         }
@@ -256,11 +275,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         setIsDefaultLogPath(true);
     };
 
+    const handleToggleAutoUpdate = async () => {
+        const newValue = !autoUpdateCheck;
+        setAutoUpdateCheck(newValue);
+        await window.ipcRenderer.invoke('config:set', { autoUpdateCheck: newValue });
+    };
+
     if (!isOpen) return null;
 
     return createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="w-[700px] h-[500px] bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)] shadow-2xl flex overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/5">
+            <div className="relative w-[700px] h-[500px] bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)] shadow-2xl flex overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/5">
 
                 {/* Sidebar */}
                 <div className="w-[180px] flex flex-col border-r border-[var(--color-app-border)]/40 bg-[var(--color-app-surface)]/20 p-2 space-y-0.5">
@@ -275,7 +300,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
 
                     <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
-                        <TabButton active={activeTab === 'about'} onClick={() => handleTabChange('about')} icon={<Info size={15} />} label="About" />
+                        <TabButton
+                            active={activeTab === 'about'}
+                            onClick={() => handleTabChange('about')}
+                            icon={<Info size={15} />}
+                            label="About"
+                            badge={updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready'}
+                        />
                     </div>
                 </div>
 
@@ -296,6 +327,34 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                         {activeTab === 'general' && (
                             <div className="space-y-8 animate-in fade-in duration-300">
+                                <Section title="Application">
+                                    <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-start gap-3">
+                                                <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                    <RefreshCw size={20} />
+                                                </div>
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-[var(--color-app-text)]">Auto-Check for Updates</h4>
+                                                    <p className="text-xs text-[var(--color-app-muted)] mt-1">
+                                                        Automatically check for new versions when Zync starts.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={handleToggleAutoUpdate}
+                                                className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${autoUpdateCheck ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
+                                                    }`}
+                                            >
+                                                <span
+                                                    className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${autoUpdateCheck ? 'translate-x-5' : 'translate-x-0'
+                                                        }`}
+                                                />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Section>
+
                                 <Section title="Data Storage">
                                     <div className="space-y-4">
                                         <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
@@ -774,7 +833,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <span>
                                             {updateStatus === 'idle' && 'Check for Updates'}
                                             {updateStatus === 'checking' && 'Checking...'}
-                                            {updateStatus === 'available' && (canAutoUpdate ? 'Install Update' : 'Download Update')}
+                                            {updateStatus === 'available' && 'Download Update'}
+                                            {updateStatus === 'downloading' && (
+                                                <>
+                                                    <RefreshCw size={14} className="animate-spin" />
+                                                    <span>Downloading...</span>
+                                                </>
+                                            )}
+                                            {updateStatus === 'ready' && 'Install & Restart'}
                                             {updateStatus === 'not-available' && 'Up to date'}
                                             {updateStatus === 'error' && 'Check Failed'}
                                         </span>
@@ -792,9 +858,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                     {/* Release Notes Expandable */}
                                     {showReleaseNotes && (
-                                        <div className="w-full bg-[var(--color-app-surface)]/30 border border-[var(--color-app-border)] rounded-lg p-3 text-xs text-left max-h-40 overflow-y-auto animate-in fade-in slide-in-from-top-2">
-                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] whitespace-pre-wrap font-mono opacity-80">
-                                                {releaseNotes || 'Loading release notes...'}
+                                        <div className="w-full bg-[var(--color-app-surface)]/30 border border-[var(--color-app-border)] rounded-lg p-3 text-xs text-left max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 custom-scrollbar">
+                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] opacity-90 [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h1]:text-sm [&>h2]:text-xs [&>h2]:font-bold [&>h3]:text-xs [&>h3]:font-semibold [&>p]:mb-2 [&>a]:text-[var(--color-app-accent)]">
+                                                {releaseNotes ? <ReactMarkdown>{releaseNotes}</ReactMarkdown> : 'Loading release notes...'}
                                             </div>
                                         </div>
                                     )}
@@ -859,6 +925,34 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         )}
                     </div>
                 </div>
+                {/* Restart Confirmation Overlay */}
+                {showRestartConfirm && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)] shadow-2xl p-6 w-[320px] animate-in zoom-in-95 text-center">
+                            <div className="w-12 h-12 rounded-full bg-[var(--color-app-accent)]/10 text-[var(--color-app-accent)] flex items-center justify-center mx-auto mb-4">
+                                <RefreshCw size={24} />
+                            </div>
+                            <h3 className="text-lg font-bold text-[var(--color-app-text)] mb-2">Ready to Restart?</h3>
+                            <p className="text-xs text-[var(--color-app-muted)] mb-6 leading-relaxed">
+                                Zync will restart to install the update. Any active SSH sessions will be disconnected.
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setShowRestartConfirm(false)}
+                                    className="flex-1 py-2 rounded-lg bg-[var(--color-app-surface)] text-[var(--color-app-text)] text-sm font-medium hover:bg-[var(--color-app-border)] transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirmRestart}
+                                    className="flex-1 py-2 rounded-lg bg-[var(--color-app-accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity shadow-lg shadow-[var(--color-app-accent)]/20"
+                                >
+                                    Restart
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
             <ToastContainer />
         </div>,
@@ -866,11 +960,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     );
 }
 
-function TabButton({ active, onClick, icon, label, dimmed = false }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, dimmed?: boolean }) {
+function TabButton({ active, onClick, icon, label, dimmed = false, badge = false }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, dimmed?: boolean, badge?: boolean }) {
     return (
         <button
             onClick={onClick}
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all ${dimmed ? 'opacity-30 cursor-default' :
+            className={`w-full relative flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all ${dimmed ? 'opacity-30 cursor-default' :
                 active
                     ? 'bg-[var(--color-app-surface)] text-[var(--color-app-text)] font-medium shadow-sm'
                     : 'text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]/50'
@@ -879,6 +973,9 @@ function TabButton({ active, onClick, icon, label, dimmed = false }: { active: b
         >
             {icon}
             <span>{label}</span>
+            {badge && !active && (
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 w-2 h-2 bg-[var(--color-app-accent)] rounded-full animate-pulse shadow-[0_0_8px_var(--color-app-accent)]" />
+            )}
         </button>
     );
 }

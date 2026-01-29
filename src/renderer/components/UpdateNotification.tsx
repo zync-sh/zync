@@ -1,61 +1,92 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Download, AlertTriangle, X, ExternalLink } from 'lucide-react';
 import { Button } from './ui/Button';
+import { useAppStore } from '../store/useAppStore';
 
 export function UpdateNotification() {
-    const [status, setStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'>('idle');
-    const [progress, setProgress] = useState(0);
-    const [error, setError] = useState('');
+    // Global State
+    const status = useAppStore(state => state.updateStatus);
+    const updateInfo = useAppStore(state => state.updateInfo);
+    const progress = useAppStore(state => state.downloadProgress);
+
+    // Actions
+    const setUpdateStatus = useAppStore(state => state.setUpdateStatus);
+    const setUpdateInfo = useAppStore(state => state.setUpdateInfo);
+    const setDownloadProgress = useAppStore(state => state.setDownloadProgress);
+
+    // Local Visibility (can correspond to global status changes)
     const [isVisible, setIsVisible] = useState(false);
-    const [updateInfo, setUpdateInfo] = useState<any>(null);
+    const [error, setError] = useState('');
 
     useEffect(() => {
         const onUpdateAvailable = (_: any, info: any) => {
             console.log('Update available:', info);
             setUpdateInfo(info);
-            setStatus('available');
+            setUpdateStatus('available');
+
+            // Check auto-update preference from main process config? 
+            // Ideally main process handles auto-download if configured.
+            // If main process starts download, we will get 'update:progress' soon.
+            // If not, we show notification.
             setIsVisible(true);
         };
+        const onUpdateStatus = (_: any, status: string) => {
+            // Handle checking/not-available
+            if (status === 'Checking for update...') setUpdateStatus('checking');
+            if (status === 'Update not available.') setUpdateStatus('not-available');
+        };
         const onUpdateProgress = (_: any, p: any) => {
-            setStatus('downloading');
-            setProgress(p.percent);
+            setUpdateStatus('downloading');
+            setDownloadProgress(p.percent);
             setIsVisible(true);
         };
         const onUpdateDownloaded = () => {
-            setStatus('ready');
+            console.log('Update downloaded!');
+            setUpdateStatus('ready');
             setIsVisible(true);
         };
         const onUpdateError = (_: any, message: string) => {
             console.error('Update error:', message);
-            setStatus('error');
+            setUpdateStatus('error');
             setError(message);
             setIsVisible(true);
         };
 
         window.ipcRenderer.on('update:available', onUpdateAvailable);
+        window.ipcRenderer.on('update:status', onUpdateStatus);
         window.ipcRenderer.on('update:progress', onUpdateProgress);
         window.ipcRenderer.on('update:downloaded', onUpdateDownloaded);
         window.ipcRenderer.on('update:error', onUpdateError);
 
         return () => {
             window.ipcRenderer.off('update:available', onUpdateAvailable);
+            window.ipcRenderer.off('update:status', onUpdateStatus);
             window.ipcRenderer.off('update:progress', onUpdateProgress);
             window.ipcRenderer.off('update:downloaded', onUpdateDownloaded);
             window.ipcRenderer.off('update:error', onUpdateError);
         };
     }, []);
 
+    // Auto-hide when idle
+    useEffect(() => {
+        if (status === 'idle' || status === 'not-available') {
+            setIsVisible(false);
+        }
+    }, [status]);
+
     const startDownload = async () => {
         const url = updateInfo?.version
             ? `https://github.com/FDgajju/zync/releases/tag/v${updateInfo.version}`
             : undefined;
 
+        // Optimistic update
+        setUpdateStatus('downloading');
+
         const result = await window.ipcRenderer.invoke('update:download', { url });
 
         if (result?.action === 'browser') {
-            setIsVisible(false); // Close notification if opened in browser (Mac)
-        } else {
-            setStatus('downloading');
+            setIsVisible(false);
+            setUpdateStatus('idle');
         }
     };
 
@@ -67,7 +98,7 @@ export function UpdateNotification() {
         setIsVisible(false);
     };
 
-    if (!isVisible || status === 'idle' || status === 'checking') return null;
+    if (!isVisible || status === 'idle' || status === 'checking' || status === 'not-available') return null;
 
     return (
         <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full animate-in slide-in-from-bottom-5 duration-300">
@@ -94,9 +125,11 @@ export function UpdateNotification() {
                         </div>
 
                         <p className="text-xs text-app-muted mb-3 leading-relaxed">
-                            {status === 'available' && 'A new version of Zync is available. Do you want to download it now?'}
+                            {status === 'available' && (window.electronUtils.platform === 'darwin'
+                                ? 'A new version of Zync is available. Download it manually to update.'
+                                : 'A new version of Zync is available. Do you want to download it now?')}
                             {status === 'downloading' && `${Math.round(progress)}% downloaded. You can keep working while we prepare the update.`}
-                            {status === 'ready' && 'Create a fresh start. Restart Zync to apply the latest features and fixes.'}
+                            {status === 'ready' && 'Totally downloaded. Restart Zync to apply the latest features and fixes.'}
                             {status === 'error' && (error || 'Something went wrong. Please try downloading manually.')}
                         </p>
 
@@ -116,7 +149,7 @@ export function UpdateNotification() {
                                         Later
                                     </Button>
                                     <Button size="sm" onClick={startDownload} className="bg-app-accent hover:bg-app-accent/90 text-white border-0 shadow-lg shadow-app-accent/20">
-                                        Download
+                                        {window.electronUtils.platform === 'darwin' ? 'Download from GitHub' : 'Download'}
                                     </Button>
                                 </>
                             )}

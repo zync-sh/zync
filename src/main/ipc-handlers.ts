@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { sshManager, SSHConfig } from './ssh-manager';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -369,7 +370,6 @@ export function setupIPC() {
   });
   // Auto Update handlers
   ipcMain.handle('update:download', async (_, { url }: { url?: string } = {}) => {
-    const { autoUpdater } = require('electron-updater');
     const { shell } = require('electron');
 
     if (process.platform === 'darwin') {
@@ -378,18 +378,27 @@ export function setupIPC() {
       return { action: 'browser' };
     } else {
       // For Windows/Linux, triggers the 'download-progress' events
-      autoUpdater.downloadUpdate();
+      try {
+        // Ensure we have an update to download
+        await autoUpdater.downloadUpdate();
+      } catch (e: any) {
+        if (e.message.includes('Please check update first')) {
+          console.log('Re-checking for updates before download...');
+          await autoUpdater.checkForUpdates();
+          await autoUpdater.downloadUpdate();
+        } else {
+          throw e;
+        }
+      }
       return { action: 'downloading' };
     }
   });
 
   ipcMain.handle('update:install', () => {
-    const { autoUpdater } = require('electron-updater');
     autoUpdater.quitAndInstall();
   });
 
   ipcMain.handle('update:check', async () => {
-    const { autoUpdater } = require('electron-updater');
     // We can return the result, but the events are already wired in index.ts
     // triggering this will fire the events which the UI listens to.
     const result = await autoUpdater.checkForUpdates();
