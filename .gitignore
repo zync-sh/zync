@@ -8,7 +8,7 @@ dist/
 dist-electron/
 note.txt
 release/
-build/
+# build/
 
 # Local Environment
 .env

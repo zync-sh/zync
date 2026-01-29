@@ -94,8 +94,10 @@
       "executableName": "zync",
       "maintainer": "Gajendra <gajendravmy22@gmail.com>",
       "desktop": {
-        "Icon": "zync",
-        "StartupWMClass": "zync"
+        "entry": {
+          "Icon": "zync",
+          "StartupWMClass": "zync"
+        }
       }
     },
     "mac": {
