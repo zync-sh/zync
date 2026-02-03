@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::time::UNIX_EPOCH;
 
@@ -54,8 +55,16 @@ impl FileSystem {
                 .duration_since(UNIX_EPOCH)?
                 .as_millis() as u64;
 
-            // Unix permissions
+            // Permissions handling
+            #[cfg(unix)]
             let permissions = format!("{:o}", metadata.mode() & 0o777);
+
+            #[cfg(windows)]
+            let permissions = if metadata.permissions().readonly() {
+                "444".to_string() 
+            } else {
+                "666".to_string()
+            };
 
             entries.push(FileEntry {
                 name: file_name,

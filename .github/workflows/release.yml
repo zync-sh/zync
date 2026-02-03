@@ -41,6 +41,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Patch macOS Bundle ID
+        if: matrix.platform == 'macos-latest'
+        run: |
+          node -e 'const fs=require("fs"); let c=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json")); c.identifier="com.zync.desktop"; fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(c, null, 2));'
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
