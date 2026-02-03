@@ -32,7 +32,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,7 +43,21 @@
       "nsis": {
         "installMode": "both"
       }
-    }
+    },
+    "linux": {
+      "deb": {
+        "files": {}
+      },
+      "rpm": {
+        "files": {}
+      }
+    },
+    "targets": [
+      "deb",
+      "appimage",
+      "rpm",
+      "nsis"
+    ]
   },
   "plugins": {
     "updater": {
