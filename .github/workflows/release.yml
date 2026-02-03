@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: 'package-lock.json'
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
