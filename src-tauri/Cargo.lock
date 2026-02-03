@@ -4897,30 +4897,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "dirs 5.0.1",
- "portable-pty",
- "russh",
- "russh-keys",
- "russh-sftp",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tokio",
- "uuid",
- "whoami",
-]
-
-[[package]]
 name = "tauri-build"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6932,4 +6908,28 @@ dependencies = [
  "serde",
  "syn 2.0.114",
  "winnow 0.7.14",
+]
+
+[[package]]
+name = "zync"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 5.0.1",
+ "portable-pty",
+ "russh",
+ "russh-keys",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tokio",
+ "uuid",
+ "whoami",
 ]
