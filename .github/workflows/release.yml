@@ -12,7 +12,6 @@ jobs:
   release:
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         platform: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.platform }}
@@ -37,7 +36,7 @@ jobs:
         with:
           node-version: 'lts/*'
           cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
+          cache-dependency-path: 'zync/package-lock.json'
 
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
@@ -47,40 +46,15 @@ jobs:
         run: |
           node -e 'const fs=require("fs"); let c=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json")); c.identifier="com.zync.desktop"; fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(c, null, 2));'
 
-      - name: Debug - Check Secret Presence
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "Error: TAURI_SIGNING_PRIVATE_KEY is empty or not set!"
-            exit 1
-          else
-            echo "Success: TAURI_SIGNING_PRIVATE_KEY is found (length: ${#TAURI_SIGNING_PRIVATE_KEY})."
-          fi
-
-      - name: Build and Sign App
-        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-           npm run tauri build
-
-      - name: Verify Signatures
-        shell: bash
-        run: |
-          echo "Checking for .sig files..."
-          # Use find to locate artifacts, ignoring errors if directory doesn't exist yet
-          find src-tauri/target/release/bundle -name "*.sig" -ls || echo "No .sig files found via listing"
-          
-          APPIMAGE_SIG=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage.sig" | head -n 1)
-          if [ -f "$APPIMAGE_SIG" ]; then
-            echo "SUCCESS: Signature found at $APPIMAGE_SIG"
-          else
-            echo "WARNING: AppImage signature file NOT found. Signing might have failed."
-            # Don't exit 1 yet, let the artifact upload step try its best or fail there
-          fi
-
-      - name: Debug - List Build Artifacts
-        run: |
-          echo "Listing artifacts in target/release/bundle:"
-          find src-tauri/target/release/bundle -maxdepth 3 -ls || echo "Directory not found"
+        with:
+          tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version
+          releaseName: "Zync v__VERSION__"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: true
+          prerelease: false
