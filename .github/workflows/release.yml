@@ -12,6 +12,7 @@ jobs:
   release:
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         platform: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.platform }}
@@ -46,17 +47,11 @@ jobs:
         run: |
           node -e 'const fs=require("fs"); let c=JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json")); c.identifier="com.zync.desktop"; fs.writeFileSync("src-tauri/tauri.conf.json", JSON.stringify(c, null, 2));'
 
-      - name: Prepare Signing Key
-        env:
-          KEY_CONTENT: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          node -e 'const fs = require("fs"); fs.writeFileSync("zync.key", process.env.KEY_CONTENT.trim());'
-
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: zync.key
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version
