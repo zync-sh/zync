@@ -147,34 +147,33 @@ const ipcRenderer = {
         }
       } else if (tauriCommand === 'fs_list' || tauriCommand === 'fs_read_file' || tauriCommand === 'fs_mkdir' || tauriCommand === 'fs_delete' || tauriCommand === 'fs_exists') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
-          payload = { connection_id: args[0].connectionId, path: args[0].path };
+          payload = args[0]; // Already has camelCase keys { connectionId, path }
         } else {
-          payload = { connection_id: args[0], path: args[1] };
+          payload = { connectionId: args[0], path: args[1] };
         }
       } else if (tauriCommand === 'fs_write_file') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
           payload = args[0];
         } else {
-          payload = { connection_id: args[0], path: args[1], content: args[2] };
+          payload = { connectionId: args[0], path: args[1], content: args[2] };
         }
       } else if (tauriCommand === 'fs_rename') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
-          payload = { connection_id: args[0].connectionId, old_path: args[0].oldPath, new_path: args[0].newPath };
+          payload = args[0]; // { connectionId, oldPath, newPath }
         } else {
-          payload = { connection_id: args[0], old_path: args[1], new_path: args[2] };
+          payload = { connectionId: args[0], oldPath: args[1], newPath: args[2] };
         }
       } else if (tauriCommand === 'fs_copy') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
-          payload = { connection_id: args[0].connectionId, from: args[0].from, to: args[0].to };
+          payload = args[0]; // { connectionId, from, to }
         } else {
-          payload = { connection_id: args[0], from: args[1], to: args[2] };
+          payload = { connectionId: args[0], from: args[1], to: args[2] };
         }
       } else if (tauriCommand === 'tunnel_list') {
         if (args.length === 1 && typeof args[0] === 'string') {
-          payload = { connection_id: args[0] };
+          payload = { connectionId: args[0] };
         } else if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
-          // Handle object if passed as { connectionId: ... }
-          payload = { connection_id: args[0].connectionId };
+          payload = { connectionId: args[0].connectionId };
         }
       } else if (tauriCommand === 'tunnel_save') {
         payload = { tunnel: args[0] };
@@ -182,20 +181,17 @@ const ipcRenderer = {
         if (args.length === 1 && typeof args[0] === 'string') {
           payload = { id: args[0] };
         } else if (args.length === 2) {
-          // tunnelSlice calls deleteTunnel(id, connectionId) -> ipc.invoke('tunnel:delete', id)
-          // args[0] is id.
           payload = { id: args[0] };
         }
       } else if (tauriCommand === 'tunnel_start') {
-        // args[0] is id
         payload = { id: args[0] };
       } else if (tauriCommand === 'tunnel_stop') {
         payload = { id: args[0] };
       } else if (tauriCommand === 'fs_cwd') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
-          payload = { connection_id: args[0].connectionId };
+          payload = { connectionId: args[0].connectionId };
         } else {
-          payload = { connection_id: args[0] };
+          payload = { connectionId: args[0] };
         }
       } else if (tauriCommand === 'ssh_extract_pem') {
         payload = { path: args[0] };

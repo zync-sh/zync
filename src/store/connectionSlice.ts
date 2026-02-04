@@ -113,9 +113,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 let conns = Array.isArray(loaded) ? loaded : loaded.connections;
                 let folders = (loaded.folders || []).map((f: any) => typeof f === 'string' ? { name: f } : f);
 
-                console.log('Setting connections state:', conns);
+                // Deduplicate connections by ID to prevent React key collisions
+                const uniqueConns = Array.from(new Map(conns.map((c: any) => [c.id, c])).values());
+
+                if (uniqueConns.length !== conns.length) {
+                    console.warn(`[RENDERER] Found ${conns.length - uniqueConns.length} duplicate connection IDs. Deduplicated.`);
+                }
+
+                console.log('Setting connections state:', uniqueConns);
                 set({
-                    connections: conns.map((c: any) => ({ ...c, status: 'disconnected' })),
+                    connections: uniqueConns.map((c: any) => ({ ...c, status: 'disconnected' })),
                     folders
                 });
             } else {
@@ -180,7 +187,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
             const importedNames = new Set(newConns.map(c => c.name));
             const preserved = state.connections.filter(c => !importedNames.has(c.name));
-            const finalConns = [...preserved, ...connsToAdd];
+
+            // Merge and Deduplicate by ID
+            const allConns = [...preserved, ...connsToAdd];
+            const uniqueConns = Array.from(new Map(allConns.map(c => [c.id, c])).values());
+
+            const finalConns = uniqueConns;
 
             saveToMain(finalConns, state.folders);
             return { connections: finalConns };
