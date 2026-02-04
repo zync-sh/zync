@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { check } from '@tauri-apps/plugin-updater';
+import { getVersion } from '@tauri-apps/api/app';
+
+let currentUpdate: any = null;
 
 // Map to track active listeners for cleanup
 const eventListeners = new Map<string, Map<Function, UnlistenFn>>();
@@ -127,7 +131,57 @@ const ipcRenderer = {
         });
         if (result === null) return { filePaths: [], canceled: true };
         const paths = Array.isArray(result) ? result : [result];
+
         return { filePaths: paths, canceled: false };
+      }
+
+      // App & Updater Handlers
+      if (channel === 'app:getVersion') {
+        try {
+          return await getVersion();
+        } catch (e) {
+          console.warn('Failed to get version:', e);
+          return '2.0.0'; // Fallback
+        }
+      }
+
+      if (channel === 'app:isAppImage') {
+        // Simple heuristic for now, or returns false
+        return false;
+      }
+
+      if (channel === 'update:check') {
+        try {
+          const update = await check();
+          if (update?.available) {
+            currentUpdate = update;
+            return {
+              updateInfo: {
+                version: update.version,
+                body: update.body,
+                date: update.date
+              }
+            };
+          }
+          return null;
+        } catch (e) {
+          console.error('Update check error:', e);
+          throw e;
+        }
+      }
+
+      if (channel === 'update:download') {
+        if (currentUpdate) {
+          await currentUpdate.download();
+        }
+        return;
+      }
+
+      if (channel === 'update:install') {
+        if (currentUpdate) {
+          await currentUpdate.install(); // Relaunches
+        }
+        return;
       }
 
       // Tauri invoke expects a single object as the argument with named keys
