@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 'lts/*'
           cache: 'npm'
-          cache-dependency-path: 'zync/package-lock.json'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
