@@ -1,9 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { RefreshCw, Download, AlertTriangle, X, ExternalLink } from 'lucide-react';
 import { Button } from './ui/Button';
 import { useAppStore } from '../store/useAppStore';
-import { check, type Update } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
+// Imports updated
 
 export function UpdateNotification() {
     // Global State
@@ -19,22 +18,37 @@ export function UpdateNotification() {
     // Local Visibility
     const [isVisible, setIsVisible] = useState(false);
     const [error, setError] = useState('');
-    const updateRef = useRef<Update | null>(null);
 
     useEffect(() => {
         let isCancelled = false;
 
+        // Listen for progress events from IPC
+        const handleProgress = (e: any) => {
+            const { detail } = e;
+            if (detail.status === 'started') {
+                setUpdateStatus('downloading');
+                setDownloadProgress(0);
+            } else if (detail.status === 'progress') {
+                setDownloadProgress(detail.percent);
+            } else if (detail.status === 'finished') {
+                setDownloadProgress(100);
+                setUpdateStatus('ready');
+            }
+        };
+
+        window.addEventListener('zync:update-progress', handleProgress);
+
         const checkForUpdates = async () => {
             try {
                 setUpdateStatus('checking');
-                const update = await check();
+                // Use IPC wrapper to ensure shared state
+                const result = await window.ipcRenderer.invoke('update:check');
 
                 if (isCancelled) return;
 
-                if (update) {
-                    console.log('Update available:', update.version);
-                    updateRef.current = update;
-                    setUpdateInfo({ version: update.version, body: update.body });
+                if (result && result.updateInfo) {
+                    console.log('Update available:', result.updateInfo.version);
+                    setUpdateInfo(result.updateInfo);
                     setUpdateStatus('available');
                     setIsVisible(true);
                 } else {
@@ -56,6 +70,7 @@ export function UpdateNotification() {
         return () => {
             isCancelled = true;
             clearInterval(interval);
+            window.removeEventListener('zync:update-progress', handleProgress);
         };
     }, []);
 
@@ -67,31 +82,10 @@ export function UpdateNotification() {
     }, [status]);
 
     const startDownload = async () => {
-        if (!updateRef.current) {
-            // Fallback to manual download if we lost the update handle
-            window.open('https://github.com/FDgajju/zync/releases', '_blank');
-            return;
-        }
-
         try {
             setUpdateStatus('downloading');
             setDownloadProgress(0);
-
-            await updateRef.current.downloadAndInstall((event: any) => {
-                switch (event.event) {
-                    case 'Started':
-                        setDownloadProgress(0);
-                        break;
-                    case 'Progress':
-                        const p = (event.data.chunkLength / (event.data.contentLength || 100)) * 100;
-                        setDownloadProgress(p);
-                        break;
-                    case 'Finished':
-                        setDownloadProgress(100);
-                        setUpdateStatus('ready');
-                        break;
-                }
-            });
+            await window.ipcRenderer.invoke('update:download');
         } catch (err: any) {
             console.error('Download failed:', err);
             setUpdateStatus('error');
@@ -101,9 +95,9 @@ export function UpdateNotification() {
 
     const installUpdate = async () => {
         try {
-            await relaunch();
+            await window.ipcRenderer.invoke('update:install');
         } catch (err) {
-            console.error('Failed to relaunch:', err);
+            console.error('Failed to launch installer:', err);
             // Fallback: just tell them to restart manually
             setUpdateStatus('ready');
         }

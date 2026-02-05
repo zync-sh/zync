@@ -8,6 +8,12 @@ let currentUpdate: any = null;
 // Map to track active listeners for cleanup
 const eventListeners = new Map<string, Map<Function, UnlistenFn>>();
 
+// Progress tracking state
+let downloadState = {
+  downloaded: 0,
+  total: 0
+};
+
 // Tauri IPC wrapper to replace Electron's ipcRenderer
 const ipcRenderer = {
   send(channel: string, ...args: any[]): void {
@@ -185,14 +191,44 @@ const ipcRenderer = {
 
       if (channel === 'update:download') {
         if (currentUpdate) {
-          await currentUpdate.download();
+          // Reset state
+          downloadState = { downloaded: 0, total: 0 };
+
+          // We use downloadAndInstall because it handles the specific flow better
+          // But 'download' gives us more granular control if we want subsequent install
+          await currentUpdate.downloadAndInstall((event: any) => {
+            try {
+              if (event.event === 'Started') {
+                downloadState.total = event.data.contentLength || 0;
+                downloadState.downloaded = 0;
+                // Emit started event
+                window.dispatchEvent(new CustomEvent('zync:update-progress', { detail: { percent: 0, status: 'started' } }));
+              } else if (event.event === 'Progress') {
+                downloadState.downloaded += event.data.chunkLength;
+                let percent = 0;
+                if (downloadState.total > 0) {
+                  percent = (downloadState.downloaded / downloadState.total) * 100;
+                }
+                // Cap at 100
+                percent = Math.min(100, percent);
+                window.dispatchEvent(new CustomEvent('zync:update-progress', { detail: { percent, status: 'progress' } }));
+              } else if (event.event === 'Finished') {
+                window.dispatchEvent(new CustomEvent('zync:update-progress', { detail: { percent: 100, status: 'finished' } }));
+              }
+            } catch (err) {
+              console.error('Error in download callback:', err);
+            }
+          });
         }
         return;
       }
 
       if (channel === 'update:install') {
-        if (currentUpdate) {
-          await currentUpdate.install(); // Relaunches
+        if (currentUpdate && typeof currentUpdate.install === 'function') {
+          await currentUpdate.install();
+        } else {
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
         }
         return;
       }

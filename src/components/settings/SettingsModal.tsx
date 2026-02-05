@@ -193,7 +193,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     };
 
     const isWindows = window.navigator.userAgent.indexOf('Windows') !== -1;
-    const canAutoUpdate = isWindows || isAppImage;
+    // Allow auto-update on Windows and Linux (AppImage context primarily, but UI should allow it)
+    const canAutoUpdate = window.electronUtils?.platform !== 'darwin';
 
     const handleUpdateAction = () => {
         if (updateStatus === 'downloading') return;
