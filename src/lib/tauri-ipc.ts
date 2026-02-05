@@ -104,6 +104,7 @@ const ipcRenderer = {
       // Dialog commands handled specially below
       'dialog:openFile': 'dialog_open_file',
       'dialog:openDirectory': 'dialog_open_directory',
+      'config:set': 'settings_set',
       'shell:open': 'shell_open',
     };
 
@@ -136,6 +137,18 @@ const ipcRenderer = {
       }
 
       // App & Updater Handlers
+      if (channel === 'config:get') {
+        try {
+          const settings = await invoke('settings_get');
+          // Return settings with isConfigured flag for legacy compatibility
+          const hasKeys = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
+          return { ...(settings as object), isConfigured: hasKeys };
+        } catch (e) {
+          console.error('config:get failed', e);
+          return { isConfigured: false };
+        }
+      }
+
       if (channel === 'app:getVersion') {
         try {
           return await getVersion();

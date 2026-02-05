@@ -1,6 +1,6 @@
 [package]
 name = "zync"
-version = "2.0.1"
+version = "2.0.0"
 description = "A modern SSH client"
 authors = ["Gajendra"]
 edition = "2021"
