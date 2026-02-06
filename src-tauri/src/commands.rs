@@ -12,6 +12,34 @@ use tokio::sync::Mutex;
 use crate::tunnel::TunnelManager;
 use serde::Serialize;
 
+/// Helper function to get the data directory.
+/// Reads the configured `dataPath` from settings.json if available,
+/// otherwise falls back to the default app_data_dir.
+/// This ensures user-selected paths from the setup wizard are respected on all platforms.
+pub fn get_data_dir(app: &AppHandle) -> std::path::PathBuf {
+    let default_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let settings_path = default_dir.join("settings.json");
+    
+    if settings_path.exists() {
+        if let Ok(data) = std::fs::read_to_string(&settings_path) {
+            if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
+                    if !data_path.is_empty() {
+                        let custom_dir = std::path::PathBuf::from(data_path);
+                        // Ensure the directory exists
+                        if !custom_dir.exists() {
+                            let _ = std::fs::create_dir_all(&custom_dir);
+                        }
+                        return custom_dir;
+                    }
+                }
+            }
+        }
+    }
+    
+    default_dir
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct TunnelStatusChange {
     pub id: String,
@@ -207,8 +235,7 @@ pub async fn ssh_extract_pem(
     app_handle: tauri::AppHandle,
     path: String,
 ) -> Result<String, String> {
-    use tauri::Manager;
-    let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app_handle);
     let keys_dir = data_dir.join("keys");
     
     if !keys_dir.exists() {
@@ -247,8 +274,7 @@ pub async fn ssh_extract_pem(
 
 #[tauri::command]
 pub async fn ssh_migrate_all_keys(app_handle: tauri::AppHandle) -> Result<usize, String> {
-    use tauri::Manager;
-    let data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app_handle);
     let connections_path = data_dir.join("connections.json");
 
     if !connections_path.exists() {
@@ -379,7 +405,7 @@ pub async fn terminal_resize(
 
 #[tauri::command]
 pub async fn connections_get(app: AppHandle) -> Result<SavedData, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("connections.json");
 
     if !file_path.exists() {
@@ -400,7 +426,7 @@ pub async fn connections_save(
 ) -> Result<(), String> {
     let data = SavedData { connections, folders };
     
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     if !data_dir.exists() {
         std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     }
@@ -774,7 +800,7 @@ pub async fn tunnel_stop(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     // 1. Load tunnel config to reconstruct ID
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("tunnels.json");
     if !file_path.exists() {
         return Ok(()); // Nothing to stop
@@ -855,7 +881,7 @@ pub async fn window_close(app: AppHandle) {
 #[tauri::command]
 pub async fn tunnel_list(app: AppHandle, state: State<'_, AppState>, connection_id: String) -> Result<Vec<SavedTunnel>, String> {
     // let connection_id = connectionId; // Resolved: using snake_case directly
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("tunnels.json");
 
     if !file_path.exists() {
@@ -895,7 +921,7 @@ pub async fn tunnel_list(app: AppHandle, state: State<'_, AppState>, connection_
 
 #[tauri::command]
 pub async fn tunnel_save(app: AppHandle, tunnel: SavedTunnel) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     if !data_dir.exists() {
         std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     }
@@ -923,7 +949,7 @@ pub async fn tunnel_save(app: AppHandle, tunnel: SavedTunnel) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn tunnel_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("tunnels.json");
 
     if !file_path.exists() {
@@ -948,7 +974,7 @@ pub async fn tunnel_start(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 1. Load tunnel config
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("tunnels.json");
     if !file_path.exists() {
         return Err("Tunnels file not found".to_string());
@@ -1006,7 +1032,7 @@ pub async fn tunnel_start(
 
 #[tauri::command]
 pub async fn tunnel_get_all(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<SavedTunnel>, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("tunnels.json");
 
     if !file_path.exists() {
@@ -1162,15 +1188,29 @@ pub async fn settings_set(
     app: AppHandle,
     settings: serde_json::Value,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    if !data_dir.exists() {
-        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    // Always write to the default app_data_dir for bootstrap purposes
+    let default_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !default_dir.exists() {
+        std::fs::create_dir_all(&default_dir).map_err(|e| e.to_string())?;
     }
 
-    let file_path = data_dir.join("settings.json");
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     
-    std::fs::write(file_path, json).map_err(|e| e.to_string())?;
+    // Write to bootstrap location (app_data_dir)
+    let bootstrap_path = default_dir.join("settings.json");
+    std::fs::write(&bootstrap_path, &json).map_err(|e| e.to_string())?;
+    
+    // Also write to the configured dataPath if it's set
+    if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
+        if !data_path.is_empty() {
+            let custom_dir = std::path::PathBuf::from(data_path);
+            if !custom_dir.exists() {
+                std::fs::create_dir_all(&custom_dir).map_err(|e| e.to_string())?;
+            }
+            let custom_settings_path = custom_dir.join("settings.json");
+            std::fs::write(custom_settings_path, &json).map_err(|e| e.to_string())?;
+        }
+    }
     
     Ok(())
 }
@@ -1363,6 +1403,13 @@ pub async fn sftp_put(
 pub async fn shell_open(app: tauri::AppHandle, path: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener().open_url(path, None::<String>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn app_get_exe_dir() -> Result<String, String> {
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = exe_path.parent().ok_or("Could not get executable directory")?;
+    Ok(exe_dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]

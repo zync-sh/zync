@@ -18,7 +18,79 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir().unwrap();
+            let default_dir = app.path().app_data_dir().unwrap();
+            let settings_path = default_dir.join("settings.json");
+            
+            // On Windows, auto-configure using installation directory
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    if let Some(exe_dir) = exe_path.parent() {
+                        let exe_dir_str = exe_dir.to_string_lossy().to_string();
+                        
+                        // Read existing settings to preserve user preferences
+                        let mut settings: serde_json::Value = if settings_path.exists() {
+                            std::fs::read_to_string(&settings_path)
+                                .ok()
+                                .and_then(|data| serde_json::from_str(&data).ok())
+                                .unwrap_or_else(|| serde_json::json!({}))
+                        } else {
+                            serde_json::json!({})
+                        };
+                        
+                        // Always set dataPath to exe directory on Windows
+                        if let Some(obj) = settings.as_object_mut() {
+                            obj.insert("dataPath".to_string(), serde_json::json!(exe_dir_str));
+                            obj.insert("logPath".to_string(), serde_json::json!(format!("{}\\logs", exe_dir_str)));
+                            obj.insert("isConfigured".to_string(), serde_json::json!(true));
+                            if !obj.contains_key("theme") {
+                                obj.insert("theme".to_string(), serde_json::json!("dark"));
+                            }
+                        }
+                        
+                        // Write to bootstrap location
+                        if !default_dir.exists() {
+                            let _ = std::fs::create_dir_all(&default_dir);
+                        }
+                        let json = serde_json::to_string_pretty(&settings).unwrap_or_default();
+                        let _ = std::fs::write(&settings_path, &json);
+                        
+                        // Also write to exe directory
+                        if !exe_dir.exists() {
+                            let _ = std::fs::create_dir_all(exe_dir);
+                        }
+                        let _ = std::fs::write(exe_dir.join("settings.json"), &json);
+                    }
+                }
+            }
+            
+            // Now read the final data directory (will pick up the configured dataPath)
+            let data_dir = if settings_path.exists() {
+                if let Ok(data) = std::fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&data) {
+                        if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
+                            if !data_path.is_empty() {
+                                let custom_dir = std::path::PathBuf::from(data_path);
+                                if !custom_dir.exists() {
+                                    let _ = std::fs::create_dir_all(&custom_dir);
+                                }
+                                custom_dir
+                            } else {
+                                default_dir.clone()
+                            }
+                        } else {
+                            default_dir.clone()
+                        }
+                    } else {
+                        default_dir.clone()
+                    }
+                } else {
+                    default_dir.clone()
+                }
+            } else {
+                default_dir.clone()
+            };
+            
             let app_state = AppState::new(data_dir);
             app.manage(app_state);
             Ok(())
@@ -71,6 +143,7 @@ pub fn run() {
             commands::settings_set,
             commands::sftp_put,
             commands::shell_open,
+            commands::app_get_exe_dir,
             commands::app_exit,
         ])
         .run(tauri::generate_context!())

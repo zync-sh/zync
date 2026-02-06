@@ -10,10 +10,19 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
  */
 export function useWindowDrag(ref: RefObject<HTMLElement | null>, enabled = true) {
     useEffect(() => {
+        // Skip if not in Tauri environment (e.g., browser dev mode)
+        if (!(window as any).__TAURI__) return;
         if (!enabled || !ref.current) return;
 
         const element = ref.current;
-        const appWindow = getCurrentWindow();
+        let appWindow: any;
+
+        try {
+            appWindow = getCurrentWindow();
+        } catch {
+            // getCurrentWindow() failed, not in Tauri context
+            return;
+        }
 
         const handleMouseDown = async (e: MouseEvent) => {
             // Only drag on left click

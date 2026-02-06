@@ -418,6 +418,8 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     const checkConfig = async () => {
         try {
+            // Backend handles Windows auto-configuration at startup
+            // Frontend only needs to check if config exists and show wizard for Mac/Linux
             const config = await ipc.invoke('config:get');
             if (!config || !config.isConfigured) {
                 setShowWizard(true);
