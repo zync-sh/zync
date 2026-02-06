@@ -106,16 +106,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     }
   }, [settings.terminal]);
 
-  // Force fit and focus when visibility changes (e.g. switching tabs)
+  // Force fit and focus when visibility changes (e.g. switching tabs) or connection becomes active
   useEffect(() => {
-    if (isVisible && fitAddonRef.current && termRef.current) {
+    if (isVisible && isConnected && fitAddonRef.current && termRef.current) {
       // Small delay using requestAnimationFrame + setTimeout for layout stability
       const frameId = requestAnimationFrame(() => {
         const timer = setTimeout(() => {
           try {
             if (fitAddonRef.current) fitAddonRef.current.fit();
 
-            // Focus the terminal aggressively when it becomes visible
+            // Focus the terminal aggressively when it becomes visible or connected
             if (termRef.current) {
               termRef.current.focus();
 
@@ -132,7 +132,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       });
       return () => cancelAnimationFrame(frameId);
     }
-  }, [isVisible, sessionId]);
+  }, [isVisible, sessionId, isConnected]);
 
   useEffect(() => {
     if (!containerRef.current || !activeConnectionId || !sessionId || !isConnected) return;
