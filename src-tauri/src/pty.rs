@@ -50,6 +50,16 @@ impl PtyManager {
         app_handle: AppHandle,
     ) -> Result<()> {
         println!("[PTY-DEBUG] create_local_session called for {}", term_id);
+        
+        // Check if session already exists to prevent duplicate spawns
+        {
+            let sessions = self.sessions.lock().await;
+            if sessions.contains_key(&term_id) {
+                println!("[PTY-DEBUG] Session {} already exists, skipping creation", term_id);
+                return Ok(());
+            }
+        }
+        
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -146,6 +156,17 @@ impl PtyManager {
         app_handle: AppHandle,
     ) -> Result<()> {
         println!("[PTY] Creating remote session for {}", term_id);
+        
+        // Check if session already exists to prevent duplicate spawns
+        {
+            let sessions = self.sessions.lock().await;
+            if sessions.contains_key(&term_id) {
+                println!("[PTY] Session {} already exists, skipping creation", term_id);
+                // Close the channel since we're not using it
+                let _ = channel.close().await;
+                return Ok(());
+            }
+        }
 
         // Request PTY on the channel
         channel.request_pty(
