@@ -1,4 +1,5 @@
 import { MainLayout } from './components/layout/MainLayout';
+// v2 Trigger
 import { UpdateNotification } from './components/UpdateNotification';
 import { ToastContainer } from './components/ToastContainer';
 import { TransferManager } from './components/file-manager/TransferManager';
@@ -37,10 +38,14 @@ function AppContent() {
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 
+import { PluginProvider } from './context/PluginContext';
+
 function App() {
     return (
         <ErrorBoundary>
-            <AppContent />
+            <PluginProvider>
+                <AppContent />
+            </PluginProvider>
         </ErrorBoundary>
     );
 }

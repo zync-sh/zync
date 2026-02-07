@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { AppStore } from './useAppStore';
 
 export interface AppSettings {
-    theme: 'dark' | 'light' | 'dracula' | 'monokai' | 'warm' | 'light-warm' | 'midnight' | 'system';
+    theme: string;
     accentColor?: string;
     windowOpacity: number;
     enableVibrancy: boolean;

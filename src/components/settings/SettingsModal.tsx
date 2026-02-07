@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
-import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal } from 'lucide-react';
+import { usePlugins } from '../../context/PluginContext';
+
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
@@ -12,7 +14,7 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'about';
+type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const settings = useAppStore(state => state.settings);
@@ -40,6 +42,35 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [releaseNotes, setReleaseNotes] = useState('');
     const [autoUpdateCheck, setAutoUpdateCheck] = useState(false);
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+
+    // Plugins State
+    const [plugins, setPlugins] = useState<any[]>([]);
+    const [isLoadingPlugins, setIsLoadingPlugins] = useState(false);
+    const { executeCommand } = usePlugins();
+
+    useEffect(() => {
+        if (isOpen && activeTab === 'plugins') {
+            setIsLoadingPlugins(true);
+            window.ipcRenderer.invoke('plugins:load')
+                .then((list: any) => setPlugins(list))
+                .catch((err: any) => console.error('Failed to load plugins', err))
+                .finally(() => setIsLoadingPlugins(false));
+        }
+    }, [isOpen, activeTab]);
+
+    const handleTogglePlugin = async (id: string, enabled: boolean) => {
+        try {
+            // Optimistic update
+            setPlugins(prev => prev.map(p => p.manifest.id === id ? { ...p, enabled } : p));
+            await window.ipcRenderer.invoke('plugins:toggle', { id, enabled });
+            showToast(`Plugin ${enabled ? 'enabled' : 'disabled'}. Restart required.`, 'info');
+        } catch (error) {
+            console.error('Failed to toggle plugin', error);
+            showToast('Failed to update plugin state', 'error');
+            // Revert on error
+            setPlugins(prev => prev.map(p => p.manifest.id === id ? { ...p, enabled: !enabled } : p));
+        }
+    };
 
     // 3D Tilt State Removed - Moved to TiltLogo component
 
@@ -300,6 +331,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <TabButton active={activeTab === 'appearance'} onClick={() => handleTabChange('appearance')} icon={<Monitor size={15} />} label="Appearance" />
                     <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" />
                     <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
+                    <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" />
 
                     <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
                         <TabButton
@@ -706,6 +738,90 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             checked={settings.fileManager.confirmDelete}
                                             onChange={(v) => updateFileManagerSettings({ confirmDelete: v })}
                                         />
+                                    </div>
+                                </Section>
+                            </div>
+                        )}
+
+                        {activeTab === 'plugins' && (
+                            <div className="space-y-8 animate-in fade-in duration-300">
+                                <Section title="Installed Plugins">
+                                    <div className="space-y-4">
+                                        {/* Theme Selection Banner */}
+                                        <div className="p-4 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                    <Monitor size={20} />
+                                                </div>
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-[var(--color-app-text)]">Color Theme</h4>
+                                                    <p className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                        {plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length} themes installed
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => executeCommand('workbench.action.selectTheme')}
+                                                className="px-3 py-1.5 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded-md text-xs font-medium transition-colors"
+                                            >
+                                                Select Theme
+                                            </button>
+                                        </div>
+
+                                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+
+                                        {isLoadingPlugins ? (
+                                            <div className="flex items-center justify-center p-8 text-[var(--color-app-muted)]">
+                                                <RefreshCw className="animate-spin mr-2" size={16} />
+                                                Loading plugins...
+                                            </div>
+                                        ) : plugins.filter(p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager').length === 0 ? (
+                                            <div className="p-8 text-center text-[var(--color-app-muted)] bg-[var(--color-app-surface)]/30 rounded-lg border border-[var(--color-app-border)] border-dashed">
+                                                No plugins installed.
+                                            </div>
+                                        ) : (
+                                            plugins
+                                                .filter(p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager')
+                                                .map((plugin) => (
+                                                    <div key={plugin.manifest.id} className="flex items-center justify-between p-4 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50">
+                                                        <div className="flex items-start gap-3">
+                                                            <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                                {plugin.path.startsWith('builtin://') ? <Package size={20} /> : <Plug size={20} />}
+                                                            </div>
+                                                            <div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <h4 className="text-sm font-medium text-[var(--color-app-text)]">{plugin.manifest.name}</h4>
+                                                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] text-[var(--color-app-muted)]">
+                                                                        v{plugin.manifest.version}
+                                                                    </span>
+                                                                    {plugin.path.startsWith('builtin://') && (
+                                                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                                                                            Built-in
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <p className="text-xs text-[var(--color-app-muted)] mt-1 font-mono opacity-70">
+                                                                    {plugin.manifest.id}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <label className="relative inline-flex items-center cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={plugin.enabled}
+                                                                onChange={(e) => handleTogglePlugin(plugin.manifest.id, e.target.checked)}
+                                                                className="sr-only peer"
+                                                            />
+                                                            <div className="w-11 h-6 bg-[var(--color-app-bg)] border-2 border-[var(--color-app-border)] rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-[var(--color-app-accent)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                                                        </label>
+                                                    </div>
+                                                ))
+                                        )}
+                                        <div className="text-xs text-[var(--color-app-muted)] pt-2 flex items-center gap-2">
+                                            <Info size={12} />
+                                            Changes to plugins require an app restart to take full effect.
+                                        </div>
                                     </div>
                                 </Section>
                             </div>

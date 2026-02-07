@@ -1369,3 +1369,95 @@ pub async fn shell_open(app: tauri::AppHandle, path: String) -> Result<(), Strin
 pub async fn app_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
+#[tauri::command]
+pub async fn plugins_load(
+    app: AppHandle,
+) -> Result<Vec<crate::plugins::Plugin>, String> {
+    crate::plugins::PluginScanner::scan(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_toggle(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::save_state(&app, id, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugin_fs_read(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state.file_system.read_file("local", &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugin_fs_write(
+    path: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.file_system.write_file("local", &path, &content).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugin_fs_list(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileEntry>, String> {
+    state.file_system.list_local(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugin_fs_exists(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    state.file_system.exists("local", &path).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugin_fs_create_dir(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.file_system.create_dir("local", &path).await.map_err(|e| e.to_string())
+}
+
+
+#[tauri::command]
+pub async fn plugin_window_create(
+    app: AppHandle,
+    url: Option<String>,
+    html: Option<String>,
+    title: Option<String>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), String> {
+   use tauri::WebviewWindowBuilder;
+   use base64::Engine;
+   let label = format!("plugin-window-{}", uuid::Uuid::new_v4());
+   let mut builder = WebviewWindowBuilder::new(
+       &app,
+       &label,
+       if let Some(u) = url {
+           tauri::WebviewUrl::External(u.parse().map_err(|e: url::ParseError| e.to_string())?) 
+       } else if let Some(h) = html {
+           // For HTML content, we use a data URL for simplicity in MVP
+           let data_url = format!("data:text/html;base64,{}", base64::engine::general_purpose::STANDARD.encode(h));
+           tauri::WebviewUrl::External(data_url.parse().map_err(|e: url::ParseError| e.to_string())?)
+       } else {
+           return Err("Must provide url or html".into());
+       }
+   );
+   
+   if let Some(t) = title { builder = builder.title(t); }
+   if let Some(w) = width { builder = builder.inner_size(w, height.unwrap_or(600.0)); }
+   
+   builder.build().map_err(|e| e.to_string())?;
+   Ok(())
+}
+
+

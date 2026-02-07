@@ -248,377 +248,393 @@ export function WelcomeScreen() {
             initial="hidden"
             animate="visible"
             variants={containerVariants}
-            className="flex-1 h-full flex flex-col p-8 bg-app-bg text-app-text overflow-y-auto relative isolate"
+            className="w-full h-full flex flex-col overflow-hidden relative isolate"
         >
             {/* Dot Grid Background */}
             <div className="absolute inset-0 -z-10 h-full w-full bg-app-bg bg-[radial-gradient(#2a2d3d_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30"></div>
 
-            {/* Compact Header - Greeting + Time */}
-            <motion.div variants={itemVariants} className="mb-6">
-                <div className="flex items-baseline gap-3">
-                    <h1 className="text-3xl font-light text-app-text tracking-tight">
-                        {greeting}
-                    </h1>
-                    <span className="text-sm text-app-muted/60 font-mono">{time}</span>
-                </div>
-            </motion.div>
-
-            {/* Quick Connect */}
-            <motion.div variants={itemVariants} className="mb-6 max-w-2xl relative" ref={autocompleteRef}>
-                <form onSubmit={handleQuickConnect} className="relative group flex flex-col gap-2">
-                    <div className="flex items-center bg-app-panel/80 backdrop-blur-sm border border-app-border/50 rounded-lg p-2 focus-within:border-app-accent transition-all shadow-sm">
-                        <Terminal size={16} className="text-app-muted ml-2 mr-2 shrink-0" />
-                        <input
-                            type="text"
-                            value={quickConnectInput}
-                            onChange={(e) => {
-                                setQuickConnectInput(e.target.value);
-                                setShowAutocomplete(e.target.value.length > 0);
-                            }}
-                            onFocus={() => quickConnectInput && setShowAutocomplete(true)}
-                            placeholder="user@host:port (e.g. root@192.168.1.5)"
-                            className="flex-1 bg-transparent border-none outline-none text-app-text placeholder:text-app-muted/40 font-mono text-sm h-8 w-full"
-                        />
-
-                        <div className="flex items-center gap-1 pr-1 shrink-0">
-                            <button
-                                type="button"
-                                onClick={() => setShowTemplates(!showTemplates)}
-                                className="p-1.5 rounded transition-all text-app-muted hover:text-app-accent hover:bg-app-accent/10"
-                                title="Templates"
-                            >
-                                <Sparkles size={14} />
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={() => setIsAuthExpanded(!isAuthExpanded)}
-                                className={`p-1.5 rounded transition-all ${isAuthExpanded || password || privateKeyPath
-                                    ? 'bg-app-accent/10 text-app-accent'
-                                    : 'text-app-muted hover:text-app-text hover:bg-app-surface'
-                                    }`}
-                                title="Auth"
-                            >
-                                <Key size={14} />
-                            </button>
-
-                            <label className="flex items-center gap-1.5 text-xs text-app-muted cursor-pointer hover:text-app-text transition-colors select-none px-2 py-1 rounded hover:bg-app-surface">
-                                <input
-                                    type="checkbox"
-                                    checked={saveConnection}
-                                    onChange={(e) => setSaveConnection(e.target.checked)}
-                                    className="accent-app-accent"
-                                />
-                                <span>Save</span>
-                            </label>
-                            <button
-                                type="submit"
-                                disabled={!quickConnectInput}
-                                className="bg-app-accent text-white px-4 py-1.5 rounded text-sm font-medium hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                            >
-                                Connect
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Templates Dropdown */}
-                    <AnimatePresence>
-                        {showTemplates && (
-                            <motion.div
-                                initial={{ opacity: 0, y: -10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
-                            >
-                                <div className="p-1.5">
-                                    {CONNECTION_TEMPLATES.map(template => (
-                                        <button
-                                            key={template.id}
-                                            onClick={() => handleSelectTemplate(template)}
-                                            className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
-                                        >
-                                            <Terminal size={12} className="text-app-accent" />
-                                            <div>
-                                                <div className="font-medium text-xs">{template.name}</div>
-                                                <div className="text-[10px] text-app-muted font-mono">{template.username}@host:{template.port}</div>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-
-                    {/* Autocomplete Dropdown */}
-                    <AnimatePresence>
-                        {showAutocomplete && autocompleteSuggestions.length > 0 && !showTemplates && (
-                            <motion.div
-                                initial={{ opacity: 0, y: -10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
-                            >
-                                <div className="p-1.5">
-                                    {autocompleteSuggestions.map(conn => (
-                                        <button
-                                            key={conn.id}
-                                            onClick={() => handleSelectAutocomplete(conn)}
-                                            className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
-                                        >
-                                            <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="font-medium text-xs truncate">{conn.name || conn.host}</div>
-                                                <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}:{conn.port}</div>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-
-                    {/* Expandable Auth Fields */}
-                    <AnimatePresence>
-                        {isAuthExpanded && (
-                            <motion.div
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="bg-app-panel/30 border border-app-border rounded-lg p-3 grid grid-cols-2 gap-3"
-                            >
-                                <div className="relative col-span-2 sm:col-span-1">
-                                    <Lock size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                    <input
-                                        type="password"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        placeholder="Password"
-                                        className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors"
-                                    />
-                                </div>
-
-                                <div className="relative col-span-2 sm:col-span-1">
-                                    <Monitor size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                    <input
-                                        type="number"
-                                        value={port}
-                                        onChange={(e) => setPort(e.target.value)}
-                                        placeholder="Port (22)"
-                                        className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
-                                    />
-                                </div>
-
-                                <div className="relative col-span-2">
-                                    <div className="relative flex gap-2">
-                                        <div className="relative flex-1">
-                                            <FileKey size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                            <input
-                                                type="text"
-                                                value={privateKeyPath}
-                                                onChange={(e) => setPrivateKeyPath(e.target.value)}
-                                                placeholder="Private Key Path"
-                                                className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
-                                            />
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleBrowseKey}
-                                            className="px-2.5 py-2 bg-app-surface border border-app-border rounded text-app-text hover:border-app-accent hover:text-app-accent transition-colors"
-                                        >
-                                            <FolderOpen size={14} />
-                                        </button>
-                                    </div>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </form>
-            </motion.div>
-
-            {/* Command Palette Button */}
-            <motion.div variants={itemVariants} className="mb-6">
-                <button
-                    onClick={handleCommandPalette}
-                    className="flex items-center gap-2 px-4 py-2 bg-app-panel/50 border border-app-border/50 rounded-lg text-sm text-app-muted hover:text-app-text hover:border-app-accent/50 transition-all hover:bg-app-panel/80 hover:shadow-sm"
-                >
-                    <Command size={14} />
-                    <span>Command Palette</span>
-                    <kbd className="ml-auto px-2 py-0.5 bg-app-surface border border-app-border rounded text-[10px] font-mono">{commandKey}</kbd>
-                </button>
-            </motion.div>
-
-            {/* Compact Actions */}
-            <motion.div variants={itemVariants} className="flex gap-3 mb-8">
-                <Card
-                    onClick={() => openTab('local')}
-                    className="flex-1 cursor-pointer"
-                >
-                    <div className="p-4 flex items-center gap-3">
-                        <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-app-accent shrink-0 ring-1 ring-inset ring-app-border/20">
-                            <Terminal size={16} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-medium text-app-text">Local Terminal</h3>
-                            <p className="text-xs text-app-muted">Local machine</p>
-                        </div>
-                    </div>
-                </Card>
-
-                <Card
-                    onClick={() => openAddConnectionModal()}
-                    className="flex-1 cursor-pointer"
-                >
-                    <div className="p-4 flex items-center gap-3">
-                        <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-green-500 shrink-0 ring-1 ring-inset ring-app-border/20">
-                            <Plus size={16} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-medium text-app-text">New Connection</h3>
-                            <p className="text-xs text-app-muted">Add SSH server</p>
-                        </div>
-                    </div>
-                </Card>
-
-                <Card
-                    onClick={() => setIsAddTunnelModalOpen(true)}
-                    className="flex-1 cursor-pointer"
-                >
-                    <div className="p-4 flex items-center gap-3">
-                        <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-blue-500 shrink-0 ring-1 ring-inset ring-app-border/20">
-                            <Network size={16} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-medium text-app-text">Port Forwarding</h3>
-                            <p className="text-xs text-app-muted">Local & Remote</p>
-                        </div>
-                    </div>
-                </Card>
-            </motion.div>
-
-            <AddTunnelModal
-                isOpen={isAddTunnelModalOpen}
-                onClose={() => setIsAddTunnelModalOpen(false)}
-            />
-
-            {/* Favorite Connections */}
-            {favoriteConnections.length > 0 && (
+            {/* Scrollable Content Wrapper */}
+            <motion.div
+                className="flex-1 overflow-y-auto p-8"
+                style={{
+                    maskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)',
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)'
+                }}
+            >
+                {/* Compact Header - Greeting + Time */}
                 <motion.div variants={itemVariants} className="mb-6">
-                    <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
-                        <Star size={12} className="text-yellow-500 fill-yellow-500" />
-                        Favorites
-                    </h2>
-                    <div className="grid grid-cols-5 gap-3">
-                        {favoriteConnections.map(conn => (
-                            <Card
-                                key={conn.id}
-                                className="cursor-pointer border-yellow-500/10 hover:border-yellow-500/30"
-                            >
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleFavorite(conn.id);
-                                    }}
-                                    className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
-                                >
-                                    <Star size={12} className="fill-yellow-500 text-yellow-500" />
-                                </button>
-
-                                <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
-                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
-                                        `}>
-                                            <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
-                                        </div>
-                                    </div>
-                                    <div className="mb-2">
-                                        <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
-                                        <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
-                                        {conn.lastConnected && (
-                                            <span className="text-[9px] text-app-muted font-mono truncate ml-2">
-                                                {getRelativeTime(conn.lastConnected)}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </Card>
-                        ))}
+                    <div className="flex items-baseline gap-3">
+                        <h1 className="text-3xl font-light text-app-text tracking-tight">
+                            {greeting}
+                        </h1>
+                        <span className="text-sm text-app-muted/60 font-mono">{time}</span>
                     </div>
                 </motion.div>
-            )}
 
-            {/* Recent Connections */}
-            <motion.div variants={itemVariants}>
-                <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
-                    Recent Connections
-                </h2>
+                {/* Quick Connect */}
+                <motion.div variants={itemVariants} className="mb-6 max-w-2xl relative" ref={autocompleteRef}>
+                    <form onSubmit={handleQuickConnect} className="relative group flex flex-col gap-2">
+                        <div className="flex items-center bg-app-panel/80 backdrop-blur-sm border border-app-border/50 rounded-lg p-2 focus-within:border-app-accent transition-all shadow-sm">
+                            <Terminal size={16} className="text-app-muted ml-2 mr-2 shrink-0" />
+                            <input
+                                type="text"
+                                value={quickConnectInput}
+                                onChange={(e) => {
+                                    setQuickConnectInput(e.target.value);
+                                    setShowAutocomplete(e.target.value.length > 0);
+                                }}
+                                onFocus={() => quickConnectInput && setShowAutocomplete(true)}
+                                placeholder="user@host:port (e.g. root@192.168.1.5)"
+                                className="flex-1 bg-transparent border-none outline-none text-app-text placeholder:text-app-muted/40 font-mono text-sm h-8 w-full"
+                            />
 
-                {connections.length === 0 ? (
-                    <div className="bg-app-panel/50 p-8 rounded-lg border border-dashed border-app-border/50 text-center">
-                        <div className="w-16 h-16 bg-app-surface/50 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Terminal size={24} className="text-app-muted" />
-                        </div>
-                        <h3 className="text-sm font-medium text-app-text mb-2">No Connections Yet</h3>
-                        <p className="text-xs text-app-muted mb-4">
-                            Get started by adding your first SSH connection.
-                        </p>
-                        <button
-                            onClick={() => openAddConnectionModal()}
-                            className="px-4 py-2 bg-app-accent text-white rounded text-sm font-medium hover:brightness-110 transition-all font-mono"
-                        >
-                            Add Connection
-                        </button>
-                    </div>
-                ) : recentConnections.length > 0 ? (
-                    <div className="grid grid-cols-5 gap-3">
-                        {recentConnections.map(conn => (
-                            <Card
-                                key={conn.id}
-                                className="cursor-pointer"
-                            >
+                            <div className="flex items-center gap-1 pr-1 shrink-0">
                                 <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        toggleFavorite(conn.id);
-                                    }}
-                                    className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
+                                    type="button"
+                                    onClick={() => setShowTemplates(!showTemplates)}
+                                    className="p-1.5 rounded transition-all text-app-muted hover:text-app-accent hover:bg-app-accent/10"
+                                    title="Templates"
                                 >
-                                    <Star size={12} className="text-app-muted" />
+                                    <Sparkles size={14} />
                                 </button>
 
-                                <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
-                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
-                                        `}>
-                                            <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAuthExpanded(!isAuthExpanded)}
+                                    className={`p-1.5 rounded transition-all ${isAuthExpanded || password || privateKeyPath
+                                        ? 'bg-app-accent/10 text-app-accent'
+                                        : 'text-app-muted hover:text-app-text hover:bg-app-surface'
+                                        }`}
+                                    title="Auth"
+                                >
+                                    <Key size={14} />
+                                </button>
+
+                                <label className="flex items-center gap-1.5 text-xs text-app-muted cursor-pointer hover:text-app-text transition-colors select-none px-2 py-1 rounded hover:bg-app-surface">
+                                    <input
+                                        type="checkbox"
+                                        checked={saveConnection}
+                                        onChange={(e) => setSaveConnection(e.target.checked)}
+                                        className="accent-app-accent"
+                                    />
+                                    <span>Save</span>
+                                </label>
+                                <button
+                                    type="submit"
+                                    disabled={!quickConnectInput}
+                                    className="bg-app-accent text-white px-4 py-1.5 rounded text-sm font-medium hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                                >
+                                    Connect
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Templates Dropdown */}
+                        <AnimatePresence>
+                            {showTemplates && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
+                                    className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
+                                >
+                                    <div className="p-1.5">
+                                        {CONNECTION_TEMPLATES.map(template => (
+                                            <button
+                                                key={template.id}
+                                                onClick={() => handleSelectTemplate(template)}
+                                                className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
+                                            >
+                                                <Terminal size={12} className="text-app-accent" />
+                                                <div>
+                                                    <div className="font-medium text-xs">{template.name}</div>
+                                                    <div className="text-[10px] text-app-muted font-mono">{template.username}@host:{template.port}</div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Autocomplete Dropdown */}
+                        <AnimatePresence>
+                            {showAutocomplete && autocompleteSuggestions.length > 0 && !showTemplates && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
+                                    className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
+                                >
+                                    <div className="p-1.5">
+                                        {autocompleteSuggestions.map(conn => (
+                                            <button
+                                                key={conn.id}
+                                                onClick={() => handleSelectAutocomplete(conn)}
+                                                className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
+                                            >
+                                                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="font-medium text-xs truncate">{conn.name || conn.host}</div>
+                                                    <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}:{conn.port}</div>
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Expandable Auth Fields */}
+                        <AnimatePresence>
+                            {isAuthExpanded && (
+                                <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className="bg-app-panel/30 border border-app-border rounded-lg p-3 grid grid-cols-2 gap-3"
+                                >
+                                    <div className="relative col-span-2 sm:col-span-1">
+                                        <Lock size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
+                                        <input
+                                            type="password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            placeholder="Password"
+                                            className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors"
+                                        />
+                                    </div>
+
+                                    <div className="relative col-span-2 sm:col-span-1">
+                                        <Monitor size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
+                                        <input
+                                            type="number"
+                                            value={port}
+                                            onChange={(e) => setPort(e.target.value)}
+                                            placeholder="Port (22)"
+                                            className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
+                                        />
+                                    </div>
+
+                                    <div className="relative col-span-2">
+                                        <div className="relative flex gap-2">
+                                            <div className="relative flex-1">
+                                                <FileKey size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
+                                                <input
+                                                    type="text"
+                                                    value={privateKeyPath}
+                                                    onChange={(e) => setPrivateKeyPath(e.target.value)}
+                                                    placeholder="Private Key Path"
+                                                    className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
+                                                />
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleBrowseKey}
+                                                className="px-2.5 py-2 bg-app-surface border border-app-border rounded text-app-text hover:border-app-accent hover:text-app-accent transition-colors"
+                                            >
+                                                <FolderOpen size={14} />
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="mb-2">
-                                        <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
-                                        <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </form>
+                </motion.div>
+
+                {/* Command Palette Button */}
+                <motion.div variants={itemVariants} className="mb-6">
+                    <button
+                        onClick={handleCommandPalette}
+                        className="flex items-center gap-2 px-4 py-2 bg-app-panel/50 border border-app-border/50 rounded-lg text-sm text-app-muted hover:text-app-text hover:border-app-accent/50 transition-all hover:bg-app-panel/80 hover:shadow-sm"
+                    >
+                        <Command size={14} />
+                        <span>Command Palette</span>
+                        <kbd className="ml-auto px-2 py-0.5 bg-app-surface border border-app-border rounded text-[10px] font-mono">{commandKey}</kbd>
+                    </button>
+                </motion.div>
+
+                {/* Compact Actions */}
+                <motion.div variants={itemVariants} className="flex gap-3 mb-8">
+                    <Card
+                        onClick={() => openTab('local')}
+                        className="flex-1 cursor-pointer"
+                    >
+                        <div className="p-4 flex items-center gap-3">
+                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-app-accent shrink-0 ring-1 ring-inset ring-app-border/20">
+                                <Terminal size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-medium text-app-text">Local Terminal</h3>
+                                <p className="text-xs text-app-muted">Local machine</p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    <Card
+                        onClick={() => openAddConnectionModal()}
+                        className="flex-1 cursor-pointer"
+                    >
+                        <div className="p-4 flex items-center gap-3">
+                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-green-500 shrink-0 ring-1 ring-inset ring-app-border/20">
+                                <Plus size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-medium text-app-text">New Connection</h3>
+                                <p className="text-xs text-app-muted">Add SSH server</p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    <Card
+                        onClick={() => setIsAddTunnelModalOpen(true)}
+                        className="flex-1 cursor-pointer"
+                    >
+                        <div className="p-4 flex items-center gap-3">
+                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-blue-500 shrink-0 ring-1 ring-inset ring-app-border/20">
+                                <Network size={16} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-medium text-app-text">Port Forwarding</h3>
+                                <p className="text-xs text-app-muted">Local & Remote</p>
+                            </div>
+                        </div>
+                    </Card>
+                </motion.div>
+
+                <AddTunnelModal
+                    isOpen={isAddTunnelModalOpen}
+                    onClose={() => setIsAddTunnelModalOpen(false)}
+                />
+
+                {/* Favorite Connections */}
+                {favoriteConnections.length > 0 && (
+                    <motion.div
+                        initial="visible"
+                        animate="visible"
+                        className="mb-6"
+                    >
+                        <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
+                            <Star size={12} className="text-yellow-500 fill-yellow-500" />
+                            Favorites
+                        </h2>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            {favoriteConnections.map(conn => (
+                                <Card
+                                    key={conn.id}
+                                    className="cursor-pointer border-yellow-500/10 hover:border-yellow-500/30"
+                                >
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleFavorite(conn.id);
+                                        }}
+                                        className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
+                                    >
+                                        <Star size={12} className="fill-yellow-500 text-yellow-500" />
+                                    </button>
+
+                                    <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
+                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
+                                        `}>
+                                                <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
+                                            </div>
+                                        </div>
+                                        <div className="mb-2">
+                                            <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
+                                            <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
+                                            {conn.lastConnected && (
+                                                <span className="text-[9px] text-app-muted font-mono truncate ml-2">
+                                                    {getRelativeTime(conn.lastConnected)}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="flex items-center justify-between">
-                                        <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
-                                        {conn.lastConnected && (
-                                            <span className="text-[9px] text-app-muted font-mono truncate ml-2">
-                                                {getRelativeTime(conn.lastConnected)}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </Card>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="text-center py-6 text-sm text-app-muted">
-                        No recent connections. All connections are favorited.
-                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    </motion.div>
                 )}
-            </motion.div>
+
+                {/* Recent Connections */}
+                <motion.div
+                    initial="visible"
+                    animate="visible"
+                >
+                    <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
+                        Recent Connections
+                    </h2>
+
+                    {connections.length === 0 ? (
+                        <div className="bg-app-panel/50 p-8 rounded-lg border border-dashed border-app-border/50 text-center">
+                            <div className="w-16 h-16 bg-app-surface/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Terminal size={24} className="text-app-muted" />
+                            </div>
+                            <h3 className="text-sm font-medium text-app-text mb-2">No Connections Yet</h3>
+                            <p className="text-xs text-app-muted mb-4">
+                                Get started by adding your first SSH connection.
+                            </p>
+                            <button
+                                onClick={() => openAddConnectionModal()}
+                                className="px-4 py-2 bg-app-accent text-white rounded text-sm font-medium hover:brightness-110 transition-all font-mono"
+                            >
+                                Add Connection
+                            </button>
+                        </div>
+                    ) : recentConnections.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                            {recentConnections.map(conn => (
+                                <Card
+                                    key={conn.id}
+                                    className="cursor-pointer"
+                                >
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleFavorite(conn.id);
+                                        }}
+                                        className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
+                                    >
+                                        <Star size={12} className="text-app-muted" />
+                                    </button>
+
+                                    <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
+                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
+                                        `}>
+                                                <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
+                                            </div>
+                                        </div>
+                                        <div className="mb-2">
+                                            <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
+                                            <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
+                                            {conn.lastConnected && (
+                                                <span className="text-[9px] text-app-muted font-mono truncate ml-2">
+                                                    {getRelativeTime(conn.lastConnected)}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="text-center py-6 text-sm text-app-muted">
+                            No recent connections. All connections are favorited.
+                        </div>
+                    )}
+                </motion.div>
+            </motion.div>{/* End scrollable content wrapper */}
         </motion.div>
     );
 }
