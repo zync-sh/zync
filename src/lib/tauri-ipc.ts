@@ -112,6 +112,7 @@ const ipcRenderer = {
       'dialog:openDirectory': 'dialog_open_directory',
       'config:set': 'settings_set',
       'shell:open': 'shell_open',
+      'plugins:load': 'plugins_load',
     };
 
     const tauriCommand = channelMap[channel] || channel.replace(':', '_');

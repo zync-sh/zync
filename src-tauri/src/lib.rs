@@ -6,6 +6,7 @@ mod ssh;
 mod ssh_config;
 pub mod tunnel;
 mod snippets;
+pub mod plugins;
 
 use commands::AppState;
 use tauri::{Manager, Emitter};
@@ -25,8 +26,11 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.emit("app:request-close", ());
+                // Only handle graceful shutdown for the main window
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.emit("app:request-close", ());
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -72,6 +76,14 @@ pub fn run() {
             commands::sftp_put,
             commands::shell_open,
             commands::app_exit,
+            commands::plugins_load,
+            commands::plugins_toggle,
+            commands::plugin_fs_read,
+            commands::plugin_fs_write,
+            commands::plugin_fs_list,
+            commands::plugin_fs_exists,
+            commands::plugin_fs_create_dir,
+            commands::plugin_window_create,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -57,6 +57,15 @@
         border-color: var(--color-app-border);
     }
 
+    html,
+    body,
+    #root {
+        height: 100%;
+        overflow: hidden !important;
+        margin: 0;
+        padding: 0;
+    }
+
     body {
         background-color: var(--color-app-bg);
         color: var(--color-app-text);
@@ -131,81 +140,6 @@
 
 /* Terminal styles overrides */
 
-/* Theme Overrides */
-.light {
-    --color-app-bg: #ffffff;
-    --color-app-panel: #f3f4f6;
-    --color-app-surface: #e5e7eb;
-    --color-app-border: #e5e7eb;
-    --color-app-text: #24292f;
-    --color-app-muted: #57606a;
-    --color-app-accent: #4c82c9;
-}
-
-.dracula {
-    --color-app-bg: #282a36;
-    --color-app-panel: #282a36;
-    /* Unified for simpler look, or #44475a sidebar */
-    --color-app-surface: #44475a;
-    --color-app-border: #6272a4;
-    --color-app-text: #f8f8f2;
-    --color-app-muted: #6272a4;
-    --color-app-accent: #d282af;
-}
-
-.monokai {
-    --color-app-bg: #272822;
-    --color-app-panel: #272822;
-    --color-app-surface: #3e3d32;
-    --color-app-border: #49483e;
-    --color-app-text: #f8f8f2;
-    --color-app-muted: #75715e;
-    --color-app-accent: #9ebf52;
-}
-
-.midnight {
-    /* Classic Dark Blue */
-    --color-app-bg: #0f111a;
-    --color-app-panel: #1a1d2d;
-    --color-app-surface: #262a3b;
-    --color-app-border: #2f344a;
-    --color-app-text: #e2e8f0;
-    --color-app-muted: #94a3b8;
-    --color-app-accent: #797bce;
-}
-
-.warm {
-    /* Dark Warm (Gruvbox/Espresso inspired) */
-    --color-app-bg: #1c1917;
-    /* Warm dark gray/brown */
-    --color-app-panel: #292524;
-    --color-app-surface: #44403c;
-    --color-app-border: #57534e;
-    --color-app-text: #f5f5f4;
-    --color-app-muted: #a8a29e;
-    --color-app-accent: #c08535;
-    /* Muted Amber */
-}
-
-.light-warm {
-    /* Light Warm (Latte/Cream) */
-    --color-app-bg: #f9f5eb;
-    /* Richer Cream */
-    --color-app-panel: #f0ebe2;
-    /* Darker Cream for sidebar */
-    --color-app-surface: #e6e0d5;
-    /* Darker surface for inputs */
-    --color-app-border: #dcd6cb;
-    /* Warm Border */
-    --color-app-text: #44403c;
-    /* Stone-700 (Softer than black) */
-    --color-app-muted: #a8a29e;
-    /* Stone-400 */
-    --color-app-accent: #c08535;
-    /* Muted Amber */
-}
-
-/* Ensure background is applied */
 body {
     background-color: var(--color-app-bg);
     transition: background-color 0.2s, color 0.2s;

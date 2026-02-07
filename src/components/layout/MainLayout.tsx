@@ -377,14 +377,16 @@ export function MainLayout({ children }: { children: ReactNode }) {
         // Persist for splash screen
         localStorage.setItem('zync-theme', theme);
 
-        // Remove old theme classes
+        // Remove old theme classes (Legacy support)
         document.body.classList.remove('light', 'dark', 'dracula', 'monokai', 'midnight', 'warm', 'light-warm');
 
         if (theme === 'system') {
             const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             document.body.classList.add(systemTheme);
+            document.body.setAttribute('data-theme', systemTheme);
         } else {
-            document.body.classList.add(theme);
+            document.body.classList.add(theme); // Keep class for backward compatibility
+            document.body.setAttribute('data-theme', theme); // Set attribute for new plugin system
         }
 
         // Apply Custom Accent
