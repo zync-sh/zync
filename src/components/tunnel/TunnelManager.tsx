@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
-import { ExternalLink, ArrowRight, Plus, Network, Trash2 } from 'lucide-react';
+import { ExternalLink, ArrowRight, Plus, Network, Trash2, ChevronDown } from 'lucide-react';
+import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { Modal } from '../ui/Modal';
 
@@ -35,6 +36,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   const [, setLoading] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingTunnel, setEditingTunnel] = useState<TunnelConfig | null>(null);
+  const [showPresetDropdown, setShowPresetDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Port suggestion dialog state
   const [portSuggestion, setPortSuggestion] = useState<{
@@ -77,6 +80,40 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       window.ipcRenderer.off('tunnel:status-change', handleStatusChange);
     };
   }, [activeConnectionId]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowPresetDropdown(false);
+      }
+    };
+
+    if (showPresetDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showPresetDropdown]);
+
+  // Handle preset selection
+  const handlePresetSelect = (preset: TunnelPreset) => {
+    setShowPresetDropdown(false);
+    setEditingTunnel({
+      id: '',
+      connectionId: activeConnectionId || '',
+      name: preset.name,
+      type: preset.type,
+      localPort: preset.localPort,
+      remoteHost: preset.remoteHost,
+      remotePort: preset.remotePort,
+      bindToAny: preset.bindToAny,
+      status: 'stopped',
+    } as TunnelConfig);
+    setIsAddModalOpen(true);
+  };
 
 
 
@@ -219,15 +256,49 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
             </span>
           )}
         </div>
-        <Button
-          onClick={() => {
-            setEditingTunnel(null);
-            setIsAddModalOpen(true);
-          }}
-          className="h-7 px-2.5 bg-app-accent text-white hover:bg-app-accent/90 text-[10px] font-bold whitespace-nowrap"
-        >
-          <Plus size={12} className="mr-1" /> New Forward
-        </Button>
+        <div className="relative" ref={dropdownRef}>
+          <div className="flex">
+            <Button
+              onClick={() => {
+                setEditingTunnel(null);
+                setIsAddModalOpen(true);
+              }}
+              className="h-7 px-2.5 bg-app-accent text-white hover:bg-app-accent/90 text-[10px] font-bold whitespace-nowrap rounded-r-none border-r border-white/20"
+            >
+              <Plus size={12} className="mr-1" /> New Forward
+            </Button>
+            <Button
+              onClick={() => setShowPresetDropdown(!showPresetDropdown)}
+              className="h-7 px-1.5 bg-app-accent text-white hover:bg-app-accent/90 rounded-l-none"
+              title="Quick Tunnels"
+            >
+              <ChevronDown size={12} />
+            </Button>
+          </div>
+
+          {/* Preset Dropdown */}
+          {showPresetDropdown && (
+            <div className="absolute right-0 mt-1 w-56 bg-app-panel border border-app-border rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+              {TUNNEL_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => handlePresetSelect(preset)}
+                  className="w-full px-3 py-2.5 text-left hover:bg-app-surface transition-colors border-b border-app-border/30 last:border-b-0 group"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="font-semibold text-xs text-app-text group-hover:text-app-accent transition-colors">{preset.name}</div>
+                      <div className="text-[10px] text-app-muted mt-0.5">{preset.description}</div>
+                    </div>
+                    <div className="text-[9px] font-mono text-app-muted/60 bg-app-surface/50 px-1.5 py-0.5 rounded">
+                      {preset.localPort}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4">
