@@ -94,7 +94,9 @@ const ipcRenderer = {
       'fs_exists': 'fs_exists',
       'tunnel:getAll': 'tunnel_get_all',
       'tunnel:startLocal': 'tunnel_start_local',
+      'tunnel:start_local': 'tunnel_start_local', // Add snake_case mapping
       'tunnel:startRemote': 'tunnel_start_remote',
+      'tunnel:start_remote': 'tunnel_start_remote', // Add snake_case mapping
       'tunnel:stop': 'tunnel_stop',
       'ssh:exec': 'ssh_exec',
       'ssh:test': 'ssh_test_connection',
@@ -290,8 +292,46 @@ const ipcRenderer = {
         } else if (args.length === 2) {
           payload = { id: args[0] };
         }
-      } else if (tauriCommand === 'tunnel_start') {
-        payload = { id: args[0] };
+      } else if (tauriCommand === 'tunnel_start_local') {
+        // Handle both object style (from some paths) and positional args (from TunnelManager)
+        if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
+          const arg = args[0];
+          payload = {
+            connectionId: arg.connectionId,
+            localPort: arg.localPort,
+            remoteHost: arg.remoteHost,
+            remotePort: arg.remotePort
+          };
+        } else if (args.length >= 4) {
+          // From TunnelManager: connectionId, localPort, remoteHost, remotePort
+          payload = {
+            connectionId: args[0],
+            localPort: args[1],
+            remoteHost: args[2],
+            remotePort: args[3]
+          };
+        }
+        console.log('[IPC] tunnel_start_local final payload:', payload);
+
+      } else if (tauriCommand === 'tunnel_start_remote') {
+        if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
+          const arg = args[0];
+          payload = {
+            connectionId: arg.connectionId,
+            remotePort: arg.remotePort,
+            localHost: arg.localHost,
+            localPort: arg.localPort
+          };
+        } else if (args.length >= 4) {
+          // From TunnelManager: connectionId, remotePort, localHost, localPort
+          payload = {
+            connectionId: args[0],
+            remotePort: args[1],
+            localHost: args[2],
+            localPort: args[3]
+          };
+        }
+
       } else if (tauriCommand === 'tunnel_stop') {
         payload = { id: args[0] };
       } else if (tauriCommand === 'fs_cwd') {

@@ -57,7 +57,7 @@ export interface ConnectionSlice {
     disconnect: (id: string) => Promise<void>;
 
     // Tab Actions
-    openTab: (connectionId: string) => void;
+    openTab: (connectionId: string, startView?: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
     openPortForwardingTab: () => void;
     openSnippetsTab: () => void;
     closeTab: (tabId: string) => void;
@@ -354,7 +354,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
-    openTab: (connectionId) => {
+    openTab: (connectionId, startView = 'terminal') => {
         set(state => {
             // Logic moved from Context
             if (connectionId === 'local') {
@@ -373,15 +373,26 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
             // Check for existing tab for this connection (excluding generic or other views if needed, but here we want main connection tab)
             // We specifically look for a tab with type 'connection' and matching connectionId
-            // We might also want to check if the view is 'terminal' to be specific, but usually one main tab per connection is desired.
-            const existingTab = state.tabs.find(t => t.connectionId === conn.id && t.type === 'connection' && t.view === 'terminal');
+            const existingTab = state.tabs.find(t => t.connectionId === conn.id && t.type === 'connection');
 
             if (existingTab) {
-                // Auto connect if disconnected even if tab exists (e.g. user clicked to reconnect)
-                if (conn.status === 'disconnected') {
+                // Return updated state with potentially changed view
+                const updatedTabs = state.tabs.map(t =>
+                    t.id === existingTab.id && startView && t.view !== startView
+                        ? { ...t, view: startView }
+                        : t
+                );
+
+                // Auto connect if disconnected or error even if tab exists (e.g. user clicked to reconnect)
+                if (conn.status === 'disconnected' || conn.status === 'error') {
                     get().connect(conn.id);
                 }
-                return { activeTabId: existingTab.id, activeConnectionId: conn.id };
+
+                return {
+                    tabs: updatedTabs,
+                    activeTabId: existingTab.id,
+                    activeConnectionId: conn.id
+                };
             }
 
             const newTab: Tab = {
@@ -389,11 +400,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 type: 'connection',
                 title: conn.name || conn.host,
                 connectionId: conn.id,
-                view: 'terminal'
+                view: startView as any
             };
 
-            // Auto connect if disconnected
-            if (conn.status === 'disconnected') {
+            // Auto connect if disconnected or error
+            if (conn.status === 'disconnected' || conn.status === 'error') {
                 get().connect(conn.id);
             }
 

@@ -261,8 +261,13 @@ impl PtyManager {
                         }
                     }
                     
-                    // 3. Handle resize events
-                    Some((c, r)) = resize_rx.recv() => {
+                    // 3. Handle resize events - drain channel to get only latest
+                    Some((mut c, mut r)) = resize_rx.recv() => {
+                        // Drain any additional resize events to avoid stale resizes
+                        while let Ok((latest_c, latest_r)) = resize_rx.try_recv() {
+                            c = latest_c;
+                            r = latest_r;
+                        }
                         if let Err(e) = channel.window_change(c as u32, r as u32, 0, 0).await {
                             eprintln!("[PTY] Failed to resize channel: {}", e);
                         }

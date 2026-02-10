@@ -42,7 +42,18 @@ impl TunnelManager {
             }
         }
 
-        let listener = TcpListener::bind(format!("{}:{}", bind_address, local_port)).await?;
+        let listener = match TcpListener::bind(format!("{}:{}", bind_address, local_port)).await {
+            Ok(listener) => listener,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                let process_info = find_process_using_port(local_port).await;
+                return Err(anyhow!(
+                    "Port {} is already in use{}. Please stop this process or choose a different port.",
+                    local_port,
+                    process_info.map(|p| format!(" {}", p)).unwrap_or_default()
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        };
         let session = session.clone();
 
         println!("[TUNNEL] Starting local forwarding on port {} to {}:{} with bind address {}", local_port, remote_host, remote_port, bind_address);
@@ -149,14 +160,13 @@ impl TunnelManager {
         // Parse ID to determine type
         if tunnel_id.starts_with("local:") {
             let mut listeners = self.local_listeners.lock().await;
-            if listeners.contains_key(&tunnel_id) {
-                if let Some((handle, tx)) = listeners.remove(&tunnel_id) {
-                    // Send kill signal to children
-                    let _ = tx.send(());
-                    // Abort the listener thread itself (redundant if using select but safe)
-                    handle.abort();
-                    println!("[TUNNEL MARKER] Stop signal sent for {}", tunnel_id);
-                }
+            // Atomic remove - no race condition
+            if let Some((handle, tx)) = listeners.remove(&tunnel_id) {
+                // Send kill signal to children
+                let _ = tx.send(());
+                // Abort the listener thread itself (redundant if using select but safe)
+                handle.abort();
+                println!("[TUNNEL MARKER] Stop signal sent for {}", tunnel_id);
             } else {
                 println!("[TUNNEL ERROR] Key {} not found in local_listeners. Available: {:?}", tunnel_id, listeners.keys());
             }
@@ -187,5 +197,90 @@ impl TunnelManager {
              }
         }
         Ok(())
+    }
+}
+
+/// Attempts to find which process is using the specified port.
+/// Returns a formatted string like "by 'node' (PID: 1234)" or None if not found.
+async fn find_process_using_port(port: u16) -> Option<String> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use tokio::process::Command;
+        
+        // Try lsof command (available on Linux and macOS)
+        let output = Command::new("lsof")
+            .args(["-i", &format!(":{}", port), "-t", "-sTCP:LISTEN"])
+            .output()
+            .await
+            .ok()?;
+        
+        if output.status.success() {
+            let pid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                // Get process name from PID
+                let name_output = Command::new("ps")
+                    .args(["-p", &pid.to_string(), "-o", "comm="])
+                    .output()
+                    .await
+                    .ok()?;
+                
+                if name_output.status.success() {
+                    let process_name = String::from_utf8_lossy(&name_output.stdout).trim().to_string();
+                    if !process_name.is_empty() {
+                        return Some(format!("by '{}' (PID: {})", process_name, pid));
+                    }
+                }
+                return Some(format!("by PID {}", pid));
+            }
+        }
+        None
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        use tokio::process::Command;
+        
+        // Use netstat on Windows
+        let output = Command::new("netstat")
+            .args(["-ano"])
+            .output()
+            .await
+            .ok()?;
+        
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if line.contains(&format!(":{}", port)) && line.contains("LISTENING") {
+                    // Extract PID (last column in netstat output)
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            // Try to get process name using tasklist
+                            let name_output = Command::new("tasklist")
+                                .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+                                .output()
+                                .await
+                                .ok()?;
+                            
+                            if name_output.status.success() {
+                                let name_str = String::from_utf8_lossy(&name_output.stdout);
+                                if let Some(first_field) = name_str.split(',').next() {
+                                    let process_name = first_field.trim_matches('"').trim();
+                                    if !process_name.is_empty() {
+                                        return Some(format!("by '{}' (PID: {})", process_name, pid));
+                                    }
+                                }
+                            }
+                            return Some(format!("by PID {}", pid));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        None
     }
 }
