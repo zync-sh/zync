@@ -136,6 +136,18 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
     const pinnedFeatures = connection?.pinnedFeatures || [];
 
+    // Ensure active view is always in openFeatures
+    useEffect(() => {
+        if (tab.view && tab.view !== 'terminal' && !pinnedFeatures.includes(tab.view)) {
+            setOpenFeatures(prev => {
+                if (!prev.includes(tab.view)) {
+                    return [...prev, tab.view];
+                }
+                return prev;
+            });
+        }
+    }, [tab.view, pinnedFeatures]);
+
     // Handle Tab Selection
     const handleTabSelect = (view: any, termId?: string) => {
         setTabView(tab.id, view);
@@ -188,6 +200,19 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             setTabView(tab.id, 'terminal');
         }
     };
+
+    // Listen for keyboard shortcut events to open features
+    useEffect(() => {
+        const handleFeatureEvent = (e: Event) => {
+            const customEvent = e as CustomEvent;
+            if (customEvent.detail.tabId === tab.id) {
+                handleOpenFeature(customEvent.detail.feature);
+            }
+        };
+
+        window.addEventListener('ssh-ui:open-feature', handleFeatureEvent);
+        return () => window.removeEventListener('ssh-ui:open-feature', handleFeatureEvent);
+    }, [tab.id, handleOpenFeature]);
 
     // Ensure we start with at least 'terminal' available conceptually, 
     // though combined bar renders terminals from store.

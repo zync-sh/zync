@@ -2,13 +2,18 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/utils';
 
-export interface ContextMenuItem {
-  label: string;
-  icon?: React.ReactNode;
-  action: () => void;
-  variant?: 'default' | 'danger';
-  disabled?: boolean;
-}
+export type ContextMenuItem =
+  | {
+    label: string;
+    icon?: React.ReactNode;
+    action: () => void;
+    variant?: 'default' | 'danger';
+    disabled?: boolean;
+    separator?: never;
+  }
+  | {
+    separator: true;
+  };
 
 interface ContextMenuProps {
   x: number;
@@ -58,10 +63,14 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     <div
       ref={ref}
       style={style}
-      className="fixed z-50 w-48 rounded-xl border border-app-border/50 bg-app-panel/95 backdrop-blur-xl shadow-2xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5 context-menu-container"
+      className="fixed z-50 w-52 rounded-xl border border-app-border/50 bg-app-panel shadow-xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5 context-menu-container flex flex-col py-1"
     >
-      <div className="p-1">
-        {items.map((item, i) => (
+      {items.map((item, i) => {
+        if ('separator' in item) {
+          return <div key={i} className="h-[1px] bg-app-border/50 my-1 mx-2" />;
+        }
+
+        return (
           <button
             key={i}
             disabled={item.disabled}
@@ -71,19 +80,21 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               onClose();
             }}
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-2 text-left transition-colors relative',
+              'w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors relative mx-1 rounded-md text-xs',
+              // Fix width to account for margins
+              'w-[calc(100%-8px)]',
               item.disabled
                 ? 'text-app-muted/50 cursor-not-allowed'
                 : item.variant === 'danger'
                   ? 'text-app-danger hover:bg-app-danger/10'
-                  : 'text-app-text hover:bg-app-accent/10 hover:text-white',
+                  : 'text-app-text hover:bg-app-surface',
             )}
           >
-            {item.icon}
+            {item.icon && <span className="text-current opacity-80">{item.icon}</span>}
             <span>{item.label}</span>
           </button>
-        ))}
-      </div>
+        );
+      })}
     </div>,
     document.body,
   );

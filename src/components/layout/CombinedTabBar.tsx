@@ -66,18 +66,18 @@ export function CombinedTabBar({
     // We filter openFeatures to exclude pinned ones to avoid duplication
     const visibleFeatures = Array.from(new Set([...pinnedFeatures, ...openFeatures]));
 
-    const FEATURE_CONFIG: Record<string, { icon: any, label: string, view: any }> = {
-        'files': { icon: Files, label: 'Files', view: 'files' },
-        'port-forwarding': { icon: Network, label: 'Port Forwarding', view: 'port-forwarding' },
-        'snippets': { icon: Code, label: 'Snippets', view: 'snippets' },
-        'dashboard': { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' },
+    const FEATURE_CONFIG: Record<string, { icon: any, label: string, view: any, shortcut: string }> = {
+        'files': { icon: Files, label: 'Files', view: 'files', shortcut: 'Ctrl+Shift+F' },
+        'port-forwarding': { icon: Network, label: 'Port Forwarding', view: 'port-forwarding', shortcut: 'Ctrl+Shift+N' },
+        'snippets': { icon: Code, label: 'Snippets', view: 'snippets', shortcut: 'Ctrl+Shift+S' },
+        'dashboard': { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard', shortcut: 'Ctrl+Shift+D' },
     };
 
     return (
         <div ref={dragRegionRef} className="flex items-center w-full bg-app-panel border-b border-app-border px-1 h-9 shrink-0 gap-1 select-none app-drag-region" data-tauri-drag-region>
 
-            {/* Scrollable Tabs Area */}
-            <div className="flex-1 flex overflow-x-auto scrollbar-hide h-full items-center gap-1 pr-2 app-drag-region" data-tauri-drag-region>
+            {/* Scrollable Tabs Wrapper - flex-initial to size to content, allow shrinking for scroll */}
+            <div className="flex-initial min-w-0 flex overflow-x-auto scrollbar-hide h-full items-center gap-1 pr-1 app-drag-region" data-tauri-drag-region>
 
                 {/* 1. Terminal Tabs */}
                 {terminals.map(term => {
@@ -88,7 +88,7 @@ export function CombinedTabBar({
                             onClick={() => onTabSelect('terminal', term.id)}
                             data-tauri-drag-region="false"
                             className={cn(
-                                "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[100px] max-w-[200px] group border border-transparent drag-none",
+                                "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[100px] max-w-[200px] group border border-transparent drag-none shrink-0",
                                 isActive
                                     ? "bg-app-surface text-app-text shadow-sm border-app-border/50"
                                     : "text-app-muted hover:bg-app-surface/50 hover:text-app-text"
@@ -130,7 +130,7 @@ export function CombinedTabBar({
                             }}
                             data-tauri-drag-region="false"
                             className={cn(
-                                "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[90px] group border border-transparent relative drag-none",
+                                "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[90px] group border border-transparent relative drag-none shrink-0",
                                 isActive
                                     ? "bg-app-surface text-app-text shadow-sm border-app-border/50"
                                     : "text-app-muted hover:bg-app-surface/50 hover:text-app-text"
@@ -159,11 +159,10 @@ export function CombinedTabBar({
                         </div>
                     );
                 })}
-
             </div>
 
-            {/* Actions: Add Terminal + Dropdown */}
-            <div className="flex items-center gap-0.5 bg-app-surface/30 rounded-lg p-0.5 border border-app-border/30 drag-none" data-tauri-drag-region="false">
+            {/* 3. Actions: Add Terminal + Dropdown (Outside scrollable area) */}
+            <div className="flex items-center gap-0.5 bg-app-surface/30 rounded-lg p-0.5 border border-app-border/30 drag-none shrink-0 ml-1" data-tauri-drag-region="false">
                 <button
                     onClick={onNewTerminal}
                     className="h-6 w-7 flex items-center justify-center rounded hover:bg-app-surface hover:text-white text-app-accent transition-colors"
@@ -186,22 +185,28 @@ export function CombinedTabBar({
                     </button>
 
                     {isDropdownOpen && (
-                        <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100">
-                            <div className="px-2 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider">Features</div>
+                        <div className="absolute top-full right-0 mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+
+
 
                             <button
                                 onClick={() => {
                                     onNewTerminal();
                                     setIsDropdownOpen(false);
                                 }}
-                                className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors text-app-text hover:bg-app-surface"
+                                className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors text-app-text hover:bg-app-surface mx-1 rounded-md w-[calc(100%-8px)]"
                             >
-                                <TerminalIcon size={14} />
+                                <TerminalIcon size={14} className="opacity-80" />
                                 <span>Terminal</span>
                             </button>
 
+                            <div className="h-[1px] bg-app-border/50 my-1 mx-2" />
+
+                            <div className="px-3 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider">Features</div>
+
                             {Object.entries(FEATURE_CONFIG).map(([key, conf]) => {
                                 const isOpen = openFeatures.includes(key);
+                                const isActive = activeView === key;
                                 const Icon = conf.icon;
                                 return (
                                     <button
@@ -210,15 +215,21 @@ export function CombinedTabBar({
                                             onOpenFeature(key);
                                             setIsDropdownOpen(false);
                                         }}
-                                        disabled={isOpen}
+                                        disabled={isActive}
                                         className={cn(
-                                            "w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors",
-                                            isOpen ? "bg-app-accent/5 text-app-accent/50 cursor-default" : "text-app-text hover:bg-app-surface"
+                                            "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors mx-1 rounded-md w-[calc(100%-8px)]",
+                                            isActive ? "bg-app-accent/10 text-app-accent cursor-default" : "text-app-text hover:bg-app-surface"
                                         )}
                                     >
-                                        <Icon size={14} />
-                                        <span>{conf.label}</span>
-                                        {isOpen && <span className="ml-auto text-[10px] opacity-70">Open</span>}
+                                        <Icon size={14} className={cn("opacity-80", isActive && "opacity-100")} />
+                                        <span className="flex-1 font-medium">{conf.label}</span>
+                                        {isActive ? (
+                                            <span className="text-[10px] opacity-70">Active</span>
+                                        ) : isOpen ? (
+                                            <span className="text-[10px] opacity-50">Open</span>
+                                        ) : (
+                                            <span className="text-[10px] text-app-muted/60 font-mono">{conf.shortcut}</span>
+                                        )}
                                     </button>
                                 );
                             })}

@@ -143,6 +143,55 @@ export function ShortcutManager() {
                 e.preventDefault();
                 window.ipcRenderer.invoke('app:zoomOut');
             }
+            // Feature Shortcuts (Files, Port Forwarding, Snippets, Dashboard)
+            else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                if (activeTabId) {
+                    const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
+                    if (currentTab && currentTab.type === 'connection') {
+                        const event = new CustomEvent('ssh-ui:open-feature', {
+                            detail: { feature: 'files', tabId: activeTabId }
+                        });
+                        window.dispatchEvent(event);
+                    }
+                }
+            }
+            else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+                e.preventDefault();
+                if (activeTabId) {
+                    const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
+                    if (currentTab && currentTab.type === 'connection') {
+                        const event = new CustomEvent('ssh-ui:open-feature', {
+                            detail: { feature: 'port-forwarding', tabId: activeTabId }
+                        });
+                        window.dispatchEvent(event);
+                    }
+                }
+            }
+            else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (activeTabId) {
+                    const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
+                    if (currentTab && currentTab.type === 'connection') {
+                        const event = new CustomEvent('ssh-ui:open-feature', {
+                            detail: { feature: 'snippets', tabId: activeTabId }
+                        });
+                        window.dispatchEvent(event);
+                    }
+                }
+            }
+            else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                if (activeTabId) {
+                    const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
+                    if (currentTab && currentTab.type === 'connection') {
+                        const event = new CustomEvent('ssh-ui:open-feature', {
+                            detail: { feature: 'dashboard', tabId: activeTabId }
+                        });
+                        window.dispatchEvent(event);
+                    }
+                }
+            }
             // Terminal Actions (Dispatch to Active Terminal)
             else if (matchShortcut(e, kb.termCopy || 'Mod+Shift+C')) {
                 e.preventDefault();

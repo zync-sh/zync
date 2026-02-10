@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useAppStore, Connection, Folder } from '../../store/useAppStore'; // Updated Import
 import { getCurrentDragSource } from '../../lib/dragDrop';
-import { Pencil, ChevronRight, Folder as FolderIcon, ChevronDown, FolderPlus, Settings, Plus, Laptop, Network, PanelLeftOpen, PanelLeftClose, Search, TerminalIcon, Trash2, FolderOpen } from 'lucide-react';
+import { Pencil, ChevronRight, Folder as FolderIcon, ChevronDown, FolderPlus, Settings, Plus, Laptop, Network, PanelLeftOpen, PanelLeftClose, Search, TerminalIcon, Trash2, FolderOpen, Files, Code, LayoutDashboard, Power, Info } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -1010,6 +1010,7 @@ function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Co
                         items={[
                             {
                                 label: conn.status === 'connected' ? "Disconnect" : "Connect",
+                                icon: <Power size={14} className={conn.status === 'connected' ? "text-red-400" : "text-emerald-400"} />,
                                 action: () => {
                                     if (conn.status === 'connected') {
                                         disconnect(conn.id);
@@ -1021,14 +1022,39 @@ function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Co
                             },
                             {
                                 label: "Details",
+                                icon: <Info size={14} />,
                                 action: () => onViewDetails(conn)
                             },
+                            { separator: true },
+                            {
+                                label: "File Manager",
+                                icon: <Files size={14} />,
+                                action: () => openTab(conn.id, 'files')
+                            },
+                            {
+                                label: "Port Forwarding",
+                                icon: <Network size={14} />,
+                                action: () => openTab(conn.id, 'port-forwarding')
+                            },
+                            {
+                                label: "Snippets",
+                                icon: <Code size={14} />,
+                                action: () => openTab(conn.id, 'snippets')
+                            },
+                            {
+                                label: "Dashboard",
+                                icon: <LayoutDashboard size={14} />,
+                                action: () => openTab(conn.id, 'dashboard')
+                            },
+                            { separator: true },
                             {
                                 label: "Edit",
+                                icon: <Pencil size={14} />,
                                 action: () => onEdit(conn)
                             },
                             {
                                 label: "Delete",
+                                icon: <Trash2 size={14} />,
                                 variant: "danger",
                                 action: () => {
                                     if (confirm('Are you sure you want to delete this connection?')) {
