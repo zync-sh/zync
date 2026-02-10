@@ -90,13 +90,18 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
 
         // Auto-revert if it was using a suggested port
         if (tunnel.originalPort) {
-          const revertedTunnel = {
-            ...tunnel,
-            [tunnel.type === 'local' ? 'localPort' : 'remotePort']: tunnel.originalPort,
-            originalPort: undefined,
-          };
-          await window.ipcRenderer.invoke('tunnel:save', revertedTunnel);
-          showToast('success', `Port reverted to ${tunnel.originalPort}`);
+          try {
+            const revertedTunnel = {
+              ...tunnel,
+              [tunnel.type === 'local' ? 'localPort' : 'remotePort']: tunnel.originalPort,
+              originalPort: undefined,
+            };
+            await window.ipcRenderer.invoke('tunnel:save', revertedTunnel);
+            showToast('success', `Port reverted to ${tunnel.originalPort}`);
+            setTimeout(() => loadTunnels(), 200); // Refresh UI
+          } catch (revertError: any) {
+            showToast('error', `Failed to revert port: ${revertError.message || revertError}`);
+          }
         }
       } else {
         if (tunnel.type === 'remote') {
