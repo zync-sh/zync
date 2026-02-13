@@ -656,7 +656,17 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't interfere with modals, inputs, or when strict focus is needed
       if (isNewFolderModalOpen || isRenameModalOpen || editingFile || isCopyModalOpen || isPropertiesOpen) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        // Special case: Allow arrow keys and Enter to pass through if we are in the search input
+        // so that users can navigate results while typing.
+        const isSearchInput = e.target.placeholder?.includes('Search');
+        const isNavigationKey = ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key);
+        if (isSearchInput && isNavigationKey) {
+          // Continue to global handler
+        } else {
+          return;
+        }
+      }
 
       const filteredFiles = files.filter((f) =>
         f.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -694,6 +704,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1 && /^[a-zA-Z0-9_\-]$/.test(e.key)) {
         // If not already focused on search, open it and let it handle further input
         if (!isSearchOpen) {
+          e.preventDefault(); // Prevent browser from typing the char into the newly focused input
           setIsSearchOpen(true);
           // We can't easily "forward" the key to the input immediately after state change in the same tick 
           // but if we set the searchTerm here, it will appear in the input when it renders.
