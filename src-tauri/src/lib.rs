@@ -23,8 +23,11 @@ pub fn run() {
         .setup(|app| {
             // Explicitly set a menu to override potential default conflicts
             // We use the default menu structure but this ensures we have control
-            let menu = tauri::menu::Menu::default(app.handle())?;
-            app.set_menu(menu)?;
+            #[cfg(target_os = "macos")]
+            {
+                let menu = tauri::menu::Menu::default(app.handle())?;
+                app.set_menu(menu)?;
+            }
 
             let default_dir = app.path().app_data_dir().unwrap();
             let settings_path = default_dir.join("settings.json");
