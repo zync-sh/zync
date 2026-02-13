@@ -285,7 +285,7 @@ const ipcRenderer = {
           payload = { connectionId: args[0].connectionId };
         }
       } else if (tauriCommand === 'tunnel_save') {
-        payload = { tunnel: args[0] };
+        payload = { tunnelVal: args[0] };
       } else if (tauriCommand === 'tunnel_delete') {
         if (args.length === 1 && typeof args[0] === 'string') {
           payload = { id: args[0] };

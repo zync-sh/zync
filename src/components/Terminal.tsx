@@ -217,15 +217,6 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // Custom Key Handler
       term.attachCustomKeyEventHandler((e) => {
         if (e.type === 'keydown') {
-          // Smart Copy: Ctrl+C
-          if (e.key.toLowerCase() === 'c' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
-            if (term.hasSelection()) {
-              const selection = term.getSelection();
-              navigator.clipboard.writeText(selection);
-              term.clearSelection();
-              return false;
-            }
-          }
 
           // Zoom In: Ctrl + = or Ctrl + +
           if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
@@ -342,7 +333,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       cachedForListener.listenerAttached = true;
 
       // Listen to Tauri event for this specific terminal
-      listen<string>(`terminal-output-${sessionId}`, (event) => {
+      listen<Uint8Array>(`terminal-output-${sessionId}`, (event) => {
         term.write(event.payload);
       }).then((unlistenFn) => {
         // Store the unlisten function
@@ -413,28 +404,37 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   // Handle Global Shortcuts (Copy, Paste, Find)
   useEffect(() => {
     const handleGlobalCopy = () => {
-      // Only trigger if this terminal is the active one (or part of active view)
-      // For simplicity, we check if this component's ID matches the global active one
-      // If we implement split views later, we'll need a different check (e.g. tracking focus)
-      if (activeConnectionId === globalActiveId && termRef.current?.hasSelection()) {
+      // Only trigger if this terminal is currently visible/active
+      if (isVisible && termRef.current?.hasSelection()) {
         const selection = termRef.current.getSelection();
         if (selection) navigator.clipboard.writeText(selection);
       }
     };
 
     const handleGlobalPaste = async () => {
-      if (activeConnectionId === globalActiveId) {
+      if (isVisible) {
         try {
-          const text = await navigator.clipboard.readText();
-          if (text && termRef.current) termRef.current.paste(text);
+          // Use Tauri plugin for robust clipboard access
+          const { readText } = await import('@tauri-apps/plugin-clipboard-manager');
+          const text = await readText();
+          if (text && termRef.current) {
+            termRef.current.paste(text);
+          }
         } catch (e) {
           console.error('Paste failed:', e);
+          // Fallback to navigator (though likely to fail if plugin failed)
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text && termRef.current) termRef.current.paste(text);
+          } catch (e2) {
+            console.error('Fallback paste failed:', e2);
+          }
         }
       }
     };
 
     const handleGlobalFind = () => {
-      if (activeConnectionId === globalActiveId) {
+      if (isVisible) {
         setIsSearchOpen(true);
         // Small delay to ensure render
         setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -450,7 +450,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       window.removeEventListener('ssh-ui:term-paste', handleGlobalPaste);
       window.removeEventListener('ssh-ui:term-find', handleGlobalFind);
     };
-  }, [activeConnectionId, globalActiveId]);
+  }, [activeConnectionId, globalActiveId, isVisible]);
 
   // Define Presets
   const THEME_PRESETS: Record<string, any> = {

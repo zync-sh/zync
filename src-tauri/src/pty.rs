@@ -14,6 +14,8 @@ pub enum TerminalHandle {
         writer: Arc<Mutex<Box<dyn Write + Send>>>,
         reader_handle: Option<tokio::task::JoinHandle<()>>,
         master: Box<dyn MasterPty + Send>,
+        #[allow(dead_code)]
+        child: Box<dyn portable_pty::Child + Send>,
     },
     Remote {
         tx: mpsc::Sender<Vec<u8>>, // Send input data to the channel task
@@ -109,18 +111,29 @@ impl PtyManager {
         for arg in &args {
             cmd.arg(arg);
         }
+        
+        // Add interactive flag if not already present
+        if !args.contains(&"-i".to_string()) && !shell.contains("powershell") && !shell.contains("cmd.exe") {
+             cmd.arg("-i");
+        }
         cmd.env("TERM", "xterm-256color");
+
+        // Clear IDE/Editor specific variables that might interfere with git/ssh prompts
+        cmd.env_remove("GIT_ASKPASS");
+        cmd.env_remove("SSH_ASKPASS");
+        cmd.env_remove("VSCODE_GIT_ASKPASS");
+        cmd.env_remove("ELECTRON_RUN_AS_NODE");
 
         // Fix for AppImage: Unset LD_LIBRARY_PATH and other vars to prevent
         // bundled libraries from interfering with system binaries (like git).
-        if cfg!(target_os = "linux") {
+        if cfg!(target_os = "linux") && std::env::var("APPIMAGE").is_ok() {
             cmd.env_remove("LD_LIBRARY_PATH");
             cmd.env_remove("APPIMAGE");
             cmd.env_remove("APPDIR");
             cmd.env_remove("OWD");
         }
 
-        let _child = pair
+        let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| anyhow!("Failed to spawn shell: {}", e))?;
@@ -144,12 +157,9 @@ impl PtyManager {
                         break; 
                     }, // EOF
                     Ok(n) => {
-                        let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                        // println!("[PTY-DEBUG] Read {} bytes: {:?}", n, data);
-                        if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), data) {
+                        // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
+                        if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), &buf[..n]) {
                             eprintln!("Failed to emit terminal output: {}", e);
-                        } else {
-                            // println!("[PTY-DEBUG] Emitted terminal-output-{}", term_id_clone);
                         }
                     }
                     Err(e) => {
@@ -169,6 +179,7 @@ impl PtyManager {
                 writer: Arc::new(Mutex::new(writer)),
                 reader_handle: Some(reader_handle),
                 master: pair.master,
+                child,
             },
         };
 
@@ -232,8 +243,8 @@ impl PtyManager {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
-                                let output = String::from_utf8_lossy(data).to_string();
-                                if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), output) {
+                                // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
+                                if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), data.as_ref()) {
                                     eprintln!("[PTY] Failed to emit output: {}", e);
                                 }
                             }
