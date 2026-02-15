@@ -510,16 +510,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       const jsonData = e.dataTransfer.getData('application/json');
       if (jsonData) {
         const dragData = JSON.parse(jsonData);
-        setDragSourceConnectionId(dragData.connectionId);
-
-        console.log('[Drop] Check:', {
-          dragId: dragData.connectionId,
-          activeId: activeConnectionId,
-          dragType: typeof dragData.connectionId,
-          activeType: typeof activeConnectionId,
-          match: String(dragData.connectionId) === String(activeConnectionId)
-        });
-
         if (dragData.type === 'server-file' && activeConnectionId) {
           // Check for Same Server (Relaxed check)
           if (String(dragData.connectionId) === String(activeConnectionId)) {
