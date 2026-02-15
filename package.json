@@ -1,7 +1,7 @@
 {
   "name": "zync",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "type": "module",
   "repository": {
     "type": "git",
@@ -11,7 +11,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
