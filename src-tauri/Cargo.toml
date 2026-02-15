@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "webview-data-url"] }
+tauri = { version = "2.10", features = ["protocol-asset", "webview-data-url"] }
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
@@ -34,7 +34,7 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "5.0"
 whoami = "1.4"
 tauri-plugin-dialog = "2.6.0"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "2.10"
 base64 = "0.21"
 url = "2.5"
 regex = "1.12.3"

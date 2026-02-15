@@ -308,8 +308,8 @@ impl FileSystem {
         let mut dest = sftp.open_with_flags(to, OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE)
             .await.map_err(|e| anyhow!("Failed to open dest '{}': {}", to, e))?;
 
-        // Manual copy loop with 32KB buffer (optimal for SFTP)
-        let mut buffer = vec![0u8; 32 * 1024]; 
+        // Manual copy loop with 4MB buffer to maximize throughput on high-latency links
+        let mut buffer = vec![0u8; 4194304]; 
         let mut total_bytes = 0;
 
         loop {

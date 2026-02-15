@@ -10,7 +10,7 @@ use tauri::{AppHandle, State, Manager};
 use tokio::sync::Mutex;
 
 use crate::tunnel::TunnelManager;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 /// Helper function to get the data directory.
 /// Reads the configured `dataPath` from settings.json if available,
@@ -47,6 +47,12 @@ pub struct TunnelStatusChange {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CopyOperation {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
@@ -55,6 +61,7 @@ pub struct AppState {
     pub ssh_manager: Arc<SshManager>,
     pub tunnel_manager: Arc<TunnelManager>,
     pub snippets_manager: Arc<crate::snippets::SnippetsManager>,
+    pub transfers: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl AppState {
@@ -66,6 +73,7 @@ impl AppState {
             ssh_manager: Arc::new(SshManager::new()),
             tunnel_manager: Arc::new(TunnelManager::new()),
             snippets_manager: Arc::new(crate::snippets::SnippetsManager::new(data_dir)),
+            transfers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -758,6 +766,88 @@ pub async fn fs_copy(
 }
 
 #[tauri::command]
+pub async fn fs_copy_batch(
+    connection_id: String,
+    operations: Vec<CopyOperation>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if connection_id == "local" {
+        for op in operations {
+            state.file_system.copy(&connection_id, &op.from, &op.to).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    } else {
+        // Optimization: Try single SSH channel for all cp commands if OS detected
+        let (session_opt, should_optimize) = {
+            let connections = state.connections.lock().await;
+            let conn = connections.get(&connection_id);
+            (
+                conn.and_then(|c| c.session.clone()),
+                conn.map(|c| c.detected_os.is_some()).unwrap_or(false)
+            )
+        };
+
+        if should_optimize && session_opt.is_some() {
+            if let Some(session) = session_opt {
+                let mut channel = session.lock().await.channel_open_session().await
+                    .map_err(|e| format!("Failed to open channel: {}", e))?;
+                
+                // Build a multi-command string: cp -r 'a' 'b'; cp -r 'c' 'd'; ...
+                let cmd = operations.iter()
+                    .map(|op| format!("cp -r '{}' '{}'", op.from.replace("'", "'\\''"), op.to.replace("'", "'\\''")))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                
+                println!("[FS] Attempting batch server-side copy: {}", cmd);
+                channel.exec(true, cmd).await.map_err(|e| format!("Exec failed: {}", e))?;
+                
+                let mut exit_code = None;
+                while let Some(msg) = channel.wait().await {
+                    if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
+                        exit_code = Some(exit_status);
+                        break;
+                    }
+                }
+
+                if let Some(0) = exit_code {
+                    println!("[FS] Batch server-side copy successful");
+                    return Ok(());
+                } else {
+                     println!("[FS] Batch server-side copy failed with exit code {:?}, falling back to SFTP...", exit_code);
+                }
+            }
+        }
+        
+        // Final fallback: Sequential SFTP if no session or optimization fails
+        let sftp = get_sftp(&state, &connection_id).await?;
+        for op in operations {
+            state.file_system.copy_remote(&sftp, &op.from, &op.to).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn fs_rename_batch(
+    connection_id: String,
+    operations: Vec<CopyOperation>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if connection_id == "local" {
+        for op in operations {
+            state.file_system.rename(&connection_id, &op.from, &op.to).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    } else {
+        let sftp = get_sftp(&state, &connection_id).await?;
+        for op in operations {
+            state.file_system.rename_remote(&sftp, &op.from, &op.to).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
 pub async fn fs_exists(
     connection_id: String,
     path: String,
@@ -1359,8 +1449,9 @@ fn upload_recursive<'a>(
     file_system: &'a FileSystem,
     app: &'a AppHandle,
     transfer_id: &'a str,
-    total_size: &'a mut u64, // Track total mostly for logging or rough progress if pre-calculated
+    total_size: &'a mut u64,
     transferred: &'a mut u64,
+    cancel_token: &'a std::sync::atomic::AtomicBool,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         if local_path.is_dir() {
@@ -1377,7 +1468,7 @@ fn upload_recursive<'a>(
                     format!("{}/{}", remote_path, name)
                 };
                 
-                upload_recursive(sftp, &path, &new_remote, file_system, app, transfer_id, total_size, transferred).await?;
+                upload_recursive(sftp, &path, &new_remote, file_system, app, transfer_id, total_size, transferred, cancel_token).await?;
             }
         } else {
             // Upload file with chunked progress
@@ -1385,34 +1476,53 @@ fn upload_recursive<'a>(
             use tokio::io::AsyncWriteExt;
             use std::io::Read;
 
-            let mut file = std::fs::File::open(local_path).map_err(|e| format!("Failed to open local file: {}", e))?;
-            let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+            let file_metadata = std::fs::metadata(local_path).map_err(|e| format!("Failed to stat local file: {}", e))?;
+            let file_size = file_metadata.len();
             
             // Open remote file
             let mut remote_file = sftp.open_with_flags(remote_path, OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE)
                 .await.map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
 
-            // Chunked upload
-            // Using 4MB chunks to maximize throughput on high-latency links
-            // and minimize round-trip awaits.
-            let mut buffer = vec![0u8; 4 * 1024 * 1024]; 
+            // Full-Duplex Channel (Pipes local reads to remote writes)
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, String>>(4);
+            let local_path_buf = local_path.to_path_buf();
+            
+            // Spawn Disk Reader Task
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut file = match tokio::fs::File::open(local_path_buf).await {
+                    Ok(f) => f,
+                    Err(e) => { let _ = tx.send(Err(format!("Local open failed: {}", e))).await; return; }
+                };
+                loop {
+                    let mut buffer = vec![0u8; 4 * 1024 * 1024]; // 4MB Chunk
+                    match file.read(&mut buffer).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buffer.truncate(n);
+                            if tx.send(Ok(buffer)).await.is_err() { break; }
+                        }
+                        Err(e) => { let _ = tx.send(Err(format!("Local read failed: {}", e))).await; break; }
+                    }
+                }
+            });
+
             let mut file_transferred = 0;
             let mut last_emit = std::time::Instant::now();
 
-            loop {
-                // Read chunk
-                let n = file.read(&mut buffer).map_err(|e| format!("Failed to read chunk: {}", e))?;
-                if n == 0 { break; }
+            // Main loop: Receive from reader and Write to Server concurrently
+            while let Some(chunk_res) = rx.recv().await {
+                let chunk = chunk_res?;
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("Cancelled".to_string());
+                }
 
-                // Write chunk
-                remote_file.write_all(&buffer[..n]).await.map_err(|e| format!("Failed to write chunk: {}", e))?;
+                remote_file.write_all(&chunk).await.map_err(|e| format!("SFTP write failed: {}", e))?;
                 
-                // Update progress
+                let n = chunk.len();
                 *transferred += n as u64;
                 file_transferred += n as u64;
 
-                // Throttle emission: Enforce minimum 100ms interval OR completion
-                // Always emit if this is the last chunk effectively (handled by completion event anyway, but good to be precise)
                 if last_emit.elapsed().as_millis() >= 100 {
                     let _ = app.emit("transfer-progress", TransferProgress {
                         id: transfer_id.to_string(),
@@ -1463,6 +1573,15 @@ pub async fn sftp_put(
     let remote = remote_path.clone();
     let tid = transfer_id.clone();
     
+    // Create cancellation token
+    let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    
+    // Register token
+    {
+        let mut transfers = _state.transfers.lock().await;
+        transfers.insert(tid.clone(), cancel_token.clone());
+    }
+    
     tauri::async_runtime::spawn(async move {
         // Retrieve state inside task
         let state = app_handle.state::<AppState>();
@@ -1492,20 +1611,458 @@ pub async fn sftp_put(
                     total: total_size,
                 });
 
-                upload_recursive(&sftp, path, &remote, &state.file_system, &app_handle, &tid, &mut total_size, &mut transferred).await?;
+                upload_recursive(&sftp, path, &remote, &state.file_system, &app_handle, &tid, &mut total_size, &mut transferred, &cancel_token).await?;
              }
              Ok(())
         }.await;
+                // Cleanup
+         {
+             let mut transfers = state.transfers.lock().await;
+             transfers.remove(&tid);
+         }
+
+         match result {
+             Ok(_) => {
+                 let _ = app_handle.emit("transfer-success", TransferSuccess { 
+                     id: tid, 
+                     destination_connection_id: connection_id 
+                 });
+             },
+             Err(e) => {
+                 if e == "Cancelled" {
+                     let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: "Cancelled".to_string() });
+                 } else {
+                     let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: e });
+                 }
+             }
+         }
+    });
+
+    Ok(())
+}
+
+
+#[tauri::command]
+pub async fn sftp_cancel_transfer(
+    state: State<'_, AppState>,
+    transfer_id: String,
+) -> Result<(), String> {
+    let transfers = state.transfers.lock().await;
+    if let Some(token) = transfers.get(&transfer_id) {
+        token.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_copy_to_server(
+    app: AppHandle,
+    source_connection_id: String,
+    source_path: String,
+    destination_connection_id: String,
+    destination_path: String,
+    transfer_id: String,
+    mode: Option<String>, // "standard" or "turbo" (Ignored, always standard now)
+    _state: State<'_, AppState>, // kept for signature compatibility if needed, but we use app_handle.state()
+) -> Result<(), String> {
+     let app_handle = app.clone();
+     let src_id = source_connection_id.clone();
+     let src_path = source_path.clone();
+     let dst_id = destination_connection_id.clone();
+     let dst_path = destination_path.clone();
+     let tid = transfer_id.clone();
+     let _mode = mode.unwrap_or_else(|| "standard".to_string());
+
+     tauri::async_runtime::spawn(async move {
+         let state = app_handle.state::<AppState>();
+         
+         // Create cancellation token
+         let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+         {
+             let mut transfers = state.transfers.lock().await;
+             transfers.insert(tid.clone(), cancel_token.clone());
+         }
+
+         let result = async {
+             // Shared SFTP session for size calculation
+             let src_sftp = get_sftp(&state, &src_id).await?;
+             // Calculate size upfront for accurate progress
+             let mut total_size = get_remote_size(&src_sftp, &src_path).await;
+             if total_size == 0 { total_size = 1; }
+             
+             let _ = app_handle.emit("transfer-progress", TransferProgress {
+                id: tid.clone(),
+                transferred: 0,
+                total: total_size,
+             });
+
+            // Check cancellation early
+            if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Cancelled".to_string());
+            }
+
+            // Standard Mode (Proxied Streaming)
+            let dst_sftp = get_sftp(&state, &dst_id).await?;
+            let mut transferred = 0;
+
+            copy_recursive_optimized(
+                &src_sftp, 
+                &dst_sftp, 
+                &src_path, 
+                &dst_path, 
+                &app_handle, 
+                &tid, 
+                total_size, 
+                &mut transferred,
+                &cancel_token
+            ).await?;
+
+            Ok(())
+         }.await;
+
+         // Cleanup cancellation token
+         {
+             let mut transfers = state.transfers.lock().await;
+             transfers.remove(&tid);
+         }
+
+         match result {
+             Ok(_) => {
+                let _ = app_handle.emit("transfer-progress", TransferProgress {
+                    id: tid.clone(),
+                    transferred: 100, // Make sure it finishes
+                    total: 100,
+                });
+                 
+                 let _ = app_handle.emit("transfer-success", TransferSuccess { 
+                     id: tid, 
+                     destination_connection_id: dst_id 
+                 });
+             },
+             Err(e) => {
+                 let status = if e == "Cancelled" { "cancelled" } else { "failed" };
+                 if status == "cancelled" {
+                     let _ = app_handle.emit("transfer-cancelled", TransferSuccess { // reusing struct or just ID? Frontend expects error or distinct event?
+                        id: tid.clone(),
+                        destination_connection_id: dst_id // Payload matches success for ID extraction
+                     });
+                     // Or separate event? Frontend listens for 'transfer-error' usually.
+                     // CopyToServerModal handles error. TransferManager handles 'cancelled' status if we update store.
+                     // Let's emit error with "Cancelled" message, easiest.
+                     let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: "Cancelled".into() });
+                 } else {
+                    let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: e });
+                 }
+             }
+         }
+     });
+     Ok(())
+}
+
+// Optimized recursive copy with cancellation and larger buffer
+async fn copy_recursive_optimized(
+    src_sftp: &russh_sftp::client::SftpSession,
+    dst_sftp: &russh_sftp::client::SftpSession,
+    src_path: &str,
+    dst_path: &str,
+    app: &AppHandle,
+    transfer_id: &str,
+    total_size: u64,
+    transferred: &mut u64,
+    cancel_token: &Arc<std::sync::atomic::AtomicBool>
+) -> Result<(), String> {
+    use russh_sftp::protocol::OpenFlags;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("Cancelled".to_string());
+    }
+
+    let metadata = src_sftp.metadata(src_path).await.map_err(|e| format!("Failed to stat source: {}", e))?;
+
+    if metadata.is_dir() {
+        // Create remote dir (ignore error if exists)
+        let _ = dst_sftp.create_dir(dst_path).await;
+
+        let entries = src_sftp.read_dir(src_path).await.map_err(|e| format!("Read dir failed: {}", e))?;
+        for entry in entries {
+            let filename = entry.file_name();
+            if filename == "." || filename == ".." { continue; }
+
+            let new_src = if src_path.ends_with('/') { format!("{}{}", src_path, filename) } else { format!("{}/{}", src_path, filename) };
+            let new_dst = if dst_path.ends_with('/') { format!("{}{}", dst_path, filename) } else { format!("{}/{}", dst_path, filename) };
+
+            Box::pin(copy_recursive_optimized(src_sftp, dst_sftp, &new_src, &new_dst, app, transfer_id, total_size, transferred, cancel_token)).await?;
+        }
+    } else {
+        // File copy
+        let mut src_file = src_sftp.open_with_flags(src_path, OpenFlags::READ).await.map_err(|e| format!("Open src failed: {}", e))?;
+        let mut dst_file = dst_sftp.open_with_flags(dst_path, OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE).await.map_err(|e| format!("Open dst failed: {}", e))?;
+
+        // 4MB buffer to maximize throughput on high-latency links
+        // Full-Duplex Channel (Remote Source reads piped to Remote Destination writes)
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, String>>(4);
         
+        // Spawn Source Reader Task
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            loop {
+                let mut buffer = vec![0u8; 4194304]; // 4MB Chunk
+                match src_file.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buffer.truncate(n);
+                        if tx.send(Ok(buffer)).await.is_err() { break; }
+                    }
+                    Err(e) => { let _ = tx.send(Err(format!("SFTP source read failed: {}", e))).await; break; }
+                }
+            }
+        });
+
+        let mut last_emit = std::time::Instant::now();
+
+        // Main loop: Receive from source and Write to destination concurrently
+        while let Some(chunk_res) = rx.recv().await {
+            let chunk = chunk_res?;
+            if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Cancelled".to_string());
+            }
+
+            dst_file.write_all(&chunk).await.map_err(|e| format!("SFTP destination write failed: {}", e))?;
+            
+            let n = chunk.len();
+            *transferred += n as u64;
+
+            if last_emit.elapsed().as_millis() >= 200 {
+                let _ = app.emit("transfer-progress", TransferProgress {
+                    id: transfer_id.to_string(),
+                    transferred: *transferred,
+                    total: total_size,
+                });
+                last_emit = std::time::Instant::now();
+            }
+        }
+        
+        // Final emit for file
+        let _ = app.emit("transfer-progress", TransferProgress {
+            id: transfer_id.to_string(),
+            transferred: *transferred,
+            total: total_size,
+        });
+    }
+
+    Ok(())
+}
+
+// Helper for recursive download
+fn download_recursive<'a>(
+    sftp: &'a russh_sftp::client::SftpSession,
+    remote_path: &'a str,
+    local_path: &'a std::path::Path,
+    app: &'a AppHandle,
+    transfer_id: &'a str,
+    total_size: &'a mut u64,
+    transferred: &'a mut u64,
+    cancel_token: &'a std::sync::atomic::AtomicBool,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    Box::pin(async move {
+        // Check if remote is dir or file
+        let metadata = sftp.metadata(remote_path).await.map_err(|e| format!("Failed to stat remote path '{}': {}", remote_path, e))?;
+        
+        if metadata.is_dir() {
+            // Create local directory
+            std::fs::create_dir_all(local_path).map_err(|e| format!("Failed to create local dir: {}", e))?;
+
+            // List remote directory
+            let entries = sftp.read_dir(remote_path).await.map_err(|e| format!("Failed to read remote dir: {}", e))?;
+            
+            for entry in entries {
+                let name = entry.file_name();
+                if name == "." || name == ".." { continue; }
+
+                let new_remote = if remote_path.ends_with('/') {
+                    format!("{}{}", remote_path, name)
+                } else {
+                    format!("{}/{}", remote_path, name)
+                };
+                
+                let new_local = local_path.join(&name);
+                
+                download_recursive(sftp, &new_remote, &new_local, app, transfer_id, total_size, transferred, cancel_token).await?;
+            }
+        } else {
+            // Download file
+            use russh_sftp::protocol::OpenFlags;
+            use tokio::io::AsyncReadExt;
+            use std::io::Write;
+
+            // Create local file using tokio for async writing
+            let mut local_file = tokio::fs::File::create(local_path).await
+                .map_err(|e| format!("Failed to create local file: {}", e))?;
+
+            // Full-Duplex Channel (Remote reads piped to local disk writes)
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, String>>(4);
+            
+            // Open remote file
+            let mut remote_file = sftp.open_with_flags(remote_path, OpenFlags::READ).await
+                .map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
+
+            // Spawn Remote Reader Task
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                loop {
+                    let mut buffer = vec![0u8; 4 * 1024 * 1024];
+                    match remote_file.read(&mut buffer).await {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buffer.truncate(n);
+                            if tx.send(Ok(buffer)).await.is_err() { break; }
+                        }
+                        Err(e) => { let _ = tx.send(Err(format!("SFTP read failed: {}", e))).await; break; }
+                    }
+                }
+            });
+
+            let mut last_emit = std::time::Instant::now();
+
+            // Main loop: Receive from remote reader and Write to Local Disk concurrently
+            while let Some(chunk_res) = rx.recv().await {
+                let chunk = chunk_res?;
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("Cancelled".to_string());
+                }
+
+                use tokio::io::AsyncWriteExt;
+                local_file.write_all(&chunk).await.map_err(|e| format!("Local write failed: {}", e))?;
+                
+                let n = chunk.len();
+                *transferred += n as u64;
+
+                if last_emit.elapsed().as_millis() >= 100 {
+                    let _ = app.emit("transfer-progress", TransferProgress {
+                        id: transfer_id.to_string(),
+                        transferred: *transferred,
+                        total: *total_size, 
+                    });
+                    last_emit = std::time::Instant::now();
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+// Helper to calculate remote size recursively
+async fn get_remote_size(sftp: &russh_sftp::client::SftpSession, path: &str) -> u64 {
+    let mut total_size = 0;
+    // Queue of paths to visit
+    let mut queue = vec![path.to_string()];
+
+    // Initial check for file vs dir
+    if let Ok(metadata) = sftp.metadata(path).await {
+        if !metadata.is_dir() {
+            return metadata.len();
+        }
+    } else {
+        return 0; // Path doesn't exist
+    }
+
+    // BFS
+    while let Some(current_path) = queue.pop() {
+        if let Ok(entries) = sftp.read_dir(&current_path).await {
+            for entry in entries {
+                let filename = entry.file_name();
+                if filename == "." || filename == ".." { continue; }
+
+                let next_path = if current_path.ends_with('/') {
+                    format!("{}{}", current_path, filename)
+                } else {
+                    format!("{}/{}", current_path, filename)
+                };
+
+                // Stat the entry to get attributes
+                if let Ok(attrs) = sftp.metadata(&next_path).await {
+                    if attrs.is_dir() {
+                         queue.push(next_path);
+                    } else {
+                        // It's a file (or symlink pointing to file? treated as file size)
+                        total_size += attrs.len();
+                    }
+                }
+            }
+        }
+    }
+    total_size
+}
+
+#[tauri::command]
+pub async fn sftp_get(
+    app: AppHandle,
+    id: String,
+    remote_path: String,
+    local_path: String,
+    transfer_id: String,
+    _state: State<'_, AppState>,
+) -> Result<(), String> {
+    let app_handle = app.clone();
+    let connection_id = id.clone();
+    let remote = remote_path.clone();
+    let local = local_path.clone();
+    let tid = transfer_id.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let state = app_handle.state::<AppState>();
+        
+        let result = async {
+            // Retrieve session
+             let sftp = get_sftp(&state, &connection_id).await?;
+             let local_p = std::path::Path::new(&local);
+             
+             // Prepare total size (Best effort)
+             let mut total_size = get_remote_size(&sftp, &remote).await;
+             if total_size == 0 { total_size = 1; }
+             let mut transferred = 0;
+
+             let tid_clone = tid.clone();
+             let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+             
+             // Register token
+             {
+                 let mut transfers = state.transfers.lock().await;
+                 transfers.insert(tid_clone.clone(), cancel_token.clone());
+             }
+
+             // Emit start
+             let _ = app_handle.emit("transfer-progress", TransferProgress {
+                id: tid.clone(),
+                transferred: 0,
+                total: total_size,
+            });
+
+             let res = download_recursive(&sftp, &remote, local_p, &app_handle, &tid, &mut total_size, &mut transferred, &cancel_token).await;
+
+             // Cleanup
+             {
+                 let mut transfers = state.transfers.lock().await;
+                 transfers.remove(&tid_clone);
+             }
+             
+             res
+        }.await;
+
         match result {
             Ok(_) => {
                 let _ = app_handle.emit("transfer-success", TransferSuccess { 
                     id: tid, 
-                    destination_connection_id: connection_id 
+                    destination_connection_id: "local".to_string() 
                 });
             },
             Err(e) => {
-                let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: e });
+                if e == "Cancelled" {
+                    let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: "Cancelled".to_string() });
+                } else {
+                    let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: e });
+                }
             }
         }
     });

@@ -26,6 +26,7 @@ export function useTransferEvents() {
 
     useEffect(() => {
         const unlistenProgress = listen<TransferProgressPayload>('transfer-progress', (event) => {
+            console.log('[Frontend] Transfer Progress Event:', event.payload);
             const { id, transferred, total } = event.payload;
             updateProgress(id, {
                 transferred,

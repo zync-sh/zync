@@ -281,6 +281,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             // Processing list for optimistic updates
             const newEntries: FileEntry[] = [];
             const pathsToRemoveFromSource: string[] = [];
+            const successfulSources: string[] = [];
 
             for (const source of sources) {
                 // Extract filename
@@ -343,16 +344,21 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 };
 
                 newEntries.push(newEntry);
+                successfulSources.push(source);
                 if (op === 'cut') {
                     pathsToRemoveFromSource.push(source);
                 }
+            }
 
-                // Fire Backend (Fire and Forget - it spawns task)
-                if (op === 'copy') {
-                    await ipc.invoke('fs_copy', { connectionId, from: source, to: destPath });
-                } else {
-                    await ipc.invoke('fs_rename', { connectionId, oldPath: source, newPath: destPath });
-                }
+            // Fire Backend (Batch Optimized)
+            if (newEntries.length > 0) {
+                const operations = newEntries.map((e, idx) => ({
+                    from: successfulSources[idx],
+                    to: e.path
+                }));
+
+                const command = op === 'copy' ? 'fs_copy_batch' : 'fs_rename_batch';
+                await ipc.invoke(command, { connectionId, operations });
             }
 
             // Apply Optimistic Updates

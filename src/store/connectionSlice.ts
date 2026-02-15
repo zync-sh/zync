@@ -19,6 +19,7 @@ export interface Connection {
     createdAt?: number;
     isFavorite?: boolean;
     pinnedFeatures?: string[];
+    homePath?: string;
 }
 
 export interface Folder {
@@ -107,8 +108,6 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             // @ts-ignore
             const loaded = await window.ipcRenderer.invoke('connections:get');
             console.error('[RENDERER] Loaded connections from IPC:', loaded);
-            // @ts-ignore
-            window.ipcRenderer.send('terminal:write', { termId: 'local', data: `[DEBUG] Loaded connections: ${JSON.stringify(loaded)}\r\n` });
             if (loaded && (loaded.connections || Array.isArray(loaded))) {
                 let conns = Array.isArray(loaded) ? loaded : loaded.connections;
                 let folders = (loaded.folders || []).map((f: any) => typeof f === 'string' ? { name: f } : f);
@@ -267,8 +266,17 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             // @ts-ignore
             const response = await window.ipcRenderer.invoke('ssh:connect', fullConfig);
 
+            // Fetch home path after connection
+            let homePath = '/';
+            try {
+                // @ts-ignore
+                homePath = await window.ipcRenderer.invoke('fs:cwd', id);
+            } catch (e) {
+                console.error('[CONNECT] Failed to fetch home path:', e);
+            }
+
             set(state => {
-                let newConns = state.connections.map(c => c.id === id ? { ...c, status: 'connected' as const, lastConnected: Date.now() } : c);
+                let newConns = state.connections.map(c => c.id === id ? { ...c, status: 'connected' as const, lastConnected: Date.now(), homePath } : c);
 
                 // Handle OS Detection
                 // @ts-ignore
@@ -281,8 +289,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         }
                         return c;
                     });
-                    saveToMain(newConns, state.folders);
                 }
+                saveToMain(newConns, state.folders);
                 return { connections: newConns };
             });
 

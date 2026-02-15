@@ -87,87 +87,95 @@ export function TransferManager() {
                   });
                   cancelTransfer(transfer.id);
                 } catch (_err) {
-                  // If backend cancel fails, just remove from UI
                   removeTransfer(transfer.id);
                 }
               }}
-              className="text-app-muted hover:text-app-text transition-colors ml-2"
+              title="Cancel Transfer"
+              className="px-2 py-1 rounded-md text-rose-500 hover:bg-rose-500/10 transition-colors ml-2 flex items-center border border-rose-500/20 hover:border-rose-500/40"
             >
-              <X size={16} />
+              <span className="text-[10px] font-bold mr-1 uppercase tracking-wide">Cancel</span>
+              <X size={12} />
             </button>
           </div>
 
-          {transfer.status === 'transferring' && (
-            <>
-              <div className="w-full bg-app-border rounded-full h-1.5 mb-2 overflow-hidden">
-                <div
-                  className="bg-app-accent h-1.5 transition-all duration-300"
-                  style={{
-                    width: `${Math.min(100, transfer.progress.percentage)}%`,
-                  }}
-                />
-              </div>
-              <div className="flex justify-between text-xs text-app-muted">
-                <span className="font-mono tabular-nums text-[10px]">
-                  {formatBytes(transfer.progress.transferred)} / {formatBytes(transfer.progress.total)}
-                  <span className="text-app-text/60 ml-2">
-                    ({formatBytes(transfer.speed || 0)}/s)
+          {
+            transfer.status === 'transferring' && (
+              <>
+                <div className="w-full bg-app-border rounded-full h-1.5 mb-2 overflow-hidden">
+                  <div
+                    className="bg-app-accent h-1.5 transition-all duration-300"
+                    style={{
+                      width: `${Math.min(100, transfer.progress.percentage)}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-app-muted">
+                  <span className="font-mono tabular-nums text-[10px]">
+                    {formatBytes(transfer.progress.transferred)} / {formatBytes(transfer.progress.total)}
+                    <span className="text-app-text/60 ml-2">
+                      ({formatBytes(transfer.speed || 0)}/s)
+                    </span>
                   </span>
-                </span>
-                <span className="font-mono tabular-nums">{transfer.progress.percentage.toFixed(1)}%</span>
-              </div>
-            </>
-          )}
+                  <span className="font-mono tabular-nums">{transfer.progress.percentage.toFixed(1)}%</span>
+                </div>
+              </>
+            )
+          }
 
-          {transfer.status === 'pending' && (
-            <div className="space-y-1">
-              <div className="flex items-center text-xs text-app-muted gap-2">
-                <Loader2 size={12} className="animate-spin" />
-                <span>Starting...</span>
-              </div>
-              <div className="w-full bg-app-border rounded-full h-1 overflow-hidden">
-                <div className="h-full bg-app-accent/50 w-full animate-progress-indeterminate origin-left-right"></div>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {/* Recent Completed/Failed */}
-      {recentTransfers.map((transfer: Transfer) => (
-        <div
-          key={transfer.id}
-          className="bg-app-panel border border-app-border rounded-lg shadow-xl p-3 backdrop-blur-sm opacity-90"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              {transfer.status === 'completed' ? (
-                <CheckCircle size={16} className="text-app-success shrink-0" />
-              ) : transfer.status === 'cancelled' ? (
-                <XCircle size={16} className="text-app-muted shrink-0" />
-              ) : (
-                <XCircle size={16} className="text-app-danger shrink-0" />
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-app-text truncate">{getFileName(transfer.sourcePath)}</div>
-                <div className="text-xs text-app-muted">
-                  {transfer.status === 'completed'
-                    ? 'Transfer complete'
-                    : transfer.status === 'cancelled'
-                      ? 'Cancelled'
-                      : transfer.error}
+          {
+            transfer.status === 'pending' && (
+              <div className="space-y-1">
+                <div className="flex items-center text-xs text-app-muted gap-2">
+                  <Loader2 size={12} className="animate-spin" />
+                  <span>Starting...</span>
+                </div>
+                <div className="w-full bg-app-border rounded-full h-1 overflow-hidden">
+                  <div className="h-full bg-app-accent/50 w-full animate-progress-indeterminate origin-left-right"></div>
                 </div>
               </div>
-            </div>
-            <button
-              onClick={() => removeTransfer(transfer.id)}
-              className="text-app-muted hover:text-app-text transition-colors ml-2 shrink-0"
-            >
-              <X size={14} />
-            </button>
-          </div>
+            )
+          }
         </div>
-      ))}
-    </div>
+      ))
+      }
+
+      {/* Recent Completed/Failed */}
+      {
+        recentTransfers.map((transfer: Transfer) => (
+          <div
+            key={transfer.id}
+            className="bg-app-panel border border-app-border rounded-lg shadow-xl p-3 backdrop-blur-sm opacity-90"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {transfer.status === 'completed' ? (
+                  <CheckCircle size={16} className="text-app-success shrink-0" />
+                ) : transfer.status === 'cancelled' ? (
+                  <XCircle size={16} className="text-app-muted shrink-0" />
+                ) : (
+                  <XCircle size={16} className="text-app-danger shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-app-text truncate">{getFileName(transfer.sourcePath)}</div>
+                  <div className="text-xs text-app-muted">
+                    {transfer.status === 'completed'
+                      ? 'Transfer complete'
+                      : transfer.status === 'cancelled'
+                        ? 'Cancelled'
+                        : transfer.error}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => removeTransfer(transfer.id)}
+                className="text-app-muted hover:text-app-text transition-colors ml-2 shrink-0"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        ))
+      }
+    </div >
   );
 }

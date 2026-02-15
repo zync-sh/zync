@@ -58,26 +58,31 @@ export function Select({ value, onChange, options, placeholder = "Select...", di
                 type="button"
                 onClick={() => !disabled && setIsOpen(!isOpen)}
                 className={cn(
-                    "w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-sm transition-all duration-200 outline-none",
-                    "bg-app-surface/40 text-app-text",
-                    isOpen ? "border-app-accent ring-2 ring-app-accent/20 bg-app-surface/60" : "border-app-border/50 hover:border-app-muted hover:bg-app-surface/50",
-                    disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                    "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-[13px] transition-all duration-300 outline-none group",
+                    "bg-app-surface/20 text-app-text",
+                    isOpen
+                        ? "border-app-accent/40 bg-app-surface/40 shadow-[0_0_15px_rgba(121,123,206,0.1)] ring-1 ring-app-accent/20"
+                        : "border-white/[0.05] hover:border-white/10 hover:bg-app-surface/30 shadow-[inset_0_0_10px_rgba(255,255,255,0.01)]",
+                    disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
                     triggerClassName
                 )}
                 disabled={disabled}
             >
                 <div className="flex-1 flex items-center gap-2 overflow-hidden text-left min-w-0">
                     {selectedOption?.icon && (
-                        <div className="flex-none opacity-80">{selectedOption.icon}</div>
+                        <div className="flex-none transition-transform duration-300 group-hover:scale-105">
+                            {/* Force smaller icon for trigger */}
+                            <div className="scale-90 opacity-80">{selectedOption.icon}</div>
+                        </div>
                     )}
-                    <span className={cn("truncate", !selectedOption && "text-app-muted")}>
+                    <span className={cn("truncate font-medium tracking-tight", !selectedOption && "text-app-muted opacity-50")}>
                         {selectedOption ? selectedOption.label : placeholder}
                     </span>
                 </div>
                 <ChevronDown
                     className={cn(
-                        "w-4 h-4 text-app-muted transition-transform duration-300 ml-2 scale-90",
-                        isOpen && "transform rotate-180 text-app-accent"
+                        "w-3 h-3 text-app-muted transition-all duration-500 ml-1.5 opacity-30 group-hover:opacity-80",
+                        isOpen && "transform rotate-180 text-app-accent opacity-100 scale-110"
                     )}
                 />
             </button>
@@ -85,26 +90,26 @@ export function Select({ value, onChange, options, placeholder = "Select...", di
             <AnimatePresence>
                 {isOpen && (
                     <motion.div
-                        initial={{ opacity: 0, y: 5, scale: 0.98 }}
+                        initial={{ opacity: 0, y: 2, scale: 0.995 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 5, scale: 0.98 }}
-                        transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
-                        className="absolute z-[100] w-full mt-2 bg-app-panel border border-app-border shadow-2xl rounded-xl overflow-hidden backdrop-blur-2xl ring-1 ring-white/5"
+                        exit={{ opacity: 0, y: 2, scale: 0.995 }}
+                        transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                        className="absolute z-[110] w-full mt-1.5 bg-app-panel border border-white/10 shadow-[0_15px_40px_rgba(0,0,0,0.6)] rounded-xl overflow-hidden backdrop-blur-3xl ring-1 ring-white/5"
                     >
                         <Command className="flex flex-col">
                             {showSearch && (
-                                <div className="flex items-center border-b border-app-border/50 px-3" cmdk-input-wrapper="">
-                                    <Search className="w-4 h-4 text-app-muted/60" />
+                                <div className="flex items-center border-b border-white/[0.05] px-2.5 bg-white/[0.02]" cmdk-input-wrapper="">
+                                    <Search className="w-3 h-3 text-app-muted/30" />
                                     <Command.Input
                                         autoFocus
-                                        placeholder="Search..."
-                                        className="w-full h-10 bg-transparent text-sm outline-none px-2 placeholder:text-app-muted/40"
+                                        placeholder="Filter..."
+                                        className="w-full h-9 bg-transparent text-xs outline-none px-2 placeholder:text-app-muted/20"
                                     />
                                 </div>
                             )}
-                            <Command.List className="max-h-60 overflow-y-auto custom-scrollbar p-1.5 scroll-smooth">
-                                <Command.Empty className="py-6 text-center text-xs text-app-muted italic">
-                                    No matches found.
+                            <Command.List className="max-h-40 overflow-y-auto custom-scrollbar p-1 scroll-smooth">
+                                <Command.Empty className="py-4 text-center text-[9px] text-app-muted/40 font-bold uppercase tracking-widest italic leading-none">
+                                    No hits
                                 </Command.Empty>
 
                                 {options.map((option) => (
@@ -116,29 +121,36 @@ export function Select({ value, onChange, options, placeholder = "Select...", di
                                             setIsOpen(false);
                                         }}
                                         className={cn(
-                                            "flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all cursor-pointer select-none",
-                                            showCheck ? "pl-2 pr-2" : "px-2",
-                                            "aria-selected:bg-app-accent/15 aria-selected:text-app-accent",
+                                            "flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-all cursor-pointer select-none group/item mb-0.5 last:mb-0",
+                                            "aria-selected:bg-app-accent/10 aria-selected:text-white",
                                             value === option.value
-                                                ? "bg-app-accent/5 text-app-accent font-medium"
-                                                : "text-app-text/90 hover:bg-app-surface",
+                                                ? "bg-app-accent text-white font-semibold shadow-md shadow-app-accent/10"
+                                                : "text-app-text/60 hover:bg-white/[0.03] hover:text-white",
                                             itemClassName
                                         )}
                                     >
                                         {option.icon && (
-                                            <div className="flex-none transition-transform duration-200">
+                                            <div className={cn(
+                                                "flex-none transition-all duration-300 group-hover/item:scale-105 scale-90",
+                                                value === option.value ? "text-white" : "text-app-muted/40 group-hover/item:text-app-accent"
+                                            )}>
                                                 {option.icon}
                                             </div>
                                         )}
                                         <div className="flex-1 overflow-hidden">
-                                            <div className="truncate">{option.label}</div>
+                                            <div className="truncate leading-none font-medium text-[11px]">{option.label}</div>
                                             {option.description && (
-                                                <div className="text-[10px] opacity-60 truncate mt-0.5">{option.description}</div>
+                                                <div className={cn(
+                                                    "text-[8px] truncate mt-0.5 opacity-30 group-hover/item:opacity-50 transition-opacity",
+                                                    value === option.value && "opacity-70"
+                                                )}>
+                                                    {option.description}
+                                                </div>
                                             )}
                                         </div>
-                                        {showCheck && option.value === value && (
-                                            <motion.div layoutId="check">
-                                                <Check className="w-3.5 h-3.5 flex-none" />
+                                        {showCheck && value === option.value && (
+                                            <motion.div layoutId="check" className="flex-none">
+                                                <Check className="w-2.5 h-2.5 text-white" />
                                             </motion.div>
                                         )}
                                     </Command.Item>

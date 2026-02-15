@@ -41,7 +41,7 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', cl
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: 'spring', duration: 0.2, bounce: 0.2 }}
             className={cn(
-              'relative w-full bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-white/5 overflow-hidden',
+              'relative w-full bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-white/5',
               width,
               className
             )}
