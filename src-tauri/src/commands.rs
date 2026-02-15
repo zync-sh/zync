@@ -1474,7 +1474,6 @@ fn upload_recursive<'a>(
             // Upload file with chunked progress
             use russh_sftp::protocol::OpenFlags;
             use tokio::io::AsyncWriteExt;
-            use std::io::Read;
 
             let file_metadata = std::fs::metadata(local_path).map_err(|e| format!("Failed to stat local file: {}", e))?;
             let file_size = file_metadata.len();
@@ -1772,7 +1771,7 @@ async fn copy_recursive_optimized(
     cancel_token: &Arc<std::sync::atomic::AtomicBool>
 ) -> Result<(), String> {
     use russh_sftp::protocol::OpenFlags;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
 
     if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
         return Err("Cancelled".to_string());
@@ -1893,8 +1892,6 @@ fn download_recursive<'a>(
         } else {
             // Download file
             use russh_sftp::protocol::OpenFlags;
-            use tokio::io::AsyncReadExt;
-            use std::io::Write;
 
             // Create local file using tokio for async writing
             let mut local_file = tokio::fs::File::create(local_path).await
