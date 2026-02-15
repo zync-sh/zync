@@ -4,7 +4,7 @@ import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updat
 import { cn } from '../../lib/utils';
 import { WindowControls } from './WindowControls';
 import { useState, useEffect, useRef } from 'react';
-import { Modal } from '../ui/Modal';
+import { ConfirmModal } from '../ui/ConfirmModal';
 import { matchShortcut } from '../../lib/shortcuts';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
 import {
@@ -284,31 +284,15 @@ export function TabBar() {
 
             </div>
 
-            <Modal
+            <ConfirmModal
                 isOpen={!!tabToClose}
                 onClose={() => setTabToClose(null)}
+                onConfirm={confirmClose}
                 title="Disconnect & Close?"
-            >
-                <div className="space-y-4">
-                    <p className="text-sm text-app-muted">
-                        This will disconnect the active SSH session.
-                    </p>
-                    <div className="flex justify-end gap-2 text-sm">
-                        <button
-                            onClick={() => setTabToClose(null)}
-                            className="px-3 py-1.5 hover:bg-app-surface rounded text-app-text transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={confirmClose}
-                            className="px-3 py-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded font-medium transition-colors"
-                        >
-                            Disconnect
-                        </button>
-                    </div>
-                </div>
-            </Modal>
+                message="This will disconnect the active SSH session."
+                confirmLabel="Disconnect"
+                variant="danger"
+            />
         </>
     );
 }
