@@ -9,7 +9,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ConfirmModal } from './ui/ConfirmModal';
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { useAppStore, Connection } from '../store/useAppStore';
 import { isMatch } from '../lib/keyboard';
@@ -89,6 +89,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
   // Properties Panel State
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -455,22 +457,31 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (selectedFiles.length === 0 || !activeConnectionId) return;
 
     if (settings.fileManager.confirmDelete) {
-      const yes = await ask(`Are you sure you want to delete ${selectedFiles.length} item(s)?`, {
-        title: 'Delete Confirmation',
-        kind: 'warning',
-        okLabel: 'Delete',
-        cancelLabel: 'Cancel'
-      });
-      if (!yes) return;
+      setIsDeleteModalOpen(true);
+    } else {
+      executeDelete();
     }
+  };
+
+  const executeDelete = async () => {
+    if (selectedFiles.length === 0 || !activeConnectionId) return;
 
     const paths = selectedFiles.map(name => currentPath === '/' ? `/${name}` : `${currentPath}/${name}`);
-    await deleteEntries(activeConnectionId, paths);
-    setSelectedFiles([]);
+
+    setIsDeleting(true);
+    try {
+      await deleteEntries(activeConnectionId, paths);
+      setSelectedFiles([]);
+      setIsDeleteModalOpen(false);
+    } catch (e: any) {
+      showToast('error', `Delete failed: ${e.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Drag and Drop
@@ -1100,6 +1111,17 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={executeDelete}
+        title="Delete Confirmation"
+        message={`Are you sure you want to delete ${selectedFiles.length} item(s)? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+      />
 
       <PropertiesPanel
         isOpen={isPropertiesOpen}
