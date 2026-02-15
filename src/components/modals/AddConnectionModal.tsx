@@ -22,7 +22,8 @@ type Tab = 'general' | 'auth' | 'advanced';
 
 const ICONS = [
     'Server', 'Database', 'Cloud', 'Terminal', 'Code', 'Box', 'Monitor', 'Globe', 'HardDrive',
-    'Ubuntu', 'Debian', 'CentOS', 'Arch', 'Kali', 'macOS', 'Windows', 'Linux'
+    'Ubuntu', 'Debian', 'CentOS', 'Arch', 'Kali', 'macOS', 'Windows', 'Linux',
+    'AWS', 'Jenkins', 'MongoDB', 'Nginx', 'PostgreSQL', "MySql"
 ];
 
 const THEMES = [

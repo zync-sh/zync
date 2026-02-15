@@ -11,7 +11,13 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
     const type = icon?.toLowerCase() || 'server';
 
     // List of available custom icons
-    const availableIcons = ['ubuntu', 'debian', 'centos', 'arch', 'kali', 'linux', 'macos', 'redhat', 'windows'];
+    const availableIcons = [
+        'ubuntu', 'debian', 'centos', 'arch', 'kali', 'linux', 'macos', 'redhat', 'windows',
+        'aws', 'jenkins', 'mongodb', 'nginx', 'postgresql', 'database', "mysql"
+    ];
+
+    // Icons that use SVG format
+    const svgIcons = ['aws', 'jenkins', 'mongodb', "mysql"];
 
     // Specific mapping for variations
     let iconName = type;
@@ -44,12 +50,14 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
     };
 
     const IconComp = IconMap[type] || Server;
-    const showImage = availableIcons.includes(iconName) && !imageError;
+    const isCustom = availableIcons.includes(iconName);
+    const showImage = isCustom && !imageError;
 
     if (showImage) {
+        const extension = svgIcons.includes(iconName) ? 'svg' : 'png';
         return (
             <img
-                src={`/os-icons/${iconName}.png`}
+                src={`/os-icons/${iconName}.${extension}`}
                 alt={iconName}
                 className={className}
                 onError={() => setImageError(true)}
@@ -59,5 +67,3 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
 
     return <IconComp className={className} />;
 });
-
-
