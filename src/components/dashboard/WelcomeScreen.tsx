@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, MouseEvent } from 'react';
 import { useAppStore } from '../../store/useAppStore';
-import { Terminal, Plus, Network, Key, Lock, FileKey, Monitor, FolderOpen, Star, Sparkles, Command } from 'lucide-react';
+import { Terminal, Plus, Network, Key, Lock, FileKey, Monitor, FolderOpen, Bookmark, Sparkles, Command } from 'lucide-react';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { OSIcon } from '../icons/OSIcon';
 import { motion, AnimatePresence, useMotionTemplate, useMotionValue } from 'framer-motion';
@@ -516,7 +516,7 @@ export function WelcomeScreen() {
                         className="mb-6"
                     >
                         <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
-                            <Star size={12} className="text-yellow-500 fill-yellow-500" />
+                            <Bookmark size={12} className="text-yellow-500 fill-yellow-500" />
                             Favorites
                         </h2>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
@@ -532,7 +532,7 @@ export function WelcomeScreen() {
                                         }}
                                         className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
                                     >
-                                        <Star size={12} className="fill-yellow-500 text-yellow-500" />
+                                        <Bookmark size={12} className="fill-yellow-500 text-yellow-500" />
                                     </button>
 
                                     <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
@@ -601,7 +601,7 @@ export function WelcomeScreen() {
                                         }}
                                         className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
                                     >
-                                        <Star size={12} className="text-app-muted" />
+                                        <Bookmark size={12} className="text-app-muted" />
                                     </button>
 
                                     <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
