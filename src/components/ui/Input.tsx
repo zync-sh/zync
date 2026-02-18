@@ -13,7 +13,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, labe
       <input
         ref={ref}
         className={cn(
-          'flex h-10 w-full rounded-xl border border-white/[0.05] bg-app-surface/20 px-3.5 py-2 text-[13px] text-app-text shadow-[inset_0_0_10px_rgba(255,255,255,0.01)] transition-all duration-300 placeholder:text-app-muted/30 focus-visible:outline-none focus-visible:border-app-accent/40 focus-visible:bg-app-surface/40 focus-visible:shadow-[0_0_15px_rgba(121,123,206,0.1)] focus-visible:ring-1 focus-visible:ring-app-accent/20 disabled:cursor-not-allowed disabled:opacity-40 drag-none hover:border-white/10',
+          'flex h-10 w-full rounded-xl border border-app-border bg-app-surface/50 px-3.5 py-2 text-[13px] text-app-text shadow-sm transition-all duration-300 placeholder:text-app-muted/50 focus-visible:outline-none focus-visible:border-app-accent/40 focus-visible:bg-app-surface/80 focus-visible:shadow-[0_0_15px_rgba(121,123,206,0.1)] focus-visible:ring-1 focus-visible:ring-app-accent/20 disabled:cursor-not-allowed disabled:opacity-40 drag-none hover:border-app-border/80',
           error && 'border-red-500/50 focus-visible:ring-red-500/20 focus-visible:border-red-500/50',
           className,
         )}
