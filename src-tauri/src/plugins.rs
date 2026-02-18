@@ -12,6 +12,9 @@ pub struct Manifest {
     pub version: String,
     pub main: Option<String>,
     pub style: Option<String>,
+    pub mode: Option<String>, // "dark" | "light"
+    pub preview_bg: Option<String>,
+    pub preview_accent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,9 +72,14 @@ impl PluginScanner {
         inject(Self::builtin_dracula());
         inject(Self::builtin_monokai());
         inject(Self::builtin_midnight());
-        inject(Self::builtin_warm());
+        inject(Self::builtin_monokai_pro());
         inject(Self::builtin_light());
-        inject(Self::builtin_light_warm());
+        inject(Self::builtin_gruvbox_light());
+        inject(Self::builtin_solarized_light());
+        inject(Self::builtin_catppuccin_latte());
+        inject(Self::builtin_tokyo_light());
+        inject(Self::builtin_synthwave());
+        inject(Self::builtin_nordic());
 
         Ok(plugins)
     }
@@ -117,20 +125,90 @@ impl PluginScanner {
                 version: "1.0.0".to_string(),
                 main: None,
                 style: None,
+                mode: None,
+                preview_bg: None,
+                preview_accent: None,
             },
             script: Some(r#"
                 zync.on('ready', () => {
                     zync.commands.register('workbench.action.selectTheme', 'Preferences: Color Theme', async () => {
-                        const themes = [
-                            { label: 'Dark (Default)', id: 'dark' },
-                            { label: 'Dracula', id: 'dracula' },
-                            { label: 'Monokai', id: 'monokai' },
-                            { label: 'Midnight', id: 'midnight' },
-                            { label: 'Warm', id: 'warm' },
-                            { label: 'Light', id: 'light' },
-                            { label: 'Light Warm', id: 'light-warm' }
+                        const builtInThemes = [
+                            { label: 'System Default', id: 'system' },
+                            { kind: 'separator', label: 'separator' },
+                            { label: 'Light', id: 'light', mode: 'light' },
+                            { label: 'Gruvbox Light', id: 'gruvbox-light', mode: 'light' },
+                            { label: 'Solarized Light', id: 'solarized-light', mode: 'light' },
+                            { label: 'Catppuccin Latte', id: 'catppuccin-latte', mode: 'light' },
+                            { label: 'Tokyo Light', id: 'tokyo-light', mode: 'light' },
+                            { kind: 'separator', label: 'separator' },
+                            { label: 'Dark (Default)', id: 'dark', mode: 'dark' },
+                            { label: 'Dracula', id: 'dracula', mode: 'dark' },
+                            { label: 'Monokai', id: 'monokai', mode: 'dark' },
+                            { label: 'Midnight', id: 'midnight', mode: 'dark' },
+                            { label: 'Monokai Pro', id: 'monokai-pro', mode: 'dark' },
+                            { label: 'Synthwave', id: 'synthwave', mode: 'dark' },
+                            { label: 'Nordic', id: 'nordic', mode: 'dark' },
+                            { label: 'Night Owl', id: 'night-owl', mode: 'dark' },
+                            { label: 'Kanagawa', id: 'kanagawa', mode: 'dark' },
+                            { label: 'Tokyo Night', id: 'tokyo-night', mode: 'dark' },
                         ];
-                        const selected = await zync.window.showQuickPick(themes, { placeHolder: 'Select Color Theme' });
+
+                        let userThemes = [];
+
+                        try {
+                            if (zync.plugins && zync.plugins.list) {
+                                let plugins = await zync.plugins.list();
+                                
+                                // Helper to process a plugin into a QuickPick item
+                                const processPlugin = (p) => {
+                                    if (!p.manifest || (!p.manifest.style && !p.manifest.mode)) return;
+                                    if (p.manifest.id === 'com.zync.theme.manager') return;
+                                    
+                                    // Check if it's a built-in theme to avoid duplicates
+                                    const simpleId = p.manifest.id.replace('com.zync.theme.', '');
+                                    if (builtInThemes.some(t => t.id === simpleId)) return;
+
+                                    const item = {
+                                        label: p.manifest.name.replace(' Theme', ''),
+                                        id: simpleId,
+                                        description: 'User',
+                                        mode: p.manifest.mode || 'custom'
+                                    };
+                                    userThemes.push(item);
+                                };
+
+                                if (plugins && Array.isArray(plugins)) {
+                                    plugins.forEach(processPlugin);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('Failed to load user themes:', e);
+                        }
+
+                        // Merge logic: Insert user themes into correct groups
+                        // We'll reconstruct the list to keep headers
+                        const finalThemes = [];
+                        
+                        // Add System
+                        finalThemes.push(builtInThemes[0]); // System
+                        finalThemes.push(builtInThemes[1]); // Separator
+
+                        // Add Light Themes (Built-in + User)
+                        builtInThemes.filter(t => t.mode === 'light').forEach(t => finalThemes.push(t));
+                        userThemes.filter(t => t.mode === 'light').forEach(t => finalThemes.push(t));
+
+                        finalThemes.push({ kind: 'separator', label: 'separator' });
+
+                        // Add Dark Themes (Built-in + User)
+                        builtInThemes.filter(t => t.mode === 'dark').forEach(t => finalThemes.push(t));
+                        userThemes.filter(t => t.mode === 'dark').forEach(t => finalThemes.push(t));
+                        
+                        // Add any undefined mode themes at the end
+                        userThemes.filter(t => !t.mode || (t.mode !== 'light' && t.mode !== 'dark')).forEach(t => {
+                            finalThemes.push(t);
+                        });
+
+                        const selected = await zync.window.showQuickPick(finalThemes, { placeHolder: 'Select Color Theme' });
                         if (selected) {
                             zync.theme.set(selected.id);
                         }
@@ -151,6 +229,9 @@ impl PluginScanner {
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#282a36".to_string()),
+                preview_accent: Some("#d282af".to_string()),
             },
             script: None,
             style: Some(r#"
@@ -177,6 +258,9 @@ impl PluginScanner {
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#272822".to_string()),
+                preview_accent: Some("#9ebf52".to_string()),
             },
             script: None,
             style: Some(r#"
@@ -203,6 +287,9 @@ impl PluginScanner {
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#0f111a".to_string()),
+                preview_accent: Some("#797bce".to_string()),
             },
             script: None,
             style: Some(r#"
@@ -220,26 +307,29 @@ impl PluginScanner {
         }
     }
 
-    fn builtin_warm() -> Plugin {
+    fn builtin_monokai_pro() -> Plugin {
         Plugin {
-            path: "builtin://warm".to_string(),
+            path: "builtin://monokai-pro".to_string(),
             manifest: Manifest {
-                id: "com.zync.theme.warm".to_string(),
-                name: "Warm Theme".to_string(),
+                id: "com.zync.theme.monokai-pro".to_string(),
+                name: "Monokai Pro Theme".to_string(),
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#2d2a2e".to_string()),
+                preview_accent: Some("#ffd866".to_string()),
             },
             script: None,
             style: Some(r#"
-                [data-theme='warm'] {
-                    --color-app-bg: #1c1917;
-                    --color-app-panel: #292524;
-                    --color-app-surface: #44403c;
-                    --color-app-border: #57534e;
-                    --color-app-text: #f5f5f4;
-                    --color-app-muted: #a8a29e;
-                    --color-app-accent: #c08535;
+                [data-theme='monokai-pro'] {
+                    --color-app-bg: #2d2a2e;
+                    --color-app-panel: #2d2a2e;
+                    --color-app-surface: #403e41;
+                    --color-app-border: #5b595c;
+                    --color-app-text: #fcfcfa;
+                    --color-app-muted: #939293;
+                    --color-app-accent: #ffd866;
                 }
             "#.to_string()),
             enabled: true,
@@ -255,46 +345,271 @@ impl PluginScanner {
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("light".to_string()),
+                preview_bg: Some("#f4f4f5".to_string()),
+                preview_accent: Some("#2563eb".to_string()),
             },
             script: None,
             style: Some(r#"
                 [data-theme='light'] {
-                    --color-app-bg: #ffffff;
-                    --color-app-panel: #f3f4f6;
-                    --color-app-surface: #e5e7eb;
-                    --color-app-border: #e5e7eb;
-                    --color-app-text: #24292f;
-                    --color-app-muted: #57606a;
-                    --color-app-accent: #4c82c9;
+                    --color-app-bg: #f4f4f5;
+                    --color-app-panel: #ffffff;
+                    --color-app-surface: #ffffff;
+                    --color-app-border: #e4e4e7;
+                    --color-app-text: #18181b;
+                    --color-app-muted: #71717a;
+                    --color-app-accent: #2563eb;
                 }
             "#.to_string()),
             enabled: true,
         }
     }
 
-    fn builtin_light_warm() -> Plugin {
+    fn builtin_gruvbox_light() -> Plugin {
         Plugin {
-            path: "builtin://light-warm".to_string(),
+            path: "builtin://gruvbox-light".to_string(),
             manifest: Manifest {
-                id: "com.zync.theme.light-warm".to_string(),
-                name: "Light Warm Theme".to_string(),
+                id: "com.zync.theme.gruvbox-light".to_string(),
+                name: "Gruvbox Light Theme".to_string(),
                 version: "1.0.0".to_string(),
                 main: None,
                 style: Some("theme.css".to_string()),
+                mode: Some("light".to_string()),
+                preview_bg: Some("#fbf1c7".to_string()),
+                preview_accent: Some("#d65d0e".to_string()),
             },
             script: None,
             style: Some(r#"
-                [data-theme='light-warm'] {
-                    --color-app-bg: #f9f5eb;
-                    --color-app-panel: #f0ebe2;
-                    --color-app-surface: #e6e0d5;
-                    --color-app-border: #dcd6cb;
-                    --color-app-text: #44403c;
-                    --color-app-muted: #a8a29e;
-                    --color-app-accent: #c08535;
+                [data-theme='gruvbox-light'] {
+                    --color-app-bg: #fbf1c7;
+                    --color-app-panel: #f2e5bc;
+                    --color-app-surface: #ebdbb2;
+                    --color-app-border: #d5c4a1;
+                    --color-app-text: #3c3836;
+                    --color-app-muted: #7c6f64;
+                    --color-app-accent: #d65d0e;
                 }
             "#.to_string()),
             enabled: true,
+        }
+    }
+
+    fn builtin_solarized_light() -> Plugin {
+        Plugin {
+            path: "builtin://solarized-light".to_string(),
+            manifest: Manifest {
+                id: "com.zync.theme.solarized-light".to_string(),
+                name: "Solarized Light Theme".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: Some("theme.css".to_string()),
+                mode: Some("light".to_string()),
+                preview_bg: Some("#fdf6e3".to_string()),
+                preview_accent: Some("#268bd2".to_string()),
+            },
+            script: None,
+            style: Some(r#"
+                [data-theme='solarized-light'] {
+                    --color-app-bg: #fdf6e3;
+                    --color-app-panel: #eee8d5;
+                    --color-app-surface: #eee8d5;
+                    --color-app-border: #93a1a1;
+                    --color-app-text: #657b83;
+                    --color-app-muted: #586e75;
+                    --color-app-accent: #268bd2;
+                }
+            "#.to_string()),
+            enabled: true,
+        }
+    }
+
+    fn builtin_catppuccin_latte() -> Plugin {
+        Plugin {
+            path: "builtin://catppuccin-latte".to_string(),
+            manifest: Manifest {
+                id: "com.zync.theme.catppuccin-latte".to_string(),
+                name: "Catppuccin Latte Theme".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: Some("theme.css".to_string()),
+                mode: Some("light".to_string()),
+                preview_bg: Some("#eff1f5".to_string()),
+                preview_accent: Some("#ea76cb".to_string()),
+            },
+            script: None,
+            style: Some(r#"
+                [data-theme='catppuccin-latte'] {
+                    --color-app-bg: #eff1f5;
+                    --color-app-panel: #e6e9ef;
+                    --color-app-surface: #ccd0da;
+                    --color-app-border: #bcc0cc;
+                    --color-app-text: #4c4f69;
+                    --color-app-muted: #6c6f85;
+                    --color-app-accent: #ea76cb;
+                }
+            "#.to_string()),
+            enabled: true,
+        }
+    }
+
+    fn builtin_tokyo_light() -> Plugin {
+        Plugin {
+            path: "builtin://tokyo-light".to_string(),
+            manifest: Manifest {
+                id: "com.zync.theme.tokyo-light".to_string(),
+                name: "Tokyo Light Theme".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: Some("theme.css".to_string()),
+                mode: Some("light".to_string()),
+                preview_bg: Some("#e1e2e7".to_string()),
+                preview_accent: Some("#3760bf".to_string()),
+            },
+            script: None,
+            style: Some(r#"
+                [data-theme='tokyo-light'] {
+                    --color-app-bg: #e1e2e7;
+                    --color-app-panel: #d5d6db;
+                    --color-app-surface: #e9ecf2;
+                    --color-app-border: #9aa5ce;
+                    --color-app-text: #343b58;
+                    --color-app-muted: #565a6e;
+                    --color-app-accent: #3760bf;
+                }
+            "#.to_string()),
+            enabled: true,
+        }
+    }
+
+    fn builtin_synthwave() -> Plugin {
+        Plugin {
+            path: "builtin://synthwave".to_string(),
+            manifest: Manifest {
+                id: "com.zync.theme.synthwave".to_string(),
+                name: "Synthwave Theme".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#2b213a".to_string()),
+                preview_accent: Some("#ff7edb".to_string()),
+            },
+            script: None,
+            style: Some(r#"
+                [data-theme='synthwave'] {
+                    --color-app-bg: #2b213a;
+                    --color-app-panel: #241b31;
+                    --color-app-surface: #34294f;
+                    --color-app-border: #453a66;
+                    --color-app-text: #fff0f5;
+                    --color-app-muted: #b6a0d6;
+                    --color-app-accent: #ff7edb;
+                }
+            "#.to_string()),
+            enabled: true,
+        }
+    }
+
+    fn builtin_nordic() -> Plugin {
+        Plugin {
+            path: "builtin://nordic".to_string(),
+            manifest: Manifest {
+                id: "com.zync.theme.nordic".to_string(),
+                name: "Nordic Theme".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: Some("theme.css".to_string()),
+                mode: Some("dark".to_string()),
+                preview_bg: Some("#2e3440".to_string()),
+                preview_accent: Some("#88c0d0".to_string()),
+            },
+            script: None,
+            style: Some(r#"
+                [data-theme='nordic'] {
+                    --color-app-bg: #2e3440;
+                    --color-app-panel: #3b4252;
+                    --color-app-surface: #434c5e;
+                    --color-app-border: #4c566a;
+                    --color-app-text: #d8dee9;
+                    --color-app-muted: #88c0d0;
+                    --color-app-accent: #88c0d0;
+                }
+            "#.to_string()),
+            enabled: true,
+        }
+    }
+
+    pub async fn install_plugin(app: &AppHandle, url: &str) -> Result<String> {
+        println!("[Plugins] Installing from: {}", url);
+        
+        // 1. Download
+        let client = reqwest::Client::new();
+        let response = client.get(url).send().await?;
+        
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!("Failed to download plugin: status {}", response.status()));
+        }
+        
+        let bytes = response.bytes().await?;
+        let cursor = std::io::Cursor::new(bytes);
+        
+        // 2. Unzip
+        let mut archive = zip::ZipArchive::new(cursor)?;
+        
+        // Find manifest to get ID/Directory Name
+        let mut manifest_content = String::new();
+        {
+            let mut manifest_file = archive.by_name("manifest.json")
+                .context("Plugin zip is missing manifest.json")?;
+            std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
+        }
+        
+        let manifest: Manifest = serde_json::from_str(&manifest_content)
+            .context("Invalid manifest.json in plugin zip")?;
+            
+        // 3. Extract to plugins dir
+        let config_dir = app.path().app_config_dir()
+            .context("Failed to get config dir")?;
+        let plugins_dir = config_dir.join("plugins");
+        
+        if !plugins_dir.exists() {
+            fs::create_dir_all(&plugins_dir)?;
+        }
+        
+        // Use manifest ID or safe name for directory
+        // Sanitize ID for path
+        let dir_name = manifest.id.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+        let target_dir = plugins_dir.join(&dir_name);
+        
+        if target_dir.exists() {
+            // Check if we should overwrite? For now, yes, it's an update/reinstall
+            fs::remove_dir_all(&target_dir)?; 
+        }
+        
+        fs::create_dir_all(&target_dir)?;
+        
+        println!("[Plugins] Extracting to: {:?}", target_dir);
+        archive.extract(&target_dir)?;
+        
+        Ok(manifest.id)
+    }
+    
+    pub fn uninstall_plugin(app: &AppHandle, plugin_id: &str) -> Result<()> {
+        let config_dir = app.path().app_config_dir()?;
+        let plugins_dir = config_dir.join("plugins");
+        
+        // Need to find the directory - scanning or guessing
+        // Since we name dirs by ID (sanitized), we can try that first
+        let dir_name = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+        let target_dir = plugins_dir.join(&dir_name);
+        
+        if target_dir.exists() {
+            fs::remove_dir_all(target_dir)?;
+            Ok(())
+        } else {
+            // Fallback: scan to find directory with matching manifest ID?
+            // For now, assume consistent naming
+            Err(anyhow::anyhow!("Plugin directory not found for ID: {}", plugin_id))
         }
     }
 

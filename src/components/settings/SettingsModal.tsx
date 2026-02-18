@@ -7,6 +7,7 @@ import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTria
 import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
+import { Marketplace } from './Marketplace';
 
 
 interface SettingsModalProps {
@@ -14,7 +15,7 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'about';
+type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'about' | 'marketplace';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const settings = useAppStore(state => state.settings);
@@ -49,7 +50,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const { executeCommand } = usePlugins();
 
     useEffect(() => {
-        if (isOpen && activeTab === 'plugins') {
+        if (isOpen && (activeTab === 'plugins' || activeTab === 'appearance')) { // Load for appearance tab too
             setIsLoadingPlugins(true);
             window.ipcRenderer.invoke('plugins:load')
                 .then((list: any) => setPlugins(list))
@@ -332,6 +333,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" />
                     <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
                     <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" />
+                    <TabButton active={activeTab === 'marketplace'} onClick={() => handleTabChange('marketplace')} icon={<Download size={15} />} label="Marketplace" />
 
                     <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
                         <TabButton
@@ -597,43 +599,104 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         {activeTab === 'appearance' && (
                             <div className="space-y-8">
                                 <Section title="Theme">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        {[
-                                            { id: 'system', name: 'System', sub: 'Auto-detect', bg: 'linear-gradient(135deg, #09090b 50%, #ffffff 50%)', accent: '#6366f1' },
-                                            { id: 'dark', name: 'Dark', sub: 'Default', bg: '#09090b', accent: '#6366f1' }, // Standard Dark
-                                            { id: 'midnight', name: 'Midnight', sub: 'Classic Blue', bg: '#0f111a', accent: '#6366f1' }, // Blue Dark
-                                            { id: 'light', name: 'Light', sub: 'Theme', bg: '#ffffff', accent: '#0969da' }, // Blue
-                                            { id: 'dracula', name: 'Dracula', sub: 'Theme', bg: '#282a36', accent: '#ff79c6' }, // Pink
-                                            { id: 'monokai', name: 'Monokai', sub: 'Theme', bg: '#272822', accent: '#a6e22e' }, // Green
-                                            { id: 'warm', name: 'Dark Warm', sub: 'Theme', bg: '#1c1917', accent: '#d97706' }, // Amber
-                                            { id: 'light-warm', name: 'Light Warm', sub: 'Theme', bg: '#f9f5eb', accent: '#d97706' }, // Amber/Cream
-                                        ].map(theme => (
-                                            <button
-                                                key={theme.id}
-                                                onClick={() => updateSettings({ theme: theme.id as any, accentColor: undefined })}
-                                                className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === theme.id
-                                                    ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
-                                                    : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
-                                                    }`}
-                                            >
-                                                {/* Preview Box */}
-                                                <div
-                                                    className="w-12 h-12 rounded-lg shadow-inner flex items-center justify-center shrink-0 border border-white/10"
-                                                    style={{ background: theme.bg }}
+                                    <div className="space-y-6">
+                                        {/* System/Auto */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">System default</h4>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <button
+                                                    onClick={() => updateSettings({ theme: 'system' as any, accentColor: undefined })}
+                                                    className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === 'system'
+                                                        ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
+                                                        : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
+                                                        }`}
                                                 >
                                                     <div
-                                                        className="w-3 h-3 rounded-full shadow-sm"
-                                                        style={{ backgroundColor: theme.accent }}
-                                                    />
-                                                </div>
+                                                        className="w-12 h-12 rounded-lg shadow-inner flex items-center justify-center shrink-0 border border-white/10"
+                                                        style={{ background: 'linear-gradient(135deg, #09090b 50%, #ffffff 50%)' }}
+                                                    >
+                                                        <div
+                                                            className="w-3 h-3 rounded-full shadow-sm"
+                                                            style={{ backgroundColor: '#6366f1' }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-semibold text-[var(--color-app-text)] text-sm">System</div>
+                                                        <div className="text-xs text-[var(--color-app-muted)] mt-0.5">Auto-detect</div>
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        </div>
 
-                                                {/* Labels */}
-                                                <div>
-                                                    <div className="font-semibold text-[var(--color-app-text)] text-sm">{theme.name}</div>
-                                                    <div className="text-xs text-[var(--color-app-muted)] mt-0.5">{theme.sub}</div>
-                                                </div>
-                                            </button>
-                                        ))}
+                                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+
+                                        {/* Light Themes */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">Light Themes</h4>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                {plugins
+                                                    .filter(p => p.manifest.mode === 'light')
+                                                    .map(plugin => (
+                                                        <button
+                                                            key={plugin.manifest.id}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
+                                                                ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
+                                                                : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
+                                                                }`}
+                                                        >
+                                                            <div
+                                                                className="w-12 h-12 rounded-lg shadow-inner flex items-center justify-center shrink-0 border border-black/5"
+                                                                style={{ background: plugin.manifest.preview_bg || '#ffffff' }}
+                                                            >
+                                                                <div
+                                                                    className="w-3 h-3 rounded-full shadow-sm"
+                                                                    style={{ backgroundColor: plugin.manifest.preview_accent || '#000000' }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-semibold text-[var(--color-app-text)] text-sm">{plugin.manifest.name.replace(' Theme', '')}</div>
+                                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">Light</div>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+
+                                        {/* Dark Themes */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">Dark Themes</h4>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                {plugins
+                                                    .filter(p => p.manifest.mode === 'dark')
+                                                    .map(plugin => (
+                                                        <button
+                                                            key={plugin.manifest.id}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
+                                                                ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
+                                                                : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
+                                                                }`}
+                                                        >
+                                                            <div
+                                                                className="w-12 h-12 rounded-lg shadow-inner flex items-center justify-center shrink-0 border border-white/10"
+                                                                style={{ background: plugin.manifest.preview_bg || '#000000' }}
+                                                            >
+                                                                <div
+                                                                    className="w-3 h-3 rounded-full shadow-sm"
+                                                                    style={{ backgroundColor: plugin.manifest.preview_accent || '#ffffff' }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-semibold text-[var(--color-app-text)] text-sm">{plugin.manifest.name.replace(' Theme', '')}</div>
+                                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">Dark</div>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                            </div>
+                                        </div>
                                     </div>
                                 </Section>
 
@@ -1004,6 +1067,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             </div>
                         )}
 
+                        {activeTab === 'marketplace' && (
+                            <div className="h-full flex flex-col animate-in fade-in duration-300">
+                                <Marketplace />
+                            </div>
+                        )}
+
                         {activeTab === 'about' && (
                             <div className="flex flex-col items-center justify-start min-h-full pt-16 pb-8 space-y-6 animate-in fade-in duration-300">
                                 {/* Logo & Title (Interactive) */}
@@ -1160,9 +1229,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         </div>
                     </div>
                 )}
-            </div>
+            </div >
             <ToastContainer />
-        </div>,
+        </div >,
         document.body
     );
 }

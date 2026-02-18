@@ -93,6 +93,21 @@ const zync = {
         }
     },
 
+    terminal: {
+        send: (text) => {
+            self.postMessage({ type: 'api:terminal:send', payload: { text } });
+        }
+    },
+
+    statusBar: {
+        set: (id, text) => {
+            self.postMessage({ type: 'api:statusbar:set', payload: { id, text } });
+        },
+        clear: (id) => {
+            self.postMessage({ type: 'api:statusbar:set', payload: { id, text: '' } });
+        }
+    },
+
     window: {
         showQuickPick: (items, options) => {
             return zync.request('api:window:showQuickPick', { items, options });
@@ -100,6 +115,10 @@ const zync = {
         create: (options) => {
             return zync.request('api:window:create', options);
         }
+    },
+
+    plugins: {
+        list: () => zync.request('api:plugins:load', {})
     },
 
     logger: {
@@ -223,7 +242,13 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // API Implementation Bridge
         switch (type) {
             case 'api:ui:notify':
-                showToast(payload.type || 'info', payload.message);
+                showToast(payload.type || 'info', payload.body || payload.message || payload.title || 'Plugin notification');
+                break;
+            case 'api:terminal:send':
+                window.dispatchEvent(new CustomEvent('zync:terminal:send', { detail: { text: payload.text } }));
+                break;
+            case 'api:statusbar:set':
+                window.dispatchEvent(new CustomEvent('zync:statusbar:set', { detail: { id: payload.id, text: payload.text } }));
                 break;
             case 'api:log':
                 console.log(`[Plugin Log]`, payload);
@@ -253,6 +278,22 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         pluginId
                     }
                 }));
+                break;
+            case 'api:plugins:load':
+                try {
+                    const list = await ipcRenderer.invoke('plugins:load');
+                    respond(pluginId, 'api:plugins:load', {
+                        requestId: payload.requestId,
+                        result: list
+                    });
+                } catch (e) {
+                    console.error('[PluginContext] Failed to load plugins for worker:', e);
+                    respond(pluginId, 'api:plugins:load', {
+                        requestId: payload.requestId,
+                        result: [],
+                        error: String(e)
+                    });
+                }
                 break;
 
             // File System Bridge
