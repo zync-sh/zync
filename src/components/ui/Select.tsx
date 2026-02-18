@@ -132,7 +132,7 @@ export function Select({
             } : undefined}
             className={cn(
                 portal ? "pointer-events-auto" : "absolute z-[110] w-full mt-1.5",
-                "bg-[#18181b] border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.8)] rounded-xl overflow-hidden backdrop-blur-3xl ring-1 ring-white/10"
+                "bg-app-panel/95 border border-app-border shadow-2xl rounded-xl overflow-hidden backdrop-blur-3xl ring-1 ring-black/5 dark:ring-white/10"
             )}
         >
             <Command className="flex flex-col w-full bg-transparent">
@@ -161,17 +161,17 @@ export function Select({
                             }}
                             className={cn(
                                 "flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-all cursor-pointer select-none group/item mb-0.5 last:mb-0",
-                                "aria-selected:bg-app-accent/10 aria-selected:text-white",
+                                "aria-selected:bg-app-accent/10 aria-selected:text-app-accent",
                                 value === option.value
-                                    ? "bg-app-accent text-white font-semibold shadow-md shadow-app-accent/10"
-                                    : "text-app-text/60 hover:bg-white/[0.03] hover:text-white",
+                                    ? "bg-app-accent text-white font-semibold shadow-md shadow-app-accent/10 aria-selected:bg-app-accent aria-selected:text-white"
+                                    : "text-app-text/60 hover:bg-app-accent/5 hover:text-app-accent",
                                 itemClassName
                             )}
                         >
                             {option.icon && (
                                 <div className={cn(
                                     "flex-none transition-all duration-300 group-hover/item:scale-105 scale-90",
-                                    value === option.value ? "text-white" : "text-app-muted/40 group-hover/item:text-app-accent"
+                                    value === option.value ? "text-white" : "text-app-muted group-aria-selected:text-app-accent"
                                 )}>
                                     {option.icon}
                                 </div>
@@ -180,7 +180,7 @@ export function Select({
                                 <div className="truncate leading-none font-medium text-[11px]">{option.label}</div>
                                 {option.description && (
                                     <div className={cn(
-                                        "text-[8px] truncate mt-0.5 opacity-30 group-hover/item:opacity-50 transition-opacity",
+                                        "text-[8px] truncate mt-0.5 opacity-30 group-aria-selected:opacity-70 transition-opacity",
                                         value === option.value && "opacity-70"
                                     )}>
                                         {option.description}
@@ -202,7 +202,7 @@ export function Select({
     return (
         <div className={cn("relative w-full", className)} ref={containerRef}>
             {label && (
-                <label className="text-[10px] font-bold text-app-muted uppercase tracking-wider block mb-2 px-1 opacity-60">
+                <label className="text-[10px] font-bold text-app-muted uppercase tracking-wider block mb-2 px-1">
                     {label}
                 </label>
             )}
@@ -211,10 +211,10 @@ export function Select({
                 onClick={() => !disabled && setIsOpen(!isOpen)}
                 className={cn(
                     "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-[13px] transition-all duration-300 outline-none group",
-                    "bg-app-surface/20 text-app-text",
+                    "bg-app-surface text-app-text",
                     isOpen
-                        ? "border-app-accent/40 bg-app-surface/40 shadow-[0_0_15px_rgba(121,123,206,0.1)] ring-1 ring-app-accent/20"
-                        : "border-white/[0.05] hover:border-white/10 hover:bg-app-surface/30 shadow-[inset_0_0_10px_rgba(255,255,255,0.01)]",
+                        ? "border-app-accent/40 shadow-[0_0_15px_rgba(121,123,206,0.1)] ring-1 ring-app-accent/20"
+                        : "border-app-border/60 hover:border-app-border hover:bg-app-surface/80 shadow-sm",
                     disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
                     triggerClassName
                 )}
@@ -227,7 +227,7 @@ export function Select({
                             <div className="scale-90 opacity-80">{selectedOption.icon}</div>
                         </div>
                     )}
-                    <span className={cn("truncate font-medium tracking-tight", !selectedOption && "text-app-muted opacity-50")}>
+                    <span className={cn("truncate font-medium tracking-tight", !selectedOption && "text-app-muted opacity-70")}>
                         {selectedOption ? selectedOption.label : placeholder}
                     </span>
                 </div>

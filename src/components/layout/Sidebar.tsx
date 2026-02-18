@@ -404,7 +404,7 @@ export function Sidebar() {
                                 onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
                                 className={cn(
                                     "h-7 w-7 transition-colors rounded-lg",
-                                    isAddMenuOpen ? "text-app-text bg-app-surface" : "text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50"
+                                    isAddMenuOpen ? "text-app-text bg-app-surface shadow-sm" : "text-app-muted hover:text-app-text hover:bg-app-text/5 hover:bg-app-surface"
                                 )}
                                 title="Add New..."
                             >
@@ -449,7 +449,7 @@ export function Sidebar() {
                             variant="ghost"
                             size="icon"
                             onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })}
-                            className="h-7 w-7 text-app-muted hover:text-[var(--color-app-text)] hover:bg-app-surface/50 rounded-lg transition-colors"
+                            className="h-7 w-7 text-app-muted hover:text-app-text hover:bg-app-surface/50 rounded-lg transition-colors"
                         >
                             {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                         </Button>
@@ -464,7 +464,7 @@ export function Sidebar() {
                         </div>
                         <input
                             className={cn(
-                                "w-full bg-app-surface/50 hover:bg-app-surface border border-transparent focus:border-app-border/50 rounded-lg text-app-text focus:outline-none placeholder:text-app-muted/40 transition-all font-medium",
+                                "w-full bg-app-surface/50 hover:bg-app-surface border border-transparent focus:border-app-border/50 rounded-lg text-app-text focus:outline-none placeholder:text-app-muted/70 transition-all font-medium",
                                 compactMode ? "px-3 py-2 pl-9 text-xs" : "px-3 py-2.5 pl-9 text-sm"
                             )}
                             placeholder="Search..."
