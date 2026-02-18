@@ -2101,6 +2101,22 @@ pub async fn plugins_toggle(
 }
 
 #[tauri::command]
+pub async fn plugins_install(
+    app: AppHandle,
+    url: String,
+) -> Result<String, String> {
+    crate::plugins::PluginScanner::install_plugin(&app, &url).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_uninstall(
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::uninstall_plugin(&app, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn plugin_fs_read(
     path: String,
     state: State<'_, AppState>,
