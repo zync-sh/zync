@@ -2,17 +2,18 @@ import { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../lib/utils';
-import { Terminal as TerminalIcon, Files, Network, Code, LayoutDashboard, Plus, ChevronDown, X } from 'lucide-react';
+import { Terminal as TerminalIcon, Files, Network, Code, LayoutDashboard, Plus, ChevronDown, X, Plug } from 'lucide-react';
 import { ContextMenu } from '../ui/ContextMenu';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
 
 interface CombinedTabBarProps {
     connectionId: string;
-    activeView: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal';
+    activeView: string;
     activeTerminalId: string | null;
     openFeatures: string[];
     pinnedFeatures: string[];
-    onTabSelect: (view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal', termId?: string) => void;
+    pluginPanels?: { id: string; title: string }[];
+    onTabSelect: (view: any, termId?: string) => void;
     onFeatureClose: (feature: string) => void;
     onTerminalClose: (termId: string) => void;
     onNewTerminal: () => void;
@@ -26,6 +27,7 @@ export function CombinedTabBar({
     activeTerminalId,
     openFeatures,
     pinnedFeatures,
+    pluginPanels = [],
     onTabSelect,
     onFeatureClose,
     onTerminalClose,
@@ -159,6 +161,39 @@ export function CombinedTabBar({
                         </div>
                     );
                 })}
+
+                {/* 3. Plugin Panel Tabs (open ones) */}
+                {openFeatures.filter(f => f.startsWith('plugin:')).map(featureId => {
+                    const panelId = featureId.replace('plugin:', '');
+                    const panel = pluginPanels.find(p => p.id === panelId);
+                    if (!panel) return null;
+                    const isActive = activeView === featureId;
+                    return (
+                        <div
+                            key={featureId}
+                            onClick={() => onTabSelect(featureId)}
+                            data-tauri-drag-region="false"
+                            className={cn(
+                                "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[90px] group border border-transparent relative drag-none shrink-0",
+                                isActive
+                                    ? "bg-app-surface text-app-text shadow-sm border-app-border/50"
+                                    : "text-app-muted hover:bg-app-surface/50 hover:text-app-text"
+                            )}
+                        >
+                            <Plug size={12} className={cn(isActive ? "text-app-accent" : "text-app-muted")} />
+                            <span className="truncate flex-1">{panel.title}</span>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onFeatureClose(featureId); }}
+                                className={cn(
+                                    "p-0.5 rounded hover:bg-app-bg hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100",
+                                    isActive && "opacity-100"
+                                )}
+                            >
+                                <X size={12} />
+                            </button>
+                        </div>
+                    );
+                })}
             </div>
 
             {/* 3. Actions: Add Terminal + Dropdown (Outside scrollable area) */}
@@ -233,6 +268,39 @@ export function CombinedTabBar({
                                     </button>
                                 );
                             })}
+
+                            {/* Plugin Panels Section */}
+                            {pluginPanels.length > 0 && (
+                                <>
+                                    <div className="h-[1px] bg-app-border/50 my-1 mx-2" />
+                                    <div className="px-3 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider flex items-center gap-1.5">
+                                        <Plug size={10} />
+                                        Plugins
+                                    </div>
+                                    {pluginPanels.map(panel => {
+                                        const featureId = `plugin:${panel.id}`;
+                                        const isActive = activeView === featureId;
+                                        return (
+                                            <button
+                                                key={panel.id}
+                                                onClick={() => {
+                                                    onOpenFeature(featureId);
+                                                    setIsDropdownOpen(false);
+                                                }}
+                                                disabled={isActive}
+                                                className={cn(
+                                                    "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors mx-1 rounded-md w-[calc(100%-8px)]",
+                                                    isActive ? "bg-app-accent/10 text-app-accent cursor-default" : "text-app-text hover:bg-app-surface"
+                                                )}
+                                            >
+                                                <Plug size={14} className={cn("opacity-80 text-app-accent", isActive && "opacity-100")} />
+                                                <span className="flex-1 font-medium">{panel.title}</span>
+                                                {isActive && <span className="text-[10px] opacity-70">Active</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            )}
                         </div>
                     )}
                 </div>

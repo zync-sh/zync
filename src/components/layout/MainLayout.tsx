@@ -1,6 +1,7 @@
 import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
+import { usePlugins } from '../../context/PluginContext';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../lib/utils';
 import { StatusBar } from './StatusBar';
@@ -20,6 +21,7 @@ const TunnelManager = lazy(() => import('../tunnel/TunnelManager').then(module =
 const SnippetsManager = lazy(() => import('../snippets/SnippetsManager').then(module => ({ default: module.SnippetsManager })));
 const TerminalManager = lazy(() => import('../terminal/TerminalManager').then(module => ({ default: module.TerminalManager })));
 const GlobalTunnelList = lazy(() => import('../tunnel/GlobalTunnelList').then(module => ({ default: module.GlobalTunnelList })));
+const PluginPanel = lazy(() => import('../plugins/PluginPanel').then(module => ({ default: module.PluginPanel })));
 
 // Loading Component
 const TabLoading = () => (
@@ -103,6 +105,9 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     // Connection Selectors - Optimized
     const connection = useAppStore(useShallow(state => state.connections.find(c => c.id === tab.connectionId)));
+
+    // Plugin panels
+    const { panels: pluginPanels } = usePlugins();
 
     // Terminal Store Selectors - Optimized
     const activeTermId = useAppStore(state => tab.connectionId ? (state.activeTerminalIds[tab.connectionId] || null) : null);
@@ -252,6 +257,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                         activeTerminalId={activeTermId}
                         openFeatures={openFeatures}
                         pinnedFeatures={pinnedFeatures}
+                        pluginPanels={pluginPanels.map(p => ({ id: p.id, title: p.title }))}
                         onTabSelect={handleTabSelect}
                         onFeatureClose={handleFeatureClose}
                         onTerminalClose={handleTerminalClose}
@@ -280,6 +286,21 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                     <SnippetsManager connectionId={tab.connectionId} />
                                 </div>
                             )}
+
+                            {/* Plugin Panels */}
+                            {pluginPanels.map(panel => {
+                                const viewId = `plugin:${panel.id}`;
+                                if (tab.view !== viewId) return null;
+                                return (
+                                    <PluginPanel
+                                        key={panel.id}
+                                        html={panel.html}
+                                        panelId={panel.id}
+                                        pluginId={panel.pluginId}
+                                        connectionId={tab.connectionId || null}
+                                    />
+                                );
+                            })}
 
                             {/* 
                                 Terminal View

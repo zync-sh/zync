@@ -1233,7 +1233,6 @@ pub async fn ssh_exec(
                         russh::ChannelMsg::ExtendedData { ref data, .. } => stderr.extend_from_slice(data),
                         russh::ChannelMsg::ExitStatus { exit_status: code } => {
                             exit_status = code;
-                            break;
                         },
                          _ => {}
                      }
