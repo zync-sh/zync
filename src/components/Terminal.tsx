@@ -441,24 +441,14 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       }
     };
 
-    // Plugin terminal send: only the visible terminal handles this
-    const handlePluginTerminalSend = (e: Event) => {
-      if (isVisible && termRef.current) {
-        const { text } = (e as CustomEvent).detail;
-        window.ipcRenderer.send('terminal:write', { termId: sessionId, data: text });
-      }
-    };
-
     window.addEventListener('ssh-ui:term-copy', handleGlobalCopy);
     window.addEventListener('ssh-ui:term-paste', handleGlobalPaste);
     window.addEventListener('ssh-ui:term-find', handleGlobalFind);
-    window.addEventListener('zync:terminal:send', handlePluginTerminalSend);
 
     return () => {
       window.removeEventListener('ssh-ui:term-copy', handleGlobalCopy);
       window.removeEventListener('ssh-ui:term-paste', handleGlobalPaste);
       window.removeEventListener('ssh-ui:term-find', handleGlobalFind);
-      window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
     };
 
   }, [activeConnectionId, globalActiveId, isVisible]);
