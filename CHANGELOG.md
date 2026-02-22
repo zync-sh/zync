@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-02-22
+
 ### Added
 
 - **Plugin Panel API**: Sandboxed panel rendering engine; plugins can register HTML/JS/CSS payloads via `zync.panel.register` and render in isolated iframes with `postMessage` bridge
@@ -49,5 +51,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/gajendraxdev/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/gajendraxdev/zync/releases/tag/v2.2.1
