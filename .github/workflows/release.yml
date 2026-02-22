@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   release:
@@ -54,8 +56,63 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__ # the action automatically replaces __VERSION__ with the app version
+          tagName: v__VERSION__
           releaseName: "Zync v__VERSION__"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
+
+  apt-repo:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Install reprepro & gnupg
+        run: sudo apt-get install -y reprepro gnupg
+
+      - name: Import GPG private key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download .deb from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p /tmp/debs
+          gh release download ${{ github.ref_name }} -p "*.deb" -D /tmp/debs/
+
+      - name: Setup reprepro config
+        run: |
+          mkdir -p conf
+          cat > conf/distributions <<EOF
+          Origin: Zync
+          Label: Zync
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: Zync SSH Client
+          SignWith: releases@zync.thesudoer.in
+          EOF
+
+      - name: Add .deb to repo
+        run: reprepro includedeb stable /tmp/debs/*.deb
+
+      - name: Export public GPG key
+        run: gpg --armor --export releases@zync.thesudoer.in > key.gpg
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "APT repo update: ${{ github.ref_name }}"
+          git push
