@@ -7621,7 +7621,7 @@ dependencies = [
 
 [[package]]
 name = "zync"
-version = "2.2.1"
+version = "2.3.1"
 dependencies = [
  "anyhow",
  "async-trait",

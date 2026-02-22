@@ -102,9 +102,17 @@ jobs:
           Description: Zync SSH Client
           SignWith: releases@zync.thesudoer.in
           EOF
+          
+          cat > conf/options <<EOF
+          ask-passphrase
+          EOF
+          
+          cat > conf/uploaders <<EOF
+          allow * by anyone
+          EOF
 
       - name: Add .deb to repo
-        run: reprepro includedeb stable /tmp/debs/*.deb
+        run: reprepro --ignore=wrongsection includedeb stable /tmp/debs/*.deb
 
       - name: Export public GPG key
         run: gpg --armor --export releases@zync.thesudoer.in > key.gpg
