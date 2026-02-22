@@ -4,6 +4,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-02-23
+
+### Added
+- **Official APT Repository**: Debian and Ubuntu users can now install and automatically update Zync alongside their system packages via our new APT repository (`apt-get install zync`), as an alternative to the built-in AppImage auto-updater. Read the [full installation guide here](https://zync.thesudoer.in/docs).
+- **CI/CD Pipeline Integration**: The repository is fully automated via GitHub Actions using `reprepro`, securely mapping `.deb` binaries to the `gh-pages` branch with headless GPG batch signing.
+
 ## [2.3.0] - 2026-02-22
 
 ### Added
@@ -51,6 +57,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/gajendraxdev/zync/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/gajendraxdev/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/gajendraxdev/zync/releases/tag/v2.2.1
