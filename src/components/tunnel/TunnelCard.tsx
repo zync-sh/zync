@@ -157,8 +157,8 @@ export function TunnelCard({
             className={cn(
                 "group relative flex flex-col p-2 rounded-xl border transition-all duration-300 overflow-hidden",
                 isActive
-                    ? "bg-gradient-to-br from-app-panel/60 to-app-accent/10 border-app-accent/30 shadow-[0_4px_20px_-4px_rgba(var(--color-app-success),0.1)] backdrop-blur-md"
-                    : "bg-gradient-to-br from-app-panel/40 to-app-panel/10 border-app-border/40 hover:border-app-accent/40 shadow-sm hover:shadow-md backdrop-blur-sm"
+                    ? "bg-gradient-to-br from-app-panel to-app-accent/5 border-app-accent/30 shadow-[0_4px_20px_-4px_rgba(var(--color-app-success),0.1)] backdrop-blur-md"
+                    : "bg-gradient-to-br from-app-panel/80 to-app-panel/40 border-app-border hover:border-app-accent/40 shadow-sm hover:shadow-md backdrop-blur-sm"
             )}
         >
             {/* Header: Identity */}

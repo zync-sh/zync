@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { Select, type SelectOption } from '../ui/Select';
+import { OSIcon } from '../icons/OSIcon';
 
 interface CopyToServerModalProps {
   isOpen: boolean;
@@ -153,7 +154,11 @@ export function CopyToServerModal({
     value: conn.id,
     label: conn.name,
     description: `${conn.username}@${conn.host}`,
-    icon: <Server size={16} className="text-app-muted" />
+    icon: (
+      <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
+        <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
+      </div>
+    )
   }));
 
   const handleCopy = async () => {
@@ -222,11 +227,11 @@ export function CopyToServerModal({
         {/* The Compact Bridge */}
         <div className="relative flex items-center justify-between gap-4">
           {/* Source Hub */}
-          <div className="flex-1 min-w-0 bg-app-surface/20 border border-white/5 rounded-xl p-4 backdrop-blur-xl relative group transition-all duration-500 hover:bg-app-surface/30 shadow-[inset_0_0_15px_rgba(255,255,255,0.01)]">
+          <div className="flex-1 min-w-0 bg-app-surface border border-app-border rounded-xl p-4 backdrop-blur-xl relative group transition-all duration-500 hover:bg-app-surface/80 shadow-sm">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5 opacity-40">
                 <Server size={12} className="text-app-accent" />
-                <span className="text-[8px] font-bold uppercase tracking-widest">Source</span>
+                <span className="text-[8px] font-bold uppercase tracking-widest text-app-muted">Source</span>
               </div>
               <div className="text-base font-bold tracking-tight text-app-text truncate leading-tight transition-colors">
                 {connections.find((c: Connection) => c.id === firstFile.connectionId)?.name}
@@ -239,20 +244,20 @@ export function CopyToServerModal({
 
           {/* The Ethereal Bridge */}
           <div className="flex-none w-12 relative flex items-center justify-center">
-            <div className="w-full h-[1.5px] rounded-full overflow-hidden bg-white/5 relative">
+            <div className="w-full h-[1.5px] rounded-full overflow-hidden bg-app-border/40 relative">
               <div className="absolute inset-0 animate-ethereal-glow" />
             </div>
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-app-panel border border-white/10 flex items-center justify-center shadow-lg animate-zync-float backdrop-blur-md">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-app-panel border border-app-border flex items-center justify-center shadow-lg animate-zync-float backdrop-blur-md">
               <ArrowRight size={12} className="text-app-accent/80" />
             </div>
           </div>
 
           {/* Target Hub */}
-          <div className={`flex-1 min-w-0 border rounded-xl p-4 backdrop-blur-xl transition-all duration-700 shadow-[inset_0_0_15px_rgba(255,255,255,0.01)] ${selectedServerId ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-app-surface/10 border-white/5 opacity-50'}`}>
+          <div className={`flex-1 min-w-0 border rounded-xl p-4 backdrop-blur-xl transition-all duration-700 shadow-sm ${selectedServerId ? 'bg-app-surface border-emerald-500/30' : 'bg-app-surface/60 border-app-border/40 opacity-50'}`}>
             <div className="flex flex-col gap-1.5 text-right">
               <div className="flex items-center gap-1.5 opacity-40 justify-end">
-                <span className="text-[8px] font-bold uppercase tracking-widest text-emerald-500/80">Target</span>
-                <Server size={12} className={selectedServerId ? 'text-emerald-500' : 'text-app-muted'} />
+                <span className="text-[8px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Target</span>
+                <Server size={12} className={selectedServerId ? 'text-emerald-600 dark:text-emerald-400' : 'text-app-muted'} />
               </div>
               <div className="text-base font-bold tracking-tight text-app-text leading-tight truncate">
                 {selectedServerId ? availableServers.find(s => s.id === selectedServerId)?.name : 'Destination...'}
@@ -265,7 +270,7 @@ export function CopyToServerModal({
         </div>
 
         {/* File Indicator (Compact) */}
-        <div className="bg-white/[0.02] border border-white/5 rounded-lg p-2.5 flex items-center justify-between gap-3">
+        <div className="bg-app-surface/50 border border-app-border rounded-lg p-2.5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 overflow-hidden">
             <div className="w-1.5 h-1.5 rounded-full bg-app-accent animate-pulse shrink-0" />
             <div className="text-[11px] font-medium text-app-text truncate">
@@ -285,7 +290,7 @@ export function CopyToServerModal({
               onChange={setSelectedServerId}
               options={serverOptions}
               placeholder="Destination Gateway..."
-              className="z-[110] bg-app-surface/30 border-white/5 rounded-lg py-2.5 text-sm"
+              className="z-[110] bg-app-surface border-app-border rounded-lg py-2.5 text-sm"
             />
 
             <div className={`grid gap-3.5 relative ${isMultiSelect ? 'grid-cols-1' : 'grid-cols-2'}`}>
@@ -295,13 +300,13 @@ export function CopyToServerModal({
                   value={destinationPath}
                   onChange={(e) => setDestinationPath(e.target.value)}
                   placeholder="/home/user/data"
-                  className="bg-app-surface/20 border-white/5 focus:bg-app-surface/40 transition-all rounded-lg py-2.5 text-sm"
+                  className="bg-app-surface border-app-border focus:bg-app-surface/80 transition-all rounded-lg py-2.5 text-sm"
                 />
 
                 {/* Suggestions Dropdown (Quick Traverse Style) */}
                 {suggestions.length > 0 && (
-                  <div className="absolute z-[120] left-0 right-0 mt-2 bg-[#1a1b1e] border border-white/5 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                    <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 bg-white/[0.02]">
+                  <div className="absolute z-[120] left-0 right-0 mt-2 bg-app-panel border border-app-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-app-border bg-app-surface/50">
                       <span className="text-[10px] font-bold text-app-muted uppercase tracking-widest">Quick Traverse</span>
                       <button onClick={() => setSuggestions([])} className="text-app-muted hover:text-white transition-colors">
                         <span className="sr-only">Close</span>
@@ -311,7 +316,7 @@ export function CopyToServerModal({
                     <div className="p-1 max-h-60 overflow-y-auto custom-scrollbar">
                       <button
                         onClick={() => handleSuggestionClick('.')}
-                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/5 rounded-lg transition-colors flex items-center gap-3 group"
+                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg transition-colors flex items-center gap-3 group"
                       >
                         <div className="w-5 h-5 rounded flex items-center justify-center bg-emerald-500/10 text-emerald-500">
                           <div className="w-1 h-1 rounded-full bg-current" />
@@ -320,18 +325,18 @@ export function CopyToServerModal({
                       </button>
                       <button
                         onClick={goUp}
-                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/5 rounded-lg transition-colors flex items-center gap-3 group"
+                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg transition-colors flex items-center gap-3 group"
                       >
-                        <div className="w-5 h-5 rounded flex items-center justify-center bg-amber-500/10 text-amber-500">
+                        <div className="w-5 h-5 rounded flex items-center justify-center bg-amber-500/10 text-amber-600 dark:text-amber-500">
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
                         </div>
-                        <span className="font-mono text-amber-500">..</span>
+                        <span className="font-mono text-amber-600 dark:text-amber-500">..</span>
                       </button>
                       {suggestions.map((dir) => (
                         <button
                           key={dir}
                           onClick={() => handleSuggestionClick(dir)}
-                          className="w-full text-left px-3 py-2 text-sm text-app-text/80 hover:text-white hover:bg-white/5 rounded-lg transition-all flex items-center gap-3 group"
+                          className="w-full text-left px-3 py-2 text-sm text-app-text/80 hover:text-app-text hover:bg-app-surface rounded-lg transition-all flex items-center gap-3 group"
                         >
                           <div className="w-5 h-5 rounded flex items-center justify-center bg-[#ca8a04]/10 text-[#ca8a04] group-hover:bg-[#ca8a04]/20 transition-colors">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M20 20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v11Z" /></svg>
@@ -348,13 +353,13 @@ export function CopyToServerModal({
                   <div className="flex flex-wrap gap-1.5 px-0.5">
                     <button
                       onClick={goToHome}
-                      className="px-2 py-0.5 rounded-full bg-white/5 border border-white/5 text-[9px] font-bold text-app-accent hover:bg-app-accent/10 hover:border-app-accent/30 transition-all"
+                      className="px-2 py-0.5 rounded-full bg-app-surface border border-app-border text-[9px] font-bold text-app-accent hover:bg-app-accent/10 hover:border-app-accent/30 transition-all"
                     >
                       ~ Home
                     </button>
                     <button
                       onClick={goToRoot}
-                      className="px-2 py-0.5 rounded-full bg-white/5 border border-white/5 text-[9px] font-bold text-app-muted hover:bg-white/10 hover:border-white/20 transition-all"
+                      className="px-2 py-0.5 rounded-full bg-app-surface border border-app-border text-[9px] font-bold text-app-muted hover:bg-app-surface/80 hover:border-app-border/80 transition-all"
                     >
                       / Root
                     </button>
@@ -374,13 +379,13 @@ export function CopyToServerModal({
                   value={fileName}
                   onChange={(e) => setFileName(e.target.value)}
                   placeholder="name"
-                  className="bg-app-surface/20 border-white/5 focus:bg-app-surface/40 transition-all rounded-lg py-2.5 text-sm"
+                  className="bg-app-surface border-app-border focus:bg-app-surface/80 transition-all rounded-lg py-2.5 text-sm"
                 />
               )}
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-4 border-t border-white/5">
+          <div className="flex items-center justify-between pt-4 border-t border-app-border/30">
             {/* Technical Note */}
             <div className="flex-1 pr-6">
               <div className="flex items-center gap-1.5 mb-1 opacity-40">

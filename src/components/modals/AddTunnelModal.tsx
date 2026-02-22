@@ -177,7 +177,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
             label: conn.name || conn.host || 'Unknown Host',
             description: conn.host ? `${conn.username}@${conn.host}` : 'Local/Custom Connection',
             icon: (
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border">
+                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
                     <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
                 </div>
             )
@@ -193,9 +193,9 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
             <div className="p-5 space-y-6">
                 {/* Visual Flow Header (Termius-Style) */}
                 {!editingTunnel && (
-                    <div className="relative overflow-hidden rounded-xl bg-app-surface/20 border border-white/10 p-5 backdrop-blur-xl group">
+                    <div className="relative overflow-hidden rounded-xl bg-app-surface border border-app-border p-5 backdrop-blur-xl group">
                         {/* Background Grid with Scanlines & Noise */}
-                        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_80%)]" />
+                        <div className="absolute inset-0 bg-[linear-gradient(currentColor_1px,transparent_1px),linear-gradient(90deg,currentColor_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_80%)] text-app-border/20" />
                         <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_50%,rgba(0,0,0,0.1)_50%)] bg-[size:100%_4px] opacity-10 pointer-events-none" />
                         <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3F%3E%3Cfilter id='noiseFilter'%3F%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
 
@@ -212,7 +212,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                     "w-12 h-12 rounded-xl flex items-center justify-center border transition-all shadow-lg relative overflow-hidden",
                                     type === 'local'
                                         ? "bg-indigo-500/20 border-indigo-500/50 shadow-indigo-500/20"
-                                        : "bg-white/5 border-white/5"
+                                        : "bg-app-muted/5 border-app-muted/10 hover:bg-app-muted/10"
                                 )}>
                                     <Laptop size={20} className={cn(type === 'local' ? "text-indigo-400" : "text-app-muted")} />
                                     {type === 'local' && (
@@ -245,7 +245,8 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                     {/* Base Track */}
                                     <line
                                         x1="0" y1="10" x2="100%" y2="10"
-                                        stroke="rgba(255,255,255,0.1)"
+                                        stroke="currentColor"
+                                        className="text-app-border/30"
                                         strokeWidth="2"
                                         strokeDasharray="4 4"
                                     />
@@ -317,7 +318,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                     }}
                                     transition={{ duration: 2, repeat: Infinity }}
                                     className={cn(
-                                        "absolute -top-3 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-black/60 backdrop-blur-sm z-20",
+                                        "absolute -top-3 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-app-panel/90 backdrop-blur-sm z-20",
                                         type === 'local'
                                             ? "text-indigo-400 border-indigo-500/30"
                                             : "text-orange-400 border-orange-500/30"
@@ -339,7 +340,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                     "w-12 h-12 rounded-xl flex items-center justify-center border transition-all shadow-lg relative overflow-hidden",
                                     type === 'remote'
                                         ? "bg-orange-500/20 border-orange-500/50 shadow-orange-500/20"
-                                        : "bg-white/5 border-white/5"
+                                        : "bg-app-muted/5 border-app-muted/10 hover:bg-app-muted/10"
                                 )}>
                                     <ServerIcon size={20} className={cn(type === 'remote' ? "text-orange-400" : "text-app-muted")} />
                                     {type === 'remote' && (
@@ -359,17 +360,18 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
 
                         {/* Explainer Text */}
                         <div className={cn(
-                            "mt-3 text-center text-[11px] font-medium py-2 px-4 rounded-lg border",
+                            "mt-3 text-center text-[11px] font-medium py-2 px-4 rounded-lg border transition-colors",
                             type === 'local'
-                                ? "bg-indigo-500/5 border-indigo-500/10 text-indigo-200/80"
-                                : "bg-orange-500/5 border-orange-500/10 text-orange-200/80"
+                                ? "bg-indigo-500/5 border-indigo-500/10 text-indigo-600 dark:text-indigo-300"
+                                : "bg-orange-500/5 border-orange-500/10 text-orange-600 dark:text-orange-300"
                         )}>
                             {type === 'local'
                                 ? "Access a service running on the remote server (e.g. database) from your local machine."
                                 : "Expose a local service (e.g. localhost dev server) to the remote server."}
                         </div>
                     </div>
-                )}
+                )
+                }
 
                 {/* Main Form Fields */}
                 <div className="space-y-5">
@@ -382,7 +384,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                             onChange={setSelectedConnectionId}
                             options={hostOptions}
                             disabled={!!initialConnectionId}
-                            className="bg-app-surface/20 border-white/10 focus:border-app-accent/40"
+                            className="bg-app-surface border-app-border focus:border-app-accent/40"
                         />
                         <GroupSelector
                             label="Group (Optional)"
@@ -400,7 +402,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                className="bg-app-surface/20 rounded-xl border border-white/10 p-5 space-y-5 backdrop-blur-sm"
+                                className="bg-app-surface/50 rounded-xl border border-app-border p-5 space-y-5 backdrop-blur-sm"
                             >
                                 <div className="flex items-center justify-between mb-2">
                                     <h3 className="text-[10px] font-bold text-app-accent uppercase tracking-[0.2em] flex items-center gap-2">
@@ -409,7 +411,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                     </h3>
                                     <button
                                         onClick={() => setMode('bulk')}
-                                        className="text-[10px] font-bold text-white/40 hover:text-app-accent transition-all flex items-center gap-2 uppercase tracking-wider group"
+                                        className="text-[10px] font-bold text-app-muted hover:text-app-accent transition-all flex items-center gap-2 uppercase tracking-wider group"
                                     >
                                         <Layers size={12} className="group-hover:rotate-12 transition-transform" />
                                         Switch to Bulk
@@ -425,7 +427,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                     placeholder="8080"
                                                     value={localPort}
                                                     onChange={(e) => setLocalPort(e.target.value)}
-                                                    className="font-mono text-center bg-white/5 border-white/10 focus:border-indigo-500/40 focus:bg-indigo-500/5"
+                                                    className="font-mono text-center bg-app-surface border-app-border focus:border-indigo-500/40 focus:bg-indigo-500/5"
                                                 />
                                             </div>
                                             <div className="col-span-1 flex justify-center pb-3 opacity-30 text-indigo-400">
@@ -438,7 +440,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                         placeholder="127.0.0.1"
                                                         value={remoteHost}
                                                         onChange={(e) => setRemoteHost(e.target.value)}
-                                                        className="bg-white/5 border-white/10 focus:border-indigo-500/40"
+                                                        className="bg-app-surface border-app-border focus:border-indigo-500/40"
                                                     />
                                                 </div>
                                                 <div className="col-span-3">
@@ -447,7 +449,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                         placeholder="80"
                                                         value={remotePort}
                                                         onChange={(e) => setRemotePort(e.target.value)}
-                                                        className="font-mono text-center bg-white/5 border-white/10 focus:border-indigo-500/40 focus:bg-indigo-500/5"
+                                                        className="font-mono text-center bg-app-surface border-app-border focus:border-indigo-500/40 focus:bg-indigo-500/5"
                                                     />
                                                 </div>
                                             </div>
@@ -460,7 +462,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                     placeholder="9090"
                                                     value={remotePort}
                                                     onChange={(e) => setRemotePort(e.target.value)}
-                                                    className="font-mono text-center bg-white/5 border-white/10 focus:border-orange-500/40 focus:bg-orange-500/5"
+                                                    className="font-mono text-center bg-app-surface border-app-border focus:border-orange-500/40 focus:bg-orange-500/5"
                                                 />
                                             </div>
                                             <div className="col-span-1 flex justify-center pb-3 opacity-30 text-orange-400">
@@ -473,7 +475,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                         placeholder="127.0.0.1"
                                                         value={remoteHost}
                                                         onChange={(e) => setRemoteHost(e.target.value)}
-                                                        className="bg-white/5 border-white/10 focus:border-orange-500/40"
+                                                        className="bg-app-surface border-app-border focus:border-orange-500/40"
                                                     />
                                                 </div>
                                                 <div className="col-span-3">
@@ -482,7 +484,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                         placeholder="3000"
                                                         value={localPort}
                                                         onChange={(e) => setLocalPort(e.target.value)}
-                                                        className="font-mono text-center bg-white/5 border-white/10 focus:border-orange-500/40 focus:bg-orange-500/5"
+                                                        className="font-mono text-center bg-app-surface border-app-border focus:border-orange-500/40 focus:bg-orange-500/5"
                                                     />
                                                 </div>
                                             </div>
@@ -496,14 +498,14 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                         placeholder={type === 'local' ? "e.g. Postgres DB" : "e.g. Webhook Handler"}
                                         value={name}
                                         onChange={(e) => setName(e.target.value)}
-                                        className="bg-white/5 border-white/10 focus:border-white/20"
+                                        className="bg-app-surface border-app-border focus:border-app-border/80"
                                     />
                                     <Input
                                         label="Bind Address"
                                         placeholder={type === 'local' ? "127.0.0.1" : "0.0.0.0"}
                                         value={bindAddress}
                                         onChange={(e) => setBindAddress(e.target.value)}
-                                        className="font-mono bg-white/5 border-white/10 focus:border-white/20"
+                                        className="font-mono bg-app-surface border-app-border focus:border-app-border/80"
                                     />
                                 </div>
                             </motion.div>
@@ -513,16 +515,16 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -10 }}
-                                className="bg-app-surface/20 rounded-xl border border-white/10 overflow-hidden backdrop-blur-sm"
+                                className="bg-app-surface/20 rounded-xl border border-app-border overflow-hidden backdrop-blur-sm"
                             >
-                                <div className="flex items-center justify-between p-4 border-b border-white/5 bg-white/5">
+                                <div className="flex items-center justify-between p-4 border-b border-app-border bg-app-surface/50">
                                     <h3 className="text-[10px] font-bold text-app-accent uppercase tracking-[0.2em] flex items-center gap-2">
                                         <div className="w-1 h-1 rounded-full bg-app-accent" />
                                         Bulk Configuration
                                     </h3>
                                     <button
                                         onClick={() => setMode('single')}
-                                        className="text-[10px] font-bold text-white/40 hover:text-white transition-colors uppercase tracking-wider"
+                                        className="text-[10px] font-bold text-app-muted hover:text-app-text transition-colors uppercase tracking-wider"
                                     >
                                         Cancel Bulk
                                     </button>
@@ -546,7 +548,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                     animate={{ opacity: 1, x: 0 }}
                                                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
                                                     transition={{ delay: index * 0.05 }}
-                                                    className="grid grid-cols-12 gap-2 items-center py-1.5 px-3 group relative hover:bg-white/[0.02] transition-colors rounded-lg focus-within:bg-white/[0.04]"
+                                                    className="grid grid-cols-12 gap-2 items-center py-1.5 px-3 group relative hover:bg-app-surface/50 transition-colors rounded-lg focus-within:bg-app-surface/80"
                                                 >
                                                     <div className="col-span-3">
                                                         <Select
@@ -561,7 +563,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                                 { value: 'remote', label: 'Remote', icon: <ServerIcon size={14} /> }
                                                             ]}
                                                             showSearch={false}
-                                                            triggerClassName="h-8 text-[11px] bg-transparent border-transparent hover:border-white/10 focus:border-app-accent/30 focus:bg-white/5"
+                                                            triggerClassName="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:border-app-accent/30 focus:bg-app-surface/50"
                                                             showCheck={false}
                                                             itemClassName="text-[10px] py-1"
                                                             portal={true}
@@ -576,7 +578,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                                 setBulkRows(newRows);
                                                             }}
                                                             placeholder="8080"
-                                                            className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-white/10 focus:bg-white/5 focus:border-app-accent/30 text-center"
+                                                            className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
                                                         />
                                                     </div>
                                                     <div className="col-span-3">
@@ -588,7 +590,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                                 setBulkRows(newRows);
                                                             }}
                                                             placeholder="localhost"
-                                                            className="h-8 text-[11px] bg-transparent border-transparent hover:border-white/10 focus:bg-white/5 focus:border-app-accent/30"
+                                                            className="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30"
                                                         />
                                                     </div>
                                                     <div className="col-span-3">
@@ -600,7 +602,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                                 setBulkRows(newRows);
                                                             }}
                                                             placeholder="80"
-                                                            className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-white/10 focus:bg-white/5 focus:border-app-accent/30 text-center"
+                                                            className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
                                                         />
                                                     </div>
                                                     <div className="col-span-1 flex justify-end">
@@ -610,14 +612,14 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                                                 setBulkRows(newRows);
                                                             }}
                                                             disabled={bulkRows.length <= 1}
-                                                            className="p-1.5 text-white/20 opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-500/20 hover:text-red-400 disabled:opacity-0"
+                                                            className="p-1.5 text-app-muted opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-500/10 hover:text-red-400 disabled:opacity-0"
                                                         >
                                                             <Trash2 size={14} />
                                                         </button>
                                                     </div>
 
                                                     {/* Row Divider */}
-                                                    <div className="absolute bottom-0 left-4 right-4 h-px bg-white/[0.03]" />
+                                                    <div className="absolute bottom-0 left-4 right-4 h-px bg-app-border/30" />
                                                 </motion.div>
                                             ))}
                                         </AnimatePresence>
@@ -627,7 +629,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                         onClick={() => setBulkRows([...bulkRows, { type: 'local', localPort: '', remoteHost: 'localhost', remotePort: '' }])}
                                         className="w-full py-3 flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-app-muted hover:text-app-accent transition-all group"
                                     >
-                                        <div className="w-5 h-5 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-app-accent/10 transition-colors">
+                                        <div className="w-5 h-5 rounded-full bg-app-surface flex items-center justify-center group-hover:bg-app-accent/10 transition-colors">
                                             <Plus size={12} className="group-hover:scale-110 transition-transform" />
                                         </div>
                                         Add Row
@@ -644,8 +646,8 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                                         onChange={e => setAutoStart(e.target.checked)}
                                         className="peer sr-only"
                                     />
-                                    <div className="w-8 h-4.5 bg-white/5 rounded-full peer peer-checked:bg-app-accent/40 transition-all border border-white/10 peer-checked:border-app-accent/50"></div>
-                                    <div className="absolute left-0.75 top-0.75 w-3 h-3 bg-white/20 rounded-full transition-all peer-checked:translate-x-3.5 peer-checked:bg-white shadow-sm"></div>
+                                    <div className="w-8 h-4.5 bg-app-surface/50 rounded-full peer peer-checked:bg-app-accent/40 transition-all border border-app-border peer-checked:border-app-accent/50"></div>
+                                    <div className="absolute left-0.75 top-0.75 w-3 h-3 bg-app-muted/20 rounded-full transition-all peer-checked:translate-x-3.5 peer-checked:bg-white shadow-sm"></div>
                                 </div>
                                 <span className="text-[11px] font-medium text-app-muted group-hover:text-app-text transition-colors">Auto-start connection on save</span>
                             </label>
@@ -655,7 +657,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
             </div>
 
             {/* Footer Actions - Outside main padding for full width border */}
-            <div className="p-6 border-t border-white/5 bg-white/[0.02] flex items-center justify-between">
+            <div className="p-6 border-t border-app-border/30 bg-app-surface/[0.02] flex items-center justify-between">
                 {/* Technical Note */}
                 <div className="flex-1 pr-6">
                     <div className="flex items-center gap-1.5 mb-1 opacity-40">
@@ -670,7 +672,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                 <div className="flex items-center gap-3">
                     <button
                         onClick={onClose}
-                        className="px-5 py-2 rounded-lg font-bold opacity-40 hover:opacity-100 hover:bg-white/5 transition-all text-[11px] uppercase tracking-wider"
+                        className="px-5 py-2 rounded-lg font-bold opacity-40 hover:opacity-100 hover:bg-app-surface transition-all text-[11px] uppercase tracking-wider"
                     >
                         Cancel
                     </button>
@@ -695,6 +697,6 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                     </Button>
                 </div>
             </div>
-        </Modal>
+        </Modal >
     );
 }

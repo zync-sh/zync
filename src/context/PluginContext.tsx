@@ -9,9 +9,15 @@ interface Plugin {
         name: string;
         version: string;
         main?: string;
+        style?: string;
+        mode?: string;
+        preview_bg?: string;
+        preview_accent?: string;
+        icon?: string;
     };
     script?: string;
     style?: string;
+    enabled: boolean;
 }
 
 interface PluginCommand {
@@ -20,10 +26,18 @@ interface PluginCommand {
     pluginId: string;
 }
 
+interface PluginPanel {
+    id: string;
+    title: string;
+    html: string;
+    pluginId: string;
+}
+
 interface PluginContextType {
     plugins: Plugin[];
     loaded: boolean;
     commands: PluginCommand[];
+    panels: PluginPanel[];
     executeCommand: (id: string) => void;
 }
 
@@ -31,6 +45,7 @@ const PluginContext = createContext<PluginContextType>({
     plugins: [],
     loaded: false,
     commands: [],
+    panels: [],
     executeCommand: () => { }
 });
 
@@ -93,6 +108,27 @@ const zync = {
         }
     },
 
+    terminal: {
+        send: (text) => {
+            self.postMessage({ type: 'api:terminal:send', payload: { text } });
+        }
+    },
+
+    statusBar: {
+        set: (id, text) => {
+            self.postMessage({ type: 'api:statusbar:set', payload: { id, text } });
+        },
+        clear: (id) => {
+            self.postMessage({ type: 'api:statusbar:set', payload: { id, text: '' } });
+        }
+    },
+
+    panel: {
+        register: (id, title, html) => {
+            self.postMessage({ type: 'api:panel:register', payload: { id, title, html } });
+        }
+    },
+
     window: {
         showQuickPick: (items, options) => {
             return zync.request('api:window:showQuickPick', { items, options });
@@ -100,6 +136,10 @@ const zync = {
         create: (options) => {
             return zync.request('api:window:create', options);
         }
+    },
+
+    plugins: {
+        list: () => zync.request('api:plugins:load', {})
     },
 
     logger: {
@@ -143,6 +183,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [plugins, setPlugins] = useState<Plugin[]>([]);
     const [loaded, setLoaded] = useState(false);
     const [commands, setCommands] = useState<PluginCommand[]>([]);
+    const [panels, setPanels] = useState<PluginPanel[]>([]);
     const workers = useRef<Map<string, Worker>>(new Map());
     const showToast = useAppStore(state => state.showToast);
 
@@ -222,8 +263,33 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const handlePluginMessage = async (pluginId: string, type: string, payload: any) => {
         // API Implementation Bridge
         switch (type) {
+            case 'api:panel:register':
+                setPanels(prev => {
+                    if (prev.some(p => p.id === payload.id)) return prev;
+                    return [...prev, { id: payload.id, title: payload.title, html: payload.html, pluginId }];
+                });
+                // Also dispatch a DOM event so other components can react immediately
+                window.dispatchEvent(new CustomEvent('zync:panel:register', { detail: { id: payload.id, title: payload.title, pluginId } }));
+                break;
             case 'api:ui:notify':
-                showToast(payload.type || 'info', payload.message);
+                showToast(payload.type || 'info', payload.body || payload.message || payload.title || 'Plugin notification');
+                break;
+            case 'api:ui:confirm':
+                const confirmed = await useAppStore.getState().showConfirmDialog({
+                    title: payload.title || 'Confirm',
+                    message: payload.message || 'Are you sure?',
+                    confirmText: payload.confirmText,
+                    cancelText: payload.cancelText,
+                    variant: payload.variant
+                });
+                respond(pluginId, type, { requestId: payload.requestId, confirmed });
+                break;
+            case 'api:terminal:send':
+                const activeConnId = useAppStore.getState().activeConnectionId;
+                window.dispatchEvent(new CustomEvent('zync:terminal:send', { detail: { text: payload.text, connectionId: activeConnId } }));
+                break;
+            case 'api:statusbar:set':
+                window.dispatchEvent(new CustomEvent('zync:statusbar:set', { detail: { id: payload.id, text: payload.text } }));
                 break;
             case 'api:log':
                 console.log(`[Plugin Log]`, payload);
@@ -253,6 +319,22 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         pluginId
                     }
                 }));
+                break;
+            case 'api:plugins:load':
+                try {
+                    const list = await ipcRenderer.invoke('plugins:load');
+                    respond(pluginId, 'api:plugins:load', {
+                        requestId: payload.requestId,
+                        result: list
+                    });
+                } catch (e) {
+                    console.error('[PluginContext] Failed to load plugins for worker:', e);
+                    respond(pluginId, 'api:plugins:load', {
+                        requestId: payload.requestId,
+                        result: [],
+                        error: String(e)
+                    });
+                }
                 break;
 
             // File System Bridge
@@ -344,7 +426,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, []);
 
     return (
-        <PluginContext.Provider value={{ plugins, loaded, commands, executeCommand }}>
+        <PluginContext.Provider value={{ plugins, loaded, commands, panels, executeCommand }}>
             {children}
         </PluginContext.Provider>
     );

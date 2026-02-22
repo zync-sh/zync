@@ -168,18 +168,23 @@ export function CommandPalette() {
                         {/* QUICK PICK MODE */}
                         {quickPickMode && (
                             <Command.Group heading={quickPickOptions?.placeHolder || "Select an option"} className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
-                                {quickPickItems.map((item, idx) => (
-                                    <Command.Item
-                                        key={idx}
-                                        value={item.label}
-                                        onSelect={() => handleQuickPickSelect(item)}
-                                        className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
-                                    >
-                                        <div className="flex flex-col">
-                                            <span>{item.label}</span>
-                                        </div>
-                                    </Command.Item>
-                                ))}
+                                {quickPickItems.map((item: any, idx) => {
+                                    if (item.kind === 'separator') {
+                                        return <div key={idx} className="h-px bg-app-border/30 my-1.5 mx-2" />;
+                                    }
+                                    return (
+                                        <Command.Item
+                                            key={idx}
+                                            value={item.label}
+                                            onSelect={() => handleQuickPickSelect(item)}
+                                            className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                                        >
+                                            <div className="flex flex-col">
+                                                <span>{item.label}</span>
+                                            </div>
+                                        </Command.Item>
+                                    );
+                                })}
                             </Command.Group>
                         )}
 

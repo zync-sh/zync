@@ -39,12 +39,14 @@ function AppContent() {
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 import { PluginProvider } from './context/PluginContext';
+import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
 
 function App() {
     return (
         <ErrorBoundary>
             <PluginProvider>
                 <AppContent />
+                <GlobalConfirmDialog />
             </PluginProvider>
         </ErrorBoundary>
     );

@@ -23,22 +23,27 @@ export function ShortcutManager() {
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const kb = settings.keybindings;
+            if (!kb) return;
+
             // Ignore if input is focused (unless it's a command key that generally works)
             const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
             const isContentEditable = e.target instanceof HTMLElement && e.target.isContentEditable;
 
             if (isInput || isContentEditable) {
-                // Always ignore Mod+F, Mod+S, Mod+/, Mod+A, Mod+C/V/X in inputs/editors
-                const editorShortcuts = ['f', 's', 'a', 'z', 'y', 'c', 'v', 'x', '/'];
-                if ((e.ctrlKey || e.metaKey) && editorShortcuts.includes(e.key.toLowerCase())) {
-                    return;
+                // Allow terminal shortcuts to always pass through (terminal uses a hidden textarea)
+                if (matchShortcut(e, kb.termCopy) || matchShortcut(e, kb.termPaste) || matchShortcut(e, kb.termFind)) {
+                    // allow to pass through
+                } else {
+                    // Always ignore Mod+F, Mod+S, Mod+/, Mod+A, Mod+C/V/X in inputs/editors
+                    const editorShortcuts = ['f', 's', 'a', 'z', 'y', 'c', 'v', 'x', '/'];
+                    if ((e.ctrlKey || e.metaKey) && editorShortcuts.includes(e.key.toLowerCase())) {
+                        return;
+                    }
+                    // Allow Mod keys to pass through for other shortcuts (like Mod+, or Mod+B)
+                    if (!e.ctrlKey && !e.metaKey && !e.altKey) return;
                 }
-                // Allow Mod keys to pass through for other shortcuts (like Mod+, or Mod+B)
-                if (!e.ctrlKey && !e.metaKey && !e.altKey) return;
             }
-
-            const kb = settings.keybindings;
-            if (!kb) return;
 
             if (matchShortcut(e, kb.toggleSidebar)) {
                 e.preventDefault();

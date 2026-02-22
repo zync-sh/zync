@@ -140,7 +140,7 @@ export function ImportSSHCommandModal({
                         value={command}
                         onChange={(e) => setCommand(e.target.value)}
                         placeholder="ssh -L 8080:localhost:80 -R 9000:localhost:3000 user@host..."
-                        className="w-full h-32 px-3 py-2 text-sm font-mono bg-app-surface border border-app-border/40 rounded-xl focus:outline-none focus:border-app-accent/50 resize-none placeholder:text-app-muted/30"
+                        className="w-full h-32 px-3 py-2 text-sm font-mono bg-app-surface border border-app-border rounded-xl focus:outline-none focus:border-app-accent/50 resize-none placeholder:text-app-muted/30"
                         autoFocus
                     />
                     <p className="text-[10px] text-app-muted mt-2 px-1 opacity-70">

@@ -41,7 +41,7 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', cl
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: 'spring', duration: 0.2, bounce: 0.2 }}
             className={cn(
-              'relative w-full bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-white/5',
+              'relative w-full bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-black/5 dark:ring-white/5',
               width,
               className
             )}
@@ -53,7 +53,7 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', cl
                 variant="ghost"
                 size="icon"
                 onClick={onClose}
-                className="h-8 w-8 rounded-full hover:bg-app-accent/10 hover:text-white transition-colors"
+                className="h-8 w-8 rounded-full text-app-muted hover:bg-app-accent hover:text-white transition-all hover:scale-110 active:scale-95 hover:shadow-lg hover:shadow-app-accent/20"
               >
                 <X className="h-4 w-4" />
               </Button>

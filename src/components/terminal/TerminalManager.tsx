@@ -51,9 +51,23 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
         };
 
         const handleTriggerNewTab = (e: any) => {
-            const { connectionId: targetConnId } = e.detail;
-            if (targetConnId === activeConnectionId) {
-                handleNewTab();
+            const { connectionId: targetConnId, command } = e.detail;
+            if (targetConnId === activeConnectionId && activeConnectionId) {
+                // `createTerminal` takes only `connectionId` and returns the newly created `termId`.
+                const newId = createTerminal(activeConnectionId);
+
+                // If a command was passed (e.g., from a plugin like PM2 logs), execute it in the new tab after a brief delay
+                if (command) {
+                    setTimeout(() => {
+                        window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
+                    }, 500); // Give XTerm a moment to mount
+
+                    // Automatically switch the global Zync view to 'terminal' so the user sees the logs
+                    const activeGlobalTabId = useAppStore.getState().activeTabId;
+                    if (activeGlobalTabId) {
+                        useAppStore.getState().setTabView(activeGlobalTabId, 'terminal');
+                    }
+                }
             }
         };
 
@@ -64,13 +78,24 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             }
         };
 
+        const handlePluginTerminalSend = (e: any) => {
+            const { connectionId: targetConnId, text } = (e as CustomEvent).detail;
+            // If the plugin didn't provide a connectionId, or it matches ours, and we have an active terminal
+            if ((!targetConnId || targetConnId === activeConnectionId) && activeTabId) {
+                window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: text });
+            }
+        };
+
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
         window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
         window.addEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
+        window.addEventListener('zync:terminal:send', handlePluginTerminalSend);
+
         return () => {
             window.removeEventListener('ssh-ui:run-command', handleRunCommand);
             window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
             window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
+            window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
         };
     }, [activeConnectionId, activeTabId]);
 

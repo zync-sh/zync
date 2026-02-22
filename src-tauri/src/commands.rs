@@ -1233,7 +1233,6 @@ pub async fn ssh_exec(
                         russh::ChannelMsg::ExtendedData { ref data, .. } => stderr.extend_from_slice(data),
                         russh::ChannelMsg::ExitStatus { exit_status: code } => {
                             exit_status = code;
-                            break;
                         },
                          _ => {}
                      }
@@ -2098,6 +2097,22 @@ pub async fn plugins_toggle(
     enabled: bool,
 ) -> Result<(), String> {
     crate::plugins::PluginScanner::save_state(&app, id, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_install(
+    app: AppHandle,
+    url: String,
+) -> Result<String, String> {
+    crate::plugins::PluginScanner::install_plugin(&app, &url).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_uninstall(
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::uninstall_plugin(&app, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
