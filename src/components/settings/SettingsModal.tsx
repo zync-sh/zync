@@ -351,8 +351,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     };
 
     const isWindows = window.navigator.userAgent.indexOf('Windows') !== -1;
+    const platform = window.electronUtils?.platform || (isWindows ? 'win32' : 'linux');
+    const platformLabel = isAppImage ? 'AppImage' : platform === 'darwin' ? 'macOS' : isWindows ? 'Windows' : 'Linux';
     // Allow auto-update on Windows and Linux (AppImage context primarily, but UI should allow it)
-    const canAutoUpdate = window.electronUtils?.platform !== 'darwin';
+    const canAutoUpdate = platform !== 'darwin';
 
     const handleUpdateAction = () => {
         if (updateStatus === 'downloading') return;
@@ -1115,6 +1117,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 </div>
                                             </div>
                                         </div>
+                                    ) : isLoadingRegistry ? (
+                                        <div className="flex items-center justify-center py-12 text-[var(--color-app-muted)] gap-2">
+                                            <RefreshCw size={14} className="animate-spin" />
+                                            <span className="text-xs">Loading marketplace...</span>
+                                        </div>
                                     ) : (
                                         <div className="h-full">
                                             <Marketplace onInstallSuccess={() => setNeedsRestart(true)} />
@@ -1304,32 +1311,32 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
 
                         {activeTab === 'about' && (
-                            <div className="flex flex-col items-center justify-start min-h-full pt-16 pb-8 space-y-6 animate-in fade-in duration-300">
-                                {/* Logo & Title (Interactive) */}
-                                <TiltLogo />
-
-                                {/* Version Badge */}
-                                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--color-app-surface)] border border-[var(--color-app-border)] text-xs font-mono text-[var(--color-app-muted)]">
-                                    <span>v{appVersion}</span>
-                                    <span className="w-1 h-1 rounded-full bg-[var(--color-app-muted)]/50" />
-                                    <span>{isAppImage ? 'AppImage' : isWindows ? 'Windows' : 'Linux'}</span>
+                            <div className="flex flex-col items-center justify-start min-h-full pt-12 pb-10 px-4 animate-in fade-in duration-300">
+                                {/* Hero: Logo + Tagline */}
+                                <div className="mb-8">
+                                    <TiltLogo />
                                 </div>
 
-                                {/* Update Action */}
-                                <div className="flex flex-col items-center gap-3 min-w-[200px] w-full max-w-[240px]">
+                                {/* Version & Update Card */}
+                                <div className="w-full max-w-[280px] rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/30 p-4 shadow-sm">
+                                    <div className="flex items-center justify-center gap-2 mb-4">
+                                        <span className="text-sm font-mono font-medium text-[var(--color-app-text)]">v{appVersion}</span>
+                                        <span className="w-1 h-1 rounded-full bg-[var(--color-app-muted)]/60" />
+                                        <span className="text-xs text-[var(--color-app-muted)]">{platformLabel}</span>
+                                    </div>
                                     <button
                                         onClick={handleUpdateAction}
                                         disabled={updateStatus === 'checking' || (canAutoUpdate && updateStatus === 'downloading')}
                                         className={`
-                                            flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all w-full
+                                            flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg text-sm font-medium transition-all
                                             ${updateStatus === 'available'
-                                                ? 'bg-[var(--color-app-accent)] text-white hover:opacity-90 shadow-md shadow-[var(--color-app-accent)]/20'
-                                                : 'bg-[var(--color-app-surface)] text-[var(--color-app-text)] hover:bg-[var(--color-app-border)]/50 border border-[var(--color-app-border)]'
+                                                ? 'bg-[var(--color-app-accent)] text-white hover:opacity-90 shadow-md shadow-[var(--color-app-accent)]/25'
+                                                : 'bg-[var(--color-app-bg)] text-[var(--color-app-text)] border border-[var(--color-app-border)] hover:border-[var(--color-app-accent)]/50'
                                             }
                                             disabled:opacity-50 disabled:cursor-not-allowed
                                         `}
                                     >
-                                        <div className={`${updateStatus === 'checking' ? 'animate-spin' : ''}`}>
+                                        <div className={`shrink-0 ${updateStatus === 'checking' ? 'animate-spin' : ''}`}>
                                             {updateStatus === 'checking' && <RefreshCw size={14} />}
                                             {updateStatus === 'idle' && <RefreshCw size={14} />}
                                             {updateStatus === 'available' && <Download size={14} />}
@@ -1342,7 +1349,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             {updateStatus === 'available' && 'Download Update'}
                                             {updateStatus === 'downloading' && (
                                                 <>
-                                                    <RefreshCw size={14} className="animate-spin" />
+                                                    <RefreshCw size={14} className="animate-spin shrink-0" />
                                                     <span>Downloading...</span>
                                                 </>
                                             )}
@@ -1351,82 +1358,102 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             {updateStatus === 'error' && 'Check Failed'}
                                         </span>
                                     </button>
-
-                                    {/* What's New Button (Release Notes) */}
+                                    {updateStatus === 'available' && updateInfo && (
+                                        <p className="text-center text-xs text-[var(--color-app-accent)] font-medium mt-2">
+                                            v{updateInfo.version} available
+                                        </p>
+                                    )}
                                     <button
                                         onClick={() => setShowReleaseNotes(!showReleaseNotes)}
-                                        className="text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-accent)] flex items-center gap-1 transition-colors"
+                                        className="mt-3 w-full flex items-center justify-center gap-1.5 py-2 text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-accent)] transition-colors rounded-md hover:bg-[var(--color-app-surface)]/50"
                                     >
                                         <Gift size={12} />
-                                        <span>What's New in v{appVersion}?</span>
+                                        <span>What&apos;s New in v{appVersion}?</span>
                                         <ChevronRight size={12} className={`transition-transform duration-200 ${showReleaseNotes ? 'rotate-90' : ''}`} />
                                     </button>
-
-                                    {/* Release Notes Expandable */}
                                     {showReleaseNotes && (
-                                        <div className="w-full bg-[var(--color-app-surface)]/30 border border-[var(--color-app-border)] rounded-lg p-3 text-xs text-left max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 custom-scrollbar">
-                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] opacity-90 [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h1]:text-sm [&>h2]:text-xs [&>h2]:font-bold [&>h3]:text-xs [&>h3]:font-semibold [&>p]:mb-2 [&>a]:text-[var(--color-app-accent)]">
+                                        <div className="mt-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/50 p-3 text-left max-h-52 overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h1]:text-sm [&>h2]:text-xs [&>h2]:font-bold [&>h3]:text-xs [&>h3]:font-semibold [&>p]:mb-2 [&>a]:text-[var(--color-app-accent)]">
                                                 {releaseNotes ? <ReactMarkdown>{releaseNotes}</ReactMarkdown> : 'Loading release notes...'}
                                             </div>
                                         </div>
                                     )}
-
-                                    {updateStatus === 'available' && updateInfo && (
-                                        <span className="text-xs text-[var(--color-app-accent)] font-medium">
-                                            v{updateInfo.version} is available
-                                        </span>
-                                    )}
                                 </div>
 
-                                {/* Links */}
-                                <div className="flex items-center gap-4 pt-4 border-t border-[var(--color-app-border)]/50 w-full max-w-xs justify-center">
-                                    <button
-                                        onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync')}
-                                        className="text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] transition-colors flex items-center gap-1.5"
-                                    >
-                                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                                        GitHub
-                                        {stars !== null && (
-                                            <span className="flex items-center gap-0.5 bg-[var(--color-app-surface)] text-[var(--color-app-text)] px-1.5 py-0.5 rounded-full border border-[var(--color-app-border)] text-[10px]">
-                                                <Star size={8} fill="currentColor" className="text-yellow-500" />
-                                                {stars > 1000 ? `${(stars / 1000).toFixed(1)}k` : stars}
-                                            </span>
-                                        )}
-                                    </button>
-                                    <span className="text-[var(--color-app-border)]">|</span>
-                                    <button
-                                        onClick={() => window.ipcRenderer.invoke('shell:open', 'https://zync.thesudoer.in')}
-                                        className="text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] transition-colors flex items-center gap-1.5"
-                                    >
-                                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>
-                                        Website
-                                    </button>
+                                {/* Links: Pill Grid */}
+                                <div className="w-full max-w-[320px] mt-6">
+                                    <p className="text-[10px] uppercase tracking-widest text-[var(--color-app-muted)]/80 mb-3 text-center font-medium">Links</p>
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync')}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                                            GitHub
+                                            {stars !== null && (
+                                                <span className="inline-flex items-center gap-0.5 bg-[var(--color-app-bg)]/80 px-1.5 py-0.5 rounded-full text-[10px] border border-[var(--color-app-border)]/50">
+                                                    <Star size={8} fill="currentColor" className="text-amber-400 shrink-0" />
+                                                    {stars > 1000 ? `${(stars / 1000).toFixed(1)}k` : stars}
+                                                </span>
+                                            )}
+                                        </button>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://zync.thesudoer.in')}
+                                            className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            Website
+                                        </button>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/blob/main/CHANGELOG.md')}
+                                            className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            Changelog
+                                        </button>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/blob/main/PLUGIN_CATALOG.md')}
+                                            className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            Extensions
+                                        </button>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://opensource.org/licenses/MIT')}
+                                            className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            License
+                                        </button>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/issues/new')}
+                                            className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
+                                        >
+                                            Report Issue
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Contributors */}
-                                <div className="mt-auto pt-8 text-center w-full">
-                                    <div className="text-[10px] uppercase tracking-wider text-[var(--color-app-muted)] mb-3 font-semibold">
-                                        Contributors
-                                    </div>
-                                    <div className="flex flex-wrap justify-center gap-2 max-w-[280px] mx-auto">
+                                <div className="mt-8 w-full max-w-[300px] rounded-xl border border-[var(--color-app-border)]/40 bg-[var(--color-app-surface)]/20 p-4">
+                                    <p className="text-[10px] uppercase tracking-widest text-[var(--color-app-muted)]/80 mb-3 text-center font-medium">Contributors</p>
+                                    <div className="flex flex-wrap justify-center gap-2">
                                         {contributors.map((c: any) => (
                                             <a
                                                 key={c.id}
                                                 href={c.html_url}
                                                 onClick={(e) => { e.preventDefault(); window.ipcRenderer.invoke('shell:open', c.html_url); }}
-                                                className="relative group block"
+                                                className="relative block rounded-full ring-2 ring-transparent hover:ring-[var(--color-app-accent)]/50 transition-all hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50"
                                                 title={c.login}
                                             >
                                                 <img
                                                     src={c.avatar_url}
                                                     alt={c.login}
-                                                    className="w-8 h-8 rounded-full border border-[var(--color-app-border)] bg-[var(--color-app-surface)] grayscale group-hover:grayscale-0 transition-all group-hover:scale-110 group-hover:border-[var(--color-app-accent)]"
+                                                    className="w-9 h-9 rounded-full border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)] object-cover grayscale hover:grayscale-0 transition-all"
                                                 />
                                             </a>
                                         ))}
                                     </div>
-                                    <p className="text-[10px] text-[var(--color-app-muted)]/40 font-mono mt-4">© 2026 Zync</p>
                                 </div>
+
+                                {/* Footer */}
+                                <p className="mt-8 text-[11px] text-[var(--color-app-muted)]/50 font-medium">© 2026 Zync · MIT License</p>
                             </div>
                         )}
                     </div>
@@ -1580,41 +1607,39 @@ function TiltLogo() {
     const [tilt, setTilt] = useState({ x: 0, y: 0 });
 
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-        const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
-        const x = (e.clientX - left - width / 2) / 20; // Increased sensitivity slightly
-        const y = (e.clientY - top - height / 2) / 20;
-
-        // React state updates here are isolated to this component now.
+        const { left, top } = e.currentTarget.getBoundingClientRect();
+        const x = (e.clientX - left - 56) / 18;
+        const y = (e.clientY - top - 56) / 18;
         setTilt({ x: -y, y: x });
     };
 
-    const handleMouseLeave = () => {
-        setTilt({ x: 0, y: 0 });
-    };
+    const handleMouseLeave = () => setTilt({ x: 0, y: 0 });
 
     return (
         <div
-            className="flex flex-col items-center space-y-4"
+            className="flex flex-col items-center gap-4 cursor-default"
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
             style={{ perspective: 1000 }}
         >
             <div
-                className="w-24 h-24 bg-[var(--color-app-surface)]/50 rounded-2xl flex items-center justify-center shadow-sm border border-[var(--color-app-border)] transition-transform duration-75 ease-out will-change-transform"
+                className="w-28 h-28 rounded-2xl flex items-center justify-center border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/40 shadow-lg shadow-black/5 transition-[transform,box-shadow] duration-150 ease-out will-change-transform"
                 style={{
-                    transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) scale3d(1.05, 1.05, 1.05)`,
-                    boxShadow: `${-tilt.y * 2}px ${tilt.x * 2}px 20px rgba(0,0,0,0.1)`
+                    transform: `rotateX(${tilt.x}deg) rotateY(${tilt.y}deg) scale3d(1.03, 1.03, 1.03)`,
+                    boxShadow: tilt.x || tilt.y
+                        ? `${-tilt.y * 3}px ${tilt.x * 3}px 24px rgba(0,0,0,0.12)`
+                        : undefined
                 }}
             >
-                <svg width="64" height="64" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="select-none pointer-events-none">
+                <svg width="56" height="56" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="select-none pointer-events-none shrink-0">
                     <rect width="512" height="512" rx="128" className="fill-[var(--color-app-accent)]/10" />
                     <path d="M128 170.667L213.333 256L128 341.333" className="stroke-[var(--color-app-accent)]" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                     <path d="M256 341.333H384" className="stroke-[var(--color-app-text)]" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
             </div>
             <div className="text-center select-none">
-                <h3 className="text-2xl font-bold text-[var(--color-app-text)] tracking-tight">Zync</h3>
-                <p className="text-sm text-[var(--color-app-muted)]">The minimal SSH client</p>
+                <h2 className="text-2xl font-bold text-[var(--color-app-text)] tracking-tight">Zync</h2>
+                <p className="text-sm text-[var(--color-app-muted)] mt-0.5">A modern, native SSH client</p>
             </div>
         </div>
     );
