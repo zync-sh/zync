@@ -112,7 +112,7 @@ jobs:
           EOF
 
       - name: Add .deb to repo
-        run: reprepro --ignore=ignore includedeb stable /tmp/debs/*.deb
+        run: reprepro -S utils -P optional includedeb stable /tmp/debs/*.deb
 
       - name: Export public GPG key
         run: gpg --armor --export releases@zync.thesudoer.in > key.gpg
