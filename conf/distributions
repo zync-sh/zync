@@ -1,0 +1,7 @@
+Origin: Zync
+Label: Zync
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Zync SSH Client
+SignWith: releases@zync.thesudoer.in
