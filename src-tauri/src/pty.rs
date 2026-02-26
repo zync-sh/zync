@@ -113,7 +113,7 @@ impl PtyManager {
         }
         
         // Add interactive flag if not already present
-        if !args.contains(&"-i".to_string()) && !shell.contains("powershell") && !shell.contains("cmd.exe") {
+        if !args.contains(&"-i".to_string()) && !shell.contains("powershell") && !shell.contains("cmd.exe") && !shell.contains("wsl.exe") {
              cmd.arg("-i");
         }
         cmd.env("TERM", "xterm-256color");
