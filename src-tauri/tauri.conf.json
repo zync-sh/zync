@@ -72,7 +72,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/gajendraxdev/zync/releases/latest/download/latest.json"
+        "https://github.com/zync-sh/zync/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYyNkJEQjI3OTQ3OENCODYKUldTR3kzaVVKOXRyWW91Wmh0TDdFc3ptSGtla3c2TnBmbDE1V0hiYXlHUGxKREhqNnVNbHZhaW8K"
     }

@@ -80,7 +80,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
             // Also fetch registry for version checking
             setIsLoadingRegistry(true);
-            fetch("https://raw.githubusercontent.com/gajendraxdev/zync-extensions/main/marketplace.json")
+            fetch("https://raw.githubusercontent.com/zync-sh/zync-extensions/main/marketplace.json")
                 .then(res => res.json())
                 .then(data => setRegistry(data.plugins || []))
                 .catch(err => console.error('Failed to fetch registry', err))
@@ -172,8 +172,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             }
 
             Promise.all([
-                fetch('https://api.github.com/repos/gajendraxdev/zync/contributors'),
-                fetch('https://api.github.com/repos/gajendraxdev/zync')
+                fetch('https://api.github.com/repos/zync-sh/zync/contributors'),
+                fetch('https://api.github.com/repos/zync-sh/zync')
             ])
                 .then(async ([contribRes, repoRes]) => {
                     const contribData = await contribRes.json();
@@ -196,7 +196,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
             // Fetch Release Notes if needed
             if (!releaseNotes) {
-                fetch('https://api.github.com/repos/gajendraxdev/zync/releases/latest')
+                fetch('https://api.github.com/repos/zync-sh/zync/releases/latest')
                     .then(res => res.json())
                     .then(data => {
                         if (data.body) setReleaseNotes(data.body);
@@ -366,7 +366,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 setUpdateStatus('downloading');
             } else {
                 // Manual Download Fallback
-                window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/releases/latest');
+                window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/releases/latest');
             }
         } else if (updateStatus === 'ready') {
             // Install & Restart - Show Confirmation First
@@ -1385,7 +1385,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     <p className="text-[10px] uppercase tracking-widest text-[var(--color-app-muted)]/80 mb-3 text-center font-medium">Links</p>
                                     <div className="flex flex-wrap justify-center gap-2">
                                         <button
-                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync')}
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync')}
                                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
                                         >
                                             <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
@@ -1404,13 +1404,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             Website
                                         </button>
                                         <button
-                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/blob/main/CHANGELOG.md')}
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/blob/main/CHANGELOG.md')}
                                             className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
                                         >
                                             Changelog
                                         </button>
                                         <button
-                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/blob/main/PLUGIN_CATALOG.md')}
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/blob/main/PLUGIN_CATALOG.md')}
                                             className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
                                         >
                                             Extensions
@@ -1422,7 +1422,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             License
                                         </button>
                                         <button
-                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/gajendraxdev/zync/issues/new')}
+                                            onClick={() => window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/issues/new')}
                                             className="px-3 py-1.5 rounded-full text-xs font-medium text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] bg-[var(--color-app-surface)]/50 hover:bg-[var(--color-app-surface)] border border-[var(--color-app-border)]/50 transition-all"
                                         >
                                             Report Issue

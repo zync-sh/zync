@@ -1,8 +1,8 @@
 # Zync
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/github/v/release/gajendraxdev/zync?include_prereleases)](https://github.com/gajendraxdev/zync/releases)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](https://github.com/gajendraxdev/zync/releases)
+[![Version](https://img.shields.io/github/v/release/zync-sh/zync?include_prereleases)](https://github.com/zync-sh/zync/releases)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](https://github.com/zync-sh/zync/releases)
 
 <p align="center">
   <strong>A Modern, Native SSH Client for the Future</strong>
@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://zync.thesudoer.in">Website</a> •
-  <a href="https://github.com/gajendraxdev/zync/releases">Releases</a> •
+  <a href="https://github.com/zync-sh/zync/releases">Releases</a> •
   <a href="#installation">Installation</a> •
   <a href="#development">Development</a> •
   <a href="#extensions">Extensions</a> •
@@ -37,7 +37,7 @@ Zync is a powerful, cross-platform SSH client built for speed, security, and aes
 
 ## Installation
 
-Download the latest release for your platform from the [Releases Page](https://github.com/gajendraxdev/zync/releases).
+Download the latest release for your platform from the [Releases Page](https://github.com/zync-sh/zync/releases).
 
 | Platform | Format |
 |----------|--------|
@@ -134,7 +134,7 @@ Zync follows a layered architecture with clear separation between the native bac
 
 ```bash
 # Clone the repository
-git clone https://github.com/gajendraxdev/zync.git
+git clone https://github.com/zync-sh/zync.git
 cd zync
 
 # Install dependencies
@@ -162,7 +162,7 @@ npm run tauri build
 
 ## Extensions
 
-Zync supports plugins and themes through the built-in Marketplace. Browse the [Plugin Catalog](PLUGIN_CATALOG.md) for available extensions, or visit [zync-extensions](https://github.com/gajendraxdev/zync-extensions) to develop and submit your own.
+Zync supports plugins and themes through the built-in Marketplace. Browse the [Plugin Catalog](PLUGIN_CATALOG.md) for available extensions, or visit [zync-extensions](https://github.com/zync-sh/zync-extensions) to develop and submit your own.
 
 ## Contributing
 
@@ -174,7 +174,7 @@ See [CHANGELOG.md](CHANGELOG.md) for a list of changes in each release.
 
 ## License
 
-MIT © [Zync](https://github.com/gajendraxdev/zync)
+MIT © [Zync](https://github.com/zync-sh/zync)
 
 ---
 

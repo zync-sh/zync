@@ -4,13 +4,13 @@ Thank you for your interest in contributing to Zync. This document provides guid
 
 ## Getting Started
 
-1. **Fork** the [repository](https://github.com/gajendraxdev/zync) on GitHub.
+1. **Fork** the [repository](https://github.com/zync-sh/zync) on GitHub.
 
 2. **Clone your fork** and add the upstream remote:
    ```bash
    git clone https://github.com/YOUR_USERNAME/zync.git
    cd zync
-   git remote add upstream https://github.com/gajendraxdev/zync.git
+   git remote add upstream https://github.com/zync-sh/zync.git
    ```
 
 3. Ensure you have the [prerequisites](./README.md#prerequisites) installed (Node.js, Rust, platform-specific dependencies).
@@ -63,4 +63,4 @@ Thank you for your interest in contributing to Zync. This document provides guid
 
 ## Questions or Ideas?
 
-Open an [Issue](https://github.com/gajendraxdev/zync/issues) to report bugs, request features, or ask questions.
+Open an [Issue](https://github.com/zync-sh/zync/issues) to report bugs, request features, or ask questions.

@@ -23,7 +23,7 @@ interface MarketplaceProps {
 }
 
 // Registry URL (Make this configurable later)
-const REGISTRY_URL = "https://raw.githubusercontent.com/gajendraxdev/zync-extensions/main/marketplace.json";
+const REGISTRY_URL = "https://raw.githubusercontent.com/zync-sh/zync-extensions/main/marketplace.json";
 
 // Icon Resolver Helper
 const IconResolver = ({ name, size = 16, className = "" }: { name?: string, size?: number, className?: string }) => {

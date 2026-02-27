@@ -49,7 +49,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Unified Settings & Marketplace**: Merged Plugins and Marketplace into a single compact view with deferred restart lifecycle (no forced reload during plugin install/update/uninstall)
 - **Expanded Theme Library**: New dark themes (Synthwave, Nordic, Monokai Pro, Dracula, Tokyo Night) and refined light themes (Modern Light, Clean Light, Warm Light)
 - **Marketplace Thumbnails**: Support for remote `thumbnailUrl` in registry with Lucide SVG fallback on load failure
-- **Dedicated Extensions Repository**: [zync-extensions](https://github.com/gajendraxdev/zync-extensions) as central source and marketplace registry
+- **Dedicated Extensions Repository**: [zync-extensions](https://github.com/zync-sh/zync-extensions) as central source and marketplace registry
 
 ### Changed
 
@@ -85,8 +85,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.4.0...HEAD
-[2.4.0]: https://github.com/gajendraxdev/zync/compare/v2.3.1...v2.4.0
-[2.3.1]: https://github.com/gajendraxdev/zync/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/gajendraxdev/zync/compare/v2.2.1...v2.3.0
-[2.2.1]: https://github.com/gajendraxdev/zync/releases/tag/v2.2.1
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
+[2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
