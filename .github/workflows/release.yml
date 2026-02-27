@@ -20,6 +20,15 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
+      - name: Debug - Check secrets presence (FIRST STEP)
+        run: |
+          echo "=== GITHUB ACTIONS SECRETS CHECK ==="
+          echo "GITHUB_TOKEN present: $([ -z '${{ secrets.GITHUB_TOKEN }}' ] && echo 'NO' || echo 'YES')"
+          echo "TAURI_SIGNING_PRIVATE_KEY present: $([ -z '${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}' ] && echo 'NO' || echo 'YES')"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD present: $([ -z '${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' ] && echo 'NO' || echo 'YES')"
+          echo "GPG_PRIVATE_KEY present: $([ -z '${{ secrets.GPG_PRIVATE_KEY }}' ] && echo 'NO' || echo 'YES')"
+          echo "=== END SECRETS CHECK ==="
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
