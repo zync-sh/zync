@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Wifi, WifiOff } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { cn } from '../../lib/utils';
+import { StatusBarTransferIndicator } from '../file-manager/StatusBarTransferIndicator';
 
 export function StatusBar() {
   const activeConnectionId = useAppStore(state => state.activeConnectionId);
@@ -45,6 +46,7 @@ export function StatusBar() {
       </div>
 
       <div className="flex items-center gap-4">
+        <StatusBarTransferIndicator />
         {/* Active Action Feedback */}
         <StatusMessage />
         <span>Ready</span>
