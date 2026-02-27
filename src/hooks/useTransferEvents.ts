@@ -26,7 +26,6 @@ export function useTransferEvents() {
 
     useEffect(() => {
         const unlistenProgress = listen<TransferProgressPayload>('transfer-progress', (event) => {
-            console.log('[Frontend] Transfer Progress Event:', event.payload);
             const { id, transferred, total } = event.payload;
             updateProgress(id, {
                 transferred,
@@ -38,15 +37,14 @@ export function useTransferEvents() {
         const unlistenSuccess = listen<TransferSuccessPayload>('transfer-success', (event) => {
             const { id, destination_connection_id } = event.payload;
             completeTransfer(id);
-            // Auto-refresh the destination to show new files immediately
-            // Silent refresh is handled by refreshFiles logic now
             if (destination_connection_id) {
                 refreshFiles(destination_connection_id);
             }
         });
 
         const unlistenError = listen<TransferErrorPayload>('transfer-error', (event) => {
-            failTransfer(event.payload.id, event.payload.error);
+            const { id, error } = event.payload;
+            failTransfer(id, error);
         });
 
         return () => {

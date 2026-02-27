@@ -110,6 +110,7 @@ const ipcRenderer = {
       'sftp:get': 'sftp_get',
       'sftp:copyToServer': 'sftp_copy_to_server',
       'sftp:cancelTransfer': 'sftp_cancel_transfer',
+      'sftp:downloadAsZip': 'sftp_download_as_zip',
       'tunnel:list': 'tunnel_list',
       'tunnel:save': 'tunnel_save',
       'tunnel:delete': 'tunnel_delete',
@@ -149,6 +150,17 @@ const ipcRenderer = {
         const paths = Array.isArray(result) ? result : [result];
 
         return { filePaths: paths, canceled: false };
+      }
+
+      if (channel === 'dialog:saveFile') {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const payload = args.length === 1 ? args[0] : {};
+        const result = await save({
+          defaultPath: payload.defaultPath,
+          filters: payload.filters,
+        });
+        if (result === null) return { filePath: null, canceled: true };
+        return { filePath: result, canceled: false };
       }
 
       // App & Updater Handlers

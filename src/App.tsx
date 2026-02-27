@@ -2,7 +2,7 @@ import { MainLayout } from './components/layout/MainLayout';
 // v2 Trigger
 import { UpdateNotification } from './components/UpdateNotification';
 import { ToastContainer } from './components/ToastContainer';
-import { TransferManager } from './components/file-manager/TransferManager';
+
 import { useEffect } from 'react';
 import { useAppStore } from './store/useAppStore';
 
@@ -30,7 +30,7 @@ function AppContent() {
                 <WelcomeScreen />
             </MainLayout>
             <UpdateNotification />
-            <TransferManager />
+
             <ToastContainer />
         </>
     );

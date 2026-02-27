@@ -2,6 +2,7 @@ import {
   Clipboard,
   Copy,
   Download,
+  FileArchive,
   FolderInput,
   RotateCw,
   Scissors,
@@ -115,6 +116,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const [initialDestPath, setInitialDestPath] = useState<string | undefined>();
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
 
@@ -135,14 +137,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [activeConnectionId, uploadAction]);
 
   const { isDraggingOver: isTauriDraggingOver } = useTauriFileDrop(useCallback((paths) => {
-    // Only upload if we have an active connection and it supports upload
+    // Clear any leftover HTML5 drag state (HTML5 drop won't fire when Tauri intercepts)
+    setIsInternalDraggingOver(false);
+    setDragType(null);
+    setDragSourceConnectionId(null);
     if (activeConnectionId) {
       performUpload(paths);
     }
   }, [activeConnectionId, performUpload]));
-
-  // Merge drag state
-  const isDraggingOver = isInternalDraggingOver || isTauriDraggingOver;
 
   // --- Copy / Paste Logic ---
   const handleCopy = (cut = false) => {
@@ -166,8 +168,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       await pasteEntries(activeConnectionId, sources, clipboard.op);
 
     } else {
-      showToast("info", `Starting transfer of ${clipboard.files.length} item(s)`);
-
       // Loop through all the files and start background task
       for (const file of clipboard.files) {
         const destPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
@@ -205,7 +205,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
         // Start actual transfer file via IPC
         window.ipcRenderer.invoke(command, args).catch(err => {
-          showToast("error", `Transfer failed: ${err.message}`);
           failTransfer(transferId, err.message);
         });
       }
@@ -423,7 +422,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
       // We process download locally in component for now as it involves local FS dialog
       setIsProcessing(true);
-      showToast('info', `Downloading ${selectedFiles.length} file(s)...`);
 
       for (const fileName of selectedFiles) {
         const remotePath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
@@ -446,14 +444,59 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         }).catch(err => {
           console.error('Download failed', err);
           failTransfer(transferId, err.message);
-          showToast('error', `Download failed: ${err.message}`);
         });
       }
-      showToast('success', 'Download started');
       setIsProcessing(false);
     } catch (error: any) {
       showToast('error', `Download failed: ${error.message}`);
       setIsProcessing(false);
+    }
+  };
+
+  const handleDownloadAsZip = async () => {
+    if (selectedFiles.length === 0 || !activeConnectionId) return;
+    if (isZipping) return; // Prevent double-click opening two dialogs
+    if (activeConnectionId === 'local') {
+      showToast('error', 'Download as Archive is only available for remote server connections');
+      return;
+    }
+
+    setIsZipping(true);
+    try {
+      const date = new Date().toISOString().slice(0, 10);
+      const defaultName = `zync_download_${date}.tar.gz`;
+      const { filePath, canceled } = await window.ipcRenderer.invoke('dialog:saveFile', {
+        defaultPath: defaultName,
+        filters: [{ name: 'Tar Archive', extensions: ['tar.gz', 'tgz'] }],
+      });
+      if (canceled || !filePath) return;
+
+      const remotePaths = selectedFiles.map(name =>
+        currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
+      );
+
+      const transferId = addTransfer({
+        sourceConnectionId: activeConnectionId,
+        sourcePath: remotePaths.length === 1 ? remotePaths[0] : `${remotePaths.length} items → ${filePath.split('/').pop() || filePath}`,
+        destinationConnectionId: 'local',
+        destinationPath: filePath,
+        label: 'Compressing',
+      });
+
+      // Fire-and-forget: completion/failure reported via transfer-success/transfer-error events
+      window.ipcRenderer.invoke('sftp:downloadAsZip', {
+        id: activeConnectionId,
+        remotePaths,
+        localPath: filePath,
+        transferId,
+      }).catch((err: any) => {
+        // Catches invoke-level errors (e.g. command not found) — backend errors come via transfer-error
+        failTransfer(transferId, err.message);
+      });
+    } catch (error: any) {
+      showToast('error', `Archive download failed: ${error.message}`);
+    } finally {
+      setIsZipping(false);
     }
   };
 
@@ -486,21 +529,21 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
   // Drag and Drop
   const handleDragOver = (e: React.DragEvent) => {
+    // Must call preventDefault for ALL drags — this signals WebView to accept the drop,
+    // which is required for Tauri to emit tauri://drop for OS file drags.
     e.preventDefault();
-    setIsInternalDraggingOver(true);
-
-    // Detect drag type
     const types = e.dataTransfer.types;
+
     if (types.includes('application/json')) {
+      // In-app server-to-server drag
+      setIsInternalDraggingOver(true);
       setDragType('server');
-      // Check if it's from the same server
       const dragSource = getCurrentDragSource();
       if (dragSource) {
         setDragSourceConnectionId(dragSource.connectionId);
       }
-    } else if (types.includes('Files')) {
-      setDragType('local');
     }
+    // OS file drags: visual handled by isTauriDraggingOver (ring border) via tauri://drag-enter
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -511,78 +554,60 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   };
 
   const handleDrop = async (e: React.DragEvent) => {
+    // Always prevent default to stop WebView from navigating to dropped file URL
     e.preventDefault();
     setIsInternalDraggingOver(false);
     setDragType(null);
     setDragSourceConnectionId(null);
 
-    // Try to parse as server-to-server file
-    try {
-      const jsonData = e.dataTransfer.getData('application/json');
-      if (jsonData) {
-        const dragData = JSON.parse(jsonData);
-        if (dragData.type === 'server-file' && activeConnectionId) {
-          // Check for Same Server (Relaxed check)
-          if (String(dragData.connectionId) === String(activeConnectionId)) {
-            // Same server drop logic
-            const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
-
-            // If dragging to same folder, ignore
-            if (dragData.path === destPath) return;
-
-            // Execute Move (since Drag implies Move usually)
-            // Or Copy if Alt key pressed? (We don't have event here easily accessible if async)
-            // Default to Move for internal drag
-            handleMoveFiles([{ source: dragData.path, target: destPath }]);
-            return;
-          }
-
-          const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
-
-          // Add transfer
-          const transferId = addTransfer({
-            sourceConnectionId: dragData.connectionId,
-            sourcePath: dragData.path,
-            destinationConnectionId: activeConnectionId,
-            destinationPath: destPath,
-          });
-
-          showToast('info', 'Transfer started in background');
-
-          // Execute transfer in background
-          (async () => {
-            try {
-              await window.ipcRenderer.invoke('sftp:copyToServer', {
-                sourceConnectionId: dragData.connectionId,
-                sourcePath: dragData.path,
-                destinationConnectionId: activeConnectionId,
-                destinationPath: destPath,
-                transferId,
-              });
-
-              // Refresh file list
-              loadFiles(currentPath);
-            } catch (error: any) {
-              if (error.message && !error.message.includes('destroy')) {
-                showToast('error', `Transfer failed: ${error.message}`);
-              }
-            }
-          })();
-
-          return;
-        }
-      }
-    } catch (_err) {
-      // Not JSON or not a server file, try as local files
+    // OS file drops are handled by Rust's on_window_event → zync://file-drop
+    const jsonData = e.dataTransfer.getData('application/json');
+    if (!jsonData) {
+      return;
     }
 
-    // Handle local file upload (Fallback for Internal Drag, e.g. if we support drag out and in later)
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length === 0) return;
-    const filePaths = droppedFiles
-      .map((f: any) => window.electronUtils?.getPathForFile(f) || f.path)
-      .filter((p) => !!p);
-    if (filePaths.length > 0) performUpload(filePaths);
+    // Parse as server-to-server file drop
+    try {
+      const dragData = JSON.parse(jsonData);
+      if (dragData.type === 'server-file' && activeConnectionId) {
+        // Check for Same Server (Relaxed check)
+        if (String(dragData.connectionId) === String(activeConnectionId)) {
+          // Same server drop logic
+          const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
+
+          // If dragging to same folder, ignore
+          if (dragData.path === destPath) return;
+
+          // Default to Move for internal drag
+          handleMoveFiles([{ source: dragData.path, target: destPath }]);
+          return;
+        }
+
+        const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
+
+        // Add transfer
+        const transferId = addTransfer({
+          sourceConnectionId: dragData.connectionId,
+          sourcePath: dragData.path,
+          destinationConnectionId: activeConnectionId,
+          destinationPath: destPath,
+        });
+
+        // Fire-and-forget: completion/failure reported via transfer events
+        // useTransferEvents handles refreshFiles on transfer-success
+        window.ipcRenderer.invoke('sftp:copyToServer', {
+          sourceConnectionId: dragData.connectionId,
+          sourcePath: dragData.path,
+          destinationConnectionId: activeConnectionId,
+          destinationPath: destPath,
+          transferId,
+        }).catch(() => {
+          // Transfer errors are shown in the TransferPanel
+        });
+      }
+    } catch (_err) {
+      // Not valid JSON — ignore
+    }
   };
 
   // Context Menu Items
@@ -596,6 +621,11 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           label: 'Download',
           icon: <Download size={14} />,
           action: handleDownload,
+        },
+        {
+          label: 'Download as Archive (.tar.gz)',
+          icon: <FileArchive size={14} />,
+          action: handleDownloadAsZip,
         },
         {
           label: 'Copy',
@@ -678,7 +708,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         {
           label: 'Refresh',
           icon: <RotateCw size={14} />,
-          action: () => loadFiles(currentPath),
+          action: () => activeConnectionId && loadFiles(activeConnectionId, currentPath),
         },
       );
     }
@@ -943,7 +973,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     <div
       ref={containerRef}
       tabIndex={0}
-      className="flex-1 flex flex-col h-full bg-app-bg relative outline-none focus-within:ring-0"
+      className={`flex-1 flex flex-col h-full bg-app-bg relative outline-none focus-within:ring-0 transition-all duration-150 ${isTauriDraggingOver ? 'ring-2 ring-app-accent ring-inset' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -954,22 +984,13 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         }
       }}
     >
-      {/* Drag Overlay */}
-      {isDraggingOver && !(dragType === 'server' && dragSourceConnectionId === activeConnectionId) && (
-        <div className="absolute inset-0 bg-app-accent/20 border-2 border-app-accent border-dashed z-50 flex items-center justify-center backdrop-blur-sm pointer-events-none">
-          <div className="bg-app-panel p-8 rounded-xl border border-app-accent flex flex-col items-center animate-in zoom-in-95 duration-200">
-            {dragType === 'server' ? (
-              <>
-                <Copy size={48} className="text-app-accent mb-4" />
-                <h3 className="text-xl font-bold text-white">Drop to Copy Here</h3>
-                <p className="text-sm text-app-muted mt-2">Server-to-server transfer</p>
-              </>
-            ) : (
-              <>
-                <Upload size={48} className="text-app-accent mb-4" />
-                <h3 className="text-xl font-bold text-white">Drop to Upload</h3>
-              </>
-            )}
+      {/* Server-to-server drag overlay (small card, no fullscreen blur) */}
+      {isInternalDraggingOver && dragType === 'server' && dragSourceConnectionId !== activeConnectionId && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className="bg-app-panel p-6 rounded-xl border border-app-accent flex flex-col items-center animate-in zoom-in-95 duration-200 shadow-xl">
+            <Copy size={36} className="text-app-accent mb-3" />
+            <h3 className="text-base font-bold text-white">Drop to Copy Here</h3>
+            <p className="text-xs text-app-muted mt-1">Server-to-server transfer</p>
           </div>
         </div>
       )}
@@ -990,6 +1011,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           }
         }}
         onNewFolder={() => setIsNewFolderModalOpen(true)}
+        onDownloadAsZip={activeConnectionId !== 'local' ? handleDownloadAsZip : undefined}
+        selectedCount={selectedFiles.length}
         viewMode={viewMode}
         onToggleView={setViewMode}
         searchTerm={searchTerm}

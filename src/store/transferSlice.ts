@@ -17,11 +17,13 @@ export interface Transfer {
     startTime: number;
     lastUpdated: number;
     speed: number; // bytes per second
+    speedBaseline: number; // transferred value at the start of the current speed window
+    label?: string; // optional custom phase label (e.g. 'Compressing')
 }
 
 export interface TransferSlice {
     transfers: Transfer[];
-    addTransfer: (transfer: Omit<Transfer, 'id' | 'status' | 'progress' | 'startTime' | 'lastUpdated' | 'speed'>) => string;
+    addTransfer: (transfer: Omit<Transfer, 'id' | 'status' | 'progress' | 'startTime' | 'lastUpdated' | 'speed' | 'speedBaseline'>) => string;
     updateTransferProgress: (id: string, progress: Transfer['progress']) => void;
     completeTransfer: (id: string) => void;
     failTransfer: (id: string, error: string) => void;
@@ -32,8 +34,8 @@ export interface TransferSlice {
 export const createTransferSlice: StateCreator<AppStore, [], [], TransferSlice> = (set) => ({
     transfers: [],
 
-    addTransfer: (transfer: Omit<Transfer, 'id' | 'status' | 'progress' | 'startTime' | 'lastUpdated' | 'speed'>) => {
-        const id = Math.random().toString(36).substr(2, 9);
+    addTransfer: (transfer: Omit<Transfer, 'id' | 'status' | 'progress' | 'startTime' | 'lastUpdated' | 'speed' | 'speedBaseline'>) => {
+        const id = Math.random().toString(36).substring(2, 11);
         const newTransfer: Transfer = {
             ...transfer,
             id,
@@ -42,6 +44,7 @@ export const createTransferSlice: StateCreator<AppStore, [], [], TransferSlice> 
             startTime: Date.now(),
             lastUpdated: Date.now(),
             speed: 0,
+            speedBaseline: 0,
         };
         set((state: AppStore) => ({ transfers: [...state.transfers, newTransfer] }));
         return id;
@@ -58,7 +61,9 @@ export const createTransferSlice: StateCreator<AppStore, [], [], TransferSlice> 
                 let newSpeed = t.speed;
 
                 if (timeDiff >= 0.5) { // Update speed every 0.5s to avoid jitter
-                    const bytesDiff = progress.transferred - t.progress.transferred;
+                    // Use speedBaseline (transferred at window start), NOT t.progress.transferred
+                    // because t.progress gets updated every event while speedBaseline only resets here
+                    const bytesDiff = progress.transferred - t.speedBaseline;
                     const currentSpeed = bytesDiff / timeDiff;
 
                     // Weighted Average (Erasure factor 0.3 -> 30% new, 70% old) for smoothness
@@ -68,20 +73,35 @@ export const createTransferSlice: StateCreator<AppStore, [], [], TransferSlice> 
                         newSpeed = (t.speed * 0.7) + (currentSpeed * 0.3);
                     }
 
-                    // Reset time window only when updating speed
-                    return { ...t, status: 'transferring', progress, speed: newSpeed, lastUpdated: now };
+                    // Advance window: reset both time and byte baseline
+                    return { ...t, status: 'transferring', progress, speed: newSpeed, lastUpdated: now, speedBaseline: progress.transferred };
                 }
 
-                // Just update progress if speed window hasn't passed
+                // Progress bar updates every event; speed window hasn't elapsed yet
                 return { ...t, status: 'transferring', progress };
             })
         }));
     },
 
     completeTransfer: (id: string) => {
+        // Step 1: Snap progress to 100% while still 'transferring' so the bar fills visually
         set((state: AppStore) => ({
-            transfers: state.transfers.map((t: Transfer) => t.id === id ? { ...t, status: 'completed' } : t)
+            transfers: state.transfers.map((t: Transfer) => {
+                if (t.id !== id) return t;
+                const total = t.progress.total || 1;
+                return { ...t, progress: { transferred: total, total, percentage: 100 } };
+            })
         }));
+        // Step 2: After the CSS transition (duration-300) plays, switch to 'completed' card
+        setTimeout(() => {
+            set((state: AppStore) => ({
+                transfers: state.transfers.map((t: Transfer) => {
+                    if (t.id !== id) return t;
+                    // Guard: don't overwrite if already cancelled/failed during the delay
+                    return t.status === 'transferring' ? { ...t, status: 'completed' } : t;
+                })
+            }));
+        }, 400);
     },
 
     failTransfer: (id: string, error: string) => {

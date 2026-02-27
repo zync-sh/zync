@@ -1,4 +1,4 @@
-import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Upload, FolderInput, Hash, X, PanelLeft } from 'lucide-react';
+import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Upload, FolderInput, Hash, X, PanelLeft, FileArchive } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -11,6 +11,8 @@ interface FileToolbarProps {
   onUpload: () => void;
   onUploadFolder: () => void;
   onNewFolder: () => void;
+  onDownloadAsZip?: () => void;
+  selectedCount?: number;
   viewMode: 'grid' | 'list';
   onToggleView: (mode: 'grid' | 'list') => void;
   searchTerm: string;
@@ -30,6 +32,8 @@ export function FileToolbar({
   onUpload,
   onUploadFolder,
   onNewFolder,
+  onDownloadAsZip,
+  selectedCount = 0,
   viewMode,
   onToggleView,
   searchTerm,
@@ -306,6 +310,21 @@ export function FileToolbar({
             onClick={() => onToggleSearch(true)}
           >
             <Search size={compactMode ? 14 : 18} />
+          </Button>
+        )}
+
+        {selectedCount >= 1 && onDownloadAsZip && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn(
+              "rounded-lg text-app-muted hover:text-app-accent hover:bg-app-surface/50 transition-all",
+              compactMode ? "h-8 w-8" : "h-9 w-9"
+            )}
+            onClick={onDownloadAsZip}
+            title={`Download ${selectedCount} item${selectedCount > 1 ? 's' : ''} as .tar.gz archive`}
+          >
+            <FileArchive size={compactMode ? 14 : 18} />
           </Button>
         )}
 

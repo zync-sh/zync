@@ -4,6 +4,34 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-02-27
+
+### Added
+
+- **Native OS Drag & Drop Upload**: File uploads now use Rust-level Tauri drag-drop events (`zync://file-drop`) instead of WebView HTML5 drops, providing reliable cross-platform behavior with deduplication guard
+- **Download as Archive (.tar.gz)**: Select multiple remote files/directories and download them as a single `.tar.gz` archive streamed directly over SSH exec — no temp files on the server
+- **Status Bar Transfer Indicator**: Nautilus/Finder-style circular pie progress in the status bar replaces the old floating overlay; click to expand a dropdown panel with full transfer details
+- **Transfer Tooltips**: Brief contextual tooltips above the status bar indicator when transfers start or complete
+- **Archive Button in Toolbar**: Quick-access toolbar button to download selected items as `.tar.gz`
+
+### Changed
+
+- Transfer progress moved from fixed bottom-right overlay (`TransferManager`) to an integrated status bar component with portaled dropdown panel
+- Transfer notifications replaced with inline tooltips and panel feedback (no more toast spam during file operations)
+- Speed calculation improved with EMA-smoothed windowed measurement using `speedBaseline` tracking for accurate throughput display
+- Transfer completion uses two-phase animation (snap progress to 100%, then transition to completed state) for smooth visual feedback
+- Drag-and-drop handler simplified: OS file drops routed through Tauri events, server-to-server drops handled via JSON data transfer
+
+### Fixed
+
+- Transfer speed jitter caused by using per-event byte deltas instead of windowed baseline measurement
+- Upload progress reporting removed unused `file_size` / `file_metadata` / `file_transferred` variables in Rust backend
+- Deprecated `substr` replaced with `substring` in transfer ID generation
+- Removed stale `console.log` statements from transfer event handlers
+- Added ARIA attributes (`aria-label`, `aria-expanded`) to transfer indicator for screen reader accessibility
+
+- **Windows WSL terminal**: `-i` (interactive) flag no longer passed to `wsl.exe` which doesn't support it, fixing terminal launch failures on Windows with WSL shell (contributed by [@coderboyakashemertech](https://github.com/coderboyakashemertech))
+
 ## [2.3.1] - 2026-02-23
 
 ### Added
@@ -57,7 +85,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/gajendraxdev/zync/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/gajendraxdev/zync/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/gajendraxdev/zync/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/gajendraxdev/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/gajendraxdev/zync/releases/tag/v2.2.1

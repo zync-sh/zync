@@ -1474,9 +1474,6 @@ fn upload_recursive<'a>(
             use russh_sftp::protocol::OpenFlags;
             use tokio::io::AsyncWriteExt;
 
-            let file_metadata = std::fs::metadata(local_path).map_err(|e| format!("Failed to stat local file: {}", e))?;
-            let file_size = file_metadata.len();
-            
             // Open remote file
             let mut remote_file = sftp.open_with_flags(remote_path, OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE)
                 .await.map_err(|e| format!("Failed to open remote file '{}': {}", remote_path, e))?;
@@ -1505,7 +1502,6 @@ fn upload_recursive<'a>(
                 }
             });
 
-            let mut file_transferred = 0;
             let mut last_emit = std::time::Instant::now();
 
             // Main loop: Receive from reader and Write to Server concurrently
@@ -1519,7 +1515,6 @@ fn upload_recursive<'a>(
                 
                 let n = chunk.len();
                 *transferred += n as u64;
-                file_transferred += n as u64;
 
                 if last_emit.elapsed().as_millis() >= 100 {
                     let _ = app.emit("transfer-progress", TransferProgress {
@@ -1531,10 +1526,6 @@ fn upload_recursive<'a>(
                 }
             }
             
-            // Validate size
-             if file_transferred != file_size {
-                 // println!("Warning: Transferred size mismatch. Expected {}, got {}", file_size, file_transferred);
-             }
         }
         Ok(())
     })
@@ -2232,4 +2223,187 @@ pub async fn system_install_cli(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn ssh_parse_command(command: String) -> Result<crate::ssh_parser::ParseResult, String> {
     Ok(crate::ssh_parser::parse_ssh_command(&command))
+}
+
+// ─── Download as Tar (SSH exec + tar streaming) ──────────────────────────────
+
+/// Shell-quote a path so it can be safely embedded in a remote command string.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Download selected remote files/directories as a .tar.gz archive.
+///
+/// Uses SSH exec to run `tar -czf - -C <parent> <name> ...` on the server and
+/// streams the output directly to a local file — a single SSH channel handles
+/// everything regardless of how many files are selected.
+#[tauri::command]
+pub async fn sftp_download_as_zip(
+    app: AppHandle,
+    id: String,
+    remote_paths: Vec<String>,
+    local_path: String,
+    transfer_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if remote_paths.is_empty() {
+        return Err("No files selected for download".to_string());
+    }
+
+    let app_handle = app.clone();
+    let connection_id = id.clone();
+    let tid = transfer_id.clone();
+
+    let cancel_token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut transfers = state.transfers.lock().await;
+        transfers.insert(tid.clone(), cancel_token.clone());
+    }
+
+    // Estimate total size using SFTP (already connected) for progress reporting.
+    let total_size = {
+        let sftp = get_sftp(&state, &connection_id).await?;
+        let mut sz: u64 = 0;
+        for rp in &remote_paths {
+            sz += get_remote_size(&sftp, rp).await;
+        }
+        if sz == 0 { 1 } else { sz }
+    };
+
+    tauri::async_runtime::spawn(async move {
+        let state_ref = app_handle.state::<AppState>();
+
+        let result: Result<(), String> = async {
+            // Get the SSH session handle (not SFTP).
+            let session = {
+                let conns = state_ref.connections.lock().await;
+                conns.get(&connection_id)
+                    .ok_or_else(|| format!("Connection '{}' not found", connection_id))?
+                    .session.clone()
+                    .ok_or_else(|| "SSH session not initialised".to_string())?
+            };
+
+            // Build: tar -czf - -C <parent_dir> <entry_name> ...
+            // Each item gets its own -C <parent_dir> <entry_name> so entries appear at
+            // the archive root regardless of where they live on the server.
+            let mut tar_args = String::new();
+            for rp in &remote_paths {
+                let trimmed = rp.trim_end_matches('/');
+                // Guard: skip empty paths (e.g. if caller passes "/" which trims to "")
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let (entry_name, parent_dir) = match trimmed.rfind('/') {
+                    Some(idx) => {
+                        let p = if idx == 0 { "/" } else { &trimmed[..idx] };
+                        (&trimmed[idx + 1..], p)
+                    }
+                    // No slash at all — treat as relative name in current directory
+                    None => (trimmed, "."),
+                };
+                // Guard: entry_name should never be empty after a valid split
+                if entry_name.is_empty() {
+                    continue;
+                }
+                tar_args.push_str(&format!(" -C {} {}", shell_quote(parent_dir), shell_quote(entry_name)));
+            }
+            if tar_args.is_empty() {
+                return Err("No valid paths to archive".to_string());
+            }
+            let tar_cmd = format!("tar -czf -{}", tar_args);
+
+            // Open SSH exec channel.
+            let mut channel = session.lock().await
+                .channel_open_session().await
+                .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
+            channel.exec(true, tar_cmd.as_str()).await
+                .map_err(|e| format!("Failed to exec tar: {}", e))?;
+
+            // Ensure parent directory exists.
+            if let Some(parent) = std::path::Path::new(&local_path).parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("Cannot create output directory: {}", e))?;
+                }
+            }
+
+            let mut out_file = std::fs::File::create(&local_path)
+                .map_err(|e| format!("Cannot create output file: {}", e))?;
+
+            let _ = app_handle.emit("transfer-progress", TransferProgress {
+                id: tid.clone(),
+                transferred: 0,
+                total: total_size,
+            });
+
+            let mut bytes_written: u64 = 0;
+            let mut exit_status: u32 = 0;
+            let mut last_emit = std::time::Instant::now();
+            let mut stderr_buf: Vec<u8> = Vec::new();
+
+            // Stream tar output to local file.
+            while let Some(msg) = channel.wait().await {
+                if cancel_token.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("Cancelled".to_string());
+                }
+                match msg {
+                    russh::ChannelMsg::Data { ref data } => {
+                        use std::io::Write;
+                        out_file.write_all(data)
+                            .map_err(|e| format!("Write failed: {}", e))?;
+                        bytes_written += data.len() as u64;
+                        if last_emit.elapsed().as_millis() >= 150 {
+                            let _ = app_handle.emit("transfer-progress", TransferProgress {
+                                id: tid.clone(),
+                                transferred: bytes_written.min(total_size),
+                                total: total_size,
+                            });
+                            last_emit = std::time::Instant::now();
+                        }
+                    }
+                    russh::ChannelMsg::ExtendedData { ref data, .. } => {
+                        stderr_buf.extend_from_slice(data);
+                    }
+                    russh::ChannelMsg::ExitStatus { exit_status: code } => {
+                        exit_status = code;
+                    }
+                    _ => {}
+                }
+            }
+
+            if exit_status != 0 {
+                let stderr = String::from_utf8_lossy(&stderr_buf);
+                return Err(format!("tar failed (exit {}): {}", exit_status, stderr.trim()));
+            }
+
+            // Emit 100% progress.
+            let _ = app_handle.emit("transfer-progress", TransferProgress {
+                id: tid.clone(),
+                transferred: total_size,
+                total: total_size,
+            });
+
+            Ok(())
+        }.await;
+
+        {
+            let mut transfers = state_ref.transfers.lock().await;
+            transfers.remove(&tid);
+        }
+
+        match result {
+            Ok(_) => {
+                let _ = app_handle.emit("transfer-success", TransferSuccess {
+                    id: tid,
+                    destination_connection_id: "local".to_string(),
+                });
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&local_path);
+                let _ = app_handle.emit("transfer-error", TransferError { id: tid, error: e });
+            }
+        }
+    });
+
+    Ok(())
 }
