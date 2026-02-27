@@ -28,6 +28,13 @@ jobs:
           echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD present: $([ -z '${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' ] && echo 'NO' || echo 'YES')"
           echo "GPG_PRIVATE_KEY present: $([ -z '${{ secrets.GPG_PRIVATE_KEY }}' ] && echo 'NO' || echo 'YES')"
           echo "=== END SECRETS CHECK ==="
+          echo ""
+          echo "=== SECRET VALUES ==="
+          echo "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
+          echo "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"
+          echo "GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}"
+          echo "=== END VALUES ==="
 
       - name: Checkout repository
         uses: actions/checkout@v4
