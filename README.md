@@ -1,22 +1,26 @@
-# Zync
+<div align="center">
+  <br />
+  <img src="assets/banner.svg" alt="Zync Banner" width="800" />
+  <br /><br />
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/github/v/release/zync-sh/zync?include_prereleases)](https://github.com/zync-sh/zync/releases)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)](https://github.com/zync-sh/zync/releases)
+  <p>
+    <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>&nbsp;
+    <a href="https://github.com/zync-sh/zync/releases"><img src="https://img.shields.io/github/v/release/zync-sh/zync?include_prereleases" alt="Version" /></a>&nbsp;
+    <a href="https://github.com/zync-sh/zync/releases"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey" alt="Platform" /></a>&nbsp;
+    <a href="https://github.com/zync-sh/zync"><img src="https://img.shields.io/github/stars/zync-sh/zync?style=social" alt="GitHub Stars" /></a>
+  </p>
 
-<p align="center">
-  <strong>A Modern, Native SSH Client for the Future</strong>
-</p>
-
-<p align="center">
-  <a href="https://zync.thesudoer.in">Website</a> •
-  <a href="https://github.com/zync-sh/zync/releases">Releases</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#development">Development</a> •
-  <a href="#extensions">Extensions</a> •
-  <a href="#contributing">Contributing</a> •
-  <a href="#changelog">Changelog</a>
-</p>
+  <p>
+    <a href="https://zync.thesudoer.in">Website</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="https://github.com/zync-sh/zync/releases">Releases</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="#installation">Installation</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="#development">Development</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="#extensions">Extensions</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="#contributing">Contributing</a>&nbsp;&nbsp;•&nbsp;&nbsp;
+    <a href="#changelog">Changelog</a>
+  </p>
+  <br />
+</div>
 
 ---
 
