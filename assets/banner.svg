@@ -1,50 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="280" viewBox="0 0 800 280">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="200" viewBox="0 0 800 200">
   <defs>
-    <!-- Background gradient -->
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1e1b4b;stop-opacity:1" />
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1a1040" />
     </linearGradient>
-    <!-- Glow filter for the logo -->
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
-      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.388  0 0 0 0 0.4  0 0 0 0 0.945  0 0 0 0.5 0" result="glow" />
-      <feMerge>
-        <feMergeNode in="glow" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-    <!-- Ambient glow -->
-    <filter id="ambientGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="30" result="blur" />
-      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.388  0 0 0 0 0.4  0 0 0 0 0.945  0 0 0 0.2 0" />
-    </filter>
-    <!-- Border gradient -->
     <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:0.3" />
-      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.1" />
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.4" />
+      <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0.3" />
     </linearGradient>
+    <!-- Soft glow behind logo -->
+    <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0" />
+    </radialGradient>
   </defs>
 
   <!-- Background -->
-  <rect width="800" height="280" rx="16" fill="url(#bg)" />
+  <rect width="800" height="200" rx="12" fill="url(#bg)" />
 
-  <!-- Subtle border -->
-  <rect width="798" height="278" x="1" y="1" rx="15" fill="none" stroke="url(#borderGrad)" stroke-width="1" />
+  <!-- Border -->
+  <rect width="798" height="198" x="1" y="1" rx="11" fill="none" stroke="url(#borderGrad)" stroke-width="1" />
 
-  <!-- Ambient glow behind logo -->
-  <circle cx="400" cy="105" r="55" filter="url(#ambientGlow)" fill="#6366f1" />
+  <!-- Soft glow behind logo -->
+  <circle cx="310" cy="100" r="80" fill="url(#logoGlow)" />
 
-  <!-- Zync logo (inline) -->
-  <g transform="translate(336, 40) scale(0.25)" filter="url(#glow)">
-    <rect width="512" height="512" rx="128" fill="#0f172a" />
+  <!-- Zync logo -->
+  <g transform="translate(270, 60) scale(0.15625)">
+    <rect width="512" height="512" rx="128" fill="#0f172a" stroke="#6366f1" stroke-width="12" stroke-opacity="0.3" />
     <path d="M128 170.667L213.333 256L128 341.333" stroke="#6366f1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" />
     <path d="M256 341.333H384" stroke="white" stroke-width="64" stroke-linecap="round" stroke-linejoin="round" />
   </g>
 
-  <!-- "Zync" text -->
-  <text x="400" y="212" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="40" font-weight="700" fill="white" letter-spacing="2">Zync</text>
+  <!-- "Zync" -->
+  <text x="370" y="108" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="48" font-weight="700" fill="white" letter-spacing="3">Zync</text>
 
   <!-- Tagline -->
-  <text x="400" y="248" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="rgba(255,255,255,0.5)" letter-spacing="1">A Modern, Native SSH Client</text>
+  <text x="372" y="136" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" fill="#94a3b8" letter-spacing="0.5">A Modern, Native SSH Client</text>
 </svg>
