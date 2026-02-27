@@ -107,12 +107,35 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Only handle graceful shutdown for the main window
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.emit("app:request-close", ());
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Only handle graceful shutdown for the main window
+                    if window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.emit("app:request-close", ());
+                    }
                 }
+                tauri::WindowEvent::DragDrop(drag_event) => {
+                    match drag_event {
+                        tauri::DragDropEvent::Enter { paths, .. } => {
+                            let path_strings: Vec<String> = paths.iter()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect();
+                            let _ = window.emit("zync://drag-enter", path_strings);
+                        }
+                        tauri::DragDropEvent::Drop { paths, .. } => {
+                            let path_strings: Vec<String> = paths.iter()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect();
+                            let _ = window.emit("zync://file-drop", path_strings);
+                        }
+                        tauri::DragDropEvent::Leave => {
+                            let _ = window.emit("zync://drag-leave", ());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -162,6 +185,7 @@ pub fn run() {
             commands::sftp_get,
             commands::sftp_copy_to_server,
             commands::sftp_cancel_transfer,
+            commands::sftp_download_as_zip,
             commands::shell_open,
             commands::app_get_exe_dir,
             commands::app_exit,
