@@ -33,7 +33,7 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', cl
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             onClick={onClose}
-            className="absolute inset-0 bg-black/60 backdrop-blur-md"
+            className="absolute inset-0 bg-black/70 backdrop-blur-md"
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -41,7 +41,7 @@ export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', cl
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: 'spring', duration: 0.2, bounce: 0.2 }}
             className={cn(
-              'relative w-full bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-black/5 dark:ring-white/5',
+              'relative w-full bg-app-panel backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-black/5 dark:ring-white/5',
               width,
               className
             )}
