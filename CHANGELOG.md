@@ -4,6 +4,21 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-02-28
+
+### Fixed
+
+- **Windows Port Forwarding**: Fixed tunnel add button not working on Windows — decorative grid overlay was missing `pointer-events-none`, intercepting all clicks in the modal's visual flow header on WebView2
+- **Port Validation**: Added missing `isNaN(remotePort)` check that allowed invalid port values through silently
+- **Modal Select Dropdown**: Target Server dropdown now uses portal mode to render above the Modal's stacking context, fixing z-index clipping on WebView2
+- **Modal Background**: Increased overlay opacity and made panel fully opaque as fallback for WebView2 where `backdrop-blur` can fail silently
+- **Button Types**: Added explicit `type="button"` to Cancel and Save buttons to prevent form submission edge cases
+
+### Changed
+
+- Migrated all repository URLs from personal repo to `zync-sh` GitHub organization
+- Updated CI/CD workflow permissions for organization context
+
 ## [2.4.0] - 2026-02-27
 
 ### Added
@@ -85,7 +100,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
