@@ -17,6 +17,21 @@ interface AddTunnelModalProps {
     editingTunnel?: TunnelConfig | null; // Pass existing tunnel to edit
 }
 
+/**
+ * Render a modal for creating or updating port forwarding configurations.
+ *
+ * The component provides single and bulk configuration modes, validates port inputs,
+ * persists new or updated TunnelConfig entries via the application's store, and
+ * displays success or error toasts. When `editingTunnel` is provided the form is
+ * pre-filled and editing is performed in single mode; when `initialConnectionId`
+ * is provided that connection is preselected for new forwards.
+ *
+ * @param isOpen - Whether the modal is visible
+ * @param onClose - Callback invoked to close the modal
+ * @param initialConnectionId - Optional connection id to preselect when creating a new forward
+ * @param editingTunnel - Optional existing tunnel to edit; its values prefill the form
+ * @returns The modal element for creating or editing port forwards
+ */
 export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTunnel }: AddTunnelModalProps) {
     const connections = useAppStore(state => state.connections);
     const tunnels = useAppStore(state => state.tunnels);

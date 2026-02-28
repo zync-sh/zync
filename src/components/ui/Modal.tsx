@@ -14,6 +14,17 @@ interface ModalProps {
   className?: string;
 }
 
+/**
+ * Render a centered modal dialog into document.body.
+ *
+ * @param isOpen - Whether the modal is visible.
+ * @param onClose - Callback invoked to close the modal (overlay click, Escape key, or close button).
+ * @param title - Header title text displayed at the top of the modal.
+ * @param children - Modal content.
+ * @param width - Tailwind width utility applied to the dialog container (default 'max-w-md').
+ * @param className - Additional classes merged into the dialog container.
+ * @returns The modal element mounted into document.body when `isOpen` is true, otherwise null.
+ */
 export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', className }: ModalProps) {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
