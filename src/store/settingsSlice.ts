@@ -67,8 +67,16 @@ export interface AppSettings {
         fmBack: string;
         fmForward: string;
         fmSearch: string;
+        aiCommandBar: string;
     };
     expandedFolders: string[];
+    ai: {
+        provider: 'ollama' | 'gemini' | 'openai' | 'claude';
+        keys?: { gemini?: string; openai?: string; claude?: string };
+        model?: string;
+        ollamaUrl?: string;
+        enabled: boolean;
+    };
 }
 
 const defaultSettings: AppSettings = {
@@ -80,6 +88,11 @@ const defaultSettings: AppSettings = {
     sidebarWidth: 288,
     sidebarCollapsed: false,
     expandedFolders: [],
+    ai: {
+        provider: 'ollama',
+        ollamaUrl: 'http://localhost:11434',
+        enabled: true,
+    },
     terminal: {
         fontSize: 14,
         fontFamily: "'Fira Code', monospace",
@@ -137,6 +150,7 @@ const defaultSettings: AppSettings = {
         fmBack: 'Alt+Left',
         fmForward: 'Alt+Right',
         fmSearch: 'Mod+F',
+        aiCommandBar: 'Mod+I',
     }
 };
 
@@ -147,6 +161,7 @@ export interface SettingsSlice {
 
     // Actions
     updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
+    updateAiSettings: (updates: Partial<AppSettings['ai']>) => Promise<void>;
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
@@ -175,6 +190,18 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                 keybindings: { ...defaultSettings.keybindings, ...(loaded?.keybindings || {}) },
+                ai: (() => {
+                    const ai = { ...defaultSettings.ai, ...(loaded?.ai || {}) };
+                    // Migrate old single apiKey to per-provider keys
+                    const oldKey = (loaded?.ai as any)?.apiKey;
+                    if (oldKey && !ai.keys) {
+                        const provider = ai.provider || 'ollama';
+                        if (provider !== 'ollama') {
+                            ai.keys = { [provider]: oldKey } as any;
+                        }
+                    }
+                    return ai;
+                })(),
                 expandedFolders: loaded?.expandedFolders || []
             };
             set({ settings: merged, isLoadingSettings: false });
@@ -191,6 +218,19 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save settings:', error);
+        }
+    },
+
+    updateAiSettings: async (updates) => {
+        const updated = {
+            ...get().settings,
+            ai: { ...get().settings.ai, ...updates }
+        };
+        set({ settings: updated });
+        try {
+            await invoke('settings_set', { settings: updated });
+        } catch (error) {
+            console.error('Failed to save AI settings:', error);
         }
     },
 
