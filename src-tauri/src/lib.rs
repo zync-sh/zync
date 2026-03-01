@@ -8,6 +8,7 @@ pub mod tunnel;
 mod snippets;
 pub mod plugins;
 mod ssh_parser;
+mod ai;
 
 use commands::AppState;
 use tauri::{Manager, Emitter};
@@ -202,6 +203,11 @@ pub fn run() {
             commands::config_select_folder,
             commands::system_install_cli,
             commands::ssh_parse_command,
+            commands::ai_translate,
+            commands::ai_translate_stream,
+            commands::ai_check_ollama,
+            commands::ai_get_ollama_models,
+            commands::ai_get_provider_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
