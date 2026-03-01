@@ -9,6 +9,7 @@ import { TerminalSlice, createTerminalSlice } from './terminalSlice';
 import { FileSystemSlice, createFileSystemSlice } from './fileSystemSlice';
 import { UpdateSlice, createUpdateSlice } from './updateSlice';
 import { UiSlice, createUiSlice } from './uiSlice';
+import { AiSlice, createAiSlice } from './aiSlice';
 
 // Re-export types for convenience
 export type { Connection, Folder, Tab } from './connectionSlice';
@@ -19,7 +20,7 @@ export type { Snippet } from './snippetsSlice';
 export type { TunnelConfig } from './tunnelSlice';
 export type { TerminalTab } from './terminalSlice';
 
-export type AppStore = ConnectionSlice & SettingsSlice & TransferSlice & ToastSlice & SnippetsSlice & TunnelSlice & TerminalSlice & FileSystemSlice & UpdateSlice & UiSlice & {    // Global Feedback
+export type AppStore = ConnectionSlice & SettingsSlice & TransferSlice & ToastSlice & SnippetsSlice & TunnelSlice & TerminalSlice & FileSystemSlice & UpdateSlice & UiSlice & AiSlice & {    // Global Feedback
     lastAction: { message: string; type: 'success' | 'date' | 'info' | 'error' } | null;
     setLastAction: (message: string, type?: 'success' | 'info' | 'error') => void;
 };
@@ -38,6 +39,7 @@ export const useAppStore = create<AppStore>()(
         ...createFileSystemSlice(...a),
         ...createUpdateSlice(...a),
         ...createUiSlice(...a),
+        ...createAiSlice(...a),
 
         lastAction: null,
         setLastAction: (message, type = 'info') => {
