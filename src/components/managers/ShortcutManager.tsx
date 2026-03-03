@@ -190,6 +190,10 @@ export function ShortcutManager() {
                 e.preventDefault();
                 window.dispatchEvent(new CustomEvent('ssh-ui:term-find'));
             }
+            else if (matchShortcut(e, kb.aiCommandBar || 'Mod+I')) {
+                e.preventDefault();
+                window.dispatchEvent(new CustomEvent('zync:ai-command-bar'));
+            }
         };
 
         window.addEventListener('keydown', handleKeyDown, { capture: true });

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
-import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock } from 'lucide-react';
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
@@ -29,11 +29,12 @@ interface RegistryPlugin {
     type?: 'theme' | 'tool';
 }
 
-type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'about';
+type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'ai' | 'about';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
+    const updateAiSettings = useAppStore(state => state.updateAiSettings);
     const updateTerminalSettings = useAppStore(state => state.updateTerminalSettings);
     const updateFileManagerSettings = useAppStore(state => state.updateFileManagerSettings);
     const updateLocalTermSettings = useAppStore(state => state.updateLocalTermSettings);
@@ -67,8 +68,21 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [needsRestart, setNeedsRestart] = useState(false);
+
+    // AI tab: local draft for API key so we don't invoke on every keystroke
+    const [apiKeyDraft, setApiKeyDraft] = useState('');
+    const [apiKeySaved, setApiKeySaved] = useState(false);
+
     const { executeCommand } = usePlugins();
     const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
+
+    // Sync apiKeyDraft when provider changes or tab opens
+    const currentProvider = settings.ai?.provider || 'ollama';
+    useEffect(() => {
+        const key = settings.ai?.keys?.[currentProvider as keyof typeof settings.ai.keys] || '';
+        setApiKeyDraft(key);
+        setApiKeySaved(false);
+    }, [currentProvider, activeTab]);
 
     useEffect(() => {
         if (isOpen && activeTab === 'plugins') {
@@ -461,6 +475,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" />
                     <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
                     <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" />
+                    <TabButton active={activeTab === 'ai'} onClick={() => handleTabChange('ai')} icon={<Sparkles size={15} />} label="AI" />
 
                     <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
                         <TabButton
@@ -478,7 +493,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     {/* Header */}
                     <div className="h-14 flex items-center justify-between px-6 border-b border-[var(--color-app-border)]/30 shrink-0">
                         <h2 className="font-medium text-[var(--color-app-text)] text-sm tracking-tight">
-                            {activeTab === 'fileManager' ? 'File Manager' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+                            {activeTab === 'fileManager' ? 'File Manager' : activeTab === 'ai' ? 'AI Assistant' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
                         </h2>
                         <button onClick={onClose} className="p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)] transition-colors">
                             <X size={16} />
@@ -1309,6 +1324,128 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         )}
 
 
+
+                        {activeTab === 'ai' && (
+                            <div className="space-y-6 animate-in fade-in duration-300">
+                                <Section title="AI Provider">
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between py-2">
+                                            <div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Provider</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">AI engine for natural language → command translation</div>
+                                            </div>
+                                            <div className="w-52">
+                                                <Select
+                                                    value={settings.ai?.provider || 'ollama'}
+                                                    onChange={(v) => updateAiSettings({ provider: v as any })}
+                                                    options={[
+                                                        { value: 'ollama', label: 'Ollama (Local / Free)' },
+                                                        { value: 'gemini', label: 'Gemini (Free BYOK)' },
+                                                        { value: 'openai', label: 'OpenAI (BYOK)' },
+                                                        { value: 'claude', label: 'Claude (BYOK)' },
+                                                    ]}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {(settings.ai?.provider === 'ollama' || !settings.ai?.provider) && (
+                                            <div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)] mb-1">Ollama URL</div>
+                                                <input
+                                                    type="text"
+                                                    value={settings.ai?.ollamaUrl || 'http://localhost:11434'}
+                                                    onChange={(e) => updateAiSettings({ ollamaUrl: e.target.value })}
+                                                    className="w-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
+                                                />
+                                                <p className="text-xs text-[var(--color-app-muted)] mt-1">
+                                                    Runs fully locally — no API key needed.{' '}
+                                                    <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">
+                                                        Install Ollama →
+                                                    </a>
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {settings.ai?.provider !== 'ollama' && (
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1">
+                                                    <div className="text-sm font-medium text-[var(--color-app-text)]">API Key</div>
+                                                    {apiKeySaved && (
+                                                        <span className="text-xs text-emerald-400 flex items-center gap-1 animate-in fade-in duration-150">
+                                                            ✓ Saved
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="password"
+                                                        value={apiKeyDraft}
+                                                        onChange={(e) => { setApiKeyDraft(e.target.value); setApiKeySaved(false); }}
+                                                        onBlur={() => {
+                                                            const p = settings.ai?.provider as string;
+                                                            updateAiSettings({ keys: { ...settings.ai?.keys, [p]: apiKeyDraft } });
+                                                            setApiKeySaved(true);
+                                                            setTimeout(() => setApiKeySaved(false), 2000);
+                                                        }}
+                                                        placeholder={`Paste your ${settings.ai?.provider} API key…`}
+                                                        className="flex-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
+                                                    />
+                                                    <button
+                                                        onClick={() => {
+                                                            const p = settings.ai?.provider as string;
+                                                            updateAiSettings({ keys: { ...settings.ai?.keys, [p]: apiKeyDraft } });
+                                                            setApiKeySaved(true);
+                                                            setTimeout(() => setApiKeySaved(false), 2000);
+                                                        }}
+                                                        className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-app-accent)] text-white hover:opacity-90 transition-opacity shrink-0"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                </div>
+                                                <p className="text-xs text-[var(--color-app-muted)] mt-1">
+                                                    {settings.ai?.provider === 'gemini' && (
+                                                        <>Free tier available, no credit card needed.{' '}
+                                                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
+                                                    )}
+                                                    {settings.ai?.provider === 'openai' && (
+                                                        <>Pay-as-you-go, credit card required.{' '}
+                                                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
+                                                    )}
+                                                    {settings.ai?.provider === 'claude' && (
+                                                        <>Pay-as-you-go, credit card required.{' '}
+                                                        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
+                                                    )}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]/40">
+                                            <Sparkles className="w-4 h-4 text-[var(--color-app-accent)] shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="text-xs font-medium text-[var(--color-app-text)]">Model selection</p>
+                                                <p className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                    Each provider uses its default model automatically. Open the AI Command Bar (<kbd className="px-1 py-0.5 rounded bg-[var(--color-app-bg)] border border-[var(--color-app-border)] font-mono text-[10px]">Ctrl+I</kbd>) and click the model pill to pick a different model per session.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Section>
+
+                                <Section title="How to Use">
+                                    <div className="space-y-2 text-sm text-[var(--color-app-muted)]">
+                                        <p>Press <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-app-surface)] border border-[var(--color-app-border)] font-mono text-xs text-[var(--color-app-text)]">Ctrl+I</kbd> inside any terminal to open the AI Command Bar.</p>
+                                        <p>Type what you want to do in plain language and press Enter to translate.</p>
+                                        <p>Review the command and safety level, then press Enter or click Execute to run it.</p>
+                                        <div className="mt-3 p-3 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]/40 space-y-1.5">
+                                            <p className="text-xs font-medium text-[var(--color-app-text)]">Safety levels</p>
+                                            <p className="text-xs"><span className="text-emerald-400 font-medium">SAFE</span> — read-only (ls, cat, df) — Enter executes</p>
+                                            <p className="text-xs"><span className="text-yellow-400 font-medium">MODERATE</span> — modifying but reversible (mkdir, git) — Enter executes</p>
+                                            <p className="text-xs"><span className="text-red-400 font-medium">DANGEROUS</span> — destructive (rm -rf, dd) — must click Execute</p>
+                                        </div>
+                                    </div>
+                                </Section>
+                            </div>
+                        )}
 
                         {activeTab === 'about' && (
                             <div className="flex flex-col items-center justify-start min-h-full pt-12 pb-10 px-4 animate-in fade-in duration-300">

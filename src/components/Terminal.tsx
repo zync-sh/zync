@@ -25,6 +25,20 @@ interface TerminalCache {
 }
 const terminalCache = new Map<string, TerminalCache>();
 
+// Export recent terminal buffer lines for AI context
+export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
+  const cached = terminalCache.get(termId);
+  if (!cached?.term?.buffer?.active) return null;
+  const buf = cached.term.buffer.active;
+  const lines: string[] = [];
+  const start = Math.max(0, buf.length - lineCount);
+  for (let i = start; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (line) lines.push(line.translateToString(true));
+  }
+  return lines.join('\n').trim() || null;
+}
+
 // Export for cleanup from terminalSlice when terminal is explicitly closed
 export function destroyTerminalInstance(termId: string) {
   const cached = terminalCache.get(termId);
@@ -36,6 +50,47 @@ export function destroyTerminalInstance(termId: string) {
     cached.term.dispose();
     terminalCache.delete(termId);
   }
+}
+
+/** Returns true when the active app theme has a light background */
+function isLightTheme(): boolean {
+  const classes = document.body.classList;
+  if (classes.contains('light') || classes.contains('light-warm')) return true;
+  // For system theme: check media query
+  const dataTheme = document.body.getAttribute('data-theme') ?? '';
+  if (dataTheme === 'light') return true;
+  return false;
+}
+
+/**
+ * Build an xterm theme object from current CSS variables.
+ * In light mode the ANSI "white" colors are swapped to dark so they remain
+ * visible against the light background.
+ */
+function buildXtermTheme(appBg: string, appText: string, appAccent: string) {
+  const light = isLightTheme();
+  return {
+    background: appBg || (light ? '#f8fafc' : '#0f111a'),
+    foreground: appText || (light ? '#18181b' : '#e2e8f0'),
+    cursor: appAccent || '#6366f1',
+    selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
+    black: light ? '#3f3f46' : '#000000',
+    red: '#ef4444',
+    green: '#10b981',
+    yellow: '#d97706',
+    blue: '#3b82f6',
+    magenta: '#d946ef',
+    cyan: '#0891b2',
+    white: light ? '#18181b' : '#ffffff',
+    brightBlack: light ? '#71717a' : '#64748b',
+    brightRed: '#fca5a5',
+    brightGreen: '#86efac',
+    brightYellow: '#fcd34d',
+    brightBlue: '#93c5fd',
+    brightMagenta: '#f0abfc',
+    brightCyan: '#67e8f9',
+    brightWhite: light ? '#09090b' : '#f8fafc',
+  };
 }
 
 export function TerminalComponent({ connectionId, termId, isVisible }: { connectionId?: string; termId?: string; isVisible?: boolean }) {
@@ -174,28 +229,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         cursorStyle: settings.terminal.cursorStyle,
         lineHeight: settings.terminal.lineHeight,
         allowProposedApi: true,
-        theme: {
-          background: appBg || '#0f111a',
-          foreground: appText || '#e2e8f0',
-          cursor: appAccent || '#6366f1',
-          selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
-          black: '#000000',
-          red: '#ef4444',
-          green: '#10b981',
-          yellow: '#f59e0b',
-          blue: '#3b82f6',
-          magenta: '#d946ef',
-          cyan: '#06b6d4',
-          white: '#ffffff',
-          brightBlack: '#64748b',
-          brightRed: '#fca5a5',
-          brightGreen: '#86efac',
-          brightYellow: '#fcd34d',
-          brightBlue: '#93c5fd',
-          brightMagenta: '#f0abfc',
-          brightCyan: '#67e8f9',
-          brightWhite: '#f8fafc',
-        },
+        theme: buildXtermTheme(appBg, appText, appAccent),
       });
 
       // Initialize Addons
@@ -217,6 +251,13 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // Custom Key Handler
       term.attachCustomKeyEventHandler((e) => {
         if (e.type === 'keydown') {
+
+          // AI Command Bar: Ctrl/Cmd + I
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
+            e.preventDefault();
+            window.dispatchEvent(new CustomEvent('zync:ai-command-bar'));
+            return false;
+          }
 
           // Zoom In: Ctrl + = or Ctrl + +
           if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
@@ -480,28 +521,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
 
     // Default Theme
-    let themeObj = {
-      background: appBg || '#0f111a',
-      foreground: appText || '#e2e8f0',
-      cursor: appAccent || '#6366f1',
-      selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
-      black: '#000000',
-      red: '#ef4444',
-      green: '#10b981',
-      yellow: '#f59e0b',
-      blue: '#3b82f6',
-      magenta: '#d946ef',
-      cyan: '#06b6d4',
-      white: '#ffffff',
-      brightBlack: '#64748b',
-      brightRed: '#fca5a5',
-      brightGreen: '#86efac',
-      brightYellow: '#fcd34d',
-      brightBlue: '#93c5fd',
-      brightMagenta: '#f0abfc',
-      brightCyan: '#67e8f9',
-      brightWhite: '#f8fafc',
-    };
+    let themeObj = buildXtermTheme(appBg, appText, appAccent);
 
     // Apply Override if exists
     if (connection?.theme && THEME_PRESETS[connection.theme]) {

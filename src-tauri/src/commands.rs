@@ -2407,3 +2407,43 @@ pub async fn sftp_download_as_zip(
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn ai_translate(
+    app: AppHandle,
+    query: String,
+    context: crate::ai::TerminalContext,
+    request_id: String,
+) -> Result<crate::ai::AiTranslateResponse, String> {
+    let config = crate::ai::read_ai_config(&app);
+    crate::ai::translate(&app, query, context, request_id, config).await
+}
+
+#[tauri::command]
+pub async fn ai_translate_stream(
+    app: AppHandle,
+    query: String,
+    context: crate::ai::TerminalContext,
+    request_id: String,
+) -> Result<(), String> {
+    let config = crate::ai::read_ai_config(&app);
+    tauri::async_runtime::spawn(crate::ai::translate_stream(app, query, context, request_id, config));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_check_ollama(app: AppHandle) -> Result<bool, String> {
+    let config = crate::ai::read_ai_config(&app);
+    let url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    Ok(crate::ai::check_ollama(url).await)
+}
+
+#[tauri::command]
+pub async fn ai_get_ollama_models(app: AppHandle) -> Result<Vec<String>, String> {
+    crate::ai::get_ollama_models(&app).await
+}
+
+#[tauri::command]
+pub async fn ai_get_provider_models(app: AppHandle) -> Result<Vec<String>, String> {
+    crate::ai::get_provider_models(&app).await
+}

@@ -4,6 +4,22 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-03-01
+
+### Added
+
+- **AI Command Bar** (`Ctrl+I`): Natural-language to shell command translation powered by Ollama, Gemini, OpenAI, and Claude — press `Ctrl+I` in any terminal session, describe what you want, and the command is generated ready to execute
+- **Streaming Responses**: AI responses stream token-by-token with a typewriter cursor instead of waiting for the full response
+- **Dual-mode AI**: Automatically detects intent — command requests return an executable shell command; questions and explanations return a prose answer. No mode switching required
+- **Chat Interface**: Full conversation history within each session; previous Q&A pairs are preserved above the current response with user bubbles (right) and AI responses (left)
+- **Query History Navigation**: Arrow Up/Down cycles through past queries; position badge shows current index (N/M); recent queries appear as clickable chips when the input is focused and empty
+- **Editable Commands**: AI-generated commands are editable inline in a terminal-style `$ ` block before executing; an "edited" indicator appears when the command has been modified
+- **Safety Classification**: Each command is classified as `SAFE`, `MODERATE`, or `DANGEROUS` with a color-coded badge and explanation; dangerous commands require an explicit "Run anyway" confirmation
+- **Save to Snippets**: Bookmark any AI-generated command directly to the Snippets panel under the "AI Generated" category
+- **Retry & Make Safer**: Re-run the same query or re-submit with a safety-first instruction to get a less destructive alternative
+- **Provider & Model Selection**: Switch AI provider (Ollama / Gemini / OpenAI / Claude) and model without leaving the command bar; unconfigured providers are shown with a setup indicator
+- **Contextual Awareness**: Sends current OS, shell, working directory, and recent terminal output as context so commands are accurate for the active session
+
 ## [2.4.1] - 2026-02-28
 
 ### Fixed
@@ -100,7 +116,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
 [2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
