@@ -439,16 +439,25 @@ export function MainLayout({ children }: { children: ReactNode }) {
         const checkVersionAndShowNotes = async () => {
             try {
                 const currentVersion = await ipc.invoke('app:getVersion');
-                // Read the stored version directly from the store snapshot (not reactive)
                 const storedVersion = useAppStore.getState().settings.lastSeenVersion;
 
-                if (storedVersion && currentVersion !== storedVersion) {
-                    // New version detected — open the What's New tab
+                // Signal 1: 'zync-just-updated' flag is written by UpdateNotification
+                //           just before the Tauri updater restarts the app.
+                //           This is the reliable signal for auto-updates.
+                const justUpdated = localStorage.getItem('zync-just-updated') === 'true';
+
+                // Signal 2: version mismatch — catches manual installs / fresh installs
+                //           where lastSeenVersion is '' or an older value.
+                const versionMismatch = storedVersion !== currentVersion;
+
+                if (justUpdated || versionMismatch) {
                     openReleaseNotesTab();
+                    // Consume the flag immediately so it only opens once
+                    localStorage.removeItem('zync-just-updated');
                 }
 
-                // Always keep lastSeenVersion up to date
-                if (currentVersion !== storedVersion) {
+                // Always keep lastSeenVersion in sync
+                if (versionMismatch) {
                     updateSettings({ lastSeenVersion: currentVersion });
                 }
             } catch (err) {

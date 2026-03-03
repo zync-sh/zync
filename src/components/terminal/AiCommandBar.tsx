@@ -706,7 +706,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
                                                     className={cn('flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-md border transition-colors', errorCfg.color, 'border-current/30 hover:bg-current/10')}
                                                 >
                                                     {errorKind === 'billing' ? <CreditCard className="w-3 h-3" />
-                                                        : errorKind === 'invalid-key' || errorKind === 'no-key' ? <Settings className="w-3 h-3" />
+                                                        : errorKind === 'invalid-key' || errorKind === 'no-key' || errorKind === 'disabled' ? <Settings className="w-3 h-3" />
                                                             : <RotateCw className="w-3 h-3" />}
                                                     {errorCfg.action.label}
                                                 </button>

@@ -261,6 +261,7 @@ export function TabBar() {
                                             {(() => {
                                                 if (tab.type === 'port-forwarding') return <Network size={13} />;
                                                 if (tab.type === 'settings') return <SettingsIcon size={13} />;
+                                                if (tab.type === 'release-notes') return <Gift size={13} className="text-[var(--color-app-accent)]" />;
                                                 const conn = connections.find((c: Connection) => c.id === tab.connectionId);
                                                 return <OSIcon icon={conn?.icon || 'Server'} className="w-[13px] h-[13px]" />;
                                             })()}

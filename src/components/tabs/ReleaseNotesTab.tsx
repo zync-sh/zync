@@ -99,7 +99,7 @@ function HeadingWithBadge({ level, children }: { level: number; children: React.
     const id = slugify(text);
 
     const inner = (
-        <span id={id} className="flex items-center gap-2.5 scroll-mt-6 group">
+        <span className="flex items-center gap-2.5 scroll-mt-6 group">
             {badge ? (
                 <span className={`inline-flex items-center px-2.5 py-1 rounded-md border text-sm font-semibold tracking-tight ${badge.color}`}>
                     {badge.label}
@@ -111,9 +111,9 @@ function HeadingWithBadge({ level, children }: { level: number; children: React.
         </span>
     );
 
-    if (level === 1) return <h1 className="text-2xl font-bold mt-8 mb-4">{inner}</h1>;
-    if (level === 2) return <h2 className="text-lg font-bold mt-8 mb-4">{inner}</h2>;
-    return <h3 className="text-base font-semibold mt-6 mb-3">{inner}</h3>;
+    if (level === 1) return <h1 id={id} className="text-2xl font-bold mt-8 mb-4">{inner}</h1>;
+    if (level === 2) return <h2 id={id} className="text-lg font-bold mt-8 mb-4">{inner}</h2>;
+    return <h3 id={id} className="text-base font-semibold mt-6 mb-3">{inner}</h3>;
 }
 
 // ----- Main Component -----
@@ -180,7 +180,10 @@ const ReleaseNotesTab: React.FC = () => {
     }, [selected]);
 
     const scrollToSection = useCallback((id: string) => {
-        contentRef.current?.querySelector(`#${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const target =
+            contentRef.current?.querySelector<HTMLElement>(`[id="${id}"]`) ??
+            document.getElementById(id);
+        target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, []);
 
     const currentRelease = selected;

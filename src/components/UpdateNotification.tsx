@@ -95,9 +95,12 @@ export function UpdateNotification() {
 
     const installUpdate = async () => {
         try {
+            // Set a flag so the next launch knows a real update just happened
+            localStorage.setItem('zync-just-updated', 'true');
             await window.ipcRenderer.invoke('update:install');
         } catch (err) {
             console.error('Failed to launch installer:', err);
+            localStorage.removeItem('zync-just-updated');
             // Fallback: just tell them to restart manually
             setUpdateStatus('ready');
         }
