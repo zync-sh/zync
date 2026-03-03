@@ -122,6 +122,8 @@ const ipcRenderer = {
       'shell:open': 'shell_open',
       'plugins:load': 'plugins_load',
       'app:getExeDir': 'app_get_exe_dir',
+      'ai:translate': 'ai_translate',
+      'ai:checkOllama': 'ai_check_ollama',
     };
 
     const tauriCommand = channelMap[channel] || channel.replace(':', '_');

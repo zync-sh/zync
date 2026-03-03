@@ -5,6 +5,7 @@ import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { Terminal as TerminalIcon, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { AiCommandBar } from './AiCommandBar';
 
 // TerminalTab interface is now in store/terminalSlice
 // export interface TerminalTab ... removed
@@ -22,6 +23,7 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     const ensureTerminal = useAppStore(state => state.ensureTerminal);
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
+    const openAiCommandBar = useAppStore(state => state.openAiCommandBar);
 
 
     // Derived State - Removed (now selected directly)
@@ -86,18 +88,22 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             }
         };
 
+        const handleAiCommandBar = () => openAiCommandBar();
+
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
         window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
         window.addEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         window.addEventListener('zync:terminal:send', handlePluginTerminalSend);
+        window.addEventListener('zync:ai-command-bar', handleAiCommandBar);
 
         return () => {
             window.removeEventListener('ssh-ui:run-command', handleRunCommand);
             window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
             window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
             window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
+            window.removeEventListener('zync:ai-command-bar', handleAiCommandBar);
         };
-    }, [activeConnectionId, activeTabId]);
+    }, [activeConnectionId, activeTabId, openAiCommandBar]);
 
 
     const handleCloseTab = (id: string, e: React.MouseEvent) => {
@@ -158,6 +164,7 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
             {/* Terminal Content Area */}
             <div className="flex-1 overflow-hidden relative bg-app-bg">
+                <AiCommandBar connectionId={activeConnectionId} activeTermId={activeTabId} />
                 {tabs.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-app-muted">
                         <TerminalIcon size={48} className="mb-4 opacity-20" />
