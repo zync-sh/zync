@@ -8,6 +8,7 @@ import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTria
 import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
+
 import { clsx } from 'clsx';
 import { Marketplace } from './Marketplace';
 
@@ -313,7 +314,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             // Arrow keys for tab navigation
             if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                 e.preventDefault();
-                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'about'];
+                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'plugins', 'ai', 'about'];
                 const currentIndex = tabs.indexOf(activeTab);
                 let nextIndex: number;
 
@@ -1327,6 +1328,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                         {activeTab === 'ai' && (
                             <div className="space-y-6 animate-in fade-in duration-300">
+                                <Section title="General">
+                                    <div className="space-y-4">
+                                        <Toggle
+                                            label="Enable AI Features"
+                                            description="Allow AI translation and processing"
+                                            checked={settings.ai?.enabled ?? true}
+                                            onChange={(v) => updateAiSettings({ enabled: v })}
+                                        />
+                                    </div>
+                                </Section>
+
                                 <Section title="AI Provider">
                                     <div className="space-y-4">
                                         <div className="flex items-center justify-between py-2">
@@ -1405,15 +1417,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 <p className="text-xs text-[var(--color-app-muted)] mt-1">
                                                     {settings.ai?.provider === 'gemini' && (
                                                         <>Free tier available, no credit card needed.{' '}
-                                                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
+                                                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
                                                     )}
                                                     {settings.ai?.provider === 'openai' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
+                                                            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
                                                     )}
                                                     {settings.ai?.provider === 'claude' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
+                                                            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
                                                     )}
                                                 </p>
                                             </div>
@@ -1661,14 +1673,17 @@ function Section({ title, children }: { title: string, children: React.ReactNode
 
 function Toggle({ label, description, checked, onChange }: { label: string, description: string, checked: boolean, onChange: (v: boolean) => void }) {
     return (
-        <div className="flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 transition-colors group">
+        <div
+            onClick={() => onChange(!checked)}
+            className="flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 transition-colors group cursor-pointer"
+        >
             <div className="flex-1">
                 <div className="text-sm font-medium text-[var(--color-app-text)]">{label}</div>
                 <div className="text-xs text-[var(--color-app-muted)] mt-0.5">{description}</div>
             </div>
             <button
-                onClick={() => onChange(!checked)}
-                className={`w-11 h-6 rounded-full transition-all relative ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
+                type="button"
+                className={`w-11 h-6 rounded-full transition-all relative pointer-events-none ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
             >
                 <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
