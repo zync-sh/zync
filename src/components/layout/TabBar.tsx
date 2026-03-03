@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeftOpen, Network } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeftOpen, Network, Gift } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -73,6 +73,7 @@ function SortableTab({
             {(() => {
                 if (tab.type === 'port-forwarding') return <Network size={13} />;
                 if (tab.type === 'settings') return <SettingsIcon size={13} />;
+                if (tab.type === 'release-notes') return <Gift size={13} className="text-[var(--color-app-accent)]" />;
 
                 const conn = connections.find((c: Connection) => c.id === tab.connectionId);
                 return <OSIcon icon={conn?.icon || 'Server'} className="w-[13px] h-[13px]" />;

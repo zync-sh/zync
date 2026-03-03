@@ -1,4 +1,4 @@
-import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback } from 'react';
+import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
 import { usePlugins } from '../../context/PluginContext';
@@ -13,6 +13,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
+import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
 
 // Lazy Load Heavy Components
 const FileManager = lazy(() => import('../FileManager').then(module => ({ default: module.FileManager })));
@@ -130,6 +131,19 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 <Suspense fallback={<TabLoading />}>
                     <GlobalTunnelList />
                 </Suspense>
+            </div>
+        );
+    }
+
+    // Release Notes Tab
+    if (tab.type === 'release-notes') {
+        return (
+            <div className={cn(
+                "absolute inset-0 z-10 bg-app-bg",
+                !isActive && "hidden",
+                isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
+            )}>
+                <ReleaseNotesTab />
             </div>
         );
     }
@@ -412,6 +426,38 @@ export function MainLayout({ children }: { children: ReactNode }) {
     useEffect(() => {
         checkConfig();
     }, []);
+
+    // Version Tracking for Release Notes
+    const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
+    const versionChecked = useRef(false);
+
+    useEffect(() => {
+        // Only run once after settings have loaded
+        if (isLoadingSettings || versionChecked.current) return;
+        versionChecked.current = true;
+
+        const checkVersionAndShowNotes = async () => {
+            try {
+                const currentVersion = await ipc.invoke('app:getVersion');
+                // Read the stored version directly from the store snapshot (not reactive)
+                const storedVersion = useAppStore.getState().settings.lastSeenVersion;
+
+                if (storedVersion && currentVersion !== storedVersion) {
+                    // New version detected — open the What's New tab
+                    openReleaseNotesTab();
+                }
+
+                // Always keep lastSeenVersion up to date
+                if (currentVersion !== storedVersion) {
+                    updateSettings({ lastSeenVersion: currentVersion });
+                }
+            } catch (err) {
+                console.error('Failed to resolve version for release notes tracking', err);
+            }
+        };
+
+        checkVersionAndShowNotes();
+    }, [isLoadingSettings, openReleaseNotesTab, updateSettings]);
 
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);
