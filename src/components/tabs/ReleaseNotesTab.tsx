@@ -175,7 +175,7 @@ const ReleaseNotesTab: React.FC = () => {
             },
             { rootMargin: '-20px 0px -80% 0px' }
         );
-        headings.forEach(h => observer.observe(h));
+        headings.forEach(h => { observer.observe(h); });
         return () => observer.disconnect();
     }, [selected]);
 
