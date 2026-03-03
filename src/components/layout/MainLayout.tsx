@@ -450,10 +450,14 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 //           where lastSeenVersion is '' or an older value.
                 const versionMismatch = storedVersion !== currentVersion;
 
-                if (justUpdated || versionMismatch) {
-                    openReleaseNotesTab();
-                    // Consume the flag immediately so it only opens once
+                // Always consume the flag unconditionally — prevents stale flag from
+                // opening the tab on every subsequent launch if the app previously crashed.
+                if (justUpdated) {
                     localStorage.removeItem('zync-just-updated');
+                }
+
+                if (versionMismatch) {
+                    openReleaseNotesTab();
                 }
 
                 // Always keep lastSeenVersion in sync
