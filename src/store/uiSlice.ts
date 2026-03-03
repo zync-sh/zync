@@ -11,6 +11,8 @@ export interface ConfirmDialogOpts {
 }
 
 export interface UiSlice {
+    isReleaseNotesModalOpen: boolean;
+    setReleaseNotesModalOpen: (open: boolean) => void;
     confirmDialog: ConfirmDialogOpts | null;
     showConfirmDialog: (opts: Omit<ConfirmDialogOpts, 'onConfirm' | 'onCancel'>) => Promise<boolean>;
     closeConfirmDialog: () => void;
@@ -18,6 +20,8 @@ export interface UiSlice {
 }
 
 export const createUiSlice: StateCreator<UiSlice, [], [], UiSlice> = (set, get) => ({
+    isReleaseNotesModalOpen: false,
+    setReleaseNotesModalOpen: (open) => set({ isReleaseNotesModalOpen: open }),
     confirmDialog: null,
     _resolveConfirm: null,
     showConfirmDialog: (opts) => {

@@ -235,7 +235,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         setSubmittedQuery(q.trim());
         pushAiHistory(q.trim());
         setAiHistoryIndex(-1);
-        const context = await collectTerminalContext(connectionId, activeTermId);
+        const context = await collectTerminalContext(connectionId, activeTermId, { includeRecentOutput: true, redact: true });
         await submitAiQuery(q.trim(), context);
     };
 
@@ -355,7 +355,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
 
     const isEdited = result && editedCommand !== result.command;
 
-    type ErrorKind = 'rate-limit' | 'billing' | 'invalid-key' | 'no-key' | 'connection' | 'generic';
+    type ErrorKind = 'rate-limit' | 'billing' | 'invalid-key' | 'no-key' | 'connection' | 'disabled' | 'generic';
     const classifyError = (msg: string): ErrorKind => {
         const e = msg.toLowerCase();
         if (e.includes('billing error') || e.includes('credit balance') || e.includes('purchase credits') || e.includes('insufficient_quota')) return 'billing';
@@ -363,6 +363,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         if (e.includes('invalid') && e.includes('key')) return 'invalid-key';
         if (e.includes('not configured')) return 'no-key';
         if (e.includes('not running') || e.includes('econnrefused') || e.includes('connection')) return 'connection';
+        if (e.includes('ai is disabled') || e.includes('disabled in settings')) return 'disabled';
         return 'generic';
     };
 
@@ -417,6 +418,15 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
                 ? "Ollama isn't running. Start it with 'ollama serve'."
                 : 'Could not reach the API. Check your network connection.',
             action: { label: 'Retry', fn: () => { clearAiResult(); handleSubmitWithQuery(submittedQuery, false); } },
+        },
+        'disabled': {
+            icon: Settings,
+            color: 'text-app-muted hover:text-app-text',
+            bg: 'bg-app-surface/50',
+            border: 'border-app-border/50',
+            title: 'AI is disabled',
+            hint: 'AI features have been turned off in your preferences.',
+            action: { label: 'Open Settings', fn: () => { handleClose(); openSettings(); } },
         },
         'generic': {
             icon: AlertTriangle,
@@ -697,7 +707,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
                                                 >
                                                     {errorKind === 'billing' ? <CreditCard className="w-3 h-3" />
                                                         : errorKind === 'invalid-key' || errorKind === 'no-key' ? <Settings className="w-3 h-3" />
-                                                        : <RotateCw className="w-3 h-3" />}
+                                                            : <RotateCw className="w-3 h-3" />}
                                                     {errorCfg.action.label}
                                                 </button>
                                             )}

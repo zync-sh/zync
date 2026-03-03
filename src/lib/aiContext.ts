@@ -15,7 +15,8 @@ export interface TerminalContext {
  */
 export async function collectTerminalContext(
     connectionId: string | undefined,
-    termId: string | null
+    termId: string | null,
+    options?: { includeRecentOutput?: boolean; redact?: boolean }
 ): Promise<TerminalContext> {
     const isLocal = !connectionId || connectionId === 'local';
     const connectionType = isLocal ? 'local' : 'ssh';
@@ -29,7 +30,7 @@ export async function collectTerminalContext(
         const ua = navigator.userAgent.toLowerCase();
         os = ua.includes('mac') ? 'macOS'
             : ua.includes('win') ? 'Windows'
-            : 'Linux';
+                : 'Linux';
     }
 
     // Shell detection: for local, infer from OS; for SSH, default to bash
@@ -54,9 +55,17 @@ export async function collectTerminalContext(
 
     // Read recent terminal output from xterm buffer
     let recentOutput: string | null = null;
-    if (termId) {
-        recentOutput = getTerminalRecentLines(termId, 20);
+    if (options?.includeRecentOutput && termId) {
+        const raw = getTerminalRecentLines(termId, 20);
+        recentOutput = options?.redact ? redactSensitiveOutput(raw) : raw;
     }
 
     return { os, shell, cwd, recentOutput, connectionType };
+}
+
+function redactSensitiveOutput(text: string | null): string | null {
+    if (!text) return null;
+    return text
+        .replace(/(password|token|secret)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
+        .replace(/\b(ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,})\b/g, '[REDACTED_KEY]');
 }

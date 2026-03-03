@@ -128,7 +128,9 @@ export const createAiSlice: StateCreator<AppStore, [], [], AiSlice> = (set, get)
             const msg = error instanceof Error ? error.message : String(error);
             set({ aiError: msg, aiLoading: false, aiStreamingText: '' });
         } finally {
-            cleanups.forEach(fn => fn());
+            for (const fn of cleanups) {
+                fn();
+            }
         }
     },
 
