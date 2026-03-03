@@ -207,7 +207,8 @@ const ReleaseNotesTab: React.FC = () => {
 
     // Update TOC when release changes
     useEffect(() => {
-        if (selected?.body) setToc(extractToc(selected.body));
+        setActiveSection('');
+        setToc(selected?.body ? extractToc(selected.body) : []);
     }, [selected]);
 
     // Intersection observer for active TOC item
