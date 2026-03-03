@@ -47,14 +47,9 @@ function extractToc(markdown: string): TocEntry[] {
     const lines = markdown.split('\n');
     const entries: TocEntry[] = [];
     const usedSlugs = new Map<string, number>();
+    let inFence = false;
     for (const line of lines) {
-        const m = line.match(/^(#{1,3})\s+(.+)/);
-        if (m) {
-            const text = m[2].replace(/`[^`]*`/g, s => s.slice(1, -1));
-            entries.push({ level: m[1].length, text, id: slugify(text, usedSlugs) });
-        }
-    }
-    return entries;
+        if (/^\s*
 }
 
 function formatDate(iso: string) {
