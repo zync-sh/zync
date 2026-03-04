@@ -34,6 +34,7 @@ Zync is a powerful, cross-platform SSH client built for speed, security, and aes
 | **SSH Tunneling** | Manage local and remote SSH tunnels with an intuitive, visual interface |
 | **SFTP File Manager** | Full SFTP support with drag-and-drop, CRUD operations, and remote file handling |
 | **Integrated Terminal** | Built-in xterm.js-based terminal with syntax highlighting for multiple languages |
+| **AI Command Bar** | Natural language to shell command translation (Ctrl+I) with local model support |
 | **Productivity** | System-level keyboard shortcuts and command palette (⌘K / Ctrl+K) for rapid navigation |
 | **Auto-Updates** | Seamless background updates to keep you on the latest version |
 | **Cross-Platform** | Linux (.deb, .rpm, .AppImage), Windows (.exe), macOS (.dmg) |
