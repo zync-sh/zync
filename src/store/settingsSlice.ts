@@ -77,6 +77,7 @@ export interface AppSettings {
         ollamaUrl?: string;
         enabled: boolean;
     };
+    lastSeenVersion: string;
 }
 
 const defaultSettings: AppSettings = {
@@ -93,6 +94,7 @@ const defaultSettings: AppSettings = {
         ollamaUrl: 'http://localhost:11434',
         enabled: true,
     },
+    lastSeenVersion: '',
     terminal: {
         fontSize: 14,
         fontFamily: "'Fira Code', monospace",
