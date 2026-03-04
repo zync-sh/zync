@@ -79,19 +79,20 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
         // If "Channel open failure" happens on Windows it will be caught below.
 
         try {
-          const psCommand = (cmd: string) => `powershell -NoProfile -Command "${cmd}"`;
+          // Note: Backend ssh_exec already wraps local Windows commands in powershell -Command
+          // so we only provide the raw PowerShell script here.
 
           // CPU
           const cpuOut = await window.ipcRenderer.invoke('ssh:exec', {
             connectionId: activeConnectionId,
-            command: psCommand('Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select -ExpandProperty Average'),
+            command: 'Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select -ExpandProperty Average',
           });
           cpuLoad = parseFloat(cpuOut.trim()) || 0;
 
           // Memory
           const memOut = await window.ipcRenderer.invoke('ssh:exec', {
             connectionId: activeConnectionId,
-            command: psCommand('Get-CimInstance Win32_OperatingSystem | ForEach-Object { \\"$($_.TotalVisibleMemorySize) $($_.FreePhysicalMemory)\\" }'),
+            command: 'Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.TotalVisibleMemorySize) $($_.FreePhysicalMemory)" }',
           });
           const [totalKB, freeKB] = memOut.trim().split(/\s+/).map(Number);
           totalMem = Math.round(totalKB / 1024); // to MB
@@ -101,21 +102,21 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
           // Uptime
           const uptimeOut = await window.ipcRenderer.invoke('ssh:exec', {
             connectionId: activeConnectionId,
-            command: psCommand('((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).ToString()'),
+            command: '((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).ToString()',
           });
           uptimeStr = uptimeOut.trim().split('.')[0];
 
           // Processes
           const procOut = await window.ipcRenderer.invoke('ssh:exec', {
             connectionId: activeConnectionId,
-            command: psCommand('(Get-Process).Count'),
+            command: '(Get-Process).Count',
           });
           procCount = parseInt(procOut.trim(), 10) || 0;
 
           // Disk (C:)
           const diskOut = await window.ipcRenderer.invoke('ssh:exec', {
             connectionId: activeConnectionId,
-            command: psCommand('Get-CimInstance Win32_LogicalDisk -Filter \\"DeviceID=\'C:\'\\" | ForEach-Object { \\"$($_.Size) $($_.FreeSpace)\\" }'),
+            command: 'Get-CimInstance Win32_LogicalDisk -Filter "DeviceID=\'C:\'" | ForEach-Object { "$($_.Size) $($_.FreeSpace)" }',
           });
           const [diskSizeBytes, diskFreeBytes] = diskOut.trim().split(/\s+/).map(Number);
           const diskTotalGB = (diskSizeBytes / (1024 * 1024 * 1024));

@@ -15,6 +15,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Copy Button Leaks**: Resolved a React state unmount leak in the CodeBlock copy button by properly clearing timeouts and handling clipboard write errors.
 - **Dropdown UX**: Added an outside-click listener to the version history dropdown so it automatically closes when clicking elsewhere on the screen.
 - **AI Error Classification**: Improved error parsing logic so backend messages containing both "disabled" and "connection" are correctly categorized as Disabled rather than Connection Error.
+- **AI Ollama Hints**: Added specific error classification and actionable "pull" hints when selected Ollama models are not found on the local host.
+- **AI Streaming UX**: Implemented a real-time JSON streaming parser in the Command Bar to hide raw JSON boilerplate (keys/quotes) while the model is generating responses.
+- **System Dashboard Metrics**: Fixed "missing terminator" errors on Windows Local by resolving redundant PowerShell wrapping and quote escaping desync.
 - **UI Dragging**: Fixed the missing drag-and-drop overlay icon for the "What's New" tab.
 
 ## [2.5.1] - 2026-03-03
