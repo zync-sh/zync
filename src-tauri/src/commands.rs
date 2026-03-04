@@ -2190,6 +2190,7 @@ pub async fn config_select_folder(app: AppHandle) -> Result<Option<String>, Stri
 }
 
 #[tauri::command]
+#[cfg_attr(target_os = "windows", allow(unused_variables))]
 pub async fn system_install_cli(app: AppHandle) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
@@ -2416,6 +2417,9 @@ pub async fn ai_translate(
     request_id: String,
 ) -> Result<crate::ai::AiTranslateResponse, String> {
     let config = crate::ai::read_ai_config(&app);
+    if !config.enabled {
+        return Err("AI is disabled in Settings → AI.".to_string());
+    }
     crate::ai::translate(&app, query, context, request_id, config).await
 }
 
@@ -2427,6 +2431,9 @@ pub async fn ai_translate_stream(
     request_id: String,
 ) -> Result<(), String> {
     let config = crate::ai::read_ai_config(&app);
+    if !config.enabled {
+        return Err("AI is disabled in Settings → AI.".to_string());
+    }
     tauri::async_runtime::spawn(crate::ai::translate_stream(app, query, context, request_id, config));
     Ok(())
 }

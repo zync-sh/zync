@@ -29,7 +29,7 @@ export interface Folder {
 
 export interface Tab {
     id: string;
-    type: 'connection' | 'settings' | 'port-forwarding';
+    type: 'connection' | 'settings' | 'port-forwarding' | 'release-notes';
     title: string;
     connectionId?: string;
     view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal';
@@ -61,6 +61,7 @@ export interface ConnectionSlice {
     openTab: (connectionId: string, startView?: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
     openPortForwardingTab: () => void;
     openSnippetsTab: () => void;
+    openReleaseNotesTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     setTabView: (tabId: string, view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
@@ -431,6 +432,20 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 type: 'port-forwarding',
                 title: 'Port Forwarding',
                 view: 'port-forwarding'
+            };
+            return { tabs: [...state.tabs, newTab], activeTabId: newTab.id };
+        });
+    },
+
+    openReleaseNotesTab: () => {
+        set(state => {
+            const existing = state.tabs.find(t => t.type === 'release-notes');
+            if (existing) return { activeTabId: existing.id };
+            const newTab: Tab = {
+                id: crypto.randomUUID(),
+                type: 'release-notes',
+                title: "What's New",
+                view: 'terminal', // placeholder, not used for this type
             };
             return { tabs: [...state.tabs, newTab], activeTabId: newTab.id };
         });

@@ -4,6 +4,35 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-03-04
+
+### Fixed
+
+- **Settings Integration**: Clicking the "What's New" button in the Settings > About panel now opens the dedicated in-app Release Notes tab instead of an inline markdown preview.
+- **Release Notes Auto-Open**: Fixed a bug where the "What's New" tab failed to open after an update; now reliably detects updates using a trusted installation flag instead of cached disk settings.
+- **TOC Scroll-Spy**: Corrected the placement of HTML IDs in the Release Notes viewer so the sidebar Table of Contents scroll-spy accurately highlights the active section.
+- **Code Block Reliability**: Enhanced the markdown parser's block detection to prevent inline code fragments with newlines from being incorrectly rendered as expanding fenced code blocks.
+- **Copy Button Leaks**: Resolved a React state unmount leak in the CodeBlock copy button by properly clearing timeouts and handling clipboard write errors.
+- **Dropdown UX**: Added an outside-click listener to the version history dropdown so it automatically closes when clicking elsewhere on the screen.
+- **AI Error Classification**: Improved error parsing logic so backend messages containing both "disabled" and "connection" are correctly categorized as Disabled rather than Connection Error.
+- **UI Dragging**: Fixed the missing drag-and-drop overlay icon for the "What's New" tab.
+
+## [2.5.1] - 2026-03-03
+
+### Added
+
+- **"What's New" Tab**: On first launch after an update, Zync automatically opens a dedicated "What's New" tab inside the main workspace — showing the current release notes formatted and fetched live from GitHub. The tab appears exactly once per version bump and never again after being seen.
+- **Release Notes Viewer**: A built-in release notes reader featuring a version history dropdown (browse the 10 most recent releases), auto-generated sticky Table of Contents with scroll-spy, colorful section badges (`Added`, `Fixed`, `Security`, etc.), syntax-highlighted code blocks with one-click copy buttons, and a live hero header showing the version and release date.
+- **Version History**: Users can browse and read release notes for any past version directly from within the app via the version dropdown in the "What's New" tab.
+
+### Fixed
+
+- **AI Setting Override**: Added strict backend validation to prevent AI command execution when AI is disabled in user settings.
+- **AI UX**: Added a dedicated "Enable AI Features" toggle in Settings to control the feature, and replaced the raw "Error" alert with a friendly "AI is disabled" info box with a Settings shortcut.
+- **AI Privacy Enforcement**: Prevented sensitive raw terminal output from leaking to third-party providers by implementing explicit opt-in blocks and aggressive redaction regex for tokens and passwords.
+- **Keyboard Navigation**: Fixed modal arrow-key navigation desyncing from the sidebar by properly registering the 'plugins' and 'ai' tabs.
+- **Code Quality**: Resolved Biome lint warnings (`useIterableCallbackReturn`) and trailing space MarkdownLint errors (`MD038`).
+
 ## [2.5.0] - 2026-03-01
 
 ### Added
@@ -13,7 +42,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Dual-mode AI**: Automatically detects intent — command requests return an executable shell command; questions and explanations return a prose answer. No mode switching required
 - **Chat Interface**: Full conversation history within each session; previous Q&A pairs are preserved above the current response with user bubbles (right) and AI responses (left)
 - **Query History Navigation**: Arrow Up/Down cycles through past queries; position badge shows current index (N/M); recent queries appear as clickable chips when the input is focused and empty
-- **Editable Commands**: AI-generated commands are editable inline in a terminal-style `$ ` block before executing; an "edited" indicator appears when the command has been modified
+- **Editable Commands**: AI-generated commands are editable inline in a terminal-style `$` block before executing; an "edited" indicator appears when the command has been modified
 - **Safety Classification**: Each command is classified as `SAFE`, `MODERATE`, or `DANGEROUS` with a color-coded badge and explanation; dangerous commands require an explicit "Run anyway" confirmation
 - **Save to Snippets**: Bookmark any AI-generated command directly to the Snippets panel under the "AI Generated" category
 - **Retry & Make Safer**: Re-run the same query or re-submit with a safety-first instruction to get a less destructive alternative
@@ -116,7 +145,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.2...HEAD
+[2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
+[2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0

@@ -1,4 +1,4 @@
-import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback } from 'react';
+import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
 import { usePlugins } from '../../context/PluginContext';
@@ -13,6 +13,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
+import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
 
 // Lazy Load Heavy Components
 const FileManager = lazy(() => import('../FileManager').then(module => ({ default: module.FileManager })));
@@ -130,6 +131,19 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 <Suspense fallback={<TabLoading />}>
                     <GlobalTunnelList />
                 </Suspense>
+            </div>
+        );
+    }
+
+    // Release Notes Tab
+    if (tab.type === 'release-notes') {
+        return (
+            <div className={cn(
+                "absolute inset-0 z-10 bg-app-bg",
+                !isActive && "hidden",
+                isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
+            )}>
+                <ReleaseNotesTab />
             </div>
         );
     }
@@ -412,6 +426,51 @@ export function MainLayout({ children }: { children: ReactNode }) {
     useEffect(() => {
         checkConfig();
     }, []);
+
+    // Version Tracking for Release Notes
+    const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
+    const versionChecked = useRef(false);
+
+    useEffect(() => {
+        // Only run once after settings have loaded
+        if (isLoadingSettings || versionChecked.current) return;
+        versionChecked.current = true;
+
+        const checkVersionAndShowNotes = async () => {
+            try {
+                const currentVersion = await ipc.invoke('app:getVersion');
+                const storedVersion = useAppStore.getState().settings.lastSeenVersion;
+
+                // Signal 1: 'zync-just-updated' flag is written by UpdateNotification
+                //           just before the Tauri updater restarts the app.
+                //           This is the reliable signal for auto-updates.
+                const justUpdated = localStorage.getItem('zync-just-updated') === 'true';
+
+                // Signal 2: version mismatch — catches manual installs / fresh installs
+                //           where lastSeenVersion is '' or an older value.
+                const versionMismatch = storedVersion !== currentVersion;
+
+                // Always consume the flag unconditionally — prevents stale flag from
+                // opening the tab on every subsequent launch if the app previously crashed.
+                if (justUpdated) {
+                    localStorage.removeItem('zync-just-updated');
+                }
+
+                if (versionMismatch) {
+                    openReleaseNotesTab();
+                }
+
+                // Always keep lastSeenVersion in sync
+                if (versionMismatch) {
+                    updateSettings({ lastSeenVersion: currentVersion });
+                }
+            } catch (err) {
+                console.error('Failed to resolve version for release notes tracking', err);
+            }
+        };
+
+        checkVersionAndShowNotes();
+    }, [isLoadingSettings, openReleaseNotesTab, updateSettings]);
 
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);

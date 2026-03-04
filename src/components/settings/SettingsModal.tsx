@@ -5,9 +5,9 @@ import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
 import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
+
 import { clsx } from 'clsx';
 import { Marketplace } from './Marketplace';
 
@@ -55,8 +55,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [isAppImage, setIsAppImage] = useState(false);
     const [contributors, setContributors] = useState<any[]>([]);
     const [stars, setStars] = useState<number | null>(null);
-    const [showReleaseNotes, setShowReleaseNotes] = useState(false);
-    const [releaseNotes, setReleaseNotes] = useState('');
+    const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
     const [autoUpdateCheck, setAutoUpdateCheck] = useState(false);
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
@@ -207,16 +206,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     }));
                 })
                 .catch(console.error);
-
-            // Fetch Release Notes if needed
-            if (!releaseNotes) {
-                fetch('https://api.github.com/repos/zync-sh/zync/releases/latest')
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.body) setReleaseNotes(data.body);
-                    })
-                    .catch(() => setReleaseNotes('Could not load release notes.'));
-            }
         }
     }, [isOpen, activeTab]);
 
@@ -313,7 +302,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             // Arrow keys for tab navigation
             if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                 e.preventDefault();
-                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'about'];
+                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'plugins', 'ai', 'about'];
                 const currentIndex = tabs.indexOf(activeTab);
                 let nextIndex: number;
 
@@ -1327,6 +1316,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                         {activeTab === 'ai' && (
                             <div className="space-y-6 animate-in fade-in duration-300">
+                                <Section title="General">
+                                    <div className="space-y-4">
+                                        <Toggle
+                                            label="Enable AI Features"
+                                            description="Allow AI translation and processing"
+                                            checked={settings.ai?.enabled ?? true}
+                                            onChange={(v) => updateAiSettings({ enabled: v })}
+                                        />
+                                    </div>
+                                </Section>
+
                                 <Section title="AI Provider">
                                     <div className="space-y-4">
                                         <div className="flex items-center justify-between py-2">
@@ -1405,15 +1405,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 <p className="text-xs text-[var(--color-app-muted)] mt-1">
                                                     {settings.ai?.provider === 'gemini' && (
                                                         <>Free tier available, no credit card needed.{' '}
-                                                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
+                                                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
                                                     )}
                                                     {settings.ai?.provider === 'openai' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
+                                                            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
                                                     )}
                                                     {settings.ai?.provider === 'claude' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
+                                                            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
                                                     )}
                                                 </p>
                                             </div>
@@ -1501,20 +1501,16 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         </p>
                                     )}
                                     <button
-                                        onClick={() => setShowReleaseNotes(!showReleaseNotes)}
+                                        onClick={() => {
+                                            openReleaseNotesTab();
+                                            onClose();
+                                        }}
                                         className="mt-3 w-full flex items-center justify-center gap-1.5 py-2 text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-accent)] transition-colors rounded-md hover:bg-[var(--color-app-surface)]/50"
                                     >
                                         <Gift size={12} />
                                         <span>What&apos;s New in v{appVersion}?</span>
-                                        <ChevronRight size={12} className={`transition-transform duration-200 ${showReleaseNotes ? 'rotate-90' : ''}`} />
+                                        <ChevronRight size={12} className="transition-transform duration-200" />
                                     </button>
-                                    {showReleaseNotes && (
-                                        <div className="mt-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/50 p-3 text-left max-h-52 overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200">
-                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h1]:text-sm [&>h2]:text-xs [&>h2]:font-bold [&>h3]:text-xs [&>h3]:font-semibold [&>p]:mb-2 [&>a]:text-[var(--color-app-accent)]">
-                                                {releaseNotes ? <ReactMarkdown>{releaseNotes}</ReactMarkdown> : 'Loading release notes...'}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
 
                                 {/* Links: Pill Grid */}
@@ -1661,14 +1657,17 @@ function Section({ title, children }: { title: string, children: React.ReactNode
 
 function Toggle({ label, description, checked, onChange }: { label: string, description: string, checked: boolean, onChange: (v: boolean) => void }) {
     return (
-        <div className="flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 transition-colors group">
+        <div
+            onClick={() => onChange(!checked)}
+            className="flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 transition-colors group cursor-pointer"
+        >
             <div className="flex-1">
                 <div className="text-sm font-medium text-[var(--color-app-text)]">{label}</div>
                 <div className="text-xs text-[var(--color-app-muted)] mt-0.5">{description}</div>
             </div>
             <button
-                onClick={() => onChange(!checked)}
-                className={`w-11 h-6 rounded-full transition-all relative ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
+                type="button"
+                className={`w-11 h-6 rounded-full transition-all relative pointer-events-none ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
             >
                 <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
             </button>
