@@ -5,7 +5,6 @@ import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
 import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { ToastContainer, showToast } from '../ui/Toast';
 import { Select } from '../ui/Select';
 
@@ -56,8 +55,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [isAppImage, setIsAppImage] = useState(false);
     const [contributors, setContributors] = useState<any[]>([]);
     const [stars, setStars] = useState<number | null>(null);
-    const [showReleaseNotes, setShowReleaseNotes] = useState(false);
-    const [releaseNotes, setReleaseNotes] = useState('');
+    const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
     const [autoUpdateCheck, setAutoUpdateCheck] = useState(false);
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
@@ -208,16 +206,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     }));
                 })
                 .catch(console.error);
-
-            // Fetch Release Notes if needed
-            if (!releaseNotes) {
-                fetch('https://api.github.com/repos/zync-sh/zync/releases/latest')
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.body) setReleaseNotes(data.body);
-                    })
-                    .catch(() => setReleaseNotes('Could not load release notes.'));
-            }
         }
     }, [isOpen, activeTab]);
 
@@ -1513,20 +1501,16 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         </p>
                                     )}
                                     <button
-                                        onClick={() => setShowReleaseNotes(!showReleaseNotes)}
+                                        onClick={() => {
+                                            openReleaseNotesTab();
+                                            onClose();
+                                        }}
                                         className="mt-3 w-full flex items-center justify-center gap-1.5 py-2 text-xs text-[var(--color-app-muted)] hover:text-[var(--color-app-accent)] transition-colors rounded-md hover:bg-[var(--color-app-surface)]/50"
                                     >
                                         <Gift size={12} />
                                         <span>What&apos;s New in v{appVersion}?</span>
-                                        <ChevronRight size={12} className={`transition-transform duration-200 ${showReleaseNotes ? 'rotate-90' : ''}`} />
+                                        <ChevronRight size={12} className="transition-transform duration-200" />
                                     </button>
-                                    {showReleaseNotes && (
-                                        <div className="mt-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/50 p-3 text-left max-h-52 overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-top-2 duration-200">
-                                            <div className="prose prose-invert prose-xs max-w-none text-[var(--color-app-text)] [&>ul]:list-disc [&>ul]:pl-4 [&>ol]:list-decimal [&>ol]:pl-4 [&>h1]:text-sm [&>h2]:text-xs [&>h2]:font-bold [&>h3]:text-xs [&>h3]:font-semibold [&>p]:mb-2 [&>a]:text-[var(--color-app-accent)]">
-                                                {releaseNotes ? <ReactMarkdown>{releaseNotes}</ReactMarkdown> : 'Loading release notes...'}
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
 
                                 {/* Links: Pill Grid */}
