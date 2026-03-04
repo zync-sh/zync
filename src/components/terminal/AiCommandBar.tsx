@@ -128,13 +128,14 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         if (!rawText.trim().startsWith("{")) return rawText;
 
         // look for the "answer" or "command" values in the partial JSON
-        const answerMatch = rawText.match(/"answer":\s*"([^"]*)/);
-        const commandMatch = rawText.match(/"command":\s*"([^"]*)/);
+        // uses a robust regex that handles escaped characters (like \")
+        const answerMatch = rawText.match(/"answer":\s*"((?:\\.|[^"\\])*)/);
+        const commandMatch = rawText.match(/"command":\s*"((?:\\.|[^"\\])*)/);
 
-        if (answerMatch) return answerMatch[1];
-        if (commandMatch) return commandMatch[1];
+        if (answerMatch) return answerMatch[1].replace(/\\"/g, '"');
+        if (commandMatch) return commandMatch[1].replace(/\\"/g, '"');
 
-        // while it's still outputing the initial JSON keys like {"type": ...}
+        // while it's still outputting the initial JSON keys like {"type": ...}
         // we return an empty string to keep the UI Clean
         return "";
     }
