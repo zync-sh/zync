@@ -944,7 +944,13 @@ async fn get_ollama_models_internal(config: &AiConfig) -> Result<Vec<String>, St
         .map(|arr| {
             arr.iter()
                 .filter_map(|m| m["name"].as_str())
-                .map(|s| s.split(':').next().unwrap_or(s).to_string())
+                .map(|s| {
+                    if s.ends_with(":latest") {
+                        s.split(':').next().unwrap_or(s).to_string()
+                    } else {
+                        s.to_string()
+                    }
+                })
                 .collect()
         })
         .unwrap_or_default();
