@@ -43,14 +43,34 @@ function slugify(text: string, usedSlugs?: Map<string, number>) {
     return baseSlug;
 }
 
+/**
+ * Parses a markdown string and extracts heading entries (h1–h3) for the Table of Contents.
+ *
+ * - Skips headings that appear inside fenced code blocks (``` ... ```).
+ * - Strips inline backtick spans from heading text so the TOC label is clean.
+ * - Produces unique slug IDs: if two headings share the same slug, subsequent ones
+ *   are suffixed with `-1`, `-2`, etc. to prevent duplicate anchor targets.
+ *
+ * @param markdown - Raw markdown body of a GitHub release.
+ * @returns An array of {@link TocEntry} objects ordered by appearance.
+ */
 function extractToc(markdown: string): TocEntry[] {
     const lines = markdown.split('\n');
     const entries: TocEntry[] = [];
     const usedSlugs = new Map<string, number>();
     let inFence = false;
     for (const line of lines) {
-        if (/^\s*
+        if (/^\s*```/.test(line)) { inFence = !inFence; continue; }
+        if (inFence) continue;
+        const m = line.match(/^(#{1,3})\s+(.+)/);
+        if (m) {
+            const text = m[2].replace(/`[^`]*`/g, s => s.slice(1, -1));
+            entries.push({ level: m[1].length, text, id: slugify(text, usedSlugs) });
+        }
+    }
+    return entries;
 }
+
 
 function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
