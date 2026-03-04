@@ -123,6 +123,22 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         return { value: id, label, short };
     };
 
+    // 
+    const getDisplayStreamingText = (rawText: string) => {
+        if (!rawText.trim().startsWith("{")) return rawText;
+
+        // look for the "answer" or "command" values in the partial JSON
+        const answerMatch = rawText.match(/"answer":\s*"([^"]*)/);
+        const commandMatch = rawText.match(/"command":\s*"([^"]*)/);
+
+        if (answerMatch) return answerMatch[1];
+        if (commandMatch) return commandMatch[1];
+
+        // while it's still outputing the initial JSON keys like {"type": ...}
+        // we return an empty string to keep the UI Clean
+        return "";
+    }
+
     // Build model list: dynamic (from API) → fallback static
     const currentModels: ModelOption[] = activeProviderValue === 'ollama'
         ? ollamaModels.map(m => ({ value: m, label: m, short: m }))
@@ -355,7 +371,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
 
     const isEdited = result && editedCommand !== result.command;
 
-    type ErrorKind = 'rate-limit' | 'billing' | 'invalid-key' | 'no-key' | 'connection' | 'disabled' | 'generic';
+    type ErrorKind = 'rate-limit' | 'billing' | 'invalid-key' | 'no-key' | 'connection' | 'model-not-found' | 'disabled' | 'generic';
     const classifyError = (msg: string): ErrorKind => {
         const e = msg.toLowerCase();
         if (e.includes('billing error') || e.includes('credit balance') || e.includes('purchase credits') || e.includes('insufficient_quota')) return 'billing';
@@ -363,6 +379,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         if (e.includes('invalid') && e.includes('key')) return 'invalid-key';
         if (e.includes('not configured')) return 'no-key';
         if (e.includes('ai is disabled') || e.includes('disabled in settings') || (e.includes('disabled') && e.includes('ai'))) return 'disabled';
+        if (e.includes('model') && (e.includes('not found') || e.includes('not exist'))) return 'model-not-found';
         if (e.includes('not running') || e.includes('econnrefused') || e.includes('connection')) return 'connection';
         return 'generic';
     };
@@ -417,6 +434,17 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
             hint: activeProvider.value === 'ollama'
                 ? "Ollama isn't running. Start it with 'ollama serve'."
                 : 'Could not reach the API. Check your network connection.',
+            action: { label: 'Retry', fn: () => { clearAiResult(); handleSubmitWithQuery(submittedQuery, false); } },
+        },
+        'model-not-found': {
+            icon: AlertTriangle,
+            color: 'text-orange-700 dark:text-orange-400',
+            bg: 'bg-orange-500/10 dark:bg-orange-500/5',
+            border: 'border-orange-500/30 dark:border-orange-500/15',
+            title: 'Model not found',
+            hint: activeProvider.value === 'ollama'
+                ? `The model '${activeModel}' isn't pulled yet. Run 'ollama pull ${activeModel}' in your terminal.`
+                : `The selected model '${activeModel}' is not available for this provider.`,
             action: { label: 'Retry', fn: () => { clearAiResult(); handleSubmitWithQuery(submittedQuery, false); } },
         },
         'disabled': {
@@ -666,7 +694,7 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
                                     <div className="flex-1 pt-1.5">
                                         {streamingText ? (
                                             <code className="text-sm font-mono text-app-text/80 whitespace-pre-wrap break-all">
-                                                {streamingText}
+                                                {getDisplayStreamingText(streamingText)}
                                                 <motion.span
                                                     className="inline-block w-1.5 h-3.5 bg-app-accent/60 ml-0.5 align-middle"
                                                     animate={{ opacity: [1, 0] }}
