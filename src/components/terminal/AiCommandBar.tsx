@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Sparkles, X, Copy, Play, AlertTriangle, ShieldCheck, ShieldAlert, ChevronDown, ArrowRight, Bookmark, RotateCw, Shield, Clock, KeyRound, WifiOff, Settings, CreditCard } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useDragControls } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import type { AiResult } from '../../store/aiSlice';
@@ -45,6 +45,8 @@ const DEFAULT_MODEL: Record<ProviderValue, string> = {
 interface AiCommandBarProps {
     connectionId?: string;
     activeTermId: string | null;
+    /** Optional ref to the element that constrains dragging. Falls back to window bounds. */
+    constraintRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 const SAFETY_CONFIG = {
@@ -65,7 +67,7 @@ const SAFETY_CONFIG = {
     },
 } as const;
 
-export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) {
+export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCommandBarProps) {
     const isOpen = useAppStore(state => state.aiCommandBarOpen);
     const isLoading = useAppStore(state => state.aiLoading);
     const result = useAppStore(state => state.aiResult);
@@ -107,6 +109,8 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const queryBeforeHistoryRef = useRef('');
     const modelFetchIdRef = useRef(0);
+    const dragHandleRef = useRef<HTMLDivElement>(null);
+    const dragControls = useDragControls();
 
     const activeProvider = PROVIDERS.find(p => p.value === aiSettings?.provider) ?? PROVIDERS[0];
     const activeProviderValue = activeProvider.value as ProviderValue;
@@ -481,16 +485,30 @@ export function AiCommandBar({ connectionId, activeTermId }: AiCommandBarProps) 
         <AnimatePresence>
             {isOpen && (
                 <motion.div
-                    initial={{ opacity: 0, y: -8, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                    drag
+                    dragMomentum={false}
+                    dragElastic={0}
+                    dragControls={dragControls}
+                    dragListener={false}
+                    dragConstraints={constraintRef ?? false}
+                    initial={{ opacity: 0, y: -8, scale: 0.98, x: '-50%' }}
+                    animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
+                    exit={{ opacity: 0, y: -8, scale: 0.98, x: '-50%' }}
                     transition={{ type: 'spring', duration: 0.2, bounce: 0.1 }}
-                    className="absolute top-3 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3"
+                    style={{ top: 12, left: '50%', position: 'absolute' }}
+                    className="z-50 w-full max-w-xl px-3"
                 >
                     <div className="bg-app-panel border border-app-border rounded-xl shadow-2xl ring-1 ring-black/10 dark:ring-white/5 flex flex-col">
 
                         {/* ── Header: icon + provider + model + close ── */}
-                        <div className="flex items-center gap-2 px-3 py-2 border-b border-app-border/40">
+                        <div
+                            ref={dragHandleRef}
+                            onPointerDown={(e) => {
+                                if ((e.target as HTMLElement).closest('button')) return;
+                                dragControls.start(e);
+                            }}
+                            className="flex items-center gap-2 px-3 py-2 border-b border-app-border/40 cursor-grab active:cursor-grabbing select-none"
+                        >
                             <Sparkles className="w-3.5 h-3.5 text-app-accent shrink-0" />
                             <span className="text-[11px] font-medium text-app-muted mr-1">AI</span>
 

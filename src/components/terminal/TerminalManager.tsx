@@ -1,5 +1,5 @@
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { TerminalComponent } from '../Terminal';
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -24,6 +24,7 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
     const openAiCommandBar = useAppStore(state => state.openAiCommandBar);
+    const terminalContentRef = useRef<HTMLDivElement>(null);
 
 
     // Derived State - Removed (now selected directly)
@@ -163,8 +164,8 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             )}
 
             {/* Terminal Content Area */}
-            <div className="flex-1 overflow-hidden relative bg-app-bg">
-                <AiCommandBar connectionId={activeConnectionId} activeTermId={activeTabId} />
+            <div ref={terminalContentRef} className="flex-1 overflow-hidden relative bg-app-bg">
+                <AiCommandBar connectionId={activeConnectionId} activeTermId={activeTabId} constraintRef={terminalContentRef} />
                 {tabs.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-app-muted">
                         <TerminalIcon size={48} className="mb-4 opacity-20" />
