@@ -8,16 +8,43 @@ export interface TerminalTab {
 }
 
 export interface TerminalSlice {
-    // Keyed by connectionId
+    /** Keyed by connectionId, stores the list of terminal tabs for each connection */
     terminals: Record<string, TerminalTab[]>;
+    /** Keyed by connectionId, stores the ID of the currently active terminal tab */
     activeTerminalIds: Record<string, string | null>;
 
     // Actions
-    createTerminal: (connectionId: string) => string; // Returns new ID
+    /**
+     * Creates a new terminal tab for a specific connection.
+     * @param connectionId The ID of the connection to create the terminal for.
+     * @returns The generated ID of the new terminal.
+     */
+    createTerminal: (connectionId: string) => string;
+
+    /**
+     * Ensures at least one terminal exists for a connection. Creates one if none exist.
+     * @param connectionId The ID of the connection to check.
+     */
     ensureTerminal: (connectionId: string) => void;
+
+    /**
+     * Closes a specific terminal tab and cleans up associated backend processes and AI history.
+     * @param connectionId The ID of the connection the terminal belongs to.
+     * @param termId The ID of the terminal to close.
+     */
     closeTerminal: (connectionId: string, termId: string) => void;
+
+    /**
+     * Sets a specific terminal as the active one for a connection.
+     * @param connectionId The ID of the connection.
+     * @param termId The ID of the terminal to make active.
+     */
     setActiveTerminal: (connectionId: string, termId: string) => void;
-    // Helper to clear terminals for a connection
+
+    /**
+     * Clears all terminal tabs for a specific connection and prunes all associated AI history.
+     * @param connectionId The ID of the connection to clear terminals for.
+     */
     clearTerminals: (connectionId: string) => void;
 }
 
@@ -28,6 +55,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
     terminals: {},
     activeTerminalIds: {},
 
+    /** @inheritdoc */
     createTerminal: (connectionId) => {
         const newId = `term-${crypto.randomUUID()}`;
         set(state => {
@@ -48,6 +76,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         return newId;
     },
 
+    /** @inheritdoc */
     ensureTerminal: (connectionId) => {
         const state = get();
         const currentTabs = state.terminals[connectionId] || [];
@@ -56,6 +85,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         }
     },
 
+    /** @inheritdoc */
     closeTerminal: (connectionId, termId) => {
         // Kill backend process first
         ipc.send('terminal:kill', { termId });
@@ -74,12 +104,10 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             }
 
             // 🗑️ Free AI conversation history for the closed tab (memory-safe)
-            const nextConversations = { ...state.aiConversations };
-            delete nextConversations[termId];
+            const { [termId]: _, ...nextConversations } = state.aiConversations;
 
             // 🗑️ Free AI display history for the closed tab
-            const nextDisplay = { ...state.aiDisplayHistory };
-            delete nextDisplay[termId];
+            const { [termId]: __, ...nextDisplay } = state.aiDisplayHistory;
 
             return {
                 terminals: {
@@ -96,6 +124,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         });
     },
 
+    /** @inheritdoc */
     setActiveTerminal: (connectionId, termId) => {
         set(state => ({
             activeTerminalIds: {
@@ -105,6 +134,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         }));
     },
 
+    /** @inheritdoc */
     clearTerminals: (connectionId) => {
         set(state => {
             // Kill all known terminals for this connection and destroy cached instances
@@ -120,9 +150,20 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             const newActiveIds = { ...state.activeTerminalIds };
             delete newActiveIds[connectionId];
 
+            // 🗑️ Prune AI history for all cleared terminals
+            const termIdsToRemove = new Set(tabs.map(t => t.id));
+            const nextConversations = Object.fromEntries(
+                Object.entries(state.aiConversations).filter(([id]) => !termIdsToRemove.has(id))
+            );
+            const nextDisplay = Object.fromEntries(
+                Object.entries(state.aiDisplayHistory).filter(([id]) => !termIdsToRemove.has(id))
+            );
+
             return {
                 terminals: newTerminals,
-                activeTerminalIds: newActiveIds
+                activeTerminalIds: newActiveIds,
+                aiConversations: nextConversations,
+                aiDisplayHistory: nextDisplay
             };
         });
     }
