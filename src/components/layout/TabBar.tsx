@@ -206,15 +206,13 @@ export function TabBar() {
                     </div>
                 )}
 
-                {/* Show Sidebar Toggle (Shift left if Mac) */}
+                {/* Show Sidebar Toggle */}
                 {settings.sidebarCollapsed && (
                     <button
                         onClick={() => updateSettings({ sidebarCollapsed: false })}
-                        className={cn(
-                            "p-1.5 text-app-muted hover:text-app-text hover:bg-app-surface rounded-md transition-colors drag-none",
-                            isMac ? "ml-0" : "ml-3"
-                        )}
+                        className="h-8 w-8 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center"
                         title="Show Sidebar"
+                        aria-label="Show Sidebar"
                     >
                         <PanelLeftOpen size={16} />
                     </button>
