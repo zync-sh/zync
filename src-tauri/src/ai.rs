@@ -51,15 +51,7 @@ pub struct AiStreamChunk {
     pub error: Option<String>,
 }
 
-/// Parsed AI response returned to the frontend after a translation or chat query.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AiTranslateResponse {
-    pub command: String,
-    pub explanation: String,
-    pub safety: String,
-    #[serde(default)]
-    pub answer: Option<String>,
-}
+pub use crate::utils::toon::{AiTranslateResponse, ChatMessage, encode_history_toon, parse_response};
 
 /// Payload emitted on the `ai:stream-done` event once the full response has been streamed and parsed.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -112,19 +104,28 @@ pub fn read_ai_config(app: &AppHandle) -> AiConfig {
 const SYSTEM_PROMPT: &str = "\
 You are a terminal assistant. Analyze the user's request and pick one of two response modes.\n\
 \n\
-MODE 1 — Shell command: the user wants to DO something in a terminal (run, install, find, check, kill, list, copy, move, compress, monitor, etc.).\n\
-Respond with: {\"command\": \"the shell command\", \"explanation\": \"brief explanation\", \"safety\": \"safe|moderate|dangerous\"}\n\
-For multi-step tasks chain commands with &&.\n\
-Safety: safe=read-only (ls,cat,ps,df), moderate=modifying but reversible (mkdir,cp,git commit), dangerous=destructive/irreversible (rm -rf,dd,DROP TABLE,kill -9,mkfs).\n\
+MODE 1 — Shell command: the user wants to DO something in a terminal.\n\
+Respond ONLY in TOON format (no markdown, no backticks, no JSON, no extra text):\n\
+type: command\n\
+command: <the shell command>\n\
+explanation: <brief explanation>\n\
+safety: safe|moderate|dangerous\n\
 \n\
-MODE 2 — Answer: the user is asking a question or wants an explanation (what is, how does, explain, tell me, describe, why, difference between, etc.).\n\
-Respond with: {\"type\": \"chat\", \"answer\": \"clear concise answer in 1-3 sentences\"}\n\
+Safety: safe=read-only, moderate=reversible changes, dangerous=destructive/irreversible.\n\
 \n\
-Respond ONLY with valid JSON (no markdown, no backticks, no extra text).";
+MODE 2 — Answer: the user asks a question or wants an explanation.\n\
+Respond ONLY in TOON format:\n\
+type: chat\n\
+answer: <concise answer in 1-3 sentences>\n\
+\n\
+IMPORTANT: Respond ONLY in TOON key-value format. No JSON, no markdown, no backticks.";
 
-/// Build the user-facing portion of the prompt, injecting OS/shell/CWD context and
-/// up to 500 characters of recent terminal output before the user's query.
-fn build_user_prompt(query: &str, context: &TerminalContext) -> String {
+/// Encode the last N conversation turns as a compact TOON tabular block.
+/// Only the last 6 exchanges are used to cap token usage.
+
+/// Build the user-facing portion of the prompt, injecting OS/shell/CWD context,
+/// TOON-encoded conversation history, and up to 500 chars of recent terminal output.
+fn build_user_prompt(query: &str, context: &TerminalContext, history: &[ChatMessage]) -> String {
     let mut prompt = format!(
         "OS: {os}\nShell: {shell}\nCWD: {cwd}\nConnection: {conn}",
         os = context.os.as_deref().unwrap_or("Linux"),
@@ -133,9 +134,13 @@ fn build_user_prompt(query: &str, context: &TerminalContext) -> String {
         conn = context.connection_type,
     );
 
+    // Inject conversation history as TOON block (token-efficient)
+    if let Some(toon_history) = encode_history_toon(history) {
+        prompt.push_str(&format!("\n\nConversation history:\n{}", toon_history));
+    }
+
     if let Some(output) = context.recent_output.as_deref() {
         if !output.is_empty() {
-            // Limit to last 500 chars to avoid bloating the prompt (find safe UTF-8 boundary)
             let trimmed = if output.len() > 500 {
                 let start = output.len() - 500;
                 let safe_start = output.char_indices()
@@ -154,86 +159,26 @@ fn build_user_prompt(query: &str, context: &TerminalContext) -> String {
     prompt
 }
 
-/// Combined prompt for providers that don't support system messages (Ollama, Gemini)
-fn build_single_prompt(query: &str, context: &TerminalContext) -> String {
-    format!("{}\n\n{}", SYSTEM_PROMPT, build_user_prompt(query, context))
+/// Combined prompt for providers that don't have separate system message support.
+fn build_single_prompt(query: &str, context: &TerminalContext, history: &[ChatMessage]) -> String {
+    format!("{}\n\n{}", SYSTEM_PROMPT, build_user_prompt(query, context, history))
 }
 
-// ── Response parsing ──
-
-/// Strip markdown code fences and extract the first `{...}` JSON object from model output.
-/// Handles providers that wrap responses in triple-backtick blocks despite being told not to.
-fn extract_json(text: &str) -> String {
-    let text = text.trim();
-    let text = if text.starts_with("```") {
-        text.lines()
-            .skip(1)
-            .take_while(|l| !l.starts_with("```"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        text.to_string()
-    };
-
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            return text[start..=end].to_string();
-        }
-    }
-    text
-}
-
-/// Parse raw model output into an [`AiTranslateResponse`].
+/// Parse a TOON key-value response from the AI into an [`AiTranslateResponse`].
 ///
-/// Handles both command mode (`{"command": "...", "safety": "..."}`) and
-/// chat mode (`{"type": "chat", "answer": "..."}`). Falls back to a
-/// `dangerous` sentinel if the JSON is missing or malformed.
-fn parse_response(text: &str) -> AiTranslateResponse {
-    let cleaned = extract_json(text);
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {
-        // Chat / answer mode
-        if val.get("type").and_then(|t| t.as_str()) == Some("chat") {
-            let answer = val.get("answer").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if !answer.is_empty() {
-                return AiTranslateResponse {
-                    command: String::new(),
-                    explanation: String::new(),
-                    safety: "safe".to_string(),
-                    answer: Some(answer),
-                };
-            }
-        }
+/// Expected TOON response for commands:
+///   type: command
+///   command: <shell command>
+///   explanation: <brief explanation>
+///   safety: safe|moderate|dangerous
+///
+/// Expected TOON response for answers:
+///   type: chat
+///   answer: <text>
+///
+/// Falls back to JSON parsing for backwards-compatibility with models that
+/// respond in JSON despite being told not to.
 
-        let command = val.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let explanation = val.get("explanation").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let safety = val.get("safety").and_then(|v| v.as_str()).unwrap_or("moderate").to_string();
-
-        // Validate: command must be non-empty
-        if command.is_empty() {
-            return AiTranslateResponse {
-                command: String::new(),
-                explanation: "AI returned an empty command. Try rephrasing your query.".to_string(),
-                safety: "dangerous".to_string(),
-                answer: None,
-            };
-        }
-
-        let safety = match safety.as_str() {
-            "safe" | "moderate" | "dangerous" => safety,
-            _ => "moderate".to_string(),
-        };
-
-        return AiTranslateResponse { command, explanation, safety, answer: None };
-    }
-
-    // Fallback: could not parse JSON — mark as dangerous to prevent auto-execute
-    AiTranslateResponse {
-        command: String::new(),
-        explanation: "AI response was not valid JSON. Try again.".to_string(),
-        safety: "dangerous".to_string(),
-        answer: None,
-    }
-}
 
 // ── HTTP client ──
 
@@ -292,10 +237,10 @@ fn is_billing_error(msg: &str) -> bool {
 // ── Provider implementations ──
 
 /// Send a single (non-streaming) request to a local Ollama instance and return the raw text response.
-async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig) -> Result<String, String> {
+async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
     let base_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
     let model = config.model.as_deref().unwrap_or("llama3.2");
-    let prompt = build_single_prompt(query, context);
+    let prompt = build_single_prompt(query, context, history);
     let client = make_client().await?;
 
     let body = serde_json::json!({
@@ -322,11 +267,11 @@ async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig) 
 }
 
 /// Send a single (non-streaming) request to the Gemini API and return the raw text response.
-async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig) -> Result<String, String> {
+async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "Gemini API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
-    let prompt = build_single_prompt(query, context);
+    let prompt = build_single_prompt(query, context, history);
     let client = make_client().await?;
 
     let body = serde_json::json!({
@@ -373,11 +318,11 @@ async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig) 
 }
 
 /// Send a single (non-streaming) request to the OpenAI Chat Completions API and return the raw text response.
-async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig) -> Result<String, String> {
+async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "OpenAI API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gpt-4o-mini");
-    let user_prompt = build_user_prompt(query, context);
+    let user_prompt = build_user_prompt(query, context, history);
     let client = make_client().await?;
 
     let body = serde_json::json!({
@@ -425,11 +370,11 @@ async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig) 
 }
 
 /// Send a single (non-streaming) request to the Anthropic Messages API and return the raw text response.
-async fn call_claude(query: &str, context: &TerminalContext, config: &AiConfig) -> Result<String, String> {
+async fn call_claude(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "Claude API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("claude-haiku-4-5-20251001");
-    let user_prompt = build_user_prompt(query, context);
+    let user_prompt = build_user_prompt(query, context, history);
     let client = make_client().await?;
 
     let body = serde_json::json!({
@@ -488,10 +433,10 @@ pub async fn translate(
     config: AiConfig,
 ) -> Result<AiTranslateResponse, String> {
     let raw = match config.provider.as_str() {
-        "ollama" => call_ollama(&query, &context, &config).await,
-        "gemini" => call_gemini(&query, &context, &config).await,
-        "openai" => call_openai(&query, &context, &config).await,
-        "claude" => call_claude(&query, &context, &config).await,
+        "ollama" => call_ollama(&query, &context, &config, &[]).await,
+        "gemini" => call_gemini(&query, &context, &config, &[]).await,
+        "openai" => call_openai(&query, &context, &config, &[]).await,
+        "claude" => call_claude(&query, &context, &config, &[]).await,
         other => Err(format!("Unknown AI provider: {}", other)),
     };
 
@@ -614,11 +559,11 @@ async fn read_sse_stream(
 /// Stream a response from Ollama using newline-delimited JSON (`{"response":"token","done":false}`).
 /// Emits `ai:stream-chunk` events for each token and returns the full accumulated text.
 async fn stream_ollama(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig,
+    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
 ) -> Result<String, String> {
     let base_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
     let model = config.model.as_deref().unwrap_or("llama3.2");
-    let prompt = build_single_prompt(query, context);
+    let prompt = build_single_prompt(query, context, history);
     let client = make_stream_client().await?;
 
     let body = serde_json::json!({
@@ -701,12 +646,12 @@ async fn stream_ollama(
 /// Stream a response from OpenAI Chat Completions using SSE (`data: {...}` lines).
 /// Emits `ai:stream-chunk` events for each token and returns the full accumulated text.
 async fn stream_openai(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig,
+    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
 ) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "OpenAI API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gpt-4o-mini");
-    let user_prompt = build_user_prompt(query, context);
+    let user_prompt = build_user_prompt(query, context, history);
     let client = make_stream_client().await?;
 
     let body = serde_json::json!({
@@ -751,12 +696,12 @@ async fn stream_openai(
 /// Stream a response from the Anthropic Messages API using SSE (`data: {...}` lines).
 /// Emits `ai:stream-chunk` events for each `content_block_delta` token.
 async fn stream_claude(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig,
+    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
 ) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "Claude API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("claude-haiku-4-5-20251001");
-    let user_prompt = build_user_prompt(query, context);
+    let user_prompt = build_user_prompt(query, context, history);
     let client = make_stream_client().await?;
 
     let body = serde_json::json!({
@@ -807,12 +752,12 @@ async fn stream_claude(
 /// Stream a response from the Gemini API using its SSE endpoint (`streamGenerateContent?alt=sse`).
 /// Emits `ai:stream-chunk` events for each candidate text delta.
 async fn stream_gemini(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig,
+    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
 ) -> Result<String, String> {
     let api_key = config.api_key()
         .ok_or_else(|| "Gemini API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
-    let prompt = build_single_prompt(query, context);
+    let prompt = build_single_prompt(query, context, history);
     let client = make_stream_client().await?;
 
     let body = serde_json::json!({
@@ -859,12 +804,13 @@ pub async fn translate_stream(
     context: TerminalContext,
     request_id: String,
     config: AiConfig,
+    history: Vec<ChatMessage>,
 ) {
     let raw = match config.provider.as_str() {
-        "ollama" => stream_ollama(&app, &request_id, &query, &context, &config).await,
-        "gemini" => stream_gemini(&app, &request_id, &query, &context, &config).await,
-        "openai" => stream_openai(&app, &request_id, &query, &context, &config).await,
-        "claude" => stream_claude(&app, &request_id, &query, &context, &config).await,
+        "ollama" => stream_ollama(&app, &request_id, &query, &context, &config, &history).await,
+        "gemini" => stream_gemini(&app, &request_id, &query, &context, &config, &history).await,
+        "openai" => stream_openai(&app, &request_id, &query, &context, &config, &history).await,
+        "claude" => stream_claude(&app, &request_id, &query, &context, &config, &history).await,
         other => Err(format!("Unknown AI provider: {}", other)),
     };
 

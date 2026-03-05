@@ -73,6 +73,14 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
             }
 
+            // 🗑️ Free AI conversation history for the closed tab (memory-safe)
+            const nextConversations = { ...state.aiConversations };
+            delete nextConversations[termId];
+
+            // 🗑️ Free AI display history for the closed tab
+            const nextDisplay = { ...state.aiDisplayHistory };
+            delete nextDisplay[termId];
+
             return {
                 terminals: {
                     ...state.terminals,
@@ -81,7 +89,9 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 activeTerminalIds: {
                     ...state.activeTerminalIds,
                     [connectionId]: newActiveId
-                }
+                },
+                aiConversations: nextConversations,
+                aiDisplayHistory: nextDisplay,
             };
         });
     },

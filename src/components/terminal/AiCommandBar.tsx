@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, X, Copy, Play, AlertTriangle, ShieldCheck, ShieldAlert, ChevronDown, ArrowRight, Bookmark, RotateCw, Shield, Clock, KeyRound, WifiOff, Settings, CreditCard } from 'lucide-react';
+import { Sparkles, X, Copy, Play, AlertTriangle, AlertCircle, ShieldCheck, ShieldAlert, ChevronDown, ArrowRight, Bookmark, RotateCw, Shield, Clock, KeyRound, WifiOff, Settings, CreditCard, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence, useDragControls } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
-import type { AiResult } from '../../store/aiSlice';
 import { collectTerminalContext } from '../../lib/aiContext';
 
 const PROVIDERS = [
@@ -88,6 +87,14 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
     const addSnippet = useAppStore(state => state.addSnippet);
     const showToast = useAppStore(state => state.showToast);
     const openSettings = useAppStore(state => state.openSettings);
+    const addToDisplayHistory = useAppStore(state => state.addToDisplayHistory);
+    const aiDisplayHistory = useAppStore(state => state.aiDisplayHistory);
+    const clearConversation = useAppStore(state => state.clearConversation);
+    const clearDisplayHistory = useAppStore(state => state.clearDisplayHistory);
+    const clearAiQueryHistory = useAppStore(state => state.clearAiQueryHistory);
+
+    // Display history for this terminal tab (persists across panel close/reopen)
+    const chatHistory = activeTermId ? (aiDisplayHistory[activeTermId] || []) : [];
 
     const [query, setQuery] = useState('');
     const [copied, setCopied] = useState(false);
@@ -101,7 +108,6 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
     const [snippetSaved, setSnippetSaved] = useState(false);
     const [inputFocused, setInputFocused] = useState(false);
     const [submittedQuery, setSubmittedQuery] = useState('');
-    const [chatHistory, setChatHistory] = useState<{ query: string; result: AiResult | null; error: string | null }[]>([]);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const providerRef = useRef<HTMLDivElement>(null);
     const modelRef = useRef<HTMLDivElement>(null);
@@ -129,20 +135,55 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
 
     // 
     const getDisplayStreamingText = (rawText: string) => {
-        if (!rawText.trim().startsWith("{")) return rawText;
+        const text = rawText.trim();
+        if (!text) return "";
 
-        // look for the "answer" or "command" values in the partial JSON
-        // uses a robust regex that handles escaped characters (like \")
-        const answerMatch = rawText.match(/"answer":\s*"((?:\\.|[^"\\])*)/);
-        const commandMatch = rawText.match(/"command":\s*"((?:\\.|[^"\\])*)/);
+        // 1. Handle JSON streaming
+        if (text.startsWith("{")) {
+            const answerMatch = rawText.match(/"answer":\s*"((?:\\.|[^"\\])*)/);
+            const commandMatch = rawText.match(/"command":\s*"((?:\\.|[^"\\])*)/);
+            if (answerMatch) return answerMatch[1].replace(/\\"/g, '"');
+            if (commandMatch) return commandMatch[1].replace(/\\"/g, '"');
+            return ""; // Hide metadata/keys while streaming
+        }
 
-        if (answerMatch) return answerMatch[1].replace(/\\"/g, '"');
-        if (commandMatch) return commandMatch[1].replace(/\\"/g, '"');
+        // 2. Handle TOON streaming (keys like type:, answer:, etc.)
+        const lines = rawText.split('\n');
+        let hasKeys = false;
+        let currentField = "";
+        const fields: Record<string, string> = {};
 
-        // while it's still outputting the initial JSON keys like {"type": ...}
-        // we return an empty string to keep the UI Clean
-        return "";
-    }
+        for (const line of lines) {
+            const colonPos = line.indexOf(':');
+            // A key is likely if colon is early and followed by known TOON fields
+            if (colonPos > 0 && colonPos < 20) {
+                const keyCandidate = line.slice(0, colonPos).trim().toLowerCase();
+                const val = line.slice(colonPos + 1).trim();
+
+                const isKey = ["type", "answer", "ans", "command", "cmd", "explanation", "expl", "safety", "desc"].includes(keyCandidate);
+                if (isKey) {
+                    hasKeys = true;
+                    if (["answer", "ans"].includes(keyCandidate)) currentField = "answer";
+                    else if (["command", "cmd"].includes(keyCandidate)) currentField = "command";
+                    else if (["explanation", "expl", "desc"].includes(keyCandidate)) currentField = "explanation";
+                    else currentField = ""; // Ignore type/safety metadata
+
+                    if (currentField) fields[currentField] = val;
+                    continue;
+                }
+            }
+
+            if (currentField) {
+                fields[currentField] = (fields[currentField] || "") + (fields[currentField] ? "\n" : "") + line;
+            }
+        }
+
+        // If no structured keys were found, it's just raw text
+        if (!hasKeys) return rawText;
+
+        // Priority for display: answer > command > explanation
+        return fields.answer || fields.command || fields.explanation || "";
+    };
 
     // Build model list: dynamic (from API) → fallback static
     const currentModels: ModelOption[] = activeProviderValue === 'ollama'
@@ -200,14 +241,13 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
         if (result?.command) setEditedCommand(result.command);
     }, [result?.command]);
 
-    // Focus input on open, reset state
+    // Focus input on open, reset transient state (but NOT chat history — that persists)
     useEffect(() => {
         if (isOpen) {
             setQuery('');
             setEditedCommand('');
             setSnippetSaved(false);
             setSubmittedQuery('');
-            setChatHistory([]);
             clearAiResult();
             queryBeforeHistoryRef.current = '';
             setTimeout(() => inputRef.current?.focus(), 50);
@@ -242,8 +282,20 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
     }, [providerOpen, modelOpen]);
 
     const handleClose = () => {
+        // Archive the current active exchange to display history before closing,
+        // so it reappears when the panel is reopened.
+        if (submittedQuery && (result || error) && activeTermId) {
+            // Avoid duplicate if it was already archived (e.g. user submitted another query)
+            const existing = aiDisplayHistory[activeTermId] || [];
+            const alreadyArchived = existing.length > 0 &&
+                existing[existing.length - 1].query === submittedQuery;
+            if (!alreadyArchived) {
+                addToDisplayHistory(activeTermId, { query: submittedQuery, result, error });
+            }
+        }
         closeAiCommandBar();
         setQuery('');
+        setSubmittedQuery('');
         setTimeout(() => window.dispatchEvent(new CustomEvent('ssh-ui:term-focus')), 50);
     };
 
@@ -251,13 +303,15 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
         if (!q.trim() || isLoading || activeProviderNeedsSetup) return;
         // Archive current result/error before overwriting with the new query
         if (saveToHistory && submittedQuery && (result || error)) {
-            setChatHistory(prev => [...prev, { query: submittedQuery, result, error }]);
+            if (activeTermId) {
+                addToDisplayHistory(activeTermId, { query: submittedQuery, result, error });
+            }
         }
         setSubmittedQuery(q.trim());
         pushAiHistory(q.trim());
         setAiHistoryIndex(-1);
         const context = await collectTerminalContext(connectionId, activeTermId, { includeRecentOutput: true, redact: true });
-        await submitAiQuery(q.trim(), context);
+        await submitAiQuery(q.trim(), context, activeTermId);
     };
 
     const handleSubmit = () => {
@@ -267,10 +321,10 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
     };
 
     const handleExecute = () => {
-        const cmd = editedCommand || result?.command;
+        const cmd = (editedCommand || result?.command || '').trim();
         if (!cmd) return;
         window.dispatchEvent(new CustomEvent('zync:terminal:send', {
-            detail: { connectionId, text: cmd + '\n' }
+            detail: { connectionId, text: cmd + '\r' }
         }));
         handleClose();
     };
@@ -633,6 +687,24 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
 
                             <div className="flex-1" />
 
+                            {(chatHistory.length > 0 || result || error) && activeTermId && (
+                                <button
+                                    onClick={() => {
+                                        clearConversation(activeTermId);
+                                        clearDisplayHistory(activeTermId);
+                                        clearAiQueryHistory();
+                                        setQuery('');
+                                        setSubmittedQuery('');
+                                        clearAiResult();
+                                        setTimeout(() => inputRef.current?.focus(), 50);
+                                    }}
+                                    className="p-1 mx-1 rounded text-app-muted hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                                    title="Clear chat history"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+
                             <button
                                 onClick={handleClose}
                                 className="p-1 rounded text-app-muted hover:text-app-text hover:bg-app-surface transition-colors"
@@ -675,20 +747,41 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
                                             {item.query}
                                         </div>
                                     </div>
-                                    {/* AI response (compact, no actions) */}
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 group/msg">
                                         <div className="w-5 h-5 rounded-full bg-app-surface flex items-center justify-center shrink-0 mt-0.5">
                                             <Sparkles className="w-2.5 h-2.5 text-app-accent/50" />
                                         </div>
-                                        <div className="flex-1 min-w-0 pt-0.5 opacity-60">
+                                        <div className="flex-1 min-w-0 pt-0.5">
                                             {item.result?.answer && (
-                                                <p className="text-sm text-app-text leading-relaxed line-clamp-3">{item.result.answer}</p>
+                                                <p className="text-sm text-app-text/60 leading-relaxed">{item.result.answer}</p>
                                             )}
                                             {item.result?.command && !item.result.answer && (
-                                                <code className="text-sm font-mono text-app-text">$ {item.result.command}</code>
+                                                <div className="flex flex-col gap-1.5">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <code className="text-sm font-mono text-app-text/70">$ {item.result.command}</code>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (item.result?.command) {
+                                                                    navigator.clipboard.writeText(item.result.command);
+                                                                    showToast('success', 'Command copied');
+                                                                }
+                                                            }}
+                                                            className="opacity-0 group-hover/msg:opacity-100 p-1 rounded hover:bg-app-surface text-app-accent/50 hover:text-app-accent transition-all"
+                                                            title="Copy command"
+                                                        >
+                                                            <Copy className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
+                                                    {item.result.explanation && (
+                                                        <p className="text-[11px] text-app-muted/60 italic">{item.result.explanation}</p>
+                                                    )}
+                                                </div>
                                             )}
                                             {item.error && !item.result && (
-                                                <p className="text-xs text-red-400/60">Error</p>
+                                                <p className="text-xs text-red-400/50 italic flex items-center gap-1">
+                                                    <AlertCircle className="w-3 h-3" />
+                                                    {item.error}
+                                                </p>
                                             )}
                                         </div>
                                     </div>

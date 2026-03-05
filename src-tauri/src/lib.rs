@@ -1,3 +1,4 @@
+mod utils;
 mod commands;
 mod types;
 mod pty;

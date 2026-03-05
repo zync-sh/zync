@@ -10,6 +10,19 @@ export interface AiResult {
     answer?: string;
 }
 
+/** A single message in the AI conversation history (sent to backend as TOON-encoded context). */
+export interface ChatMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+/** A single displayed chat entry in the AI Command Bar UI. */
+export interface AiDisplayEntry {
+    query: string;
+    result: AiResult | null;
+    error: string | null;
+}
+
 interface AiStreamChunkPayload {
     requestId: string;
     chunk: string;
@@ -32,15 +45,31 @@ export interface AiSlice {
     aiQueryHistory: string[];
     aiHistoryIndex: number;
 
+    /** Per-terminal-tab conversation history (TOON context). Keyed by termId. Cleared when tab is closed. */
+    aiConversations: Record<string, ChatMessage[]>;
+    /** Per-terminal-tab display history (UI chat entries). Keyed by termId. Cleared when tab is closed. */
+    aiDisplayHistory: Record<string, AiDisplayEntry[]>;
+
     openAiCommandBar: () => void;
     closeAiCommandBar: () => void;
-    submitAiQuery: (query: string, context: Record<string, any>) => Promise<void>;
+    submitAiQuery: (query: string, context: Record<string, any>, termId: string | null) => Promise<void>;
     clearAiResult: () => void;
     pushAiHistory: (query: string) => void;
+    clearAiQueryHistory: () => void;
     setAiHistoryIndex: (index: number) => void;
     checkOllama: () => Promise<boolean>;
     getOllamaModels: () => Promise<string[]>;
     getProviderModels: () => Promise<string[]>;
+
+    /** Add a message to a terminal tab's conversation history. */
+    addToConversation: (termId: string, message: ChatMessage) => void;
+    /** Clear conversation history for a terminal tab (called on tab close). */
+    clearConversation: (termId: string) => void;
+
+    /** Append a display entry to a terminal tab's chat UI history. */
+    addToDisplayHistory: (termId: string, entry: AiDisplayEntry) => void;
+    /** Clear display history for a terminal tab (called on tab close). */
+    clearDisplayHistory: (termId: string) => void;
 }
 
 export const createAiSlice: StateCreator<AppStore, [], [], AiSlice> = (set, get) => ({
@@ -51,25 +80,64 @@ export const createAiSlice: StateCreator<AppStore, [], [], AiSlice> = (set, get)
     aiStreamingText: '',
     aiQueryHistory: [],
     aiHistoryIndex: -1,
+    aiConversations: {},
+    aiDisplayHistory: {},
 
     openAiCommandBar: () => set({ aiCommandBarOpen: true, aiResult: null, aiError: null, aiStreamingText: '', aiHistoryIndex: -1 }),
     closeAiCommandBar: () => set({ aiCommandBarOpen: false, aiLoading: false, aiStreamingText: '' }),
     clearAiResult: () => set({ aiResult: null, aiError: null, aiStreamingText: '' }),
+
+    addToConversation: (termId, message) => set(state => {
+        const existing = state.aiConversations[termId] || [];
+        return {
+            aiConversations: {
+                ...state.aiConversations,
+                [termId]: [...existing, message],
+            }
+        };
+    }),
+
+    clearConversation: (termId) => set(state => {
+        const next = { ...state.aiConversations };
+        delete next[termId];
+        return { aiConversations: next };
+    }),
+
+    addToDisplayHistory: (termId, entry) => set(state => {
+        const existing = state.aiDisplayHistory[termId] || [];
+        return {
+            aiDisplayHistory: {
+                ...state.aiDisplayHistory,
+                [termId]: [...existing, entry],
+            }
+        };
+    }),
+
+    clearDisplayHistory: (termId) => set(state => {
+        const next = { ...state.aiDisplayHistory };
+        delete next[termId];
+        return { aiDisplayHistory: next };
+    }),
 
     pushAiHistory: (query) => {
         const filtered = get().aiQueryHistory.filter(q => q !== query);
         set({ aiQueryHistory: [query, ...filtered].slice(0, 50) });
     },
 
+    clearAiQueryHistory: () => set({ aiQueryHistory: [], aiHistoryIndex: -1 }),
+
     setAiHistoryIndex: (index) => set({ aiHistoryIndex: index }),
 
-    submitAiQuery: async (query, context) => {
+    submitAiQuery: async (query, context, termId) => {
         // Guard against concurrent calls — skip if already loading
         if (get().aiLoading) return;
 
         set({ aiLoading: true, aiResult: null, aiError: null, aiStreamingText: '' });
         const requestId = crypto.randomUUID();
         const cleanups: UnlistenFn[] = [];
+
+        // Snapshot current history for this tab (sent as TOON-encoded context)
+        const history: ChatMessage[] = termId ? (get().aiConversations[termId] || []) : [];
 
         // Shared resolve/reject refs so both chunk-error and done listeners can settle the promise
         let resolveDone: ((result: AiResult | null) => void) | null = null;
@@ -105,7 +173,7 @@ export const createAiSlice: StateCreator<AppStore, [], [], AiSlice> = (set, get)
             });
 
             // Fire the streaming command (returns immediately)
-            await invoke('ai_translate_stream', { query, context, requestId });
+            await invoke('ai_translate_stream', { query, context, requestId, history });
 
             // Wait for the done event
             const result = await donePromise;
@@ -121,6 +189,16 @@ export const createAiSlice: StateCreator<AppStore, [], [], AiSlice> = (set, get)
                     aiLoading: false,
                     aiStreamingText: '',
                 });
+
+                // Save this turn to per-tab conversation history
+                if (termId) {
+                    get().addToConversation(termId, { role: 'user', content: query });
+                    // Store a compact summary of the AI response for the history
+                    const aiContent = result.answer
+                        ? result.answer
+                        : `cmd:${result.command}`;
+                    get().addToConversation(termId, { role: 'assistant', content: aiContent });
+                }
             } else {
                 set({ aiLoading: false, aiStreamingText: '' });
             }
