@@ -566,12 +566,16 @@ export function MainLayout({ children }: { children: ReactNode }) {
         };
 
     const hideBootSplash = useCallback(() => {
-        if (typeof window.__zyncHideBootSplash === 'function') {
-            window.__zyncHideBootSplash();
-            return;
+        try {
+            if (typeof window.__zyncHideBootSplash === 'function') {
+                window.__zyncHideBootSplash();
+                return;
+            }
+        } catch (e) {
+            console.warn('Error in __zyncHideBootSplash:', e);
+        } finally {
+            document.getElementById('boot-splash')?.remove();
         }
-
-        document.getElementById('boot-splash')?.remove();
     }, []);
 
     useEffect(() => {
