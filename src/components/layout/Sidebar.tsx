@@ -426,6 +426,8 @@ export function Sidebar() {
                                 )}
                                 title="Add New..."
                                 aria-label="Add new host, folder, or tunnel"
+                                aria-expanded={isAddMenuOpen}
+                                aria-haspopup="menu"
                             >
                                 <Plus className="h-4 w-4" />
                             </Button>
