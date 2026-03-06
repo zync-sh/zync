@@ -4,10 +4,39 @@ use russh::{Channel, ChannelMsg};
 use russh::client::Msg;
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::mem;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::{Duration, Instant};
 
+/// Maximum time to hold remote SSH output before emitting a combined frontend event.
+const REMOTE_OUTPUT_BATCH_MS: u64 = 8;
+/// Flush buffered remote output immediately once it reaches this many bytes.
+const REMOTE_OUTPUT_FLUSH_THRESHOLD: usize = 4096;
+
+/// Emits a terminal output chunk to the frontend without changing the existing event contract.
+///
+/// Keeping this in a helper centralizes the `terminal-output-{term_id}` event
+/// shape so local and remote PTY paths stay consistent.
+fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, payload: &[u8]) {
+    if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id), payload) {
+        eprintln!("[PTY] Failed to emit output: {}", e);
+    }
+}
+
+/// Flushes buffered remote output into a single frontend event.
+///
+/// The remote SSH path may receive very small chunks for echo and control
+/// sequences. This helper coalesces them without losing trailing bytes on exit.
+fn flush_pending_output(app_handle: &AppHandle, term_id: &str, pending_output: &mut Vec<u8>) {
+    if pending_output.is_empty() {
+        return;
+    }
+
+    let output = mem::take(pending_output);
+    emit_terminal_output(app_handle, term_id, &output);
+}
 // Enum to handle both local PTY and remote SSH channels
 pub enum TerminalHandle {
     Local {
@@ -158,9 +187,7 @@ impl PtyManager {
                     }, // EOF
                     Ok(n) => {
                         // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
-                        if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), &buf[..n]) {
-                            eprintln!("Failed to emit terminal output: {}", e);
-                        }
+                        emit_terminal_output(&app_handle, &term_id_clone, &buf[..n]);
                     }
                     Err(e) => {
                         eprintln!("Error reading from PTY: {}", e);
@@ -236,32 +263,50 @@ impl PtyManager {
         // Spawn a single task to manage the SSH channel (Reader + Writer + Resize)
         let task_handle = tokio::task::spawn(async move {
             println!("[PTY] Starting manager task for {}", term_id_clone);
-            
+            let mut pending_output = Vec::new();
+            let mut flush_deadline: Option<Instant> = None;
+
             loop {
                 tokio::select! {
                     // 1. Handle incoming SSH data (Output from server)
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
-                                // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
-                                if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id_clone), data.as_ref()) {
-                                    eprintln!("[PTY] Failed to emit output: {}", e);
+                                pending_output.extend_from_slice(data.as_ref());
+
+                                if pending_output.len() >= REMOTE_OUTPUT_FLUSH_THRESHOLD {
+                                    flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                                    flush_deadline = None;
+                                } else if flush_deadline.is_none() {
+                                    flush_deadline = Some(Instant::now() + Duration::from_millis(REMOTE_OUTPUT_BATCH_MS));
                                 }
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
+                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
                                 println!("[PTY] Remote shell exited with status: {}", exit_status);
                                 break;
                             }
                             Some(ChannelMsg::Eof) => {
+                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
                                 println!("[PTY] Remote channel EOF");
                                 break;
                             }
                             None => {
+                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
                                 println!("[PTY] Channel closed");
                                 break;
                             }
                             _ => {} // Ignore other messages for now
                         }
+                    }
+
+                    _ = async {
+                        if let Some(deadline) = flush_deadline.clone() {
+                            tokio::time::sleep_until(deadline).await;
+                        }
+                    }, if flush_deadline.is_some() => {
+                        flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                        flush_deadline = None;
                     }
                     
                     // 2. Handle outgoing user input (Input to server)
@@ -285,6 +330,8 @@ impl PtyManager {
                     }
                 }
             }
+
+            flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
             
             // Cleanup on exit
             let _ = channel.close().await;
@@ -409,3 +456,6 @@ impl PtyManager {
         Ok(())
     }
 }
+
+
+

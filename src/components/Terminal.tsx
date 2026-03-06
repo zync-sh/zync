@@ -21,9 +21,139 @@ interface TerminalCache {
   spawned: boolean;
   detached: boolean; // listenerAttached flag renamed for clarity? No, let's use listenerAttached
   listenerAttached: boolean;
+  pendingInput: string;
+  inputFlushTimer: ReturnType<typeof window.setTimeout> | null;
+  lastResize: { rows: number; cols: number } | null;
   unlisten?: UnlistenFn;
 }
 const terminalCache = new Map<string, TerminalCache>();
+
+const INPUT_BATCH_MS = 4;
+const INPUT_FLUSH_THRESHOLD = 64;
+const inputByteEncoder = new TextEncoder();
+const IMMEDIATE_INPUT_PATTERN = /[\r\n\x03\x04\x1b]/;
+
+/**
+ * Cancels the pending input flush timer for a cached terminal session.
+ *
+ * The terminal batches ordinary typing into short bursts, so each session can
+ * have one scheduled flush at a time. This helper is used by the clear/flush
+ * paths to make timer cleanup consistent.
+ *
+ * @param cached Cached terminal session state that may own an active flush timer.
+ */
+function clearPendingInputTimer(cached: TerminalCache) {
+  if (cached.inputFlushTimer !== null) {
+    window.clearTimeout(cached.inputFlushTimer);
+    cached.inputFlushTimer = null;
+  }
+}
+
+/**
+ * Drops any buffered user input for a terminal session and clears its timer.
+ *
+ * This is used when a session exits, restarts, or is destroyed so queued
+ * keystrokes are never replayed into a new PTY/SSH session by accident.
+ *
+ * @param termId Terminal session id. Missing ids are ignored because some call
+ * sites narrow the value at runtime instead of in the type system.
+ */
+function clearPendingInput(termId: string | null | undefined) {
+  if (!termId) return;
+  const cached = terminalCache.get(termId);
+  if (!cached) return;
+
+  clearPendingInputTimer(cached);
+  cached.pendingInput = '';
+}
+
+/**
+ * Sends the currently buffered user input for a terminal session in one IPC call.
+ *
+ * The buffer is cleared before the IPC send so a re-entrant call cannot emit the
+ * same bytes twice. If the buffer is empty, the helper only clears the pending timer.
+ *
+ * @param termId Terminal session id whose queued input should be flushed.
+ */
+function flushPendingInput(termId: string | null | undefined) {
+  if (!termId) return;
+  const cached = terminalCache.get(termId);
+  if (!cached) return;
+
+  if (!cached.pendingInput) {
+    clearPendingInputTimer(cached);
+    return;
+  }
+
+  const data = cached.pendingInput;
+  cached.pendingInput = '';
+  clearPendingInputTimer(cached);
+  window.ipcRenderer.send('terminal:write', { termId, data });
+}
+
+/**
+ * Queues terminal input so ordinary typing can be sent in small bursts instead
+ * of one IPC call per keystroke.
+ *
+ * Control-sensitive input such as Enter, Ctrl+C, Ctrl+D, and escape sequences
+ * still flushes immediately, and the buffer also flushes as soon as it grows
+ * past the byte threshold.
+ *
+ * @param termId Terminal session id that owns the buffered input queue.
+ * @param data Raw xterm input chunk received from the frontend terminal.
+ */
+function queueTerminalInput(termId: string | null | undefined, data: string) {
+  if (!termId) return;
+  const cached = terminalCache.get(termId);
+  if (!cached) return;
+
+  cached.pendingInput += data;
+
+  const shouldFlushImmediately =
+    IMMEDIATE_INPUT_PATTERN.test(data) ||
+    inputByteEncoder.encode(cached.pendingInput).length >= INPUT_FLUSH_THRESHOLD;
+
+  if (shouldFlushImmediately) {
+    flushPendingInput(termId);
+    return;
+  }
+
+  if (cached.inputFlushTimer === null) {
+    cached.inputFlushTimer = window.setTimeout(() => flushPendingInput(termId), INPUT_BATCH_MS);
+  }
+}
+
+/**
+ * Sends a backend resize event only when the visible terminal size changed.
+ *
+ * Visibility toggles and layout settling can trigger repeated fit calls with the
+ * same dimensions. This helper suppresses duplicate resize IPC traffic while
+ * keeping the backend synchronized with real row/column changes.
+ *
+ * @param termId Terminal session id whose backend PTY should be resized.
+ * @param term Live xterm instance used to read the current rows/cols.
+ */
+function syncTerminalResize(termId: string | null | undefined, term: XTerm | null) {
+  if (!termId) return;
+  const cached = terminalCache.get(termId);
+  if (!cached || !term) return;
+
+  const nextSize = { rows: term.rows, cols: term.cols };
+  if (
+    cached.lastResize &&
+    cached.lastResize.rows === nextSize.rows &&
+    cached.lastResize.cols === nextSize.cols
+  ) {
+    return;
+  }
+
+  cached.lastResize = nextSize;
+  window.ipcRenderer.send('terminal:resize', {
+    termId,
+    rows: nextSize.rows,
+    cols: nextSize.cols,
+  });
+}
 
 // Export recent terminal buffer lines for AI context
 export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
@@ -43,6 +173,7 @@ export function getTerminalRecentLines(termId: string, lineCount = 20): string |
 export function destroyTerminalInstance(termId: string) {
   const cached = terminalCache.get(termId);
   if (cached) {
+    clearPendingInput(termId);
     // Remove the Tauri event listener if it exists
     if (cached.unlisten) {
       cached.unlisten();
@@ -175,11 +306,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
               termRef.current.focus();
 
               // Also sync with backend
-              window.ipcRenderer.send('terminal:resize', {
-                termId: sessionId,
-                rows: termRef.current.rows,
-                cols: termRef.current.cols,
-              });
+              syncTerminalResize(sessionId, termRef.current);
             }
           } catch (e) { console.warn('Fit/Focus failed on visibility change', e); }
         }, 150); // Increased delay for layout settling
@@ -287,7 +414,17 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       });
 
       // Store in cache
-      terminalCache.set(sessionId, { term, fitAddon, searchAddon, spawned: false, listenerAttached: false, detached: false });
+      terminalCache.set(sessionId, {
+        term,
+        fitAddon,
+        searchAddon,
+        spawned: false,
+        listenerAttached: false,
+        detached: false,
+        pendingInput: '',
+        inputFlushTimer: null,
+        lastResize: null,
+      });
     }
 
     fitAddonRef.current = fitAddon;
@@ -337,6 +474,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         // Check if the PTY session has ended and needs restart
         if (cached && !cached.spawned) {
           console.log('[Terminal] Session ended, restarting on user input');
+          clearPendingInput(sessionId);
+          cached.lastResize = null;
           cached.spawned = true;
 
           // Clear terminal for fresh start
@@ -364,7 +503,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           return; // Don't send the input that triggered restart
         }
 
-        window.ipcRenderer.send('terminal:write', { termId: sessionId, data });
+        queueTerminalInput(sessionId, data);
       });
     }
 
@@ -390,6 +529,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         if (cached) {
           // Reset spawned flag so terminal can be restarted
           cached.spawned = false;
+          clearPendingInput(sessionId);
+          cached.lastResize = null;
           // Clear the terminal buffer and show exit message
           term.write('\r\n\x1b[33m[Terminal session ended. Press Enter to restart.]\x1b[0m\r\n');
         }
@@ -405,11 +546,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           if (containerRef.current.clientWidth === 0 || containerRef.current.clientHeight === 0) return;
 
           fitAddon.fit();
-          window.ipcRenderer.send('terminal:resize', {
-            termId: sessionId,
-            rows: term.rows,
-            cols: term.cols,
-          });
+          syncTerminalResize(sessionId, term);
         });
       } catch (e) {
         console.warn('Resize failed', e);
@@ -425,6 +562,13 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // and will be cleaned up when destroyTerminalInstance() is called.
       // This prevents duplicate listeners when the component remounts.
       resizeObserver.disconnect();
+
+      const cachedForCleanup = terminalCache.get(sessionId);
+      if (cachedForCleanup?.spawned) {
+        flushPendingInput(sessionId);
+      } else {
+        clearPendingInput(sessionId);
+      }
 
       // NOTE: We do NOT dispose the terminal here!
       // The terminal instance stays in cache to preserve history.
@@ -681,3 +825,6 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     </div>
   );
 }
+
+
+
