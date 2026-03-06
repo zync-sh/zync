@@ -736,7 +736,6 @@ export function Sidebar() {
                     if (folderToRename) {
                         // We need to call a function that updates both. 
                         // I'll update renameFolder in context to accept tags (optional 3rd arg)
-                        // @ts-ignore
                         renameFolder(folderToRename, newName, newTags);
                     }
                     setIsRenameFolderModalOpen(false);
