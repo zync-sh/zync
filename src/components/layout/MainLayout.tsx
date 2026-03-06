@@ -294,7 +294,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                 <FileManager connectionId={tab.connectionId} isVisible={isActive && tab.view === 'files'} />
                             </div>
                             <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'dashboard' ? "block" : "hidden")}>
-                                <Dashboard connectionId={tab.connectionId} />
+                                <Dashboard connectionId={tab.connectionId} isVisible={isActive && tab.view === 'dashboard'} />
                             </div>
                             {/* Tunnels & Snippets */}
                             {tab.view === 'port-forwarding' && (
@@ -668,3 +668,4 @@ export function MainLayout({ children }: { children: ReactNode }) {
         </div>
     );
 }
+

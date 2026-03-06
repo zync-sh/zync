@@ -8,7 +8,7 @@ import { UptimeWidget } from './UptimeWidget';
 import { ProcessWidget } from './ProcessWidget';
 import { QuickActionsWidget } from './QuickActionsWidget';
 
-export function Dashboard({ connectionId }: { connectionId?: string }) {
+export function Dashboard({ connectionId, isVisible = true }: { connectionId?: string; isVisible?: boolean }) {
   const globalId = useAppStore(state => state.activeConnectionId);
   const connections = useAppStore(state => state.connections);
   const settings = useAppStore(state => state.settings);
@@ -47,6 +47,7 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
 
     // Skip if tab is hidden (save resources) or busy
     if (!targetId || isFetching.current) return true;
+    if (!isVisible) return true;
     if (document.hidden) return true;
 
     // Metrics are now enabled for both local and SSH connections
@@ -269,7 +270,7 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
   };
 
   useEffect(() => {
-    if (!activeConnectionId || !isConnected) return;
+    if (!activeConnectionId || !isConnected || !isVisible) return;
 
     // Initial fetch
     fetchMetrics();
@@ -295,7 +296,7 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
       isActive = false;
       clearTimeout(timeoutId);
     };
-  }, [activeConnectionId, isConnected, isSaturationDetected]); // Re-run if saturation status changes to adjust delay immediately? 
+  }, [activeConnectionId, isConnected, isSaturationDetected, isVisible]); // Re-run if visibility changes so polling stops immediately when hidden
   // Ideally, if saturationDetected changes to true inside fetchMetrics, the NEXT schedule will see it.
   // But since scheduleNext reads state... Wait, scheduleNext uses closure?
   // We need to be careful. If we rely on closure, we might use stale `isSaturationDetected`.
@@ -414,3 +415,4 @@ export function Dashboard({ connectionId }: { connectionId?: string }) {
     </div>
   );
 }
+
