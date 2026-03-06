@@ -77,7 +77,7 @@
             : normalizeTheme(themePreference);
 
         const palette = themePalette[resolvedTheme] || themePalette.dark;
-        const fallbackAccent = savedAccent && /^#[0-9a-f]{3,6}$/i.test(savedAccent) ? savedAccent : palette.accent;
+        const fallbackAccent = savedAccent && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(savedAccent) ? savedAccent : palette.accent;
 
         const bootColors = savedThemeColors || {
           bg: palette.bg,
