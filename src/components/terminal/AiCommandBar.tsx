@@ -287,8 +287,13 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
         if (submittedQuery && (result || error) && activeTermId) {
             // Avoid duplicate if it was already archived (e.g. user submitted another query)
             const existing = aiDisplayHistory[activeTermId] || [];
-            const alreadyArchived = existing.length > 0 &&
-                existing[existing.length - 1].query === submittedQuery;
+            const last = existing.length > 0 ? existing[existing.length - 1] : null;
+            const alreadyArchived = last &&
+                last.query === submittedQuery &&
+                last.error === error &&
+                last.result?.command === result?.command &&
+                last.result?.answer === result?.answer &&
+                last.result?.safety === result?.safety;
             if (!alreadyArchived) {
                 addToDisplayHistory(activeTermId, { query: submittedQuery, result, error });
             }
