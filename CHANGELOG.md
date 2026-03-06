@@ -24,6 +24,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Transparent Edge Artifacts**: Removed window edge halo/bleed effects by tightening shell background behavior and frame styling.
 - **Startup Black Flash**: Eliminated the pre-splash black frame by delaying main window visibility until the webview page load is ready.
 - **Sidebar Toggle Alignment**: Fixed collapsed-sidebar toggle alignment and matched its control sizing/states with surrounding tab controls.
+- **Theme Color Validation**: Hardened boot-splash theme color parsing to prevent invalid or malicious CSS injections from local storage (`index.html`).
+- **Startup Splash Resilience**: Wrapped the boot splash removal in a `try...finally` block to guarantee fallback execution even if the global window function throws an error (`MainLayout.tsx`).
+- **AI Response Consistency**: Made the TOON parser case-insensitive for `type` fields to better handle unpredictable LLM casing like "Chat" vs "chat" (`toon.rs`).
+- **AI History Scoping**: Fixed a bug where clearing the AI command prompt history cleared all terminal tabs instead of just the active one, and fixed a deduplication flaw where differing explanations were dropped (`AiCommandBar.tsx`).
+- **Accessibility**: Reverted `menu` and `menuitem` ARIA roles on the Sidebar "Add New" dropdown to native button semantics to prevent screen reader dead-ends since full keyboard navigation is not yet supported.
 
 
 ## [2.5.2] - 2026-03-04
