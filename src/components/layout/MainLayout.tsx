@@ -482,9 +482,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);
     const accentColor = useAppStore(state => state.settings.accentColor);
-    const windowOpacity = useAppStore(state => state.settings.windowOpacity ?? 1);
+    const windowOpacityRaw = useAppStore(state => state.settings.windowOpacity ?? 1);
+    const clampedOpacity = Math.max(0, Math.min(1, windowOpacityRaw));
     const enableVibrancy = useAppStore(state => state.settings.enableVibrancy);
-    const isTranslucent = enableVibrancy && windowOpacity < 1;
+    const isTranslucent = enableVibrancy && clampedOpacity < 1;
 
     const persistBootThemeColors = useCallback(() => {
         try {
@@ -557,7 +558,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const shellBackgroundStyle = isTranslucent
         ? {
             backgroundColor: 'var(--color-app-bg)',
-            background: `color-mix(in srgb, var(--color-app-bg) ${windowOpacity * 100}%, transparent)`
+            background: `color-mix(in srgb, var(--color-app-bg) ${clampedOpacity * 100}%, transparent)`
         }
         : {
             backgroundColor: 'var(--color-app-bg)',
