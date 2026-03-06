@@ -2429,12 +2429,13 @@ pub async fn ai_translate_stream(
     query: String,
     context: crate::ai::TerminalContext,
     request_id: String,
+    history: Vec<crate::ai::ChatMessage>,
 ) -> Result<(), String> {
     let config = crate::ai::read_ai_config(&app);
     if !config.enabled {
         return Err("AI is disabled in Settings → AI.".to_string());
     }
-    tauri::async_runtime::spawn(crate::ai::translate_stream(app, query, context, request_id, config));
+    tauri::async_runtime::spawn(crate::ai::translate_stream(app, query, context, request_id, config, history));
     Ok(())
 }
 

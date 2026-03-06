@@ -861,16 +861,16 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <div className="space-y-3 pt-4 border-t border-[var(--color-app-border)]/50">
                                             <div className="flex justify-between">
                                                 <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Window Opacity</label>
-                                                <span className="text-sm text-[var(--color-app-accent)] font-mono">{Math.round((settings.windowOpacity ?? 0.95) * 100)}%</span>
+                                                <span className="text-sm text-[var(--color-app-accent)] font-mono">{Math.round((settings.windowOpacity ?? 1) * 100)}%</span>
                                             </div>
                                             <input
                                                 type="range" min="50" max="100" step="1"
                                                 className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
-                                                value={(settings.windowOpacity ?? 0.95) * 100}
+                                                value={(settings.windowOpacity ?? 1) * 100}
                                                 onChange={(e) => updateSettings({ windowOpacity: parseInt(e.target.value) / 100 })}
                                             />
                                             <div className="text-xs text-[var(--color-app-muted)]">
-                                                Note: Requires app restart to enable transparency support if currently disabled.
+                                                Opacity is applied only when Vibrancy Effects is enabled.
                                             </div>
                                         </div>
                                     </div>

@@ -1,30 +1,213 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
-  </head>
 
-  <body>
-    <script>
-      (function() {
-        const theme = localStorage.getItem('zync-theme');
-        if (theme) {
-          if (theme === 'system') {
-             const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-             document.body.classList.add(systemTheme);
-          } else {
-             document.body.classList.add(theme);
-          }
-        } else {
-          // Default to dark if nothing set
-          document.body.classList.add('dark');
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zync</title>
+  <script>
+    (function () {
+      const themePalette = {
+        dark: { bg: '#09090b', panel: '#18181b', text: '#e4e4e7', accent: '#797bce' },
+        light: { bg: '#f8fafc', panel: '#ffffff', text: '#111827', accent: '#6366f1' },
+        dracula: { bg: '#282a36', panel: '#2f3140', text: '#f8f8f2', accent: '#bd93f9' },
+        monokai: { bg: '#272822', panel: '#34352d', text: '#f8f8f2', accent: '#a6e22e' },
+        midnight: { bg: '#0b1020', panel: '#111827', text: '#e5e7eb', accent: '#60a5fa' },
+        warm: { bg: '#1f1a17', panel: '#2a221d', text: '#f5e7d9', accent: '#f59e0b' },
+        'light-warm': { bg: '#f8f1e8', panel: '#fff8ef', text: '#3c2f2a', accent: '#d97706' }
+      };
+
+      function normalizeTheme(themeName) {
+        const t = (themeName || '').toLowerCase();
+        if (t in themePalette) return t;
+        if (t.includes('light') && t.includes('warm')) return 'light-warm';
+        if (t.includes('dracula')) return 'dracula';
+        if (t.includes('monokai')) return 'monokai';
+        if (t.includes('midnight')) return 'midnight';
+        if (t.includes('warm')) return 'warm';
+        if (t.includes('light')) return 'light';
+        return 'dark';
+      }
+
+      function hexToRgba(hex, alpha) {
+        if (!hex || !/^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(hex)) return null;
+        let h = hex.slice(1);
+        if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+        const n = parseInt(h, 16);
+        const r = (n >> 16) & 255;
+        const g = (n >> 8) & 255;
+        const b = n & 255;
+        return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha + ')';
+      }
+
+      function safeGet(key) {
+        try {
+          return localStorage.getItem(key);
+        } catch (_err) {
+          return null;
         }
-      })();
-    </script>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+      }
+
+      function parseSavedThemeColors(raw) {
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object') return null;
+
+          const isValidColor = (c) => typeof c === 'string' && c.trim() !== '' && !c.includes(';') && !c.includes('}');
+
+          const bg = isValidColor(parsed.bg) ? parsed.bg.trim() : '';
+          const panel = isValidColor(parsed.panel) ? parsed.panel.trim() : '';
+          const text = isValidColor(parsed.text) ? parsed.text.trim() : '';
+          const accent = isValidColor(parsed.accent) ? parsed.accent.trim() : '';
+          const accentSoft = isValidColor(parsed.accentSoft) ? parsed.accentSoft.trim() : '';
+
+          if (!bg || !panel || !text || !accent) return null;
+          return { bg, panel, text, accent, accentSoft };
+        } catch (_err) {
+          return null;
+        }
+      }
+
+      const themePreference = safeGet('zync-theme') || 'dark';
+      const savedAccent = safeGet('zync-accent-color');
+      const savedThemeColors = parseSavedThemeColors(safeGet('zync-theme-colors'));
+
+      const themePrefLower = (themePreference || '').toLowerCase();
+      const resolvedTheme =
+        themePrefLower === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : normalizeTheme(themePreference);
+
+      const palette = themePalette[resolvedTheme] || themePalette.dark;
+      const fallbackAccent = savedAccent && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(savedAccent) ? savedAccent : palette.accent;
+
+      const bootColors = savedThemeColors || {
+        bg: palette.bg,
+        panel: palette.panel,
+        text: palette.text,
+        accent: fallbackAccent,
+        accentSoft: hexToRgba(fallbackAccent, 0.14) || ('color-mix(in srgb, ' + fallbackAccent + ' 14%, transparent)')
+      };
+
+      const rootStyle = document.documentElement.style;
+      rootStyle.setProperty('--boot-bg', bootColors.bg);
+      rootStyle.setProperty('--boot-panel', bootColors.panel);
+      rootStyle.setProperty('--boot-text', bootColors.text);
+      rootStyle.setProperty('--boot-accent', bootColors.accent);
+      rootStyle.setProperty(
+        '--boot-accent-soft',
+        bootColors.accentSoft || ('color-mix(in srgb, ' + bootColors.accent + ' 14%, transparent)')
+      );
+      rootStyle.backgroundColor = bootColors.bg;
+
+      window.__zyncHideBootSplash = function () {
+        const splash = document.getElementById('boot-splash');
+        if (!splash) return;
+        splash.classList.add('boot-splash-hide');
+        window.setTimeout(function () {
+          splash.remove();
+        }, 220);
+      };
+    })();
+  </script>
+  <style>
+    :root {
+      --boot-bg: #09090b;
+      --boot-panel: #18181b;
+      --boot-text: #e4e4e7;
+      --boot-accent: #797bce;
+      --boot-accent-soft: rgba(121, 123, 206, 0.14);
+    }
+
+    html,
+    body,
+    #root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      overflow: hidden;
+      background: var(--boot-bg);
+    }
+
+    #boot-splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--boot-bg);
+      opacity: 1;
+      transition: opacity 180ms ease;
+      z-index: 2147483647;
+      pointer-events: none;
+    }
+
+    #boot-splash.boot-splash-hide {
+      opacity: 0;
+    }
+
+    .boot-splash {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+    }
+
+    .boot-splash-icon {
+      width: 112px;
+      height: 112px;
+      animation: bootPulse 1.2s ease-in-out infinite;
+    }
+
+    .boot-splash-title {
+      font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--boot-text) 82%, transparent);
+    }
+
+    @keyframes bootPulse {
+
+      0%,
+      100% {
+        opacity: 0.75;
+        transform: scale(0.98);
+      }
+
+      50% {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="boot-splash" aria-hidden="true">
+    <div class="boot-splash">
+      <svg class="boot-splash-icon" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true">
+        <rect width="512" height="512" rx="128" fill="var(--boot-accent-soft)" />
+        <path d="M128 170.667L213.333 256L128 341.333" stroke="var(--boot-accent)" stroke-width="64"
+          stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M256 341.333H384" stroke="var(--boot-text)" stroke-width="64" stroke-linecap="round"
+          stroke-linejoin="round" />
+      </svg>
+      <div class="boot-splash-title">Zync</div>
+    </div>
+  </div>
+
+  <div id="root"></div>
+
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
 </html>

@@ -68,6 +68,7 @@
 
     body {
         background-color: var(--color-app-bg);
+        /* Opaque by default; runtime toggles transparency only for vibrancy mode */
         color: var(--color-app-text);
         font-family: var(--font-sans);
         -webkit-font-smoothing: antialiased;

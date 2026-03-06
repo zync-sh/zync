@@ -4,6 +4,28 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-03-06
+
+### Added
+
+- **AI Panel Draggability**: Made the AI Command Bar fully draggable so it can be repositioned across the window without obstructing terminal views.
+- **Theme-Aware Boot Splash**: Added startup splash color persistence so boot visuals now match the active theme (including plugin-provided themes) instead of defaulting to built-in palettes.
+
+### Changed
+
+- **Prompt Restructuring**: Replaced the underlying JSON parsing model with a lightweight TOON prompt structure to prevent string escaping bugs and improve streaming animation performance.
+- **Window Rendering Policy**: Switched to opaque-by-default shell rendering and applied translucency only when vibrancy is explicitly enabled.
+- **Sidebar Header Refresh**: Refined the sidebar header hierarchy with a cleaner one-line title layout, compact action grouping, and host count metadata.
+- **Release Notes Reader Polish**: Upgraded markdown rendering with GFM support, unified TOC/heading slug generation, and tighter content spacing for better readability.
+
+### Fixed
+
+- **Ollama Integration**: Fixed model name mappings causing selected Ollama local endpoint models to fail during AI invocation.
+- **Transparent Edge Artifacts**: Removed window edge halo/bleed effects by tightening shell background behavior and frame styling.
+- **Startup Black Flash**: Eliminated the pre-splash black frame by delaying main window visibility until the webview page load is ready.
+- **Sidebar Toggle Alignment**: Fixed collapsed-sidebar toggle alignment and matched its control sizing/states with surrounding tab controls.
+
+
 ## [2.5.2] - 2026-03-04
 
 ### Fixed
@@ -148,7 +170,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.2...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.3...HEAD
+[2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0

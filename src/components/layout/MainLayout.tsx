@@ -15,6 +15,12 @@ import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
 
+declare global {
+    interface Window {
+        __zyncHideBootSplash?: () => void;
+    }
+}
+
 // Lazy Load Heavy Components
 const FileManager = lazy(() => import('../FileManager').then(module => ({ default: module.FileManager })));
 const Dashboard = lazy(() => import('../dashboard/Dashboard').then(module => ({ default: module.Dashboard })));
@@ -33,12 +39,13 @@ const TabLoading = () => (
 
 const SplashScreen = () => (
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-app-bg transition-colors duration-300">
-        <div className="flex flex-col items-center">
-            <svg width="128" height="128" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-pulse drop-shadow-2xl">
-                <rect width="512" height="512" rx="128" className="fill-app-panel" />
+        <div className="flex flex-col items-center gap-3">
+            <svg width="112" height="112" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-pulse">
+                <rect width="512" height="512" rx="128" className="fill-app-accent/10" />
                 <path d="M128 170.667L213.333 256L128 341.333" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" className="stroke-app-accent" />
                 <path d="M256 341.333H384" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" className="stroke-app-text" />
             </svg>
+            <div className="text-xs font-bold tracking-[0.18em] uppercase text-app-muted">Zync</div>
         </div>
     </div>
 );
@@ -250,7 +257,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 </div>
             ) : isError ? (
                 <div className="flex-1 flex flex-col items-center justify-center space-y-4">
-                    <div className="text-[var(--color-app-danger)] text-4xl mb-4">⚠️</div>
+                    <div className="text-[var(--color-app-danger)] text-4xl mb-4">&#9888;</div>
                     <div className="text-xl font-medium text-[var(--color-app-text)]">Connection Failed</div>
                     <div className="text-[var(--color-app-muted)] text-sm max-w-md text-center">
                         Could not establish a connection to <span className="font-mono text-[var(--color-app-text)]">{connection?.host}</span>.
@@ -446,11 +453,11 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 //           This is the reliable signal for auto-updates.
                 const justUpdated = localStorage.getItem('zync-just-updated') === 'true';
 
-                // Signal 2: version mismatch — catches manual installs / fresh installs
+                // Signal 2: version mismatch - catches manual installs / fresh installs
                 //           where lastSeenVersion is '' or an older value.
                 const versionMismatch = storedVersion !== currentVersion;
 
-                // Always consume the flag unconditionally — prevents stale flag from
+                // Always consume the flag unconditionally - prevents stale flag from
                 // opening the tab on every subsequent launch if the app previously crashed.
                 if (justUpdated) {
                     localStorage.removeItem('zync-just-updated');
@@ -475,6 +482,27 @@ export function MainLayout({ children }: { children: ReactNode }) {
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);
     const accentColor = useAppStore(state => state.settings.accentColor);
+    const windowOpacityRaw = useAppStore(state => state.settings.windowOpacity ?? 1);
+    const clampedOpacity = Math.max(0, Math.min(1, windowOpacityRaw));
+    const enableVibrancy = useAppStore(state => state.settings.enableVibrancy);
+    const isTranslucent = enableVibrancy && clampedOpacity < 1;
+
+    const persistBootThemeColors = useCallback(() => {
+        try {
+            const style = getComputedStyle(document.body);
+            const bg = style.getPropertyValue('--color-app-bg').trim();
+            const panel = style.getPropertyValue('--color-app-panel').trim();
+            const text = style.getPropertyValue('--color-app-text').trim();
+            const accent = style.getPropertyValue('--color-app-accent').trim();
+
+            if (!bg || !panel || !text || !accent) return;
+
+            const accentSoft = `color-mix(in srgb, ${accent} 14%, transparent)`;
+            localStorage.setItem('zync-theme-colors', JSON.stringify({ bg, panel, text, accent, accentSoft }));
+        } catch (error) {
+            console.warn('Failed to persist boot theme colors', error);
+        }
+    }, []);
 
     useEffect(() => {
         if (isLoadingSettings) return;
@@ -497,31 +525,63 @@ export function MainLayout({ children }: { children: ReactNode }) {
         // Apply Custom Accent
         if (accentColor) {
             document.body.style.setProperty('--color-app-accent', accentColor);
+            localStorage.setItem('zync-accent-color', accentColor);
         } else {
             document.body.style.removeProperty('--color-app-accent');
+            localStorage.removeItem('zync-accent-color');
         }
 
         // Apply Window Opacity
         // We need to make the body background transparent to let the window transparency show
         // But we need the app-bg color to be applied with opacity
-        document.body.style.backgroundColor = 'transparent'; // Let Electron window handle transparency
+        // Keep body opaque by default; only expose transparency when vibrancy + opacity are enabled.
+        document.body.style.backgroundColor = isTranslucent ? 'transparent' : 'var(--color-app-bg)';
+
+        window.requestAnimationFrame(() => {
+            persistBootThemeColors();
+        });
+        const persistTimer = window.setTimeout(() => {
+            persistBootThemeColors();
+        }, 120);
 
         // This is a bit tricky. The theme sets --color-app-bg. We want that color but with alpha.
         // We can't easily modify the variable itself without knowing its value.
         // However, we can set the root div's background to be the theme color with forced opacity if we use color-mix (modern browsers)
         // or we rely on the user to pick a theme and we apply opacity to the main container.
 
-    }, [theme, accentColor, isLoadingSettings]);
+        return () => {
+            window.clearTimeout(persistTimer);
+        };
 
-    // Apply Opacity Dynamic Effect
-    const windowOpacity = useAppStore(state => state.settings.windowOpacity ?? 0.95);
+    }, [theme, accentColor, isLoadingSettings, isTranslucent, persistBootThemeColors]);
 
-    // We use a style block to override the background color with opacity
-    // Using color-mix to mix with transparent: color-mix(in srgb, var(--color-app-bg), transparent 10%)
-    // 1 - opacity = transparent amount. e.g. 0.9 opacity = 10% transparent.
-    const transparentBgStyle = {
-        backgroundColor: `color-mix(in srgb, var(--color-app-bg) ${windowOpacity * 100}%, transparent)`
-    };
+    const shellBackgroundStyle = isTranslucent
+        ? {
+            backgroundColor: 'var(--color-app-bg)',
+            background: `color-mix(in srgb, var(--color-app-bg) ${clampedOpacity * 100}%, transparent)`
+        }
+        : {
+            backgroundColor: 'var(--color-app-bg)',
+            background: 'var(--color-app-bg)'
+        };
+
+    const hideBootSplash = useCallback(() => {
+        try {
+            if (typeof window.__zyncHideBootSplash === 'function') {
+                window.__zyncHideBootSplash();
+                return;
+            }
+        } catch (e) {
+            console.warn('Error in __zyncHideBootSplash:', e);
+        } finally {
+            document.getElementById('boot-splash')?.remove();
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isLoading || isLoadingSettings) return;
+        hideBootSplash();
+    }, [isLoading, isLoadingSettings, hideBootSplash]);
 
     const checkConfig = async () => {
         try {
@@ -544,15 +604,17 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     };
 
-    if (isLoading || isLoadingSettings) return <SplashScreen />;
+    if (isLoading || isLoadingSettings) {
+        return document.getElementById('boot-splash') ? null : <SplashScreen />;
+    }
 
     return (
         <div
             className={cn(
-                "flex h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
-                !isMaximized && "rounded-xl border border-white/5 shadow-2xl m-px"
+                "relative flex h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
+                !isMaximized && "rounded-xl"
             )}
-            style={transparentBgStyle}
+            style={shellBackgroundStyle}
         >
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />

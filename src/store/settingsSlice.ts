@@ -83,7 +83,7 @@ export interface AppSettings {
 const defaultSettings: AppSettings = {
     theme: 'dark',
     accentColor: undefined,
-    windowOpacity: 0.95,
+    windowOpacity: 1.0,
     enableVibrancy: false,
     compactMode: true,
     sidebarWidth: 288,
