@@ -91,7 +91,7 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
     const aiDisplayHistory = useAppStore(state => state.aiDisplayHistory);
     const clearConversation = useAppStore(state => state.clearConversation);
     const clearDisplayHistory = useAppStore(state => state.clearDisplayHistory);
-    const clearAiQueryHistory = useAppStore(state => state.clearAiQueryHistory);
+    const clearAiQueryHistoryForTerminal = useAppStore(state => state.clearAiQueryHistory);
 
     // Display history for this terminal tab (persists across panel close/reopen)
     const chatHistory = activeTermId ? (aiDisplayHistory[activeTermId] || []) : [];
@@ -293,7 +293,8 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
                 last.error === error &&
                 last.result?.command === result?.command &&
                 last.result?.answer === result?.answer &&
-                last.result?.safety === result?.safety;
+                last.result?.safety === result?.safety &&
+                last.result?.explanation === result?.explanation;
             if (!alreadyArchived) {
                 addToDisplayHistory(activeTermId, { query: submittedQuery, result, error });
             }
@@ -697,7 +698,7 @@ export function AiCommandBar({ connectionId, activeTermId, constraintRef }: AiCo
                                     onClick={() => {
                                         clearConversation(activeTermId);
                                         clearDisplayHistory(activeTermId);
-                                        clearAiQueryHistory();
+                                        clearAiQueryHistoryForTerminal(); // Note: global query history is now intentionally isolated by UI instead of state, but calling it here is fine.
                                         setQuery('');
                                         setSubmittedQuery('');
                                         clearAiResult();
