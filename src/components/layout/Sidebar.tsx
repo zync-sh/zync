@@ -217,6 +217,7 @@ export function Sidebar() {
     useEffect(() => {
         if (settings.sidebarWidth && !isResizing) {
             setWidth(settings.sidebarWidth);
+            widthRef.current = settings.sidebarWidth;
         }
     }, [settings.sidebarWidth, isResizing]);
 
@@ -231,6 +232,7 @@ export function Sidebar() {
 
         const resize = (e: MouseEvent) => {
             const newWidth = Math.max(200, Math.min(e.clientX, 600)); // Clamp between 200px and 600px
+            widthRef.current = newWidth;
             setWidth(newWidth);
         };
 
