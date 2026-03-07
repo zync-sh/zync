@@ -368,21 +368,20 @@ impl SshManager {
             let key_data = std::fs::read_to_string(&expanded_path)
                 .map_err(|e| anyhow!("Failed to read private key file: {}", e))?;
 
-            let key = decode_secret_key(&key_data, passphrase.as_deref())
-                .map_err(|e| anyhow!("Failed to decode private key: {}", e))?;
-
-            // Add key to Global Virtual Agent
-            {
-                let mut keys = self.agent_keys.lock().unwrap();
-                keys.push(key.clone());
-            }
-
             let key = Arc::new(key);
-            session
-                .authenticate_publickey(&config.username, key)
-                .await?
+            let auth_success = session
+                .authenticate_publickey(&config.username, key.clone())
+                .await?;
+
+            if auth_success {
+                // Add key to Global Virtual Agent only on SUCCESS
+                // This prevents leaking unauthorized keys to jump-host proxies
+                let mut keys = self.agent_keys.lock().unwrap();
+                keys.push((*key).clone());
+            }
+            auth_success
         } else if let Some(pwd) = pwd {
-            session.authenticate_password(&config.username, pwd).await?
+             session.authenticate_password(&config.username, pwd).await?
         } else {
             false
         };
