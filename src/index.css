@@ -148,7 +148,7 @@ body {
 
 .terminal-transparent .xterm,
 .terminal-transparent .xterm-viewport {
-    background-color: transparent !important;
+    background-color: transparent;
 }
 
 .xterm .xterm-viewport {
@@ -238,5 +238,3 @@ body {
     background-size: 300% 100%;
     animation: ethereal-glow 4s ease-in-out infinite, horizontal-particle-flow 10s linear infinite;
 }
-
-

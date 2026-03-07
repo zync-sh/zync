@@ -159,14 +159,39 @@ function buildTerminalBackground(appBg: string, opacity: number, useHostBackgrou
 function mergeTerminalThemePreset<T extends Record<string, string>>(
   theme: T,
   preset: Record<string, string>,
-  keepTransparentBackground: boolean,
+  transparencyEnabled: boolean,
+  opacity: number,
 ): T {
-  if (!keepTransparentBackground) {
+  if (!transparencyEnabled) {
     return { ...theme, ...preset } as T;
   }
 
-  const { background: _ignoredBackground, ...presetWithoutBackground } = preset;
-  return { ...theme, ...presetWithoutBackground } as T;
+  // When transparency is enabled, we apply the current opacity to the preset's background
+  // instead of stripping it entirely.
+  const themeWithAlpha = { ...theme, ...preset } as any;
+  if (preset.background) {
+    themeWithAlpha.background = withAlpha(preset.background, opacity);
+  }
+
+  return themeWithAlpha as T;
+}
+
+/**
+ * Computes a blended color value directly for compatibility.
+ * Blends the given hex color with white based on the provided ratio.
+ */
+function blendWithWhite(hexColor: string, ratio: number): string {
+  let hex = hexColor.replace('#', '');
+  if (hex.length === 3) {
+    hex = hex.split('').map(c => c + c).join('');
+  }
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const blendR = Math.round(r * ratio + 255 * (1 - ratio));
+  const blendG = Math.round(g * ratio + 255 * (1 - ratio));
+  const blendB = Math.round(b * ratio + 255 * (1 - ratio));
+  return `#${blendR.toString(16).padStart(2, '0')}${blendG.toString(16).padStart(2, '0')}${blendB.toString(16).padStart(2, '0')}`;
 }
 
 /**
@@ -184,7 +209,7 @@ function buildXtermTheme(appBg: string, appText: string, appAccent: string, back
     black: light ? '#3f3f46' : '#000000',
     red: '#ef4444',
     green: '#10b981',
-    yellow: '#d97706',
+    yellow: appAccent || '#d97706',
     blue: '#3b82f6',
     magenta: '#d946ef',
     cyan: '#0891b2',
@@ -192,7 +217,7 @@ function buildXtermTheme(appBg: string, appText: string, appAccent: string, back
     brightBlack: light ? '#71717a' : '#64748b',
     brightRed: '#fca5a5',
     brightGreen: '#86efac',
-    brightYellow: '#fcd34d',
+    brightYellow: appAccent ? blendWithWhite(appAccent, 0.8) : '#fcd34d',
     brightBlue: '#93c5fd',
     brightMagenta: '#f0abfc',
     brightCyan: '#67e8f9',
@@ -443,6 +468,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           buildXtermTheme(appBg, appText, appAccent, terminalTransparency.opacity, terminalTransparency.enabled),
           themePreset,
           terminalTransparency.enabled,
+          terminalTransparency.opacity,
         )
         : buildXtermTheme(appBg, appText, appAccent, terminalTransparency.opacity, terminalTransparency.enabled);
 
@@ -780,6 +806,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         themeObj,
         THEME_PRESETS[connection.theme],
         terminalTransparency.enabled,
+        terminalTransparency.opacity,
       );
     }
 
