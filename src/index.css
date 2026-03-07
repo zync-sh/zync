@@ -146,8 +146,12 @@ body {
     transition: background-color 0.2s, color 0.2s;
 }
 
-.xterm .xterm-viewport {
+.terminal-transparent .xterm,
+.terminal-transparent .xterm-viewport {
     background-color: transparent !important;
+}
+
+.xterm .xterm-viewport {
     overflow-y: auto !important;
 }
 
@@ -234,3 +238,5 @@ body {
     background-size: 300% 100%;
     animation: ethereal-glow 4s ease-in-out infinite, horizontal-particle-flow 10s linear infinite;
 }
+
+
