@@ -29,12 +29,10 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
         state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
     );
     const terminalContentRef = useRef<HTMLDivElement>(null);
-    const pendingReadyRef = useRef<Record<string, { timeoutId: any; unlistenFn?: UnlistenFn }>>({});
+    const pendingReadyRef = useRef<Record<string, { timeoutId: any; unlistenFn?: UnlistenFn; sent?: boolean }>>({});
 
 
     // Derived State - Removed (now selected directly)
-
-
     // Initialize/Reset when connection changes
     useEffect(() => {
         if (activeConnectionId) {
@@ -66,11 +64,15 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
                 // If a command was passed (e.g., from a plugin like PM2 logs), execute it in the new tab after it's ready
                 if (command) {
-                    const pendingObj: { timeoutId: any; unlistenFn?: UnlistenFn } = {
+                    const pendingObj: { timeoutId: any; unlistenFn?: UnlistenFn; sent?: boolean } = {
+                        sent: false,
                         timeoutId: setTimeout(() => {
-                            if (pendingReadyRef.current[newId]) {
-                                delete pendingReadyRef.current[newId];
-                            }
+                            const obj = pendingReadyRef.current[newId];
+                            if (!obj || obj.sent) return;
+
+                            obj.sent = true;
+                            delete pendingReadyRef.current[newId];
+
                             console.warn(`[TerminalManager] terminal-ready-${newId} timed out, sending command anyway`);
                             window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
                         }, 5000)
@@ -79,16 +81,18 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
                     once(`terminal-ready-${newId}`, () => {
                         const obj = pendingReadyRef.current[newId];
-                        if (obj) {
+                        if (obj && !obj.sent) {
+                            obj.sent = true;
                             clearTimeout(obj.timeoutId);
                             delete pendingReadyRef.current[newId];
                             window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
                         }
                     }).then(unlisten => {
-                        if (pendingReadyRef.current[newId]) {
-                            pendingReadyRef.current[newId].unlistenFn = unlisten;
+                        const obj = pendingReadyRef.current[newId];
+                        if (obj) {
+                            obj.unlistenFn = unlisten;
                         } else {
-                            // Already timed out or unmounted
+                            // Already timed out or handled
                             unlisten();
                         }
                     }).catch(err => {
