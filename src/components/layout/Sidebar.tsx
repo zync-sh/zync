@@ -11,8 +11,9 @@ import { ContextMenu } from '../ui/ContextMenu';
 import { WindowControls } from './WindowControls';
 
 // Lazy Load Modals
-const SettingsModal = lazy(() => import('../settings/SettingsModal').then(show => ({ default: show.SettingsModal })));
-const AddTunnelModal = lazy(() => import('../modals/AddTunnelModal').then(show => ({ default: show.AddTunnelModal })));
+import { SettingsModal } from '../settings/SettingsModal';
+import { Tooltip } from '../ui/Tooltip';
+import { AddTunnelModal } from '../modals/AddTunnelModal';
 const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(show => ({ default: show.ConnectionDetailsModal })));
 const AddConnectionModal = lazy(() => import('../modals/AddConnectionModal').then(mod => ({ default: mod.AddConnectionModal })));
 
@@ -378,7 +379,7 @@ export function Sidebar() {
                 {/* Header */}
                 <div
                     className={cn(
-                        "flex items-center justify-between shrink-0 select-none",
+                        "flex items-center justify-between shrink-0 select-none relative z-10",
                         compactMode ? "p-3.5 pb-2" : "p-4 pb-3",
                         isMac && "pt-8" // Add space for traffic lights on Mac
                     )}
@@ -414,68 +415,75 @@ export function Sidebar() {
 
                     <div className="drag-none flex items-center gap-0.5 rounded-xl border border-app-border/50 bg-app-surface/30 p-1 backdrop-blur-sm">
                         <div className="relative" ref={addMenuRef}>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                                className={cn(
-                                    "h-7 w-7 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0",
-                                    isAddMenuOpen
-                                        ? "bg-app-accent/20 text-app-text"
-                                        : "text-app-muted hover:bg-app-accent/15 hover:text-app-text"
-                                )}
-                                title="Add New..."
-                                aria-label="Add new host, folder, or tunnel"
-                                aria-expanded={isAddMenuOpen}
-                                aria-haspopup="menu"
-                            >
-                                <Plus className="h-4 w-4" />
-                            </Button>
+                            <Tooltip content="Add New..." position="bottom">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                                    className={cn(
+                                        "h-7 w-7 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0",
+                                        isAddMenuOpen
+                                            ? "bg-app-accent/20 text-app-text"
+                                            : "text-app-muted hover:bg-app-accent/15 hover:text-app-text"
+                                    )}
+                                    aria-label="Add new host, folder, or tunnel"
+                                    aria-expanded={isAddMenuOpen}
+                                    aria-haspopup="menu"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                </Button>
+                            </Tooltip>
 
                             {/* Add Dropdown */}
                             {isAddMenuOpen && (
                                 <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200 p-1">
-                                    <button
-                                        onClick={() => { openAddConnectionModal(); setIsAddMenuOpen(false); }}
-                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                    >
-                                        <Laptop size={14} className="text-app-muted" />
-                                        <span>New Host</span>
-                                    </button>
-                                    <button
-                                        onClick={() => { setIsFolderModalOpen(true); setIsAddMenuOpen(false); }}
-                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                    >
-                                        <FolderPlus size={14} className="text-app-muted" />
-                                        <span>New Folder</span>
-                                    </button>
+                                    <Tooltip content="Add a new SSH connection" position="right" className="w-full">
+                                        <button
+                                            onClick={() => { openAddConnectionModal(); setIsAddMenuOpen(false); }}
+                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                        >
+                                            <Laptop size={14} className="text-app-muted" />
+                                            <span>New Host</span>
+                                        </button>
+                                    </Tooltip>
+                                    <Tooltip content="Organize hosts into folders" position="right" className="w-full">
+                                        <button
+                                            onClick={() => { setIsFolderModalOpen(true); setIsAddMenuOpen(false); }}
+                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                        >
+                                            <FolderPlus size={14} className="text-app-muted" />
+                                            <span>New Folder</span>
+                                        </button>
+                                    </Tooltip>
 
                                     <div className="h-px bg-app-border/50 my-1 mx-2" />
 
-                                    <button
-                                        onClick={() => {
-                                            setIsAddTunnelModalOpen(true);
-                                            setIsAddMenuOpen(false);
-                                        }}
-                                        className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-app-surface rounded-lg flex items-center gap-2 transition-colors"
-                                        title="Create a new tunnel"
-                                    >
-                                        <Network size={14} className="text-app-muted" />
-                                        <span>New Tunnel</span>
-                                    </button>
+                                    <Tooltip content="Create a new port forwarding tunnel" position="right" className="w-full">
+                                        <button
+                                            onClick={() => {
+                                                setIsAddTunnelModalOpen(true);
+                                                setIsAddMenuOpen(false);
+                                            }}
+                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                        >
+                                            <Network size={14} className="text-app-muted" />
+                                            <span>New Tunnel</span>
+                                        </button>
+                                    </Tooltip>
                                 </div>
                             )}
                         </div>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })}
-                            className="h-7 w-7 rounded-lg text-app-muted transition-colors hover:bg-app-surface/70 hover:text-app-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0"
-                            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                        >
-                            {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-                        </Button>
+                        <Tooltip content={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} position="bottom">
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })}
+                                className="h-7 w-7 rounded-lg text-app-muted transition-colors hover:bg-app-surface/70 hover:text-app-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0"
+                                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            >
+                                {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                            </Button>
+                        </Tooltip>
                     </div>
                 </div>
 

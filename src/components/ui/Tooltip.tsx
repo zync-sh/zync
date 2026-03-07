@@ -1,21 +1,72 @@
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { cn } from '../../lib/utils';
 
 interface TooltipProps {
   content: string;
   children: ReactNode;
+  position?: 'top' | 'bottom' | 'left' | 'right';
+  className?: string;
 }
 
-export function Tooltip({ content, children }: TooltipProps) {
+export function Tooltip({ content, children, position = 'top', className }: TooltipProps) {
   const [show, setShow] = useState(false);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (show && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const spacing = 8; // Distance from trigger
+
+      let top = 0;
+      let left = 0;
+
+      switch (position) {
+        case 'top':
+          top = rect.top - spacing;
+          left = rect.left + rect.width / 2;
+          break;
+        case 'bottom':
+          top = rect.bottom + spacing;
+          left = rect.left + rect.width / 2;
+          break;
+        case 'left':
+          top = rect.top + rect.height / 2;
+          left = rect.left - spacing;
+          break;
+        case 'right':
+          top = rect.top + rect.height / 2;
+          left = rect.right + spacing;
+          break;
+      }
+
+      setCoords({ top, left });
+    }
+  }, [show, position]);
 
   return (
-    <div className="relative inline-block" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+    <div
+      ref={triggerRef}
+      className={cn("relative inline-flex items-center justify-center", className)}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
       {children}
-      {show && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap shadow-lg border border-gray-700 z-50 animate-in fade-in duration-150">
+      {show && createPortal(
+        <div
+          style={{ top: coords.top, left: coords.left }}
+          className={cn(
+            "fixed px-2.5 py-1.5 bg-app-panel/95 backdrop-blur-md text-app-text text-xs font-medium rounded-md whitespace-nowrap shadow-xl border border-app-border z-[9999] animate-in fade-in duration-150 pointer-events-none",
+            position === 'top' ? "-translate-y-full -translate-x-1/2 slide-in-from-bottom-1" :
+              position === 'bottom' ? "-translate-x-1/2 slide-in-from-top-1" :
+                position === 'left' ? "-translate-x-full -translate-y-1/2 slide-in-from-right-1" :
+                  "-translate-y-1/2 slide-in-from-left-1"
+          )}
+        >
           {content}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px border-4 border-transparent border-t-gray-800"></div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
