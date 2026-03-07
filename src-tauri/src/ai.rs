@@ -4,9 +4,8 @@ use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Compiled regex for stripping `?key=...` / `&key=...` from URLs in error messages.
-static KEY_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"[?&]key=[^&\s]*").unwrap()
-});
+static KEY_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"[?&]key=[^&\s]*").unwrap());
 
 /// AI provider configuration stored in `settings.json` under the `"ai"` key.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -23,7 +22,8 @@ pub struct AiConfig {
 impl AiConfig {
     /// Get the API key for the current provider
     fn api_key(&self) -> Option<&str> {
-        self.keys.as_ref()
+        self.keys
+            .as_ref()
             .and_then(|k| k.get(&self.provider))
             .map(|s| s.as_str())
             .filter(|k| !k.is_empty())
@@ -51,7 +51,9 @@ pub struct AiStreamChunk {
     pub error: Option<String>,
 }
 
-pub use crate::utils::toon::{AiTranslateResponse, ChatMessage, encode_history_toon, parse_response};
+pub use crate::utils::toon::{
+    encode_history_toon, parse_response, AiTranslateResponse, ChatMessage,
+};
 
 /// Payload emitted on the `ai:stream-done` event once the full response has been streamed and parsed.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -143,7 +145,8 @@ fn build_user_prompt(query: &str, context: &TerminalContext, history: &[ChatMess
         if !output.is_empty() {
             let trimmed = if output.len() > 500 {
                 let start = output.len() - 500;
-                let safe_start = output.char_indices()
+                let safe_start = output
+                    .char_indices()
                     .map(|(i, _)| i)
                     .find(|&i| i >= start)
                     .unwrap_or(start);
@@ -161,7 +164,11 @@ fn build_user_prompt(query: &str, context: &TerminalContext, history: &[ChatMess
 
 /// Combined prompt for providers that don't have separate system message support.
 fn build_single_prompt(query: &str, context: &TerminalContext, history: &[ChatMessage]) -> String {
-    format!("{}\n\n{}", SYSTEM_PROMPT, build_user_prompt(query, context, history))
+    format!(
+        "{}\n\n{}",
+        SYSTEM_PROMPT,
+        build_user_prompt(query, context, history)
+    )
 }
 
 /// Parse a TOON key-value response from the AI into an [`AiTranslateResponse`].
@@ -178,7 +185,6 @@ fn build_single_prompt(query: &str, context: &TerminalContext, history: &[ChatMe
 ///
 /// Falls back to JSON parsing for backwards-compatibility with models that
 /// respond in JSON despite being told not to.
-
 
 // ── HTTP client ──
 
@@ -211,7 +217,8 @@ async fn read_error_body(response: reqwest::Response) -> String {
     let body = response.text().await.unwrap_or_default();
     // Try to extract just the message from a JSON error object
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(msg) = json.get("error")
+        if let Some(msg) = json
+            .get("error")
             .and_then(|e| e.get("message").or(Some(e)))
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
@@ -230,15 +237,27 @@ async fn read_error_body(response: reqwest::Response) -> String {
 /// Check if an error message indicates a billing / credit issue
 fn is_billing_error(msg: &str) -> bool {
     let m = msg.to_lowercase();
-    m.contains("credit balance") || m.contains("billing") || m.contains("purchase credits")
-        || m.contains("payment") || m.contains("insufficient_quota") || m.contains("exceeded your current quota")
+    m.contains("credit balance")
+        || m.contains("billing")
+        || m.contains("purchase credits")
+        || m.contains("payment")
+        || m.contains("insufficient_quota")
+        || m.contains("exceeded your current quota")
 }
 
 // ── Provider implementations ──
 
 /// Send a single (non-streaming) request to a local Ollama instance and return the raw text response.
-async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
-    let base_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+async fn call_ollama(
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
+) -> Result<String, String> {
+    let base_url = config
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
     let model = config.model.as_deref().unwrap_or("llama3.2");
     let prompt = build_single_prompt(query, context, history);
     let client = make_client().await?;
@@ -255,7 +274,12 @@ async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig, 
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Ollama not running. Install from ollama.com or run 'ollama serve'. ({})", e))?;
+        .map_err(|e| {
+            format!(
+                "Ollama not running. Install from ollama.com or run 'ollama serve'. ({})",
+                e
+            )
+        })?;
 
     if !response.status().is_success() {
         let detail = read_error_body(response).await;
@@ -263,12 +287,22 @@ async fn call_ollama(query: &str, context: &TerminalContext, config: &AiConfig, 
     }
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
-    Ok(json.get("response").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    Ok(json
+        .get("response")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string())
 }
 
 /// Send a single (non-streaming) request to the Gemini API and return the raw text response.
-async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
-    let api_key = config.api_key()
+async fn call_gemini(
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
+) -> Result<String, String> {
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "Gemini API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
     let prompt = build_single_prompt(query, context, history);
@@ -284,7 +318,12 @@ async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig, 
         model, api_key
     );
 
-    let response = client.post(&url).json(&body).send().await.map_err(|e| sanitize_error(&e.to_string()))?;
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| sanitize_error(&e.to_string()))?;
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -304,9 +343,13 @@ async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig, 
         return Err(format!("Gemini ({}): {}", model, detail));
     }
 
-    let json: serde_json::Value = response.json().await.map_err(|e| sanitize_error(&e.to_string()))?;
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| sanitize_error(&e.to_string()))?;
     let text = json
-        .get("candidates").and_then(|c| c.get(0))
+        .get("candidates")
+        .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
         .and_then(|c| c.get("parts"))
         .and_then(|p| p.get(0))
@@ -318,8 +361,14 @@ async fn call_gemini(query: &str, context: &TerminalContext, config: &AiConfig, 
 }
 
 /// Send a single (non-streaming) request to the OpenAI Chat Completions API and return the raw text response.
-async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
-    let api_key = config.api_key()
+async fn call_openai(
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
+) -> Result<String, String> {
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "OpenAI API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gpt-4o-mini");
     let user_prompt = build_user_prompt(query, context, history);
@@ -348,7 +397,10 @@ async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig, 
         return Err("Invalid OpenAI API key. Check Settings → AI.".to_string());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(format!("Rate limit reached for '{}'. Wait a moment or switch models.", model));
+        return Err(format!(
+            "Rate limit reached for '{}'. Wait a moment or switch models.",
+            model
+        ));
     }
     if !status.is_success() {
         let detail = read_error_body(response).await;
@@ -360,7 +412,8 @@ async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig, 
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     let text = json
-        .get("choices").and_then(|c| c.get(0))
+        .get("choices")
+        .and_then(|c| c.get(0))
         .and_then(|c| c.get("message"))
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
@@ -370,10 +423,19 @@ async fn call_openai(query: &str, context: &TerminalContext, config: &AiConfig, 
 }
 
 /// Send a single (non-streaming) request to the Anthropic Messages API and return the raw text response.
-async fn call_claude(query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage]) -> Result<String, String> {
-    let api_key = config.api_key()
+async fn call_claude(
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
+) -> Result<String, String> {
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "Claude API key not configured. Go to Settings → AI.".to_string())?;
-    let model = config.model.as_deref().unwrap_or("claude-haiku-4-5-20251001");
+    let model = config
+        .model
+        .as_deref()
+        .unwrap_or("claude-haiku-4-5-20251001");
     let user_prompt = build_user_prompt(query, context, history);
     let client = make_client().await?;
 
@@ -399,7 +461,10 @@ async fn call_claude(query: &str, context: &TerminalContext, config: &AiConfig, 
         return Err("Invalid Claude API key. Check Settings → AI.".to_string());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(format!("Rate limit reached for '{}'. Wait a moment or switch models.", model));
+        return Err(format!(
+            "Rate limit reached for '{}'. Wait a moment or switch models.",
+            model
+        ));
     }
     if !status.is_success() {
         let detail = read_error_body(response).await;
@@ -411,7 +476,8 @@ async fn call_claude(query: &str, context: &TerminalContext, config: &AiConfig, 
 
     let json: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     let text = json
-        .get("content").and_then(|c| c.get(0))
+        .get("content")
+        .and_then(|c| c.get(0))
         .and_then(|c| c.get("text"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
@@ -443,21 +509,27 @@ pub async fn translate(
     match raw {
         Ok(text) => {
             let result = parse_response(&text);
-            let _ = app.emit("ai:stream-chunk", AiStreamChunk {
-                request_id,
-                chunk: text,
-                done: true,
-                error: None,
-            });
+            let _ = app.emit(
+                "ai:stream-chunk",
+                AiStreamChunk {
+                    request_id,
+                    chunk: text,
+                    done: true,
+                    error: None,
+                },
+            );
             Ok(result)
         }
         Err(e) => {
-            let _ = app.emit("ai:stream-chunk", AiStreamChunk {
-                request_id,
-                chunk: String::new(),
-                done: true,
-                error: Some(e.clone()),
-            });
+            let _ = app.emit(
+                "ai:stream-chunk",
+                AiStreamChunk {
+                    request_id,
+                    chunk: String::new(),
+                    done: true,
+                    error: Some(e.clone()),
+                },
+            );
             Err(e)
         }
     }
@@ -483,7 +555,9 @@ async fn read_sse_stream(
             Ok(_) => byte_buf.len(),
             Err(e) => e.valid_up_to(),
         };
-        if valid_len == 0 { continue; }
+        if valid_len == 0 {
+            continue;
+        }
 
         let text = std::str::from_utf8(&byte_buf[..valid_len]).unwrap();
         let mut line_buf = String::new();
@@ -506,12 +580,15 @@ async fn read_sse_stream(
                     if let Some(token) = extract_token(data) {
                         if !token.is_empty() {
                             accumulated.push_str(&token);
-                            let _ = app.emit("ai:stream-chunk", AiStreamChunk {
-                                request_id: request_id.to_string(),
-                                chunk: token,
-                                done: false,
-                                error: None,
-                            });
+                            let _ = app.emit(
+                                "ai:stream-chunk",
+                                AiStreamChunk {
+                                    request_id: request_id.to_string(),
+                                    chunk: token,
+                                    done: false,
+                                    error: None,
+                                },
+                            );
                         }
                     }
                 }
@@ -540,12 +617,15 @@ async fn read_sse_stream(
                     if let Some(token) = extract_token(data) {
                         if !token.is_empty() {
                             accumulated.push_str(&token);
-                            let _ = app.emit("ai:stream-chunk", AiStreamChunk {
-                                request_id: request_id.to_string(),
-                                chunk: token,
-                                done: false,
-                                error: None,
-                            });
+                            let _ = app.emit(
+                                "ai:stream-chunk",
+                                AiStreamChunk {
+                                    request_id: request_id.to_string(),
+                                    chunk: token,
+                                    done: false,
+                                    error: None,
+                                },
+                            );
                         }
                     }
                 }
@@ -559,9 +639,17 @@ async fn read_sse_stream(
 /// Stream a response from Ollama using newline-delimited JSON (`{"response":"token","done":false}`).
 /// Emits `ai:stream-chunk` events for each token and returns the full accumulated text.
 async fn stream_ollama(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
+    app: &AppHandle,
+    request_id: &str,
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
 ) -> Result<String, String> {
-    let base_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let base_url = config
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
     let model = config.model.as_deref().unwrap_or("llama3.2");
     let prompt = build_single_prompt(query, context, history);
     let client = make_stream_client().await?;
@@ -578,7 +666,12 @@ async fn stream_ollama(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Ollama not running. Install from ollama.com or run 'ollama serve'. ({})", e))?;
+        .map_err(|e| {
+            format!(
+                "Ollama not running. Install from ollama.com or run 'ollama serve'. ({})",
+                e
+            )
+        })?;
 
     if !response.status().is_success() {
         let detail = read_error_body(response).await;
@@ -598,7 +691,9 @@ async fn stream_ollama(
             Ok(_) => byte_buf.len(),
             Err(e) => e.valid_up_to(),
         };
-        if valid_len == 0 { continue; }
+        if valid_len == 0 {
+            continue;
+        }
 
         let text = std::str::from_utf8(&byte_buf[..valid_len]).unwrap();
         let mut processed_to = 0;
@@ -610,7 +705,9 @@ async fn stream_ollama(
                 line_start = i + 1;
                 processed_to = i + 1;
 
-                if line.is_empty() { continue; }
+                if line.is_empty() {
+                    continue;
+                }
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
                     // Handle Ollama error objects in stream
                     if let Some(err_msg) = json.get("error").and_then(|v| v.as_str()) {
@@ -619,12 +716,15 @@ async fn stream_ollama(
                     if let Some(token) = json.get("response").and_then(|v| v.as_str()) {
                         if !token.is_empty() {
                             accumulated.push_str(token);
-                            let _ = app.emit("ai:stream-chunk", AiStreamChunk {
-                                request_id: request_id.to_string(),
-                                chunk: token.to_string(),
-                                done: false,
-                                error: None,
-                            });
+                            let _ = app.emit(
+                                "ai:stream-chunk",
+                                AiStreamChunk {
+                                    request_id: request_id.to_string(),
+                                    chunk: token.to_string(),
+                                    done: false,
+                                    error: None,
+                                },
+                            );
                         }
                     }
                 }
@@ -646,9 +746,15 @@ async fn stream_ollama(
 /// Stream a response from OpenAI Chat Completions using SSE (`data: {...}` lines).
 /// Emits `ai:stream-chunk` events for each token and returns the full accumulated text.
 async fn stream_openai(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
+    app: &AppHandle,
+    request_id: &str,
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
 ) -> Result<String, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "OpenAI API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gpt-4o-mini");
     let user_prompt = build_user_prompt(query, context, history);
@@ -678,7 +784,10 @@ async fn stream_openai(
         return Err("Invalid OpenAI API key. Check Settings → AI.".to_string());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(format!("OpenAI rate limit reached for '{}'. Wait a moment or switch models.", model));
+        return Err(format!(
+            "OpenAI rate limit reached for '{}'. Wait a moment or switch models.",
+            model
+        ));
     }
     if !status.is_success() {
         let detail = read_error_body(response).await;
@@ -686,8 +795,16 @@ async fn stream_openai(
     }
 
     fn extract_openai_token(data: &str) -> Option<String> {
-        serde_json::from_str::<serde_json::Value>(data).ok()
-            .and_then(|v| v.get("choices")?.get(0)?.get("delta")?.get("content")?.as_str().map(|s| s.to_string()))
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .and_then(|v| {
+                v.get("choices")?
+                    .get(0)?
+                    .get("delta")?
+                    .get("content")?
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
     }
 
     read_sse_stream(app, request_id, response, extract_openai_token).await
@@ -696,11 +813,20 @@ async fn stream_openai(
 /// Stream a response from the Anthropic Messages API using SSE (`data: {...}` lines).
 /// Emits `ai:stream-chunk` events for each `content_block_delta` token.
 async fn stream_claude(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
+    app: &AppHandle,
+    request_id: &str,
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
 ) -> Result<String, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "Claude API key not configured. Go to Settings → AI.".to_string())?;
-    let model = config.model.as_deref().unwrap_or("claude-haiku-4-5-20251001");
+    let model = config
+        .model
+        .as_deref()
+        .unwrap_or("claude-haiku-4-5-20251001");
     let user_prompt = build_user_prompt(query, context, history);
     let client = make_stream_client().await?;
 
@@ -727,7 +853,10 @@ async fn stream_claude(
         return Err("Invalid Claude API key. Check Settings → AI.".to_string());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(format!("Rate limit reached for '{}'. Wait a moment or switch models.", model));
+        return Err(format!(
+            "Rate limit reached for '{}'. Wait a moment or switch models.",
+            model
+        ));
     }
     if !status.is_success() {
         let detail = read_error_body(response).await;
@@ -752,9 +881,15 @@ async fn stream_claude(
 /// Stream a response from the Gemini API using its SSE endpoint (`streamGenerateContent?alt=sse`).
 /// Emits `ai:stream-chunk` events for each candidate text delta.
 async fn stream_gemini(
-    app: &AppHandle, request_id: &str, query: &str, context: &TerminalContext, config: &AiConfig, history: &[ChatMessage],
+    app: &AppHandle,
+    request_id: &str,
+    query: &str,
+    context: &TerminalContext,
+    config: &AiConfig,
+    history: &[ChatMessage],
 ) -> Result<String, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "Gemini API key not configured. Go to Settings → AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
     let prompt = build_single_prompt(query, context, history);
@@ -770,14 +905,22 @@ async fn stream_gemini(
         model, api_key
     );
 
-    let response = client.post(&url).json(&body).send().await.map_err(|e| sanitize_error(&e.to_string()))?;
+    let response = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| sanitize_error(&e.to_string()))?;
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err("Invalid Gemini API key. Check Settings → AI.".to_string());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(format!("Model '{}' is rate limited. Switch to 'gemini-2.0-flash'.", model));
+        return Err(format!(
+            "Model '{}' is rate limited. Switch to 'gemini-2.0-flash'.",
+            model
+        ));
     }
     if !status.is_success() {
         let detail = read_error_body(response).await;
@@ -785,8 +928,18 @@ async fn stream_gemini(
     }
 
     fn extract_gemini_token(data: &str) -> Option<String> {
-        serde_json::from_str::<serde_json::Value>(data).ok()
-            .and_then(|v| v.get("candidates")?.get(0)?.get("content")?.get("parts")?.get(0)?.get("text")?.as_str().map(|s| s.to_string()))
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .and_then(|v| {
+                v.get("candidates")?
+                    .get(0)?
+                    .get("content")?
+                    .get("parts")?
+                    .get(0)?
+                    .get("text")?
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
     }
 
     read_sse_stream(app, request_id, response, extract_gemini_token).await
@@ -817,18 +970,24 @@ pub async fn translate_stream(
     match raw {
         Ok(text) => {
             let result = parse_response(&text);
-            let _ = app.emit("ai:stream-done", AiStreamDone {
-                request_id,
-                result: Some(result),
-                error: None,
-            });
+            let _ = app.emit(
+                "ai:stream-done",
+                AiStreamDone {
+                    request_id,
+                    result: Some(result),
+                    error: None,
+                },
+            );
         }
         Err(e) => {
-            let _ = app.emit("ai:stream-done", AiStreamDone {
-                request_id,
-                result: None,
-                error: Some(e),
-            });
+            let _ = app.emit(
+                "ai:stream-done",
+                AiStreamDone {
+                    request_id,
+                    result: None,
+                    error: Some(e),
+                },
+            );
         }
     }
 }
@@ -868,7 +1027,10 @@ pub async fn get_provider_models(app: &AppHandle) -> Result<Vec<String>, String>
 
 /// Internal Ollama model listing (takes config, no AppHandle needed)
 async fn get_ollama_models_internal(config: &AiConfig) -> Result<Vec<String>, String> {
-    let base_url = config.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let base_url = config
+        .ollama_url
+        .as_deref()
+        .unwrap_or("http://localhost:11434");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -909,7 +1071,8 @@ async fn get_ollama_models_internal(config: &AiConfig) -> Result<Vec<String>, St
 /// Fetch available Gemini models from the Google AI API, filtered to stable
 /// `generateContent`-capable models (excludes experimental, preview, and tuning variants).
 async fn get_gemini_models(config: &AiConfig) -> Result<Vec<String>, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "No API key configured".to_string())?;
 
     let client = reqwest::Client::builder()
@@ -921,12 +1084,19 @@ async fn get_gemini_models(config: &AiConfig) -> Result<Vec<String>, String> {
         "https://generativelanguage.googleapis.com/v1beta/models?key={}",
         api_key
     );
-    let resp = client.get(&url).send().await.map_err(|e| sanitize_error(&e.to_string()))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| sanitize_error(&e.to_string()))?;
     if !resp.status().is_success() {
         return Err(format!("Gemini API error: {}", resp.status()));
     }
 
-    let json: serde_json::Value = resp.json().await.map_err(|e| sanitize_error(&e.to_string()))?;
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| sanitize_error(&e.to_string()))?;
     let mut models: Vec<String> = json["models"]
         .as_array()
         .unwrap_or(&vec![])
@@ -938,7 +1108,9 @@ async fn get_gemini_models(config: &AiConfig) -> Result<Vec<String>, String> {
                 .unwrap_or(false)
         })
         .filter_map(|m| {
-            m["name"].as_str().map(|n| n.trim_start_matches("models/").to_string())
+            m["name"]
+                .as_str()
+                .map(|n| n.trim_start_matches("models/").to_string())
         })
         .filter(|id| {
             id.starts_with("gemini-")
@@ -958,7 +1130,8 @@ async fn get_gemini_models(config: &AiConfig) -> Result<Vec<String>, String> {
 /// Fetch available OpenAI models, filtered to GPT and reasoning (o-series) chat models
 /// and excluding embeddings, TTS, Whisper, realtime, audio, search, and base variants.
 async fn get_openai_models(config: &AiConfig) -> Result<Vec<String>, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "No API key configured".to_string())?;
 
     let client = reqwest::Client::builder()
@@ -984,7 +1157,13 @@ async fn get_openai_models(config: &AiConfig) -> Result<Vec<String>, String> {
         .iter()
         .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
         .filter(|id| {
-            (id.starts_with("gpt-") || id == "o1" || id.starts_with("o1-") || id == "o3" || id.starts_with("o3-") || id == "o4" || id.starts_with("o4-"))
+            (id.starts_with("gpt-")
+                || id == "o1"
+                || id.starts_with("o1-")
+                || id == "o3"
+                || id.starts_with("o3-")
+                || id == "o4"
+                || id.starts_with("o4-"))
                 && !id.contains("instruct")
                 && !id.contains("embedding")
                 && !id.contains("tts")
@@ -1004,7 +1183,8 @@ async fn get_openai_models(config: &AiConfig) -> Result<Vec<String>, String> {
 /// Fetch available Claude models from the Anthropic API.
 /// Falls back to a hardcoded list of known stable models if the API call fails or returns empty.
 async fn get_claude_models(config: &AiConfig) -> Result<Vec<String>, String> {
-    let api_key = config.api_key()
+    let api_key = config
+        .api_key()
         .ok_or_else(|| "No API key configured".to_string())?;
 
     let client = reqwest::Client::builder()
@@ -1039,7 +1219,11 @@ async fn get_claude_models(config: &AiConfig) -> Result<Vec<String>, String> {
         .filter(|id| id.starts_with("claude-"))
         .collect();
 
-    if models.is_empty() { Ok(fallback) } else { Ok(models) }
+    if models.is_empty() {
+        Ok(fallback)
+    } else {
+        Ok(models)
+    }
 }
 
 /// Public entry point for listing Ollama models, called from the `ai_get_ollama_models` Tauri command.

@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::fs;
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -23,7 +23,7 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
 
     let content = fs::read_to_string(path)?;
     let mut connections = Vec::new();
-    
+
     let mut current_host: Option<ParsedSshConnection> = None;
 
     for line in content.lines() {
@@ -33,38 +33,41 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
         }
 
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.is_empty() { continue; }
+        if parts.is_empty() {
+            continue;
+        }
 
         // let key = parts[0].to_lowercase();
         // Handle "Key = Value" or "Key Value"
-        // We'll simplisticly join the rest, assuming space separation without '=' for now, 
+        // We'll simplisticly join the rest, assuming space separation without '=' for now,
         // or simplistic handling. The standard allows both.
         // Let's perform a cleaner value extraction.
-        
+
         // Re-split strictly
-        let (key_str, value_str) = if let Some(idx) = line.find(|c: char| c.is_whitespace() || c == '=') {
-            let k = &line[..idx];
-            let mut remainder = &line[idx..];
-            // consume delimiter
-            remainder = remainder.trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-            (k, remainder.trim())
-        } else {
-             (line, "")
-        };
+        let (key_str, value_str) =
+            if let Some(idx) = line.find(|c: char| c.is_whitespace() || c == '=') {
+                let k = &line[..idx];
+                let mut remainder = &line[idx..];
+                // consume delimiter
+                remainder = remainder.trim_start_matches(|c: char| c.is_whitespace() || c == '=');
+                (k, remainder.trim())
+            } else {
+                (line, "")
+            };
 
         if key_str.to_lowercase() == "host" {
             // Push previous
             if let Some(mut host) = current_host.take() {
                 if !host.name.contains('*') && !host.name.contains('?') {
-                     // Generate ID
-                     host.id = format!("ssh_{}", uuid::Uuid::new_v4());
-                     connections.push(host);
+                    // Generate ID
+                    host.id = format!("ssh_{}", uuid::Uuid::new_v4());
+                    connections.push(host);
                 }
             }
-            
+
             // Start new
             current_host = Some(ParsedSshConnection {
-                id: String::new(), // Will be set on push
+                id: String::new(),           // Will be set on push
                 name: value_str.to_string(), // First alias
                 host: String::new(),
                 username: whoami::username(),
@@ -77,20 +80,24 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
             match key_str.to_lowercase().as_str() {
                 "hostname" => host.host = value_str.to_string(),
                 "user" => host.username = value_str.to_string(),
-                "port" => if let Ok(p) = value_str.parse() { host.port = p; },
+                "port" => {
+                    if let Ok(p) = value_str.parse() {
+                        host.port = p;
+                    }
+                }
                 "identityfile" => {
-                     // expansion of ~ is tricky in rust std, but crucial
-                     // Strip quotes FIRST
-                     let mut path = value_str.trim_matches('"').trim_matches('\'').to_string();
-                     
-                     // Then expand ~
-                     if path.starts_with("~") {
-                         if let Some(home) = dirs::home_dir() {
-                             path = path.replacen("~", &home.to_string_lossy(), 1);
-                         }
-                     }
-                     host.private_key_path = Some(path);
-                },
+                    // expansion of ~ is tricky in rust std, but crucial
+                    // Strip quotes FIRST
+                    let mut path = value_str.trim_matches('"').trim_matches('\'').to_string();
+
+                    // Then expand ~
+                    if path.starts_with("~") {
+                        if let Some(home) = dirs::home_dir() {
+                            path = path.replacen("~", &home.to_string_lossy(), 1);
+                        }
+                    }
+                    host.private_key_path = Some(path);
+                }
                 "proxyjump" => host.jump_server_alias = Some(value_str.to_string()),
                 _ => {}
             }
@@ -100,13 +107,14 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
     // Push last
     if let Some(mut host) = current_host.take() {
         if !host.name.contains('*') && !host.name.contains('?') {
-             host.id = format!("ssh_{}", uuid::Uuid::new_v4());
-             connections.push(host);
+            host.id = format!("ssh_{}", uuid::Uuid::new_v4());
+            connections.push(host);
         }
     }
 
     // Pass 2: Resolve Jump Server Aliases to IDs
-    let alias_map: std::collections::HashMap<String, String> = connections.iter()
+    let alias_map: std::collections::HashMap<String, String> = connections
+        .iter()
         .map(|c| (c.name.clone(), c.id.clone()))
         .collect();
 

@@ -38,7 +38,7 @@ impl SnippetsManager {
 
     pub async fn save(&self, snippet: Snippet) -> Result<(), String> {
         let mut snippets = self.list().await?;
-        
+
         if let Some(pos) = snippets.iter().position(|s| s.id == snippet.id) {
             snippets[pos] = snippet;
         } else {

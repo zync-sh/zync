@@ -50,7 +50,8 @@ pub fn encode_history_toon(history: &[ChatMessage]) -> Option<String> {
             _ => "user", // fallback
         };
         // Use proper escaping instead of destructive replacement
-        let safe_content = msg.content
+        let safe_content = msg
+            .content
             .replace('\\', "\\\\")
             .replace('\n', "\\n")
             .replace(',', "\\,");
@@ -73,7 +74,8 @@ pub fn parse_response(text: &str) -> AiTranslateResponse {
     let text = text.trim();
     let owned_text: String;
     let text = if text.starts_with("```") {
-        owned_text = text.lines()
+        owned_text = text
+            .lines()
             .skip(1)
             .take_while(|l| !l.starts_with("```"))
             .collect::<Vec<_>>()
@@ -105,7 +107,7 @@ pub fn parse_response(text: &str) -> AiTranslateResponse {
     // 3. Construct response based on extracted fields
     if !fields.is_empty() {
         let response_type = fields.get("type").map(|s| s.as_str()).unwrap_or("");
-        
+
         // Priority 1: Check for explicit "answer" or "chat" type
         if response_type.eq_ignore_ascii_case("chat") || fields.contains_key("answer") {
             if let Some(answer) = fields.get("answer") {
@@ -124,12 +126,20 @@ pub fn parse_response(text: &str) -> AiTranslateResponse {
         if let Some(command) = fields.get("command") {
             if !command.is_empty() {
                 let explanation = fields.get("explanation").cloned().unwrap_or_default();
-                let safety = fields.get("safety").map(|s| s.to_lowercase()).unwrap_or_else(|| "moderate".to_string());
+                let safety = fields
+                    .get("safety")
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_else(|| "moderate".to_string());
                 let safety = match safety.as_str() {
                     "safe" | "moderate" | "dangerous" => safety,
                     _ => "moderate".to_string(),
                 };
-                return AiTranslateResponse { command: command.clone(), explanation, safety, answer: None };
+                return AiTranslateResponse {
+                    command: command.clone(),
+                    explanation,
+                    safety,
+                    answer: None,
+                };
             }
         }
     }
@@ -139,20 +149,41 @@ pub fn parse_response(text: &str) -> AiTranslateResponse {
         if let Some(end) = text.rfind('}') {
             let json_str = &text[start..=end];
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                let safety = val.get("safety").and_then(|v| v.as_str()).unwrap_or("moderate").to_lowercase();
+                let safety = val
+                    .get("safety")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("moderate")
+                    .to_lowercase();
                 let safety = match safety.as_str() {
                     "safe" | "moderate" | "dangerous" => safety,
                     _ => "moderate".to_string(),
                 };
                 let mut resp = AiTranslateResponse {
-                    command: val.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    explanation: val.get("explanation").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    command: val
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    explanation: val
+                        .get("explanation")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     safety,
-                    answer: val.get("answer").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    answer: val
+                        .get("answer")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                 };
-                
+
                 // If it's explicitly a chat type in JSON
-                if val.get("type").and_then(|t| t.as_str()).map(|s| s.eq_ignore_ascii_case("chat")).unwrap_or(false) && resp.answer.is_none() {
+                if val
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.eq_ignore_ascii_case("chat"))
+                    .unwrap_or(false)
+                    && resp.answer.is_none()
+                {
                     resp.answer = Some(resp.explanation.clone()); // models sometimes put the answer in explanation
                 }
 

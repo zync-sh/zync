@@ -1,9 +1,9 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
-use anyhow::{Context, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -39,23 +39,28 @@ impl PluginScanner {
     /// Plugins are located in `app_config_dir/plugins`.
     pub fn scan(app: &AppHandle) -> Result<Vec<Plugin>> {
         // Resolve configuration directory (e.g. ~/.config/zync on Linux)
-        let config_dir = app.path().app_config_dir()
+        let config_dir = app
+            .path()
+            .app_config_dir()
             .context("Failed to resolve app config directory")?;
-        
+
         let plugins_dir = config_dir.join("plugins");
         let state = Self::load_state(app).unwrap_or_default();
 
         // Load User Plugins
         let mut plugins = Vec::new();
         if plugins_dir.exists() {
-             for entry in fs::read_dir(plugins_dir)? {
+            for entry in fs::read_dir(plugins_dir)? {
                 let entry = entry?;
                 let path = entry.path();
 
                 if path.is_dir() {
                     if let Ok(mut plugin) = Self::load_plugin(&path) {
                         // Check if enabled (default true if not present)
-                        plugin.enabled = *state.enabled_plugins.get(&plugin.manifest.id).unwrap_or(&true);
+                        plugin.enabled = *state
+                            .enabled_plugins
+                            .get(&plugin.manifest.id)
+                            .unwrap_or(&true);
                         plugins.push(plugin);
                     }
                 }
@@ -86,7 +91,9 @@ impl PluginScanner {
     }
 
     fn load_state(app: &AppHandle) -> Result<PluginState> {
-        let config_dir = app.path().app_config_dir()
+        let config_dir = app
+            .path()
+            .app_config_dir()
             .context("Failed to resolve app config directory")?;
         let state_path = config_dir.join("plugins.json");
 
@@ -100,20 +107,22 @@ impl PluginScanner {
     }
 
     pub fn save_state(app: &AppHandle, id: String, enabled: bool) -> Result<()> {
-        let config_dir = app.path().app_config_dir()
+        let config_dir = app
+            .path()
+            .app_config_dir()
             .context("Failed to resolve app config directory")?;
         if !config_dir.exists() {
             fs::create_dir_all(&config_dir)?;
         }
-        
+
         let state_path = config_dir.join("plugins.json");
         let mut state = Self::load_state(app).unwrap_or_default();
-        
+
         state.enabled_plugins.insert(id, enabled);
-        
+
         let content = serde_json::to_string_pretty(&state)?;
         fs::write(state_path, content)?;
-        
+
         Ok(())
     }
 
@@ -237,7 +246,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='dracula'] {
                     --color-app-bg: #282a36;
                     --color-app-panel: #282a36;
@@ -247,7 +257,9 @@ impl PluginScanner {
                     --color-app-muted: #6272a4;
                     --color-app-accent: #d282af;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -267,7 +279,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='monokai'] {
                     --color-app-bg: #272822;
                     --color-app-panel: #272822;
@@ -277,7 +290,9 @@ impl PluginScanner {
                     --color-app-muted: #75715e;
                     --color-app-accent: #9ebf52;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -297,7 +312,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='midnight'] {
                     --color-app-bg: #0f111a;
                     --color-app-panel: #1a1d2d;
@@ -307,7 +323,9 @@ impl PluginScanner {
                     --color-app-muted: #94a3b8;
                     --color-app-accent: #797bce;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -327,7 +345,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='monokai-pro'] {
                     --color-app-bg: #2d2a2e;
                     --color-app-panel: #2d2a2e;
@@ -337,7 +356,9 @@ impl PluginScanner {
                     --color-app-muted: #939293;
                     --color-app-accent: #ffd866;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -357,7 +378,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='light'] {
                     --color-app-bg: #f4f4f5;
                     --color-app-panel: #ffffff;
@@ -367,7 +389,9 @@ impl PluginScanner {
                     --color-app-muted: #71717a;
                     --color-app-accent: #2563eb;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -387,7 +411,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='gruvbox-light'] {
                     --color-app-bg: #fbf1c7;
                     --color-app-panel: #f2e5bc;
@@ -397,7 +422,9 @@ impl PluginScanner {
                     --color-app-muted: #7c6f64;
                     --color-app-accent: #d65d0e;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -417,7 +444,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='solarized-light'] {
                     --color-app-bg: #fdf6e3;
                     --color-app-panel: #eee8d5;
@@ -427,7 +455,9 @@ impl PluginScanner {
                     --color-app-muted: #586e75;
                     --color-app-accent: #268bd2;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -447,7 +477,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='catppuccin-latte'] {
                     --color-app-bg: #eff1f5;
                     --color-app-panel: #e6e9ef;
@@ -457,7 +488,9 @@ impl PluginScanner {
                     --color-app-muted: #6c6f85;
                     --color-app-accent: #ea76cb;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -477,7 +510,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='tokyo-light'] {
                     --color-app-bg: #e1e2e7;
                     --color-app-panel: #d5d6db;
@@ -487,7 +521,9 @@ impl PluginScanner {
                     --color-app-muted: #565a6e;
                     --color-app-accent: #3760bf;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -507,7 +543,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='synthwave'] {
                     --color-app-bg: #2b213a;
                     --color-app-panel: #241b31;
@@ -517,7 +554,9 @@ impl PluginScanner {
                     --color-app-muted: #b6a0d6;
                     --color-app-accent: #ff7edb;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
@@ -537,7 +576,8 @@ impl PluginScanner {
                 icon: None,
             },
             script: None,
-            style: Some(r#"
+            style: Some(
+                r#"
                 [data-theme='nordic'] {
                     --color-app-bg: #2e3440;
                     --color-app-panel: #3b4252;
@@ -547,82 +587,96 @@ impl PluginScanner {
                     --color-app-muted: #88c0d0;
                     --color-app-accent: #88c0d0;
                 }
-            "#.to_string()),
+            "#
+                .to_string(),
+            ),
             enabled: true,
         }
     }
 
     pub async fn install_plugin(app: &AppHandle, url: &str) -> Result<String> {
         println!("[Plugins] Installing from: {}", url);
-        
+
         // 1. Download
         let client = reqwest::Client::new();
         let response = client.get(url).send().await?;
-        
+
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to download plugin: status {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to download plugin: status {}",
+                response.status()
+            ));
         }
-        
+
         let bytes = response.bytes().await?;
         let cursor = std::io::Cursor::new(bytes);
-        
+
         // 2. Unzip
         let mut archive = zip::ZipArchive::new(cursor)?;
-        
+
         // Find manifest to get ID/Directory Name
         let mut manifest_content = String::new();
         {
-            let mut manifest_file = archive.by_name("manifest.json")
+            let mut manifest_file = archive
+                .by_name("manifest.json")
                 .context("Plugin zip is missing manifest.json")?;
             std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
         }
-        
+
         let manifest: Manifest = serde_json::from_str(&manifest_content)
             .context("Invalid manifest.json in plugin zip")?;
-            
+
         // 3. Extract to plugins dir
-        let config_dir = app.path().app_config_dir()
+        let config_dir = app
+            .path()
+            .app_config_dir()
             .context("Failed to get config dir")?;
         let plugins_dir = config_dir.join("plugins");
-        
+
         if !plugins_dir.exists() {
             fs::create_dir_all(&plugins_dir)?;
         }
-        
+
         // Use manifest ID or safe name for directory
         // Sanitize ID for path
-        let dir_name = manifest.id.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+        let dir_name = manifest
+            .id
+            .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
         let target_dir = plugins_dir.join(&dir_name);
-        
+
         if target_dir.exists() {
             // Check if we should overwrite? For now, yes, it's an update/reinstall
-            fs::remove_dir_all(&target_dir)?; 
+            fs::remove_dir_all(&target_dir)?;
         }
-        
+
         fs::create_dir_all(&target_dir)?;
-        
+
         println!("[Plugins] Extracting to: {:?}", target_dir);
         archive.extract(&target_dir)?;
-        
+
         Ok(manifest.id)
     }
-    
+
     pub fn uninstall_plugin(app: &AppHandle, plugin_id: &str) -> Result<()> {
         let config_dir = app.path().app_config_dir()?;
         let plugins_dir = config_dir.join("plugins");
-        
+
         // Need to find the directory - scanning or guessing
         // Since we name dirs by ID (sanitized), we can try that first
-        let dir_name = plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
+        let dir_name =
+            plugin_id.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-', "_");
         let target_dir = plugins_dir.join(&dir_name);
-        
+
         if target_dir.exists() {
             fs::remove_dir_all(target_dir)?;
             Ok(())
         } else {
             // Fallback: scan to find directory with matching manifest ID?
             // For now, assume consistent naming
-            Err(anyhow::anyhow!("Plugin directory not found for ID: {}", plugin_id))
+            Err(anyhow::anyhow!(
+                "Plugin directory not found for ID: {}",
+                plugin_id
+            ))
         }
     }
 
@@ -630,9 +684,9 @@ impl PluginScanner {
         let manifest_path = dir.join("manifest.json");
         let manifest_content = fs::read_to_string(&manifest_path)
             .context(format!("Missing manifest.json in {:?}", dir))?;
-        
-        let manifest: Manifest = serde_json::from_str(&manifest_content)
-            .context("Failed to parse manifest.json")?;
+
+        let manifest: Manifest =
+            serde_json::from_str(&manifest_content).context("Failed to parse manifest.json")?;
 
         // Load Main Script (worker.js or specified entry)
         let script = if let Some(main_file) = &manifest.main {

@@ -14,8 +14,13 @@ pub struct ConnectionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AuthMethod {
-    Password { password: String },
-    PrivateKey { key_path: String, passphrase: Option<String> },
+    Password {
+        password: String,
+    },
+    PrivateKey {
+        key_path: String,
+        passphrase: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -25,7 +30,6 @@ pub struct ConnectionResponse {
     pub term_id: Option<String>,
     pub detected_os: Option<String>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")] // Match TS interface

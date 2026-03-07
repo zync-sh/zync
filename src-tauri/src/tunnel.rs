@@ -1,17 +1,18 @@
 use crate::ssh::Client;
 use anyhow::{anyhow, Result};
 use russh::client::Handle;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct TunnelManager {
     // remote_port -> (local_host, local_port, bind_address)
     pub remote_forwards: Arc<Mutex<HashMap<u16, (String, u16, String)>>>,
     // tunnel_id -> (Listener AbortHandle, Kill Signal Sender)
-    pub local_listeners: Arc<Mutex<HashMap<String, (tokio::task::AbortHandle, tokio::sync::broadcast::Sender<()>)>>>,
+    pub local_listeners:
+        Arc<Mutex<HashMap<String, (tokio::task::AbortHandle, tokio::sync::broadcast::Sender<()>)>>>,
 }
 
 impl TunnelManager {
@@ -25,19 +26,22 @@ impl TunnelManager {
     // Local Forwarding: Listen on local_port, forward to remote_host:remote_port via SSH
     pub async fn start_local_forwarding(
         &self,
-        session: Arc<Mutex<Handle<Client>>>, 
+        session: Arc<Mutex<Handle<Client>>>,
         bind_address: String,
         local_port: u16,
         remote_host: String,
         remote_port: u16,
     ) -> Result<String> {
         let tunnel_id = format!("local:{}:{}", local_port, remote_port);
-        
+
         // Idempotency check
         {
             let listeners = self.local_listeners.lock().await;
             if listeners.contains_key(&tunnel_id) {
-                println!("[TUNNEL] Tunnel {} already active, skipping start", tunnel_id);
+                println!(
+                    "[TUNNEL] Tunnel {} already active, skipping start",
+                    tunnel_id
+                );
                 return Ok(tunnel_id);
             }
         }
@@ -47,7 +51,7 @@ impl TunnelManager {
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                 let process_info = find_process_using_port(local_port).await;
                 let suggested_port = find_next_available_port(local_port, 10).await;
-                
+
                 let error_msg = if let Some(port) = suggested_port {
                     format!(
                         "Port {} is already in use{}. Port {} is available.",
@@ -62,14 +66,17 @@ impl TunnelManager {
                         process_info.map(|p| format!(" {}", p)).unwrap_or_default()
                     )
                 };
-                
+
                 return Err(anyhow!(error_msg));
             }
             Err(e) => return Err(e.into()),
         };
         let session = session.clone();
 
-        println!("[TUNNEL] Starting local forwarding on port {} to {}:{} with bind address {}", local_port, remote_host, remote_port, bind_address);
+        println!(
+            "[TUNNEL] Starting local forwarding on port {} to {}:{} with bind address {}",
+            local_port, remote_host, remote_port, bind_address
+        );
 
         let (tx, _rx) = tokio::sync::broadcast::channel(1);
         let tx_for_store = tx.clone();
@@ -84,7 +91,7 @@ impl TunnelManager {
                          let session = session.clone();
                          let remote_host = remote_host.clone();
                          let mut inner_rx = tx.subscribe(); // Subscribe for inner task
-                         
+
                          tokio::spawn(async move {
                             // Open channel - CRITICAL: Lock must be dropped before streaming
                             let channel = {
@@ -100,7 +107,7 @@ impl TunnelManager {
 
                             if let Some(channel) = channel {
                                  let mut stream = channel.into_stream();
-                                 
+
                                  // Select between copy and cancellation
                                  tokio::select! {
                                      res = tokio::io::copy_bidirectional(&mut incoming_stream, &mut stream) => {
@@ -123,52 +130,69 @@ impl TunnelManager {
                 }
             }
         });
-        
+
         // Store cancellation handle and sender
-        self.local_listeners.lock().await.insert(tunnel_id.clone(), (handle.abort_handle(), tx_for_store));
+        self.local_listeners
+            .lock()
+            .await
+            .insert(tunnel_id.clone(), (handle.abort_handle(), tx_for_store));
 
         Ok(tunnel_id)
     }
 
     pub async fn start_remote_forwarding(
-         &self,
-         session: Arc<Mutex<Handle<Client>>>,
-         bind_address: String,
-         remote_port: u16,
-         local_host: String,
-         local_port: u16,
+        &self,
+        session: Arc<Mutex<Handle<Client>>>,
+        bind_address: String,
+        remote_port: u16,
+        local_host: String,
+        local_port: u16,
     ) -> Result<String> {
         // Register map FIRST so handler can find it
         let tunnel_id = format!("remote:{}:{}", remote_port, local_port);
         {
             let mut map = self.remote_forwards.lock().await;
             if map.contains_key(&remote_port) {
-                println!("[TUNNEL] Remote tunnel on port {} already active", remote_port);
+                println!(
+                    "[TUNNEL] Remote tunnel on port {} already active",
+                    remote_port
+                );
                 return Ok(tunnel_id);
             }
-            map.insert(remote_port, (local_host.clone(), local_port, bind_address.clone()));
+            map.insert(
+                remote_port,
+                (local_host.clone(), local_port, bind_address.clone()),
+            );
         }
 
         let mut session_handle = session.lock().await;
-        // Check docs: tcpip_forward returns impl Future<Output = Result<bool, Error>> usually? 
+        // Check docs: tcpip_forward returns impl Future<Output = Result<bool, Error>> usually?
         // 0.46 might return u32 if allocating port 0.
         // Assuming Result<bool> based on previous checks or similar.
         // Actually, let's treat it as result.
-        let _ = session_handle.tcpip_forward(bind_address.clone(), remote_port as u32).await
-             .map_err(|e| {
-                 anyhow!("Remote forwarding error: {}", e)
-             })?;
-        
-        println!("[TUNNEL] Remote forwarding enabled on remote port {} -> {}:{} (bound to {})", remote_port, local_host, local_port, bind_address);
-        
+        let _ = session_handle
+            .tcpip_forward(bind_address.clone(), remote_port as u32)
+            .await
+            .map_err(|e| anyhow!("Remote forwarding error: {}", e))?;
+
+        println!(
+            "[TUNNEL] Remote forwarding enabled on remote port {} -> {}:{} (bound to {})",
+            remote_port, local_host, local_port, bind_address
+        );
+
         let tunnel_id = format!("remote:{}:{}", remote_port, local_port);
         // Note: We don't have separate abort handle for remote, it's session state + map.
         // To stop, we call cancel_tcpip_forward
-        
+
         Ok(tunnel_id)
     }
 
-    pub async fn stop_tunnel(&self, session: Option<Arc<Mutex<Handle<Client>>>>, tunnel_id: String, bind_address_override: Option<String>) -> Result<()> {
+    pub async fn stop_tunnel(
+        &self,
+        session: Option<Arc<Mutex<Handle<Client>>>>,
+        tunnel_id: String,
+        bind_address_override: Option<String>,
+    ) -> Result<()> {
         println!("[TUNNEL MANAGER] Stopping {}", tunnel_id);
         // Parse ID to determine type
         if tunnel_id.starts_with("local:") {
@@ -181,33 +205,48 @@ impl TunnelManager {
                 handle.abort();
                 println!("[TUNNEL MARKER] Stop signal sent for {}", tunnel_id);
             } else {
-                println!("[TUNNEL ERROR] Key {} not found in local_listeners. Available: {:?}", tunnel_id, listeners.keys());
+                println!(
+                    "[TUNNEL ERROR] Key {} not found in local_listeners. Available: {:?}",
+                    tunnel_id,
+                    listeners.keys()
+                );
             }
         } else if tunnel_id.starts_with("remote:") {
-             // format: remote:{remote_port}:{local_port}
-             let parts: Vec<&str> = tunnel_id.split(':').collect();
-             if parts.len() == 3 {
-                 if let Ok(remote_port) = parts[1].parse::<u16>() {
-                     let mut remote_forwards_guard = self.remote_forwards.lock().await;
-                     if let Some((_, _, saved_bind_address)) = remote_forwards_guard.remove(&remote_port) {
-                         if let Some(session) = session {
-                             let handle = session.lock().await;
-                             let bind_addr = bind_address_override.unwrap_or_else(|| saved_bind_address);
-                             let _ = handle.cancel_tcpip_forward(bind_addr.clone(), remote_port as u32).await;
-                             println!("[TUNNEL] Cancelled remote forwarding on port {} (bind address: {})", remote_port, bind_addr);
-                         }
-                     } else {
-                         println!("[TUNNEL ERROR] Remote tunnel on port {} not found in manager.", remote_port);
-                         // If not found in manager, but session is provided, try to cancel with default bind_address_override
-                         if let Some(session) = session {
-                             let handle = session.lock().await;
-                             let bind_addr = bind_address_override.unwrap_or_else(|| "0.0.0.0".to_string());
-                             let _ = handle.cancel_tcpip_forward(bind_addr.clone(), remote_port as u32).await;
-                             println!("[TUNNEL] Attempted to cancel unknown remote forwarding on port {} with bind_address {}", remote_port, bind_addr);
-                         }
-                     }
-                 }
-             }
+            // format: remote:{remote_port}:{local_port}
+            let parts: Vec<&str> = tunnel_id.split(':').collect();
+            if parts.len() == 3 {
+                if let Ok(remote_port) = parts[1].parse::<u16>() {
+                    let mut remote_forwards_guard = self.remote_forwards.lock().await;
+                    if let Some((_, _, saved_bind_address)) =
+                        remote_forwards_guard.remove(&remote_port)
+                    {
+                        if let Some(session) = session {
+                            let handle = session.lock().await;
+                            let bind_addr =
+                                bind_address_override.unwrap_or_else(|| saved_bind_address);
+                            let _ = handle
+                                .cancel_tcpip_forward(bind_addr.clone(), remote_port as u32)
+                                .await;
+                            println!("[TUNNEL] Cancelled remote forwarding on port {} (bind address: {})", remote_port, bind_addr);
+                        }
+                    } else {
+                        println!(
+                            "[TUNNEL ERROR] Remote tunnel on port {} not found in manager.",
+                            remote_port
+                        );
+                        // If not found in manager, but session is provided, try to cancel with default bind_address_override
+                        if let Some(session) = session {
+                            let handle = session.lock().await;
+                            let bind_addr =
+                                bind_address_override.unwrap_or_else(|| "0.0.0.0".to_string());
+                            let _ = handle
+                                .cancel_tcpip_forward(bind_addr.clone(), remote_port as u32)
+                                .await;
+                            println!("[TUNNEL] Attempted to cancel unknown remote forwarding on port {} with bind_address {}", remote_port, bind_addr);
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -219,14 +258,14 @@ async fn find_process_using_port(port: u16) -> Option<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use tokio::process::Command;
-        
+
         // Try lsof command (available on Linux and macOS)
         let output = Command::new("lsof")
             .args(["-i", &format!(":{}", port), "-t", "-sTCP:LISTEN"])
             .output()
             .await
             .ok()?;
-        
+
         if output.status.success() {
             let pid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if let Ok(pid) = pid_str.parse::<u32>() {
@@ -236,9 +275,11 @@ async fn find_process_using_port(port: u16) -> Option<String> {
                     .output()
                     .await
                     .ok()?;
-                
+
                 if name_output.status.success() {
-                    let process_name = String::from_utf8_lossy(&name_output.stdout).trim().to_string();
+                    let process_name = String::from_utf8_lossy(&name_output.stdout)
+                        .trim()
+                        .to_string();
                     if !process_name.is_empty() {
                         return Some(format!("by '{}' (PID: {})", process_name, pid));
                     }
@@ -248,18 +289,14 @@ async fn find_process_using_port(port: u16) -> Option<String> {
         }
         None
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         use tokio::process::Command;
-        
+
         // Use netstat on Windows
-        let output = Command::new("netstat")
-            .args(["-ano"])
-            .output()
-            .await
-            .ok()?;
-        
+        let output = Command::new("netstat").args(["-ano"]).output().await.ok()?;
+
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
             for line in output_str.lines() {
@@ -273,13 +310,16 @@ async fn find_process_using_port(port: u16) -> Option<String> {
                                 .output()
                                 .await
                                 .ok()?;
-                            
+
                             if name_output.status.success() {
                                 let name_str = String::from_utf8_lossy(&name_output.stdout);
                                 if let Some(first_field) = name_str.split(',').next() {
                                     let process_name = first_field.trim_matches('"').trim();
                                     if !process_name.is_empty() {
-                                        return Some(format!("by '{}' (PID: {})", process_name, pid));
+                                        return Some(format!(
+                                            "by '{}' (PID: {})",
+                                            process_name, pid
+                                        ));
                                     }
                                 }
                             }
@@ -291,7 +331,7 @@ async fn find_process_using_port(port: u16) -> Option<String> {
         }
         None
     }
-    
+
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         None
@@ -305,7 +345,7 @@ async fn find_next_available_port(start_port: u16, max_attempts: u8) -> Option<u
         if candidate_port == 0 || candidate_port == start_port {
             continue; // Skip overflow or same port
         }
-        
+
         // Try to bind to the port to check availability
         match TcpListener::bind(format!("127.0.0.1:{}", candidate_port)).await {
             Ok(listener) => {
@@ -317,4 +357,3 @@ async fn find_next_available_port(start_port: u16, max_attempts: u8) -> Option<u
     }
     None
 }
-
