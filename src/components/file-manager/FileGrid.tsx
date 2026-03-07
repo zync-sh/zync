@@ -169,7 +169,7 @@ const FileGridItem = memo(({
         const dragPreview = document.createElement('div');
         dragPreview.style.cssText = `
           position: absolute; top: -1000px; padding: 8px; border-radius: 8px;
-          background-color: var(--app-surface); border: 1px solid var(--app-border);
+          background-color: var(--color-app-surface); border: 1px solid var(--color-app-border);
           display: flex; align-items: center; gap: 8px; z-index: 1000; width: fit-content;
         `;
 
@@ -179,7 +179,7 @@ const FileGridItem = memo(({
 
         const nameNode = document.createElement('span');
         nameNode.textContent = draggedFiles.length > 1 ? `${draggedFiles.length} items` : file.name;
-        nameNode.style.cssText = 'font-size: 12px; line-height: 1; font-weight: 500; color: var(--app-text); white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: block;';
+        nameNode.style.cssText = 'font-size: 12px; line-height: 1; font-weight: 500; color: var(--color-app-text); white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: block;';
         dragPreview.appendChild(nameNode);
 
         document.body.appendChild(dragPreview);
@@ -199,7 +199,7 @@ const FileGridItem = memo(({
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         if (e.currentTarget instanceof HTMLElement) {
-          e.currentTarget.style.outline = '2px dashed var(--app-accent)';
+          e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
           e.currentTarget.style.outlineOffset = '-2px';
         }
       }}
@@ -520,7 +520,7 @@ export function FileGrid({
 
                     const dragPreview = document.createElement('div');
                     dragPreview.innerHTML = draggedFiles.length > 1 ? `📚 ${draggedFiles.length} items` : (isFolder ? `📁 ${file.name}` : `📄 ${file.name}`);
-                    dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px; background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 8px; font-weight: 500; font-size: 14px;';
+                    dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px; background: var(--color-app-surface); border: 1px solid var(--color-app-border); border-radius: 8px; font-weight: 500; font-size: 14px;';
                     document.body.appendChild(dragPreview);
                     e.dataTransfer.setDragImage(dragPreview, 20, 20);
                     setTimeout(() => document.body.removeChild(dragPreview), 0);
@@ -529,7 +529,7 @@ export function FileGrid({
                     if (!isFolder || !onMove) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
-                    e.currentTarget.style.outline = '2px dashed var(--app-accent)';
+                    e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
                   }}
                   onDragLeave={(e) => {
                     e.currentTarget.style.outline = 'none';
@@ -641,3 +641,4 @@ export function FileGrid({
     </div>
   );
 }
+
