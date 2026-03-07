@@ -8,24 +8,24 @@ fn main() {
     #[cfg(all(target_os = "windows", not(debug_assertions)))]
     {
         use std::ptr::null_mut;
-        
+
         #[link(name = "kernel32")]
         extern "system" {
             fn AllocConsole() -> i32;
             fn GetConsoleWindow() -> *mut std::ffi::c_void;
         }
-        
+
         #[link(name = "user32")]
         extern "system" {
             fn ShowWindow(hwnd: *mut std::ffi::c_void, n_cmd_show: i32) -> i32;
         }
-        
+
         const SW_HIDE: i32 = 0;
-        
+
         unsafe {
             // Allocate a console for this process
             AllocConsole();
-            
+
             // Get the console window handle and hide it
             let console_hwnd = GetConsoleWindow();
             if console_hwnd != null_mut() {
@@ -33,6 +33,6 @@ fn main() {
             }
         }
     }
-    
+
     tauri_app_lib::run()
 }

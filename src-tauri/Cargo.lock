@@ -7621,12 +7621,13 @@ dependencies = [
 
 [[package]]
 name = "zync"
-version = "2.5.3"
+version = "2.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.21.7",
  "dirs 5.0.1",
+ "log",
  "portable-pty",
  "regex",
  "reqwest 0.12.28",

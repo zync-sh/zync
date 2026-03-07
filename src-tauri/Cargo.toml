@@ -1,6 +1,6 @@
 [package]
 name = "zync"
-version = "2.5.3"
+version = "2.5.4"
 description = "A modern SSH client"
 authors = ["Gajendra"]
 edition = "2021"
@@ -41,4 +41,5 @@ regex = "1.12.3"
 tauri-plugin-clipboard-manager = "2.3.2"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 zip = "2.2"
+log = "0.4"
 

@@ -84,7 +84,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }, [currentProvider, activeTab]);
 
     useEffect(() => {
-        if (isOpen && activeTab === 'plugins') {
+        if (isOpen && (activeTab === 'plugins' || activeTab === 'appearance')) {
             setIsLoadingPlugins(true);
             window.ipcRenderer.invoke('plugins:load')
                 .then((list: any) => setPlugins(list))
@@ -736,7 +736,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">System default</h4>
                                             <div className="grid grid-cols-2 gap-4">
                                                 <button
-                                                    onClick={() => updateSettings({ theme: 'system' as any, accentColor: undefined })}
+                                                    onClick={() => updateSettings({ theme: 'system' as any })}
                                                     className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === 'system'
                                                         ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                         : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -770,7 +770,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     .map(plugin => (
                                                         <button
                                                             key={plugin.manifest.id}
-                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any })}
                                                             className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
                                                                 ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                                 : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -805,7 +805,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     .map(plugin => (
                                                         <button
                                                             key={plugin.manifest.id}
-                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any })}
                                                             className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
                                                                 ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                                 : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -836,13 +836,42 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 <Section title="Customization">
                                     <div className="space-y-4">
                                         <div className="space-y-2">
-                                            <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Accent Color</label>
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Accent Color</label>
+                                                {!settings.accentColor && (
+                                                    <span className="text-[10px] bg-[var(--color-app-accent)]/10 text-[var(--color-app-accent)] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter border border-[var(--color-app-accent)]/20">Theme Default</span>
+                                                )}
+                                            </div>
                                             <div className="flex gap-2 flex-wrap">
+                                                {/* Theme Default Swatch */}
+                                                {(() => {
+                                                    const activePlugin = plugins.find(p => p.manifest.id === `com.zync.theme.${settings.theme}`);
+                                                    const themeAccent = activePlugin?.manifest.preview_accent ||
+                                                        (settings.theme === 'dark' ? '#797bce' :
+                                                            (settings.theme === 'light' ? '#6366f1' : 'var(--color-app-accent)'));
+
+                                                    return (
+                                                        <button
+                                                            onClick={() => updateSettings({ accentColor: undefined })}
+                                                            className={`w-8 h-8 rounded-full border-2 transition-all relative ${!settings.accentColor
+                                                                ? 'border-[var(--color-app-text)] scale-110 shadow-lg shadow-[var(--color-app-accent)]/20'
+                                                                : 'border-transparent hover:scale-110'
+                                                                }`}
+                                                            title="Theme Default"
+                                                        >
+                                                            <div
+                                                                className="absolute inset-0.5 rounded-full"
+                                                                style={{ backgroundColor: themeAccent }}
+                                                            />
+                                                        </button>
+                                                    );
+                                                })()}
+
                                                 {['#6366f1', '#0969da', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6', '#ec4899'].map(color => (
                                                     <button
                                                         key={color}
                                                         onClick={() => updateSettings({ accentColor: color })}
-                                                        className={`w-8 h-8 rounded-full border-2 transition-all ${settings.accentColor === color || (!settings.accentColor && color === '#6366f1')
+                                                        className={`w-8 h-8 rounded-full border-2 transition-all ${settings.accentColor === color
                                                             ? 'border-[var(--color-app-text)] scale-110'
                                                             : 'border-transparent hover:scale-110'
                                                             }`}
@@ -860,17 +889,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                         <div className="space-y-3 pt-4 border-t border-[var(--color-app-border)]/50">
                                             <div className="flex justify-between">
-                                                <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Window Opacity</label>
+                                                <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Terminal Opacity</label>
                                                 <span className="text-sm text-[var(--color-app-accent)] font-mono">{Math.round((settings.windowOpacity ?? 1) * 100)}%</span>
                                             </div>
                                             <input
-                                                type="range" min="50" max="100" step="1"
+                                                type="range" min="0" max="100" step="1"
                                                 className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
                                                 value={(settings.windowOpacity ?? 1) * 100}
                                                 onChange={(e) => updateSettings({ windowOpacity: parseInt(e.target.value) / 100 })}
                                             />
                                             <div className="text-xs text-[var(--color-app-muted)]">
-                                                Opacity is applied only when Vibrancy Effects is enabled.
+                                                100% keeps the terminal solid. Lower values let the desktop show through the terminal viewport only.
                                             </div>
                                         </div>
                                     </div>
@@ -898,8 +927,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                         <div className="flex items-center justify-between p-4 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50">
                                             <div>
-                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Vibrancy Effects</div>
-                                                <div className="text-xs text-[var(--color-app-muted)] mt-1">Enable translucent background blur</div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Terminal Transparency</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-1">Reveal the desktop behind the terminal viewport only.</div>
                                             </div>
                                             <label className="relative inline-flex items-center cursor-pointer">
                                                 <input
@@ -1332,7 +1361,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <div className="flex items-center justify-between py-2">
                                             <div>
                                                 <div className="text-sm font-medium text-[var(--color-app-text)]">Provider</div>
-                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">AI engine for natural language → command translation</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">AI engine for natural language to command translation</div>
                                             </div>
                                             <div className="w-52">
                                                 <Select
@@ -1358,10 +1387,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     className="w-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
                                                 />
                                                 <p className="text-xs text-[var(--color-app-muted)] mt-1">
-                                                    Runs fully locally — no API key needed.{' '}
+                                                    Runs fully locally - no API key needed.{' '}
                                                     <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">
-                                                        Install Ollama →
-                                                    </a>
+                                                        Install Ollama</a>
                                                 </p>
                                             </div>
                                         )}
@@ -1371,9 +1399,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 <div className="flex items-center justify-between mb-1">
                                                     <div className="text-sm font-medium text-[var(--color-app-text)]">API Key</div>
                                                     {apiKeySaved && (
-                                                        <span className="text-xs text-emerald-400 flex items-center gap-1 animate-in fade-in duration-150">
-                                                            ✓ Saved
-                                                        </span>
+                                                        <span className="text-xs text-emerald-400 flex items-center gap-1 animate-in fade-in duration-150"> Saved </span>
                                                     )}
                                                 </div>
                                                 <div className="flex gap-2">
@@ -1387,7 +1413,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                             setApiKeySaved(true);
                                                             setTimeout(() => setApiKeySaved(false), 2000);
                                                         }}
-                                                        placeholder={`Paste your ${settings.ai?.provider} API key…`}
+                                                        placeholder={`Paste your ${settings.ai?.provider} API key...`}
                                                         className="flex-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
                                                     />
                                                     <button
@@ -1405,15 +1431,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 <p className="text-xs text-[var(--color-app-muted)] mt-1">
                                                     {settings.ai?.provider === 'gemini' && (
                                                         <>Free tier available, no credit card needed.{' '}
-                                                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key →</a></>
+                                                            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Gemini API key</a></>
                                                     )}
                                                     {settings.ai?.provider === 'openai' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key →</a></>
+                                                            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get OpenAI API key</a></>
                                                     )}
                                                     {settings.ai?.provider === 'claude' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
-                                                            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key →</a></>
+                                                            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key</a></>
                                                     )}
                                                 </p>
                                             </div>
@@ -1438,9 +1464,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <p>Review the command and safety level, then press Enter or click Execute to run it.</p>
                                         <div className="mt-3 p-3 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]/40 space-y-1.5">
                                             <p className="text-xs font-medium text-[var(--color-app-text)]">Safety levels</p>
-                                            <p className="text-xs"><span className="text-emerald-400 font-medium">SAFE</span> — read-only (ls, cat, df) — Enter executes</p>
-                                            <p className="text-xs"><span className="text-yellow-400 font-medium">MODERATE</span> — modifying but reversible (mkdir, git) — Enter executes</p>
-                                            <p className="text-xs"><span className="text-red-400 font-medium">DANGEROUS</span> — destructive (rm -rf, dd) — must click Execute</p>
+                                            <p className="text-xs"><span className="text-emerald-400 font-medium">SAFE</span> - read-only (ls, cat, df) - Enter executes</p>
+                                            <p className="text-xs"><span className="text-yellow-400 font-medium">MODERATE</span> - modifying but reversible (mkdir, git) - Enter executes</p>
+                                            <p className="text-xs"><span className="text-red-400 font-medium">DANGEROUS</span> - destructive (rm -rf, dd) - must click Execute</p>
                                         </div>
                                     </div>
                                 </Section>
@@ -1586,7 +1612,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 </div>
 
                                 {/* Footer */}
-                                <p className="mt-8 text-[11px] text-[var(--color-app-muted)]/50 font-medium">© 2026 Zync · MIT License</p>
+                                <p className="mt-8 text-[11px] text-[var(--color-app-muted)]/50 font-medium">(c) 2026 Zync - MIT License</p>
                             </div>
                         )}
                     </div>
@@ -1657,21 +1683,23 @@ function Section({ title, children }: { title: string, children: React.ReactNode
 
 function Toggle({ label, description, checked, onChange }: { label: string, description: string, checked: boolean, onChange: (v: boolean) => void }) {
     return (
-        <div
+        <button
+            type="button"
+            role="switch"
+            aria-checked={checked}
             onClick={() => onChange(!checked)}
-            className="flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 transition-colors group cursor-pointer"
+            className="w-full text-left flex items-center justify-between py-3 px-4 rounded-lg hover:bg-[var(--color-app-surface)]/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-app-accent)] focus-visible:bg-[var(--color-app-surface)]/30 transition-colors group cursor-pointer"
         >
             <div className="flex-1">
                 <div className="text-sm font-medium text-[var(--color-app-text)]">{label}</div>
                 <div className="text-xs text-[var(--color-app-muted)] mt-0.5">{description}</div>
             </div>
-            <button
-                type="button"
-                className={`w-11 h-6 rounded-full transition-all relative pointer-events-none ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
+            <div
+                className={`shrink-0 w-11 h-6 rounded-full transition-all relative ${checked ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-surface)] border border-[var(--color-app-border)]'}`}
             >
                 <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
-            </button>
-        </div>
+            </div>
+        </button>
     );
 }
 

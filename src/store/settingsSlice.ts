@@ -214,7 +214,15 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
     },
 
     updateSettings: async (newSettings) => {
-        const updated = { ...get().settings, ...newSettings };
+        let actualSettings = { ...newSettings };
+
+        // If theme is changed but accentColor is not explicitly provided in the update,
+        // reset accentColor to undefined to allow the theme's default to take over.
+        if ('theme' in newSettings && !('accentColor' in newSettings)) {
+            actualSettings.accentColor = undefined;
+        }
+
+        const updated = { ...get().settings, ...actualSettings };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
