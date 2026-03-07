@@ -24,7 +24,7 @@ interface TerminalCache {
   pendingInput: string;
   inputFlushTimer: ReturnType<typeof window.setTimeout> | null;
   lastResize: { rows: number; cols: number } | null;
-  unlisten?: UnlistenFn;
+  unlisten?: UnlistenFn[];
 }
 const terminalCache = new Map<string, TerminalCache>();
 
@@ -32,131 +32,12 @@ const INPUT_BATCH_MS = 4;
 const INPUT_FLUSH_THRESHOLD = 64;
 const inputByteEncoder = new TextEncoder();
 const IMMEDIATE_INPUT_PATTERN = /[\r\n\x03\x04\x1b]/;
-
-/**
- * Cancels the pending input flush timer for a cached terminal session.
- *
- * The terminal batches ordinary typing into short bursts, so each session can
- * have one scheduled flush at a time. This helper is used by the clear/flush
- * paths to make timer cleanup consistent.
- *
- * @param cached Cached terminal session state that may own an active flush timer.
- */
-function clearPendingInputTimer(cached: TerminalCache) {
-  if (cached.inputFlushTimer !== null) {
-    window.clearTimeout(cached.inputFlushTimer);
-    cached.inputFlushTimer = null;
-  }
-}
-
-/**
- * Drops any buffered user input for a terminal session and clears its timer.
- *
- * This is used when a session exits, restarts, or is destroyed so queued
- * keystrokes are never replayed into a new PTY/SSH session by accident.
- *
- * @param termId Terminal session id. Missing ids are ignored because some call
- * sites narrow the value at runtime instead of in the type system.
- */
-function clearPendingInput(termId: string | null | undefined) {
-  if (!termId) return;
-  const cached = terminalCache.get(termId);
-  if (!cached) return;
-
-  clearPendingInputTimer(cached);
-  cached.pendingInput = '';
-}
-
-/**
- * Sends the currently buffered user input for a terminal session in one IPC call.
- *
- * The buffer is cleared before the IPC send so a re-entrant call cannot emit the
- * same bytes twice. If the buffer is empty, the helper only clears the pending timer.
- *
- * @param termId Terminal session id whose queued input should be flushed.
- */
-function flushPendingInput(termId: string | null | undefined) {
-  if (!termId) return;
-  const cached = terminalCache.get(termId);
-  if (!cached) return;
-
-  if (!cached.pendingInput) {
-    clearPendingInputTimer(cached);
-    return;
-  }
-
-  const data = cached.pendingInput;
-  cached.pendingInput = '';
-  clearPendingInputTimer(cached);
-  window.ipcRenderer.send('terminal:write', { termId, data });
-}
-
-/**
- * Queues terminal input so ordinary typing can be sent in small bursts instead
- * of one IPC call per keystroke.
- *
- * Control-sensitive input such as Enter, Ctrl+C, Ctrl+D, and escape sequences
- * still flushes immediately, and the buffer also flushes as soon as it grows
- * past the byte threshold.
- *
- * @param termId Terminal session id that owns the buffered input queue.
- * @param data Raw xterm input chunk received from the frontend terminal.
- */
-function queueTerminalInput(termId: string | null | undefined, data: string) {
-  if (!termId) return;
-  const cached = terminalCache.get(termId);
-  if (!cached) return;
-
-  cached.pendingInput += data;
-
-  const shouldFlushImmediately =
-    IMMEDIATE_INPUT_PATTERN.test(data) ||
-    inputByteEncoder.encode(cached.pendingInput).length >= INPUT_FLUSH_THRESHOLD;
-
-  if (shouldFlushImmediately) {
-    flushPendingInput(termId);
-    return;
-  }
-
-  if (cached.inputFlushTimer === null) {
-    cached.inputFlushTimer = window.setTimeout(() => flushPendingInput(termId), INPUT_BATCH_MS);
-  }
-}
-
-/**
- * Sends a backend resize event only when the visible terminal size changed.
- *
- * Visibility toggles and layout settling can trigger repeated fit calls with the
- * same dimensions. This helper suppresses duplicate resize IPC traffic while
- * keeping the backend synchronized with real row/column changes.
- *
- * @param termId Terminal session id whose backend PTY should be resized.
- * @param term Live xterm instance used to read the current rows/cols.
- */
-function syncTerminalResize(termId: string | null | undefined, term: XTerm | null) {
-  if (!termId) return;
-  const cached = terminalCache.get(termId);
-  if (!cached || !term) return;
-
-  const nextSize = { rows: term.rows, cols: term.cols };
-  if (
-    cached.lastResize &&
-    cached.lastResize.rows === nextSize.rows &&
-    cached.lastResize.cols === nextSize.cols
-  ) {
-    return;
-  }
-
-  cached.lastResize = nextSize;
-  window.ipcRenderer.send('terminal:resize', {
-    termId,
-    rows: nextSize.rows,
-    cols: nextSize.cols,
-  });
-}
-
 // Export recent terminal buffer lines for AI context
 export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
+  if (!termId) {
+    return null;
+  }
+
   const cached = terminalCache.get(termId);
   if (!cached?.term?.buffer?.active) return null;
   const buf = cached.term.buffer.active;
@@ -171,12 +52,17 @@ export function getTerminalRecentLines(termId: string, lineCount = 20): string |
 
 // Export for cleanup from terminalSlice when terminal is explicitly closed
 export function destroyTerminalInstance(termId: string) {
+  if (!termId) {
+    return;
+  }
+
   const cached = terminalCache.get(termId);
   if (cached) {
     clearPendingInput(termId);
-    // Remove the Tauri event listener if it exists
-    if (cached.unlisten) {
-      cached.unlisten();
+    // Remove all Tauri event listeners if they exist
+    if (cached.unlisten && cached.unlisten.length > 0) {
+      cached.unlisten.forEach(fn => fn());
+      cached.unlisten = [];
     }
     cached.term.dispose();
     terminalCache.delete(termId);
@@ -193,15 +79,105 @@ function isLightTheme(): boolean {
   return false;
 }
 
+type TerminalTransparencySettings = {
+  enableVibrancy?: boolean;
+  windowOpacity?: number;
+};
+
+/**
+ * Maps the legacy appearance keys onto the terminal-only transparency behavior.
+ * The persisted setting names stay the same for compatibility, but only the
+ * terminal viewport consumes them now.
+ */
+function resolveTerminalTransparency(settings: TerminalTransparencySettings) {
+  const opacity = Math.max(0, Math.min(1, settings.windowOpacity ?? 1));
+  return {
+    enabled: Boolean(settings.enableVibrancy) && opacity < 1,
+    opacity: Boolean(settings.enableVibrancy) ? opacity : 1,
+  };
+}
+
+/**
+ * Converts a theme color into an RGBA string so xterm can render with a real
+ * alpha background while leaving the rest of the app fully opaque.
+ */
+function withAlpha(color: string, alpha: number): string {
+  const clampedAlpha = Math.max(0, Math.min(1, alpha));
+  if (clampedAlpha <= 0) return 'rgba(0, 0, 0, 0)';
+  if (!color) return `rgba(15, 17, 26, ${clampedAlpha})`;
+
+  const normalized = color.trim();
+  const hexMatch = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1].length === 3
+      ? hexMatch[1].split('').map(ch => ch + ch).join('')
+      : hexMatch[1];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const channels = rgbMatch[1].split(',').map(part => part.trim());
+    if (channels.length >= 3) {
+      return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${clampedAlpha})`;
+    }
+  }
+
+  return clampedAlpha >= 1 ? normalized : `rgba(15, 17, 26, ${clampedAlpha})`;
+}
+/**
+ * Builds the background for the outer terminal host. Applying the slider here
+ * keeps the opacity behavior consistent across xterm renderer modes.
+ */
+function buildTerminalHostBackground(opacity: number): string {
+  const clampedPercent = Math.max(0, Math.min(100, Math.round(opacity * 100)));
+  return `color-mix(in srgb, var(--color-app-bg) ${clampedPercent}%, transparent)`;
+}
+
+/**
+ * Resolves the xterm theme background color. When terminal transparency is
+ * active the host element owns the translucent fill, so xterm itself stays
+ * transparent and does not double-apply the opacity.
+ */
+function buildTerminalBackground(appBg: string, opacity: number, useHostBackground = false): string {
+  if (useHostBackground) {
+    return 'rgba(0, 0, 0, 0)';
+  }
+
+  const light = isLightTheme();
+  const fallback = light ? '#f8fafc' : '#0f111a';
+  return withAlpha(appBg || fallback, opacity);
+}
+
+/**
+ * Merges an optional connection theme preset without reintroducing an opaque
+ * background when terminal transparency is active.
+ */
+function mergeTerminalThemePreset<T extends Record<string, string>>(
+  theme: T,
+  preset: Record<string, string>,
+  keepTransparentBackground: boolean,
+): T {
+  if (!keepTransparentBackground) {
+    return { ...theme, ...preset } as T;
+  }
+
+  const { background: _ignoredBackground, ...presetWithoutBackground } = preset;
+  return { ...theme, ...presetWithoutBackground } as T;
+}
+
 /**
  * Build an xterm theme object from current CSS variables.
  * In light mode the ANSI "white" colors are swapped to dark so they remain
  * visible against the light background.
  */
-function buildXtermTheme(appBg: string, appText: string, appAccent: string) {
+function buildXtermTheme(appBg: string, appText: string, appAccent: string, backgroundOpacity = 1, useHostBackground = false) {
   const light = isLightTheme();
   return {
-    background: appBg || (light ? '#f8fafc' : '#0f111a'),
+    background: buildTerminalBackground(appBg, backgroundOpacity, useHostBackground),
     foreground: appText || (light ? '#18181b' : '#e2e8f0'),
     cursor: appAccent || '#6366f1',
     selectionBackground: appAccent ? `${appAccent}33` : 'rgba(99, 102, 241, 0.3)',
@@ -222,6 +198,110 @@ function buildXtermTheme(appBg: string, appText: string, appAccent: string) {
     brightCyan: '#67e8f9',
     brightWhite: light ? '#09090b' : '#f8fafc',
   };
+}
+
+
+/**
+ * Clears any buffered terminal input and cancels a scheduled flush.
+ */
+function clearPendingInput(termId: string | null | undefined): void {
+  if (!termId) {
+    return;
+  }
+
+  const cached = terminalCache.get(termId);
+  if (!cached) {
+    return;
+  }
+
+  if (cached.inputFlushTimer !== null) {
+    window.clearTimeout(cached.inputFlushTimer);
+    cached.inputFlushTimer = null;
+  }
+
+  cached.pendingInput = '';
+}
+
+/**
+ * Sends queued terminal input to the backend as a single IPC write.
+ */
+function flushPendingInput(termId: string | null | undefined): void {
+  if (!termId) {
+    return;
+  }
+
+  const cached = terminalCache.get(termId);
+  if (!cached) {
+    return;
+  }
+
+  if (cached.inputFlushTimer !== null) {
+    window.clearTimeout(cached.inputFlushTimer);
+    cached.inputFlushTimer = null;
+  }
+
+  if (!cached.pendingInput) {
+    return;
+  }
+
+  const data = cached.pendingInput;
+  cached.pendingInput = '';
+  window.ipcRenderer.send('terminal:write', { termId, data });
+}
+
+/**
+ * Queues terminal input for a short batching window while still flushing
+ * immediately for control-sensitive keys and larger chunks.
+ */
+function queueTerminalInput(termId: string | null | undefined, data: string): void {
+  if (!termId) {
+    return;
+  }
+
+  const cached = terminalCache.get(termId);
+  if (!cached) {
+    window.ipcRenderer.send('terminal:write', { termId, data });
+    return;
+  }
+
+  cached.pendingInput += data;
+  const bufferedBytes = inputByteEncoder.encode(cached.pendingInput).length;
+  const shouldFlushImmediately = IMMEDIATE_INPUT_PATTERN.test(data) || bufferedBytes >= INPUT_FLUSH_THRESHOLD;
+
+  if (shouldFlushImmediately) {
+    flushPendingInput(termId);
+    return;
+  }
+
+  if (cached.inputFlushTimer === null) {
+    cached.inputFlushTimer = window.setTimeout(() => {
+      flushPendingInput(termId);
+    }, INPUT_BATCH_MS);
+  }
+}
+
+/**
+ * Sends a terminal resize only when the row or column count actually changed.
+ */
+function syncTerminalResize(termId: string | null | undefined, term: XTerm): void {
+  const nextSize = { rows: term.rows, cols: term.cols };
+  if (!termId) {
+    return;
+  }
+
+  const cached = terminalCache.get(termId);
+
+  if (!cached) {
+    window.ipcRenderer.send('terminal:resize', { termId, ...nextSize });
+    return;
+  }
+
+  if (cached.lastResize?.rows === nextSize.rows && cached.lastResize?.cols === nextSize.cols) {
+    return;
+  }
+
+  cached.lastResize = nextSize;
+  window.ipcRenderer.send('terminal:resize', { termId, ...nextSize });
 }
 
 export function TerminalComponent({ connectionId, termId, isVisible }: { connectionId?: string; termId?: string; isVisible?: boolean }) {
@@ -257,6 +337,13 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const connections = useAppStore(state => state.connections);
   const connect = useAppStore(state => state.connect);
   const settings = useAppStore(state => state.settings);
+  const terminalTransparency = resolveTerminalTransparency(settings);
+  const terminalHostStyle = terminalTransparency.enabled
+    ? {
+      backgroundColor: 'var(--color-app-bg)',
+      background: buildTerminalHostBackground(terminalTransparency.opacity),
+    }
+    : undefined;
   const updateSettings = useAppStore(state => state.updateSettings);
 
   // Helper for terminal settings update if needed, though usually we update global settings
@@ -344,10 +431,20 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // Create new terminal instance
       isNewTerminal = true;
 
-      const computedStyle = getComputedStyle(document.body);
+      const computedStyle = getComputedStyle(containerRef.current ?? document.body);
       const appBg = computedStyle.getPropertyValue('--color-app-bg').trim();
       const appText = computedStyle.getPropertyValue('--color-app-text').trim();
       const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
+      const themePreset = connection?.theme && THEME_PRESETS[connection.theme]
+        ? THEME_PRESETS[connection.theme]
+        : null;
+      const initialTheme = themePreset
+        ? mergeTerminalThemePreset(
+          buildXtermTheme(appBg, appText, appAccent, terminalTransparency.opacity, terminalTransparency.enabled),
+          themePreset,
+          terminalTransparency.enabled,
+        )
+        : buildXtermTheme(appBg, appText, appAccent, terminalTransparency.opacity, terminalTransparency.enabled);
 
       term = new XTerm({
         cursorBlink: true,
@@ -355,8 +452,9 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         fontFamily: settings.terminal.fontFamily,
         cursorStyle: settings.terminal.cursorStyle,
         lineHeight: settings.terminal.lineHeight,
+        allowTransparency: true,
         allowProposedApi: true,
-        theme: buildXtermTheme(appBg, appText, appAccent),
+        theme: initialTheme,
       });
 
       // Initialize Addons
@@ -512,13 +610,18 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     if (cachedForListener && !cachedForListener.listenerAttached) {
       cachedForListener.listenerAttached = true;
 
+      // Initialize unlisten array if not present
+      if (!cachedForListener.unlisten) {
+        cachedForListener.unlisten = [];
+      }
+
       // Listen to Tauri event for this specific terminal
       listen<Uint8Array>(`terminal-output-${sessionId}`, (event) => {
         term.write(event.payload);
       }).then((unlistenFn) => {
         // Store the unlisten function
         if (terminalCache.has(sessionId)) {
-          terminalCache.get(sessionId)!.unlisten = unlistenFn;
+          terminalCache.get(sessionId)!.unlisten!.push(unlistenFn);
         }
       });
 
@@ -533,6 +636,10 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           cached.lastResize = null;
           // Clear the terminal buffer and show exit message
           term.write('\r\n\x1b[33m[Terminal session ended. Press Enter to restart.]\x1b[0m\r\n');
+        }
+      }).then((unlistenFn) => {
+        if (terminalCache.has(sessionId)) {
+          terminalCache.get(sessionId)!.unlisten!.push(unlistenFn);
         }
       });
     }
@@ -659,22 +766,33 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     if (!termRef.current || !activeConnectionId) return;
 
     // Calculate effective theme
-    const computedStyle = getComputedStyle(document.body);
+    const computedStyle = getComputedStyle(containerRef.current ?? document.body);
     const appBg = computedStyle.getPropertyValue('--color-app-bg').trim();
     const appText = computedStyle.getPropertyValue('--color-app-text').trim();
     const appAccent = computedStyle.getPropertyValue('--color-app-accent').trim();
 
     // Default Theme
-    let themeObj = buildXtermTheme(appBg, appText, appAccent);
+    let themeObj = buildXtermTheme(appBg, appText, appAccent, terminalTransparency.opacity, terminalTransparency.enabled);
 
     // Apply Override if exists
     if (connection?.theme && THEME_PRESETS[connection.theme]) {
-      themeObj = { ...themeObj, ...THEME_PRESETS[connection.theme] };
+      themeObj = mergeTerminalThemePreset(
+        themeObj,
+        THEME_PRESETS[connection.theme],
+        terminalTransparency.enabled,
+      );
     }
 
     termRef.current.options.theme = themeObj;
 
-  }, [settings.theme, settings.accentColor, connection?.theme, activeConnectionId]);
+  }, [
+    settings.theme,
+    settings.accentColor,
+    settings.enableVibrancy,
+    settings.windowOpacity,
+    connection?.theme,
+    activeConnectionId,
+  ]);
 
   if (!activeConnectionId) return <div className="p-8 text-gray-400">Please connect to a server first.</div>;
 
@@ -716,7 +834,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   return (
     <div
       key="connected"
-      className="h-full w-full bg-app-bg p-2 relative group outline-none"
+      className={cn("h-full w-full p-2 relative group outline-none", terminalTransparency.enabled ? "terminal-transparent" : "bg-app-bg")}
+      style={terminalHostStyle}
       ref={containerRef}
       tabIndex={-1}
       onClick={() => {
@@ -731,7 +850,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     >
       {/* Search Overlay */}
       <div className={cn(
-        "absolute top-4 right-4 z-50 flex items-center gap-1 p-1 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl transition-all duration-200 ease-out origin-top-right",
+        "absolute top-4 right-4 z-50 flex items-center gap-1 p-1 bg-app-panel backdrop-blur-xl border border-app-border rounded-lg shadow-xl transition-all duration-200 ease-out origin-top-right",
         isSearchOpen ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 -translate-y-2 pointer-events-none"
       )}>
         <div className="relative flex items-center">
@@ -825,6 +944,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     </div>
   );
 }
+
+
+
+
+
 
 
 
