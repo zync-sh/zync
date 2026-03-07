@@ -84,7 +84,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }, [currentProvider, activeTab]);
 
     useEffect(() => {
-        if (isOpen && activeTab === 'plugins') {
+        if (isOpen && (activeTab === 'plugins' || activeTab === 'appearance')) {
             setIsLoadingPlugins(true);
             window.ipcRenderer.invoke('plugins:load')
                 .then((list: any) => setPlugins(list))
@@ -736,7 +736,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">System default</h4>
                                             <div className="grid grid-cols-2 gap-4">
                                                 <button
-                                                    onClick={() => updateSettings({ theme: 'system' as any, accentColor: undefined })}
+                                                    onClick={() => updateSettings({ theme: 'system' as any })}
                                                     className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === 'system'
                                                         ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                         : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -770,7 +770,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     .map(plugin => (
                                                         <button
                                                             key={plugin.manifest.id}
-                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any })}
                                                             className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
                                                                 ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                                 : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -805,7 +805,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     .map(plugin => (
                                                         <button
                                                             key={plugin.manifest.id}
-                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any, accentColor: undefined })}
+                                                            onClick={() => updateSettings({ theme: plugin.manifest.id.replace('com.zync.theme.', '') as any })}
                                                             className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === plugin.manifest.id.replace('com.zync.theme.', '')
                                                                 ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                                                 : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -836,13 +836,42 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 <Section title="Customization">
                                     <div className="space-y-4">
                                         <div className="space-y-2">
-                                            <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Accent Color</label>
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Accent Color</label>
+                                                {!settings.accentColor && (
+                                                    <span className="text-[10px] bg-[var(--color-app-accent)]/10 text-[var(--color-app-accent)] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter border border-[var(--color-app-accent)]/20">Theme Default</span>
+                                                )}
+                                            </div>
                                             <div className="flex gap-2 flex-wrap">
+                                                {/* Theme Default Swatch */}
+                                                {(() => {
+                                                    const activePlugin = plugins.find(p => p.manifest.id === `com.zync.theme.${settings.theme}`);
+                                                    const themeAccent = activePlugin?.manifest.preview_accent ||
+                                                        (settings.theme === 'dark' ? '#797bce' :
+                                                            (settings.theme === 'light' ? '#6366f1' : 'var(--color-app-accent)'));
+
+                                                    return (
+                                                        <button
+                                                            onClick={() => updateSettings({ accentColor: undefined })}
+                                                            className={`w-8 h-8 rounded-full border-2 transition-all relative ${!settings.accentColor
+                                                                ? 'border-[var(--color-app-text)] scale-110 shadow-lg shadow-[var(--color-app-accent)]/20'
+                                                                : 'border-transparent hover:scale-110'
+                                                                }`}
+                                                            title="Theme Default"
+                                                        >
+                                                            <div
+                                                                className="absolute inset-0.5 rounded-full"
+                                                                style={{ backgroundColor: themeAccent }}
+                                                            />
+                                                        </button>
+                                                    );
+                                                })()}
+
                                                 {['#6366f1', '#0969da', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6', '#ec4899'].map(color => (
                                                     <button
                                                         key={color}
                                                         onClick={() => updateSettings({ accentColor: color })}
-                                                        className={`w-8 h-8 rounded-full border-2 transition-all ${settings.accentColor === color || (!settings.accentColor && color === '#6366f1')
+                                                        className={`w-8 h-8 rounded-full border-2 transition-all ${settings.accentColor === color
                                                             ? 'border-[var(--color-app-text)] scale-110'
                                                             : 'border-transparent hover:scale-110'
                                                             }`}
