@@ -1,4 +1,4 @@
-import { type ReactNode, useState, useRef, useEffect } from 'react';
+import { type ReactNode, useState, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/utils';
 
@@ -14,7 +14,7 @@ export function Tooltip({ content, children, position = 'top', className }: Tool
   const triggerRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (show && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       const spacing = 8; // Distance from trigger
