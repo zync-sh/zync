@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Terminal as TerminalIcon, Plus, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AiCommandBar } from './AiCommandBar';
+import { once, type UnlistenFn } from '@tauri-apps/api/event';
 
 // TerminalTab interface is now in store/terminalSlice
 // export interface TerminalTab ... removed
@@ -24,7 +25,11 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
     const openAiCommandBar = useAppStore(state => state.openAiCommandBar);
+    const terminalTransparencyEnabled = useAppStore(
+        state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
+    );
     const terminalContentRef = useRef<HTMLDivElement>(null);
+    const pendingReadyRef = useRef<Record<string, { timeoutId: any; unlistenFn?: UnlistenFn }>>({});
 
 
     // Derived State - Removed (now selected directly)
@@ -59,11 +64,36 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
                 // `createTerminal` takes only `connectionId` and returns the newly created `termId`.
                 const newId = createTerminal(activeConnectionId);
 
-                // If a command was passed (e.g., from a plugin like PM2 logs), execute it in the new tab after a brief delay
+                // If a command was passed (e.g., from a plugin like PM2 logs), execute it in the new tab after it's ready
                 if (command) {
-                    setTimeout(() => {
-                        window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
-                    }, 500); // Give XTerm a moment to mount
+                    const pendingObj: { timeoutId: any; unlistenFn?: UnlistenFn } = {
+                        timeoutId: setTimeout(() => {
+                            if (pendingReadyRef.current[newId]) {
+                                delete pendingReadyRef.current[newId];
+                            }
+                            console.warn(`[TerminalManager] terminal-ready-${newId} timed out, sending command anyway`);
+                            window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
+                        }, 5000)
+                    };
+                    pendingReadyRef.current[newId] = pendingObj;
+
+                    once(`terminal-ready-${newId}`, () => {
+                        const obj = pendingReadyRef.current[newId];
+                        if (obj) {
+                            clearTimeout(obj.timeoutId);
+                            delete pendingReadyRef.current[newId];
+                            window.ipcRenderer.send('terminal:write', { termId: newId, data: command });
+                        }
+                    }).then(unlisten => {
+                        if (pendingReadyRef.current[newId]) {
+                            pendingReadyRef.current[newId].unlistenFn = unlisten;
+                        } else {
+                            // Already timed out or unmounted
+                            unlisten();
+                        }
+                    }).catch(err => {
+                        console.error(`[TerminalManager] Failed to listen for terminal-ready-${newId}:`, err);
+                    });
 
                     // Automatically switch the global Zync view to 'terminal' so the user sees the logs
                     const activeGlobalTabId = useAppStore.getState().activeTabId;
@@ -103,6 +133,13 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
             window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
             window.removeEventListener('zync:ai-command-bar', handleAiCommandBar);
+
+            // Cleanup any pending terminal-ready listeners/timeouts
+            Object.values(pendingReadyRef.current).forEach(p => {
+                clearTimeout(p.timeoutId);
+                p.unlistenFn?.();
+            });
+            pendingReadyRef.current = {};
         };
     }, [activeConnectionId, activeTabId, openAiCommandBar]);
 
@@ -117,14 +154,14 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
     if (!activeConnectionId) {
         return (
-            <div className="h-full flex items-center justify-center text-app-muted">
+            <div className="h-full flex items-center justify-center text-app-muted bg-app-bg">
                 <p>Select a connection to view terminals</p>
             </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-full bg-app-bg">
+        <div className={cn("flex flex-col h-full", terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg")}>
             {/* Tab Bar for Terminals - Conditionally Hidden */}
             {!hideTabs && (
                 <div className="flex items-center w-full bg-app-panel border-b border-app-border px-1 h-8 shrink-0 overflow-x-auto scrollbar-hide gap-1">
@@ -164,10 +201,10 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             )}
 
             {/* Terminal Content Area */}
-            <div ref={terminalContentRef} className="flex-1 overflow-hidden relative bg-app-bg">
+            <div ref={terminalContentRef} className={cn("flex-1 overflow-hidden relative", terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg")}>
                 <AiCommandBar connectionId={activeConnectionId} activeTermId={activeTabId} constraintRef={terminalContentRef} />
                 {tabs.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-app-muted">
+                    <div className="h-full flex flex-col items-center justify-center text-app-muted bg-app-bg">
                         <TerminalIcon size={48} className="mb-4 opacity-20" />
                         <p>No active terminals</p>
                         <button onClick={handleNewTab} className="mt-4 text-app-accent hover:underline">Open New Terminal</button>

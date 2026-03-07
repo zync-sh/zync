@@ -50,6 +50,20 @@ const SplashScreen = () => (
     </div>
 );
 
+
+/**
+ * Keeps the transparent native window visually opaque everywhere except views
+ * that intentionally opt into true see-through rendering, such as the terminal
+ * viewport. The compatibility settings still use the old vibrancy keys, but the
+ * runtime behavior is terminal-only transparency.
+ */
+function applyDocumentBackgroundMode(allowNativeShowThrough: boolean) {
+    const background = allowNativeShowThrough ? 'transparent' : 'var(--color-app-bg)';
+    document.documentElement.style.backgroundColor = background;
+    document.body.style.backgroundColor = background;
+    document.getElementById('root')?.style.setProperty('background-color', background);
+}
+
 function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connectionCount }: {
     isOpen: boolean;
     onClose: () => void;
@@ -110,6 +124,9 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 }) {
     const setTabView = useAppStore(state => state.setTabView);
     const connect = useAppStore(state => state.connect);
+    const terminalTransparencyEnabled = useAppStore(
+        state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
+    );
 
     // Connection Selectors - Optimized
     const connection = useAppStore(useShallow(state => state.connections.find(c => c.id === tab.connectionId)));
@@ -246,7 +263,8 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     // Each tab content is rendered but hidden if not active
     return (
         <div className={cn(
-            "absolute inset-0 flex flex-col bg-app-bg transition-all",
+            "absolute inset-0 flex flex-col transition-all",
+            tab.view === 'terminal' && terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg",
             !isActive && "hidden",
             isActive && "animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out fill-mode-forwards"
         )}>
@@ -327,7 +345,13 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                 Terminal View
                                 Pass hideTabs={true} to disable its internal tab bar
                             */}
-                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'terminal' ? "block" : "hidden")}>
+                            <div
+                                className={cn(
+                                    "absolute inset-0 z-10",
+                                    tab.view === 'terminal' ? "block" : "hidden",
+                                    terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg"
+                                )}
+                            >
                                 <TerminalManager
                                     connectionId={tab.connectionId}
                                     isVisible={isActive && tab.view === 'terminal'}
@@ -482,10 +506,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
     // Theme Application Effect
     const theme = useAppStore(state => state.settings.theme);
     const accentColor = useAppStore(state => state.settings.accentColor);
-    const windowOpacityRaw = useAppStore(state => state.settings.windowOpacity ?? 1);
-    const clampedOpacity = Math.max(0, Math.min(1, windowOpacityRaw));
-    const enableVibrancy = useAppStore(state => state.settings.enableVibrancy);
-    const isTranslucent = enableVibrancy && clampedOpacity < 1;
+    const terminalTransparencyEnabled = useAppStore(
+        state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
+    );
 
     const persistBootThemeColors = useCallback(() => {
         try {
@@ -531,11 +554,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
             localStorage.removeItem('zync-accent-color');
         }
 
-        // Apply Window Opacity
-        // We need to make the body background transparent to let the window transparency show
-        // But we need the app-bg color to be applied with opacity
-        // Keep body opaque by default; only expose transparency when vibrancy + opacity are enabled.
-        document.body.style.backgroundColor = isTranslucent ? 'transparent' : 'var(--color-app-bg)';
+        applyDocumentBackgroundMode(terminalTransparencyEnabled);
 
         window.requestAnimationFrame(() => {
             persistBootThemeColors();
@@ -553,17 +572,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
             window.clearTimeout(persistTimer);
         };
 
-    }, [theme, accentColor, isLoadingSettings, isTranslucent, persistBootThemeColors]);
+    }, [theme, accentColor, isLoadingSettings, terminalTransparencyEnabled, persistBootThemeColors]);
 
-    const shellBackgroundStyle = isTranslucent
-        ? {
-            backgroundColor: 'var(--color-app-bg)',
-            background: `color-mix(in srgb, var(--color-app-bg) ${clampedOpacity * 100}%, transparent)`
-        }
-        : {
-            backgroundColor: 'var(--color-app-bg)',
-            background: 'var(--color-app-bg)'
-        };
+    const shellBackgroundStyle = {
+        backgroundColor: 'transparent',
+        background: 'transparent'
+    };
 
     const hideBootSplash = useCallback(() => {
         try {
@@ -635,7 +649,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 <Sidebar />
             </div>
 
-            <div className="flex-1 flex flex-col min-w-0 bg-app-bg">
+            <div className="flex-1 flex flex-col min-w-0">
                 {/* Tab Bar */}
                 <TabBar />
 
@@ -650,7 +664,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                             />
                         ))
                     ) : (
-                        children // Default / Empty State
+                        <div className="flex-1 bg-app-bg">{children}</div>
                     )}
                 </div>
 

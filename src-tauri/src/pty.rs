@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty};
-use russh::{Channel, ChannelMsg};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use russh::client::Msg;
+use russh::{Channel, ChannelMsg};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::mem;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
 
 /// Maximum time to hold remote SSH output before emitting a combined frontend event.
@@ -47,7 +47,7 @@ pub enum TerminalHandle {
         child: Box<dyn portable_pty::Child + Send>,
     },
     Remote {
-        tx: mpsc::Sender<Vec<u8>>, // Send input data to the channel task
+        tx: mpsc::Sender<Vec<u8>>,           // Send input data to the channel task
         resize_tx: mpsc::Sender<(u16, u16)>, // Send resize events
         task_handle: Option<tokio::task::JoinHandle<()>>,
     },
@@ -81,17 +81,14 @@ impl PtyManager {
         app_handle: AppHandle,
         shell_override: Option<String>,
     ) -> Result<()> {
-        println!("[PTY-DEBUG] create_local_session called for {} with shell override: {:?}", term_id, shell_override);
-        
-        // Check if session already exists to prevent duplicate spawns
-        {
-            let sessions = self.sessions.lock().await;
-            if sessions.contains_key(&term_id) {
-                println!("[PTY-DEBUG] Session {} already exists, skipping creation", term_id);
-                return Ok(());
-            }
-        }
-        
+        println!(
+            "[PTY-DEBUG] create_local_session called for {} with shell override: {:?}",
+            term_id, shell_override
+        );
+
+        // Clean up any existing dead/stale session with this ID before creating a new one
+        let _ = self.close(&term_id).await;
+
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -125,14 +122,19 @@ impl PtyManager {
                     let distro = wsl_distro.strip_prefix("wsl:").unwrap_or("").to_string();
                     ("wsl.exe".to_string(), vec!["-d".to_string(), distro])
                 }
-                Some("powershell") | Some("default") | None => ("powershell.exe".to_string(), vec![]),
+                Some("powershell") | Some("default") | None => {
+                    ("powershell.exe".to_string(), vec![])
+                }
                 Some(other) => {
                     // Try to use it as a direct path or command
                     (other.to_string(), vec![])
                 }
             }
         } else {
-            (std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()), vec![])
+            (
+                std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()),
+                vec![],
+            )
         };
         println!("[PTY-DEBUG] Using shell: {} with args: {:?}", shell, args);
 
@@ -140,10 +142,14 @@ impl PtyManager {
         for arg in &args {
             cmd.arg(arg);
         }
-        
+
         // Add interactive flag if not already present
-        if !args.contains(&"-i".to_string()) && !shell.contains("powershell") && !shell.contains("cmd.exe") && !shell.contains("wsl.exe") {
-             cmd.arg("-i");
+        if !args.contains(&"-i".to_string())
+            && !shell.contains("powershell")
+            && !shell.contains("cmd.exe")
+            && !shell.contains("wsl.exe")
+        {
+            cmd.arg("-i");
         }
         cmd.env("TERM", "xterm-256color");
 
@@ -168,8 +174,14 @@ impl PtyManager {
             .map_err(|e| anyhow!("Failed to spawn shell: {}", e))?;
         println!("[PTY-DEBUG] Shell spawned");
 
-        let mut reader = pair.master.try_clone_reader().map_err(|e| anyhow!("Failed to clone reader: {}", e))?;
-        let writer = pair.master.take_writer().map_err(|e| anyhow!("Failed to take writer: {}", e))?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| anyhow!("Failed to clone reader: {}", e))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| anyhow!("Failed to take writer: {}", e))?;
 
         // Spawn a task to read from PTY and emit events
         let term_id_clone = term_id.clone();
@@ -182,17 +194,19 @@ impl PtyManager {
                     Ok(0) => {
                         println!("[PTY-DEBUG] EOF read for {}", term_id_clone);
                         // Notify frontend that terminal exited
-                        let _ = app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
-                        break; 
-                    }, // EOF
+                        let _ =
+                            app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
+                        break;
+                    } // EOF
                     Ok(n) => {
                         // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
-                        emit_terminal_output(&app_handle, &term_id_clone, &buf[..n]);
+                        emit_terminal_output(&app_handle_clone, &term_id_clone, &buf[..n]);
                     }
                     Err(e) => {
                         eprintln!("Error reading from PTY: {}", e);
                         // Notify frontend that terminal exited due to error
-                        let _ = app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
+                        let _ =
+                            app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
                         break;
                     }
                 }
@@ -211,8 +225,11 @@ impl PtyManager {
         };
 
         let mut sessions = self.sessions.lock().await;
-        sessions.insert(term_id, session);
+        sessions.insert(term_id.clone(), session);
         println!("[PTY-DEBUG] Session inserted");
+
+        // Notify frontend that terminal is ready for input
+        let _ = app_handle.emit(&format!("terminal-ready-{}", term_id), ());
 
         Ok(())
     }
@@ -228,40 +245,40 @@ impl PtyManager {
         app_handle: AppHandle,
     ) -> Result<()> {
         println!("[PTY] Creating remote session for {}", term_id);
-        
-        // Check if session already exists to prevent duplicate spawns
-        {
-            let sessions = self.sessions.lock().await;
-            if sessions.contains_key(&term_id) {
-                println!("[PTY] Session {} already exists, skipping creation", term_id);
-                // Close the channel since we're not using it
-                let _ = channel.close().await;
-                return Ok(());
-            }
-        }
+
+        // Clean up any existing dead/stale session with this ID before creating a new one
+        let _ = self.close(&term_id).await;
 
         // Request PTY on the channel
-        channel.request_pty(
-            false,
-            "xterm-256color",
-            cols as u32,
-            rows as u32,
-            0,
-            0,
-            &[], // No modes for now
-        ).await.map_err(|e| anyhow!("Failed to request PTY: {}", e))?;
+        channel
+            .request_pty(
+                false,
+                "xterm-256color",
+                cols as u32,
+                rows as u32,
+                0,
+                0,
+                &[], // No modes for now
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to request PTY: {}", e))?;
 
         // Request shell
-        channel.request_shell(false).await.map_err(|e| anyhow!("Failed to request shell: {}", e))?;
+        channel
+            .request_shell(false)
+            .await
+            .map_err(|e| anyhow!("Failed to request shell: {}", e))?;
 
         // Create channels for communication
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
         let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(4);
-        
+
         let term_id_clone = term_id.clone();
+        let app_handle_clone = app_handle.clone();
 
         // Spawn a single task to manage the SSH channel (Reader + Writer + Resize)
         let task_handle = tokio::task::spawn(async move {
+            let app_handle = app_handle_clone;
             println!("[PTY] Starting manager task for {}", term_id_clone);
             let mut pending_output = Vec::new();
             let mut flush_deadline: Option<Instant> = None;
@@ -283,16 +300,19 @@ impl PtyManager {
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
                                 flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
                                 println!("[PTY] Remote shell exited with status: {}", exit_status);
                                 break;
                             }
                             Some(ChannelMsg::Eof) => {
                                 flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
                                 println!("[PTY] Remote channel EOF");
                                 break;
                             }
                             None => {
                                 flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
                                 println!("[PTY] Channel closed");
                                 break;
                             }
@@ -308,7 +328,7 @@ impl PtyManager {
                         flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
                         flush_deadline = None;
                     }
-                    
+
                     // 2. Handle outgoing user input (Input to server)
                     Some(input) = rx.recv() => {
                         if let Err(e) = channel.data(&input[..]).await {
@@ -316,7 +336,7 @@ impl PtyManager {
                              break;
                         }
                     }
-                    
+
                     // 3. Handle resize events - drain channel to get only latest
                     Some((mut c, mut r)) = resize_rx.recv() => {
                         // Drain any additional resize events to avoid stale resizes
@@ -332,7 +352,7 @@ impl PtyManager {
             }
 
             flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
-            
+
             // Cleanup on exit
             let _ = channel.close().await;
             println!("[PTY] Remote session task ended");
@@ -349,57 +369,77 @@ impl PtyManager {
         };
 
         let mut sessions = self.sessions.lock().await;
-        sessions.insert(term_id, session);
+        sessions.insert(term_id.clone(), session);
         println!("[PTY] Remote session created successfully");
+
+        // Notify frontend that terminal is ready for input
+        let _ = app_handle.emit(&format!("terminal-ready-{}", term_id), ());
 
         Ok(())
     }
 
     pub async fn write(&self, term_id: &str, data: &str) -> Result<()> {
-        let sessions = self.sessions.lock().await;
-        let session = sessions
-            .get(term_id)
-            .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+        let (local_writer_opt, remote_tx_opt) = {
+            let sessions = self.sessions.lock().await;
+            let session = sessions
+                .get(term_id)
+                .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+            
+            match &session.handle {
+                TerminalHandle::Local { writer, .. } => (Some(writer.clone()), None),
+                TerminalHandle::Remote { tx, .. } => (None, Some(tx.clone())),
+            }
+        }; // sessions lock is dropped here
 
-        match &session.handle {
-            TerminalHandle::Local { writer, .. } => {
-                let mut writer = writer.lock().await;
-                writer
-                    .write_all(data.as_bytes())
-                    .map_err(|e| anyhow!("Failed to write to PTY: {}", e))?;
-                writer.flush().map_err(|e| anyhow!("Failed to flush PTY: {}", e))?;
-            }
-            TerminalHandle::Remote { tx, .. } => {
-                // Send data to the manager task
-                tx.send(data.as_bytes().to_vec()).await
-                    .map_err(|e| anyhow!("Failed to send input to SSH task: {}", e))?;
-            }
+        if let Some(writer) = local_writer_opt {
+            let mut writer = writer.lock().await;
+            writer
+                .write_all(data.as_bytes())
+                .map_err(|e| anyhow!("Failed to write to PTY: {}", e))?;
+            writer
+                .flush()
+                .map_err(|e| anyhow!("Failed to flush PTY: {}", e))?;
+        } else if let Some(tx) = remote_tx_opt {
+            // Send data to the manager task
+            tx.send(data.as_bytes().to_vec())
+                .await
+                .map_err(|e| anyhow!("Failed to send input to SSH task: {}", e))?;
         }
 
         Ok(())
     }
 
     pub async fn resize(&self, term_id: &str, cols: u16, rows: u16) -> Result<()> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(term_id)
-            .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+        let remote_tx_opt = {
+            let mut sessions = self.sessions.lock().await;
+            let session = sessions
+                .get_mut(term_id)
+                .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
 
-        match &mut session.handle {
-            TerminalHandle::Local { master, .. } => {
-                master
-                    .resize(PtySize {
-                        rows,
-                        cols,
-                        pixel_width: 0,
-                        pixel_height: 0,
-                    })
-                    .map_err(|e| anyhow!("Failed to resize PTY: {}", e))?;
+            match &mut session.handle {
+                TerminalHandle::Local { master, .. } => {
+                    // Local resize is synchronous and doesn't block on network I/O
+                    master
+                        .resize(PtySize {
+                            rows,
+                            cols,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        })
+                        .map_err(|e| anyhow!("Failed to resize PTY: {}", e))?;
+                    None
+                }
+                TerminalHandle::Remote { resize_tx, .. } => {
+                    Some(resize_tx.clone())
+                }
             }
-            TerminalHandle::Remote { resize_tx, .. } => {
-                resize_tx.send((cols, rows)).await
-                    .map_err(|e| anyhow!("Failed to send resize to SSH task: {}", e))?;
-            }
+        }; // sessions lock is dropped here
+
+        if let Some(resize_tx) = remote_tx_opt {
+            resize_tx
+                .send((cols, rows))
+                .await
+                .map_err(|e| anyhow!("Failed to send resize to SSH task: {}", e))?;
         }
 
         Ok(())
@@ -434,7 +474,11 @@ impl PtyManager {
             }
         }
 
-        println!("[PTY] Closing {} sessions for connection {}", ids_to_remove.len(), connection_id);
+        println!(
+            "[PTY] Closing {} sessions for connection {}",
+            ids_to_remove.len(),
+            connection_id
+        );
 
         for id in ids_to_remove {
             if let Some(mut session) = sessions.remove(&id) {
@@ -456,6 +500,3 @@ impl PtyManager {
         Ok(())
     }
 }
-
-
-
