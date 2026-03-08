@@ -256,8 +256,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
-[f44bf56]: https://github.com/zync-sh/zync/commit/f44bf56
-[734bdf9]: https://github.com/zync-sh/zync/commit/734bdf9
+[7048422]: https://github.com/zync-sh/zync/commit/7048422
 [f9e31f4]: https://github.com/zync-sh/zync/commit/f9e31f4
 [0b4e9f8]: https://github.com/zync-sh/zync/commit/0b4e9f8
 [2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
