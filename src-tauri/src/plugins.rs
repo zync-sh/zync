@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -718,11 +719,11 @@ impl PluginScanner {
             
             match fs::read_to_string(&script_path) {
                 Ok(content) => {
-                    log::info!("[Plugins] Loaded main script from: {}", script_path.display());
+                    info!("[Plugins] Loaded main script from: {}", script_path.display());
                     Some(content)
                 }
                 Err(e) => {
-                    log::warn!("[Plugins] Failed to read main script from {}: {}", script_path.display(), e);
+                    warn!("[Plugins] Failed to read main script from {}: {}", script_path.display(), e);
                     None
                 }
             }
@@ -733,11 +734,11 @@ impl PluginScanner {
                  if script_path.starts_with(&canonical_root) {
                      match fs::read_to_string(&script_path) {
                         Ok(content) => {
-                            log::info!("[Plugins] Loaded default worker script from: {}", script_path.display());
+                            info!("[Plugins] Loaded default worker script from: {}", script_path.display());
                             Some(content)
                         }
                         Err(e) => {
-                            log::warn!("[Plugins] Failed to read default worker script from {}: {}", script_path.display(), e);
+                            warn!("[Plugins] Failed to read default worker script from {}: {}", script_path.display(), e);
                             None
                         }
                      }
@@ -756,11 +757,11 @@ impl PluginScanner {
             
             match fs::read_to_string(&style_path) {
                 Ok(content) => {
-                    log::info!("[Plugins] Loaded style from: {}", style_path.display());
+                    info!("[Plugins] Loaded style from: {}", style_path.display());
                     Some(content)
                 }
                 Err(e) => {
-                    log::warn!("[Plugins] Failed to read style file from {}: {}", style_path.display(), e);
+                    warn!("[Plugins] Failed to read style file from {}: {}", style_path.display(), e);
                     None
                 }
             }

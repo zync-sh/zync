@@ -1,5 +1,6 @@
 use crate::ssh::Client;
 use anyhow::{anyhow, Result};
+use log::warn;
 use russh::client::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -264,7 +265,7 @@ impl TunnelManager {
                             let _ = handle
                                 .cancel_tcpip_forward(bind_addr.clone(), remote_port as u32)
                                 .await;
-                            log::warn!("[TUNNEL] Attempted to cancel unknown remote forwarding on port {} with bind_address {}", remote_port, bind_addr);
+                            warn!("[TUNNEL] Attempted to cancel unknown remote forwarding on port {} with bind_address {}", remote_port, bind_addr);
                         }
                     }
                 }
