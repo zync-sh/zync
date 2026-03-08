@@ -141,7 +141,7 @@ function buildTree(conns: Connection[], allFolders: Folder[], searchTerm: string
     return root;
 }
 
-export function Sidebar() {
+export function Sidebar({ className }: { className?: string }) {
     const [viewingDetailsId, setViewingDetailsId] = useState<string | null>(null);
 
     // Connection Store Hooks
@@ -357,16 +357,14 @@ export function Sidebar() {
         <div
             ref={sidebarRef}
             className={cn(
-                "bg-app-panel border-r border-app-border/50 flex flex-col h-full shrink-0 relative z-50",
-                // Smooth GPU-accelerated transition for transform, but we also want to animate margin for the sibling
-                // Using a custom cubic-bezier for a more "premium" feel (easeOutQuart-ish)
-                !isResizing ? "transition-all duration-400 ease-[cubic-bezier(0.2,0,0,1)]" : ""
+                "bg-app-panel flex flex-col h-full shrink-0 relative z-50 overflow-hidden",
+                !isCollapsed && "border-r border-app-border/50",
+                !isResizing ? "transition-[width] duration-300 ease-[cubic-bezier(0.2,0,0,1)]" : "",
+                className
             )}
             style={{
-                width: width,
-                transform: isCollapsed ? `translateX(-${width}px)` : 'translateX(0)',
-                marginRight: isCollapsed ? `-${width}px` : '0px', // Prevent layout shift
-                willChange: isResizing ? 'auto' : 'transform, margin-right, width'
+                width: isCollapsed ? 0 : width,
+                willChange: isResizing ? 'auto' : 'width'
             }}
         >
             {/* Resize Handle */}

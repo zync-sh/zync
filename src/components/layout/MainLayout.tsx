@@ -642,12 +642,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 />
             )}
 
-            <div className={cn(
-                "h-full z-50",
-                isSmallScreen && "fixed"
-            )}>
-                <Sidebar />
-            </div>
+            <Sidebar className={isSmallScreen ? "fixed" : ""} />
 
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Tab Bar */}

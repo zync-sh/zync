@@ -670,20 +670,26 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       });
     }
 
+    let resizeTimer: any;
     const resizeObserver = new ResizeObserver(() => {
-      try {
-        requestAnimationFrame(() => {
-          if (!term.element || !containerRef.current) return;
+      if (resizeTimer) return;
 
-          // Prevent resizing if dimensions are invalid/hidden (0x0)
-          if (containerRef.current.clientWidth === 0 || containerRef.current.clientHeight === 0) return;
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        try {
+          requestAnimationFrame(() => {
+            if (!term.element || !containerRef.current) return;
 
-          fitAddon.fit();
-          syncTerminalResize(sessionId, term);
-        });
-      } catch (e) {
-        console.warn('Resize failed', e);
-      }
+            // Prevent resizing if dimensions are invalid/hidden (0x0)
+            if (containerRef.current.clientWidth === 0 || containerRef.current.clientHeight === 0) return;
+
+            fitAddon.fit();
+            syncTerminalResize(sessionId, term);
+          });
+        } catch (e) {
+          console.warn('Resize failed', e);
+        }
+      }, 100); // Throttle resizes to at most 10fps during animations
     });
 
     if (containerRef.current) {
@@ -695,6 +701,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // and will be cleaned up when destroyTerminalInstance() is called.
       // This prevents duplicate listeners when the component remounts.
       resizeObserver.disconnect();
+      if (resizeTimer) clearTimeout(resizeTimer);
 
       const cachedForCleanup = terminalCache.get(sessionId);
       if (cachedForCleanup?.spawned) {
