@@ -183,7 +183,6 @@ impl TunnelManager {
             remote_port, local_host, local_port, bind_address
         );
 
-        let tunnel_id = format!("remote:{}:{}", remote_port, local_port);
         // Note: We don't have separate abort handle for remote, it's session state + map.
         // To stop, we call cancel_tcpip_forward
 
@@ -219,10 +218,13 @@ impl TunnelManager {
             let parts: Vec<&str> = tunnel_id.split(':').collect();
             if parts.len() == 3 {
                 if let Ok(remote_port) = parts[1].parse::<u16>() {
-                    let mut remote_forwards_guard = self.remote_forwards.lock().await;
-                    let found = remote_forwards_guard.get(&remote_port).cloned();
+                    // Clone needed data while holding the lock
+                    let found_entry = {
+                        let remote_forwards_guard = self.remote_forwards.lock().await;
+                        remote_forwards_guard.get(&remote_port).cloned()
+                    };
 
-                    if let Some((_, _, saved_bind_address)) = found {
+                    if let Some((_, _, saved_bind_address)) = found_entry {
                         if let Some(session) = session {
                             let handle = session.lock().await;
                             let bind_addr =
@@ -232,6 +234,8 @@ impl TunnelManager {
                                 .await;
 
                             if res.is_ok() {
+                                // Re-acquire lock only to remove entry
+                                let mut remote_forwards_guard = self.remote_forwards.lock().await;
                                 remote_forwards_guard.remove(&remote_port);
                                 println!("[TUNNEL] Cancelled remote forwarding on port {} (bind address: {})", remote_port, bind_addr);
                             } else {
@@ -244,6 +248,7 @@ impl TunnelManager {
                         } else {
                             // If no session is provided, the connection is likely gone.
                             // We remove it from local state to keep the UI in sync.
+                            let mut remote_forwards_guard = self.remote_forwards.lock().await;
                             remote_forwards_guard.remove(&remote_port);
                         }
                     } else {
