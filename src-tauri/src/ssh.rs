@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use log;
+use log::error;
 use russh::*;
 use russh_keys::*; // Re-adding this for key loading
 use std::sync::Arc;
@@ -129,7 +129,7 @@ impl client::Handler for Client {
                             tokio::io::copy_bidirectional(&mut channel_stream, &mut local_stream)
                                 .await
                         {
-                            log::error!(
+                            error!(
                                 "[TUNNEL] copy_bidirectional error between channel_stream and local_stream: {:?}",
                                 e
                             );

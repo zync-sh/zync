@@ -125,8 +125,8 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
         const handlePluginTerminalSend = (e: any) => {
             const { connectionId: targetConnId, text } = (e as CustomEvent).detail;
             // If the plugin didn't provide a connectionId, or it matches ours, and we have an active terminal
-            if ((!targetConnId || targetConnId === activeConnectionId) && activeTabId) {
-                window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: text });
+            if ((!targetConnId || targetConnId === activeConnectionId) && activeTabIdRef.current) {
+                window.ipcRenderer.send('terminal:write', { termId: activeTabIdRef.current, data: text });
             }
         };
 

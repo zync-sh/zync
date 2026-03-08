@@ -59,7 +59,6 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
         // Helper function to strip wrapping quotes
         fn strip_wrapping_quotes(s: &str) -> &str {
             s.trim_matches(|c| c == '"' || c == '\'')
-                .trim_matches(|c| c == '"' || c == '\'')
         }
         
         // Normalize value_str by removing wrapping quotes
