@@ -30,6 +30,12 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     );
     const terminalContentRef = useRef<HTMLDivElement>(null);
     const pendingReadyRef = useRef<Record<string, { timeoutId: any; unlistenFn?: UnlistenFn; sent?: boolean }>>({});
+    const activeTabIdRef = useRef(activeTabId);
+
+    // Update ref when activeTabId changes
+    useEffect(() => {
+        activeTabIdRef.current = activeTabId;
+    }, [activeTabId]);
 
 
     // Derived State - Removed (now selected directly)
@@ -51,8 +57,8 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     useEffect(() => {
         const handleRunCommand = (e: any) => {
             const { connectionId: targetConnId, command } = e.detail;
-            if (targetConnId === activeConnectionId && activeTabId) {
-                window.ipcRenderer.send('terminal:write', { termId: activeTabId, data: command });
+            if (targetConnId === activeConnectionId && activeTabIdRef.current) {
+                window.ipcRenderer.send('terminal:write', { termId: activeTabIdRef.current, data: command });
             }
         };
 
@@ -138,6 +144,14 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
             window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
             window.removeEventListener('zync:ai-command-bar', handleAiCommandBar);
+
+            // Clear any pending timeouts and reset pendingReadyRef
+            Object.values(pendingReadyRef.current).forEach(obj => {
+                if (obj && obj.timeoutId) {
+                    clearTimeout(obj.timeoutId);
+                }
+            });
+            pendingReadyRef.current = {};
 
             // Cleanup only if connection changed or unmounting
             // We don't want to clear this when just switching tabs within same connection
