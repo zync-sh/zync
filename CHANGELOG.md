@@ -8,25 +8,25 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Added
 
-- **Atomic Plugin Installation**: Implemented atomic extraction using temporary folders to prevent corrupted states during installs or updates. ([#38])
-- **Collision-Free Plugin Naming**: Switched to Base64-hashed directory names to prevent filesystem ID collisions, with automatic legacy folder migration. ([#38])
-- **Lazy Loaded Modals**: Modals like `SettingsModal` and `AddTunnelModal` are now lazy-loaded, improving initial bundle size and application startup speed. ([#38])
+- **Atomic Plugin Installation**: Implemented atomic extraction using temporary folders to prevent corrupted states during installs or updates. ([f766ac2])
+- **Collision-Free Plugin Naming**: Switched to Base64-hashed directory names to prevent filesystem ID collisions, with automatic legacy folder migration. ([f766ac2])
+- **Lazy Loaded Modals**: Modals like `SettingsModal` and `AddTunnelModal` are now lazy-loaded, improving initial bundle size and application startup speed. ([f9e31f4])
 
 ### Security
 
-- **Virtual Agent Key Registration**: Delayed SSH private key registration until after successful handshake to prevent pre-auth key leakage. ([#38])
-- **OOM Protection**: Added a 256KB sanity cap to Virtual Agent packet frames to prevent malicious server-side memory exhaustion. ([#38])
-- **Plugin ID Sanitization**: Implemented strict whitelist-based sanitization for plugin directory names to prevent directory traversal attacks. ([#38])
-- **Path Traversal Shield**: Hardened plugin asset loading with path canonicalization and strict root-directory validation. ([#38])
-- **SSH Key Decoding Fix**: Fixed a critical bug where encrypted private key passphrases were ignored; implemented robust decoding for all standard OpenSSH formats. ([#38])
-- **Single-Pass Virtual Agent**: Optimized the virtual agent's key identification response to a single-pass loop, reducing performance overhead and potential timing side-channels. ([#38])
+- **Virtual Agent Key Registration**: Delayed SSH private key registration until after successful handshake to prevent pre-auth key leakage. ([3df9766])
+- **OOM Protection**: Added a 256KB sanity cap to Virtual Agent packet frames to prevent malicious server-side memory exhaustion. ([3df9766])
+- **Plugin ID Sanitization**: Implemented strict whitelist-based sanitization for plugin directory names to prevent directory traversal attacks. ([f766ac2])
+- **Path Traversal Shield**: Hardened plugin asset loading with path canonicalization and strict root-directory validation. ([f766ac2])
+- **SSH Key Decoding Fix**: Fixed a critical bug where encrypted private key passphrases were ignored; implemented robust decoding for all standard OpenSSH formats. ([3df9766])
+- **Single-Pass Virtual Agent**: Optimized the virtual agent's key identification response to a single-pass loop, reducing performance overhead and potential timing side-channels. ([3df9766])
 
 ### Fixed
 
-- **Terminal Vibrancy Consistency**: Fixed empty terminal states where the background incorrectly remained opaque even when vibrancy was enabled. ([#38])
-- **Tab-Switch Command Persistence**: Fixed a bug where switching tabs during a connection handshake could prematurely clear the `terminal-ready` signal. ([#38])
-- **Tooltip Keyboard Accessibility**: Added focus and blur event handlers to tooltips for full keyboard navigation and screen-reader support. ([#38])
-- **SSH Config Comment Parsing**: Added quote-aware and escape-aware inline comment stripping for `ssh_config` properties to prevent parsing errors on lines with trailing comments. ([#38])
+- **Terminal Vibrancy Consistency**: Fixed empty terminal states where the background incorrectly remained opaque even when vibrancy was enabled. ([734bdf9])
+- **Tab-Switch Command Persistence**: Fixed a bug where switching tabs during a connection handshake could prematurely clear the `terminal-ready` signal. ([734bdf9])
+- **Tooltip Keyboard Accessibility**: Added focus and blur event handlers to tooltips for full keyboard navigation and screen-reader support. ([f9e31f4])
+- **SSH Config Comment Parsing**: Added quote-aware and escape-aware inline comment stripping for `ssh_config` properties to prevent parsing errors on lines with trailing comments. ([f44bf56])
 
 ## [2.5.4] - 2026-03-07
 
@@ -254,6 +254,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
 [#38]: https://github.com/zync-sh/zync/pull/38
+[f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
+[3df9766]: https://github.com/zync-sh/zync/commit/3df9766
+[f44bf56]: https://github.com/zync-sh/zync/commit/f44bf56
+[734bdf9]: https://github.com/zync-sh/zync/commit/734bdf9
+[f9e31f4]: https://github.com/zync-sh/zync/commit/f9e31f4
 [2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
