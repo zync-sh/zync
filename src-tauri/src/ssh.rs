@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use log;
 use russh::*;
 use russh_keys::*; // Re-adding this for key loading
 use std::sync::Arc;
@@ -124,11 +125,14 @@ impl client::Handler for Client {
                 match TcpStream::connect(&target_addr).await {
                     Ok(mut local_stream) => {
                         let mut channel_stream = channel.into_stream();
-                        if let Err(_e) =
+                        if let Err(e) =
                             tokio::io::copy_bidirectional(&mut channel_stream, &mut local_stream)
                                 .await
                         {
-                            // log error
+                            log::error!(
+                                "[TUNNEL] copy_bidirectional error between channel_stream and local_stream: {:?}",
+                                e
+                            );
                         }
                     }
                     Err(e) => eprintln!(
@@ -188,6 +192,22 @@ fn handle_agent_request(
             // Response: SSH_AGENT_IDENTITIES_ANSWER (12) + u32 count + (string blob + string comment) * count
             let keys = keys_mutex.lock().unwrap();
             
+            fn is_ed25519_blob(blob: &[u8]) -> bool {
+                if blob.len() < 15 {
+                    return false;
+                }
+                // Read first 4 bytes as big-endian u32 length
+                let length = u32::from_be_bytes([
+                    blob[0], blob[1], blob[2], blob[3]
+                ]);
+                // "ssh-ed25519" has length 11
+                if length != 11 || blob.len() < 15 {
+                    return false;
+                }
+                // Check if next bytes match "ssh-ed25519"
+                &blob[4..15] == b"ssh-ed25519"
+            }
+            
             // Single-pass optimization: reserve space for count, then iterate once
             let mut buf = vec![12];
             buf.extend_from_slice(&0u32.to_be_bytes()); // Placeholder for count
@@ -196,7 +216,7 @@ fn handle_agent_request(
             for k in keys.iter() {
                 let blob = k.public_key_bytes();
                 // Filter out non-Ed25519 keys because russh ECDSA blobs seem malformed (4 parts instead of 3)
-                if blob.windows(11).any(|w| w == b"ssh-ed25519") {
+                if is_ed25519_blob(&blob) {
                     write_string(&mut buf, &blob);
                     write_string(&mut buf, b"virtual-agent");
                     count += 1;
@@ -377,9 +397,8 @@ impl SshManager {
                 .map_err(|e| anyhow!("Failed to decode private key: {}", e))?;
             let privkey = Arc::new(privkey);
 
-            let auth_success = session
-                .authenticate_publickey(&config.username, privkey.clone())
-                .await?;
+            // Note: In russh 0.46, KeyPair implements Authenticate
+            let auth_success = session.authenticate_publickey(&config.username, privkey.clone()).await?;
 
             if auth_success {
                 // Add the underlying key to Global Virtual Agent only on SUCCESS
