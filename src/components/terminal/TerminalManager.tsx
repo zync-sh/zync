@@ -147,8 +147,13 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
             // Clear any pending timeouts and reset pendingReadyRef
             Object.values(pendingReadyRef.current).forEach(obj => {
-                if (obj && obj.timeoutId) {
-                    clearTimeout(obj.timeoutId);
+                if (obj) {
+                    if (typeof obj.unlistenFn === 'function') {
+                        obj.unlistenFn();
+                    }
+                    if (obj.timeoutId) {
+                        clearTimeout(obj.timeoutId);
+                    }
                 }
             });
             pendingReadyRef.current = {};

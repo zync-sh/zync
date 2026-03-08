@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use log::{info, warn};
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -717,31 +717,19 @@ impl PluginScanner {
                 return Err(anyhow::anyhow!("Illegal manifest.main path: outside plugin root"));
             }
             
-            match fs::read_to_string(&script_path) {
-                Ok(content) => {
-                    info!("[Plugins] Loaded main script from: {}", script_path.display());
-                    Some(content)
-                }
-                Err(e) => {
-                    warn!("[Plugins] Failed to read main script from {}: {}", script_path.display(), e);
-                    None
-                }
-            }
+            let content = fs::read_to_string(&script_path)
+                .with_context(|| format!("Failed to read main script from {}", script_path.display()))?;
+            info!("[Plugins] Loaded main script from: {}", script_path.display());
+            Some(content)
         } else {
             let default_script = dir.join("worker.js");
             if default_script.exists() {
                  let script_path = fs::canonicalize(default_script)?;
                  if script_path.starts_with(&canonical_root) {
-                     match fs::read_to_string(&script_path) {
-                        Ok(content) => {
-                            info!("[Plugins] Loaded default worker script from: {}", script_path.display());
-                            Some(content)
-                        }
-                        Err(e) => {
-                            warn!("[Plugins] Failed to read default worker script from {}: {}", script_path.display(), e);
-                            None
-                        }
-                     }
+                      let content = fs::read_to_string(&script_path)
+                          .with_context(|| format!("Failed to read default worker script from {}", script_path.display()))?;
+                      info!("[Plugins] Loaded default worker script from: {}", script_path.display());
+                      Some(content)
                  } else { None }
             } else { None }
         };
@@ -755,16 +743,10 @@ impl PluginScanner {
                 return Err(anyhow::anyhow!("Illegal manifest.style path: outside plugin root"));
             }
             
-            match fs::read_to_string(&style_path) {
-                Ok(content) => {
-                    info!("[Plugins] Loaded style from: {}", style_path.display());
-                    Some(content)
-                }
-                Err(e) => {
-                    warn!("[Plugins] Failed to read style file from {}: {}", style_path.display(), e);
-                    None
-                }
-            }
+            let content = fs::read_to_string(&style_path)
+                .with_context(|| format!("Failed to read style file from {}", style_path.display()))?;
+            info!("[Plugins] Loaded style from: {}", style_path.display());
+            Some(content)
         } else {
             None
         };

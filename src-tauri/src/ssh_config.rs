@@ -17,6 +17,11 @@ pub struct ParsedSshConnection {
     pub aliases: Vec<String>, // Add full alias list
 }
 
+// Helper function to strip wrapping quotes from values
+fn strip_wrapping_quotes(s: &str) -> &str {
+    s.trim_matches(|c| c == '"' || c == '\'')
+}
+
 pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
     if !path.exists() {
         return Ok(vec![]);
@@ -55,11 +60,6 @@ pub fn parse_config(path: &Path) -> Result<Vec<ParsedSshConnection>> {
             } else {
                 (line, "")
             };
-        
-        // Helper function to strip wrapping quotes
-        fn strip_wrapping_quotes(s: &str) -> &str {
-            s.trim_matches(|c| c == '"' || c == '\'')
-        }
         
         // Normalize value_str by removing wrapping quotes
         value_str = strip_wrapping_quotes(value_str);
