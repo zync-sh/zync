@@ -28,6 +28,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Tooltip Keyboard Accessibility**: Added focus and blur event handlers to tooltips for full keyboard navigation and screen-reader support. ([f9e31f4])
 - **SSH Config Comment Parsing**: Added quote-aware and escape-aware inline comment stripping for `ssh_config` properties to prevent parsing errors on lines with trailing comments. ([f44bf56])
 
+### Internal
+
+- **Code Polish**: Refined log macro imports, consolidated redundant quote stripping logic, and unified terminal session refs per security audit feedback. ([0b4e9f8])
+
 ## [2.5.4] - 2026-03-07
 
 ### Added
@@ -259,6 +263,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [f44bf56]: https://github.com/zync-sh/zync/commit/f44bf56
 [734bdf9]: https://github.com/zync-sh/zync/commit/734bdf9
 [f9e31f4]: https://github.com/zync-sh/zync/commit/f9e31f4
+[0b4e9f8]: https://github.com/zync-sh/zync/commit/0b4e9f8
 [2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
