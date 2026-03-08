@@ -1203,7 +1203,7 @@ function FolderItem({
     updateConnectionFolder: (id: string, f: string) => void;
     deleteFolder: (f: string) => void;
     onRenameFolder: (f: string) => void;
-    renameFolder: (oldName: string, newName: string) => void;
+    renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
     connectionItemProps: { onEdit: any; onViewDetails: any }
 }) {
     const isExpanded = expandedFolders.has(node.path);
