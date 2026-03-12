@@ -22,13 +22,13 @@ export function GlobalConfirmDialog() {
 
     return (
         <Dialog.Root open={!!dialog} onOpenChange={handleOpenChange}>
-            <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-[20000] bg-black/60 backdrop-blur-sm animate-in fade-in" />
+            <Dialog.Portal container={document.getElementById('modal-portal-root') ?? undefined}>
+                <Dialog.Overlay className="absolute inset-0 z-[20000] bg-black/60 backdrop-blur-sm animate-in fade-in pointer-events-auto" />
                 <Dialog.Content
                     className={cn(
-                        "fixed z-[20000] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+                        "absolute z-[20000] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
                         "w-full max-w-md bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)]",
-                        "shadow-2xl flex flex-col overflow-hidden",
+                        "shadow-2xl flex flex-col overflow-hidden pointer-events-auto",
                         "animate-in fade-in zoom-in-95 duration-200"
                     )}
                 >
