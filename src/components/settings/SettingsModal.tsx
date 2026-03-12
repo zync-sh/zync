@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { createPortal } from 'react-dom';
+import { ZPortal } from '../ui/ZPortal';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
 import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
-import { ToastContainer, showToast } from '../ui/Toast';
+import { ToastContainer } from '../ui/Toast';
 import { Select } from '../ui/Select';
 
 import { clsx } from 'clsx';
@@ -74,6 +74,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     const { executeCommand } = usePlugins();
     const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
+    const showToast = useAppStore(state => state.showToast);
 
     // Sync apiKeyDraft when provider changes or tab opens
     const currentProvider = settings.ai?.provider || 'ollama';
@@ -114,10 +115,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             // Optimistic update
             setPlugins(prev => prev.map(p => p.manifest.id === id ? { ...p, enabled } : p));
             await window.ipcRenderer.invoke('plugins:toggle', { id, enabled });
-            showToast(`Plugin ${enabled ? 'enabled' : 'disabled'}. Restart required.`, 'info');
+            showToast('info', `Plugin ${enabled ? 'enabled' : 'disabled'}. Restart required.`);
         } catch (error) {
             console.error('Failed to toggle plugin', error);
-            showToast('Failed to update plugin state', 'error');
+            showToast('error', 'Failed to update plugin state');
             // Revert on error
             setPlugins(prev => prev.map(p => p.manifest.id === id ? { ...p, enabled: !enabled } : p));
         } finally {
@@ -139,11 +140,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         setActiveMenu(null);
         try {
             await window.ipcRenderer.invoke('plugins_uninstall', { id });
-            showToast("Plugin uninstalled successfully", "success");
+            showToast('success', 'Plugin uninstalled successfully');
             setNeedsRestart(true);
         } catch (err: any) {
             console.error(err);
-            showToast(`Failed to uninstall: ${err.message || err}`, "error");
+            showToast('error', `Failed to uninstall: ${err.message || err}`);
         } finally {
             setProcessingId(null);
         }
@@ -155,11 +156,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         try {
             await window.ipcRenderer.invoke('plugins_install', { url: plugin.downloadUrl });
             await window.ipcRenderer.invoke('plugins:load');
-            showToast("Plugin updated successfully", "success");
+            showToast('success', 'Plugin updated successfully');
             setNeedsRestart(true);
         } catch (err: any) {
             console.error(err);
-            showToast(`Failed to update: ${err.message || err}`, "error");
+            showToast('error', `Failed to update: ${err.message || err}`);
         } finally {
             setProcessingId(null);
         }
@@ -343,7 +344,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             if (result && result.updateInfo && isNewer(result.updateInfo.version)) {
                 setUpdateStatus('available');
                 setUpdateInfo(result.updateInfo);
-                showToast(`Update v${result.updateInfo.version} available!`, 'info');
+                showToast('info', `Update v${result.updateInfo.version} available!`);
             } else {
                 setUpdateStatus('not-available');
             }
@@ -448,8 +449,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     if (!isOpen) return null;
 
-    return createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+    return (
+        <ZPortal className="absolute inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="relative w-[700px] h-[500px] bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)] shadow-2xl flex overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/5">
 
                 {/* Sidebar */}
@@ -562,7 +563,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                             onClick={() => {
                                                                 if (confirm("Are you sure you want to clear all connections? This cannot be undone.")) {
                                                                     useAppStore.getState().clearConnections();
-                                                                    showToast("Connections cleared.", "info");
+                                                                    showToast('info', 'Connections cleared.');
                                                                 }
                                                             }}
                                                             className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-xs font-medium text-red-500 transition-colors"
@@ -1104,7 +1105,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                                                             {activeMenu === plugin.manifest.id && (
                                                                                 <>
-                                                                                    <div className="fixed inset-0 z-40" onClick={() => setActiveMenu(null)} />
+                                                                                    <div className="absolute inset-0 z-40" onClick={() => setActiveMenu(null)} />
                                                                                     <div className="absolute right-0 top-full mt-1 w-40 bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
                                                                                         <button
                                                                                             onClick={() => handleTogglePlugin(plugin.manifest.id, !plugin.enabled)}
@@ -1647,8 +1648,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 )}
             </div >
             <ToastContainer />
-        </div >,
-        document.body
+        </ZPortal>
     );
 }
 
