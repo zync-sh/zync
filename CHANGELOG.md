@@ -4,6 +4,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Window Corner & Edge Polish**: Implemented an internal portal root (`ZPortal`) and moved modals, tooltips, and dropdowns to absolute positioning. This preserves the anti-aliased rounded window corners without clipping issues. ([5003999])
+- **Transparent Window Artifacts**: Removed the hardcoded black background color (`backgroundColor: "#09090b"`) from the Tauri window configuration to fix issues where a solid square wrapper would appear around the transparent window edges. ([aaf246a])
+- **Pointer Event Interactivity**: Restored pointer events to portaled components and migrated the `FileToolbar` backdrop to `ZPortal` to ensure click-away dismissal works reliably across the full window. ([72b7046])
+- **SFTP Transfer Cancellation**: Improved error handling so failed transfer cancellations display an error toast instead of silently removing the transfer from the UI. ([9ce71b4])
+- **Dialog.Portal Safety**: Added a safe `document.body` fallback to `GlobalConfirmDialog` to prevent crashes when the modal root is not yet mounted. ([3ce4e78])
+- **SSH Key File Filter**: Removed the `.pub` extension from the "Add Connection" private key file picker, preventing users from accidentally selecting public keys. ([b64f68d])
+- **Toast Accessibility & UI**: Migrated toasts to Zustand state, restored the bottom-center position with rounded window corner compatibility, completely eliminated the generic `X` icon collision for error states, and added full ARIA live region support (`role="status/alert"`) for screen readers. ([19de065])
+
+
 ## [2.5.5] - 2026-03-08
 
 ### Added
@@ -276,3 +287,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
+[5003999]: https://github.com/zync-sh/zync/commit/5003999
+[aaf246a]: https://github.com/zync-sh/zync/commit/aaf246a
+[72b7046]: https://github.com/zync-sh/zync/commit/72b7046
+[9ce71b4]: https://github.com/zync-sh/zync/commit/9ce71b4
+[3ce4e78]: https://github.com/zync-sh/zync/commit/3ce4e78
+[b64f68d]: https://github.com/zync-sh/zync/commit/b64f68d
+[19de065]: https://github.com/zync-sh/zync/commit/19de065
+
