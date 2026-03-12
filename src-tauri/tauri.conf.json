@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Zync",
@@ -17,7 +18,6 @@
         "height": 700,
         "decorations": false,
         "transparent": true,
-        "backgroundColor": "#09090b",
         "shadow": false,
         "dragDropEnabled": true,
         "visible": false
