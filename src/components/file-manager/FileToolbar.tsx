@@ -53,6 +53,7 @@ export function FileToolbar({
   const [isInvalid, setIsInvalid] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -96,6 +97,30 @@ export function FileToolbar({
     onTogglePathEdit(false);
     setIsInvalid(false);
   };
+
+  // New Menu Click-away & Escape dismiss
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isMenuOpen]);
 
   return (
     <div className={cn(
@@ -328,7 +353,7 @@ export function FileToolbar({
           </Button>
         )}
 
-        <div className="relative ml-2" ref={inputRef}>
+        <div className="relative ml-2" ref={wrapperRef}>
           <Button
             variant="primary"
             size="sm"
