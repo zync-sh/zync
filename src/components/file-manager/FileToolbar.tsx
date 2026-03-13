@@ -2,7 +2,6 @@ import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Up
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
-import { ZPortal } from '../ui/ZPortal';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 interface FileToolbarProps {
@@ -329,9 +328,9 @@ export function FileToolbar({
           </Button>
         )}
 
-        <div className="relative ml-2">
+        <div className="relative ml-2" ref={inputRef}>
           <Button
-            variant="primary" // Reverting to primary as per ButtonProps
+            variant="primary"
             size="sm"
             className={cn(
               "rounded-full font-medium shadow-sm active:scale-95 transition-all bg-app-accent hover:bg-app-accent/90 text-white",
@@ -345,14 +344,7 @@ export function FileToolbar({
           </Button>
 
           {isMenuOpen && (
-            <>
-              <ZPortal>
-                <div
-                  className="absolute inset-0 z-40 bg-transparent"
-                  onClick={() => setIsMenuOpen(false)}
-                />
-              </ZPortal>
-              <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
+            <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
                 <button
                   onClick={() => {
                     onNewFolder();
@@ -385,7 +377,6 @@ export function FileToolbar({
                   <span>Upload Folder</span>
                 </button>
               </div>
-            </>
           )}
         </div>
       </div>

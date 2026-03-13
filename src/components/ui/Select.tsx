@@ -127,7 +127,7 @@ export function Select({
                 width: coords.width > 0 ? coords.width : 'auto',
                 minWidth: '160px',
                 maxHeight: '400px',
-                zIndex: 2147483647
+                zIndex: 9999
             } : undefined}
             className={cn(
                 !portal && "absolute z-[110] w-full mt-1.5",
@@ -241,11 +241,7 @@ export function Select({
             {portal ? (
                 <ZPortal>
                     <AnimatePresence mode="wait">
-                        {isOpen && (
-                            <div className="z-[2147483647] relative">
-                                {dropdownContent}
-                            </div>
-                        )}
+                        {isOpen && dropdownContent}
                     </AnimatePresence>
                 </ZPortal>
             ) : (

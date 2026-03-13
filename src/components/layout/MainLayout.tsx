@@ -52,16 +52,8 @@ const SplashScreen = () => (
 
 
 /**
- * Keeps the transparent native window visually opaque everywhere except views
- * that intentionally opt into true see-through rendering, such as the terminal
- * viewport. The compatibility settings still use the old vibrancy keys, but the
- * runtime behavior is terminal-only transparency.
+ * Transparency is now handled by the .bg-transparent class on the layout div.
  */
-function applyDocumentBackgroundMode() {
-    // We no longer poke the document/body background because they must stay transparent 
-    // to allow the rounded corners of the .MainLayout-container to show the desktop.
-    // Transparency is now handled by the .bg-transparent class on the layout div.
-}
 
 function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connectionCount }: {
     isOpen: boolean;
@@ -553,8 +545,6 @@ export function MainLayout({ children }: { children: ReactNode }) {
             localStorage.removeItem('zync-accent-color');
         }
 
-        applyDocumentBackgroundMode();
-
         window.requestAnimationFrame(() => {
             persistBootThemeColors();
         });
@@ -571,7 +561,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
             window.clearTimeout(persistTimer);
         };
 
-    }, [theme, accentColor, isLoadingSettings, terminalTransparencyEnabled, persistBootThemeColors]);
+    }, [theme, accentColor, isLoadingSettings, persistBootThemeColors]);
 
 
     const hideBootSplash = useCallback(() => {

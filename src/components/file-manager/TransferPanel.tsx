@@ -1,5 +1,5 @@
 import { ArrowRight, CheckCircle, Loader2, X, XCircle } from 'lucide-react';
-import { useEffect, useRef, RefObject } from 'react';
+import { useEffect, useRef, RefObject, useState } from 'react';
 import { ZPortal } from '../ui/ZPortal';
 import { useAppStore, Transfer, Connection } from '../../store/useAppStore';
 
@@ -15,6 +15,7 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
   const connections = useAppStore(state => state.connections);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
 
   // Auto-remove timers for completed/failed/cancelled transfers
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -105,8 +106,11 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
   return (
     <ZPortal>
       <div
-        ref={panelRef}
-        className="absolute w-80 bg-app-panel border border-app-border rounded-lg shadow-xl z-50 animate-in fade-in slide-in-from-bottom-1 duration-150 overflow-hidden"
+        className="fixed inset-0 z-40 bg-transparent"
+        onClick={onClose}
+      />
+      <div
+        className="absolute bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-xl shadow-2xl animate-in slide-in-from-top-4 fade-in duration-200"
         style={panelStyle}
       >
         {/* Header */}
@@ -117,6 +121,8 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
           <button
             onClick={onClose}
             className="text-app-muted hover:text-app-text transition-colors"
+            aria-label="Close"
+            type="button"
           >
             <X size={12} />
           </button>
@@ -142,6 +148,8 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
                     </div>
                     <button
                       onClick={async () => {
+                        if (cancellingIds.has(transfer.id)) return;
+                        setCancellingIds(prev => new Set(prev).add(transfer.id));
                         try {
                           await window.ipcRenderer.invoke('sftp:cancelTransfer', {
                             transferId: transfer.id,
@@ -151,10 +159,18 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
                           const msg = `Failed to cancel transfer: ${err?.message || String(err)}`;
                           useAppStore.getState().failTransfer(transfer.id, msg);
                           useAppStore.getState().setLastAction(msg, 'error');
+                        } finally {
+                          setCancellingIds(prev => {
+                            const newSet = new Set(prev);
+                            newSet.delete(transfer.id);
+                            return newSet;
+                          });
                         }
                       }}
                       title="Cancel Transfer"
-                      className="px-1.5 py-0.5 rounded text-rose-500 hover:bg-rose-500/10 transition-colors ml-2 flex items-center text-[9px] font-bold uppercase tracking-wide"
+                      disabled={cancellingIds.has(transfer.id)}
+                      className="px-1.5 py-0.5 rounded text-rose-500 hover:bg-rose-500/10 transition-colors ml-2 flex items-center text-[9px] font-bold uppercase tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
+                      type="button"
                     >
                       Cancel
                     </button>
@@ -239,6 +255,8 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
                   <button
                     onClick={() => removeTransfer(transfer.id)}
                     className="text-app-muted hover:text-app-text transition-colors ml-2 shrink-0"
+                    aria-label="Remove"
+                    type="button"
                   >
                     <X size={12} />
                   </button>

@@ -1063,8 +1063,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                                             return (
                                                                 <div key={plugin.manifest.id} className="group relative flex items-center justify-between p-2.5 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 transition-all hover:border-[var(--color-app-border)]">
+                                                                    {activeMenu === plugin.manifest.id && (
+                                                                        <div className="absolute inset-0 z-40 rounded-lg" onClick={() => setActiveMenu(null)} />
+                                                                    )}
                                                                     <div className="flex items-start gap-2.5">
-                                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)] shrink-0">
+                                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)] shrink-0 relative z-50">
                                                                             <IconResolver name={plugin.manifest.icon} path={plugin.path} size={14} />
                                                                         </div>
                                                                         <div className="min-w-0">
@@ -1105,7 +1108,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                                                                             {activeMenu === plugin.manifest.id && (
                                                                                 <>
-                                                                                    <div className="absolute inset-0 z-40" onClick={() => setActiveMenu(null)} />
                                                                                     <div className="absolute right-0 top-full mt-1 w-40 bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
                                                                                         <button
                                                                                             onClick={() => handleTogglePlugin(plugin.manifest.id, !plugin.enabled)}

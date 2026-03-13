@@ -23,7 +23,6 @@ export function ZPortal({ children, targetId = 'modal-portal-root', passive = fa
 
     useEffect(() => {
         setMounted(true);
-        return () => setMounted(false);
     }, []);
 
     if (!mounted) return null;

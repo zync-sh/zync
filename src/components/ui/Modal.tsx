@@ -15,7 +15,7 @@ interface ModalProps {
 }
 
 /**
- * Render a centered modal dialog into document.body.
+ * Render a centered modal dialog into the ZPortal target (defaults to 'modal-portal-root').
  *
  * @param isOpen - Whether the modal is visible.
  * @param onClose - Callback invoked to close the modal (overlay click, Escape key, or close button).
@@ -23,7 +23,7 @@ interface ModalProps {
  * @param children - Modal content.
  * @param width - Tailwind width utility applied to the dialog container (default 'max-w-md').
  * @param className - Additional classes merged into the dialog container.
- * @returns The modal element mounted into document.body when `isOpen` is true, otherwise null.
+ * @returns The modal element mounted into the ZPortal target when `isOpen` is true, otherwise null.
  */
 export function Modal({ isOpen, onClose, title, children, width = 'max-w-md', className }: ModalProps) {
   useEffect(() => {
