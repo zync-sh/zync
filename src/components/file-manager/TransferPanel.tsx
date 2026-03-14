@@ -158,7 +158,6 @@ export function TransferPanel({ onClose, indicatorRef }: TransferPanelProps) {
                           cancelTransfer(transfer.id);
                         } catch (err: any) {
                           const msg = `Failed to cancel transfer: ${err?.message || String(err)}`;
-                          useAppStore.getState().failTransfer(transfer.id, msg);
                           useAppStore.getState().setLastAction(msg, 'error');
                         } finally {
                           setCancellingIds(prev => {
