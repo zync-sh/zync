@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useId, useLayoutEffect } from 'react';
-import { createPortal } from 'react-dom';
+import { ZPortal } from './ZPortal';
 import { ChevronDown, Check, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Command } from 'cmdk';
@@ -121,17 +121,16 @@ export function Select({
             exit={{ opacity: 0, y: 2, scale: 0.995 }}
             transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
             style={portal ? {
-                position: 'fixed',
+                position: 'absolute',
                 top: coords.top || 0,
                 left: coords.left || 0,
                 width: coords.width > 0 ? coords.width : 'auto',
                 minWidth: '160px',
                 maxHeight: '400px',
-                zIndex: 2147483647,
-                pointerEvents: 'auto'
+                zIndex: 9999
             } : undefined}
             className={cn(
-                portal ? "pointer-events-auto" : "absolute z-[110] w-full mt-1.5",
+                !portal && "absolute z-[110] w-full mt-1.5",
                 "bg-app-panel/95 border border-app-border shadow-2xl rounded-xl overflow-hidden backdrop-blur-3xl ring-1 ring-black/5 dark:ring-white/10"
             )}
         >
@@ -239,15 +238,12 @@ export function Select({
                 />
             </button>
 
-            {portal ? createPortal(
-                <AnimatePresence mode="wait">
-                    {isOpen && (
-                        <div className="z-[2147483647] relative">
-                            {dropdownContent}
-                        </div>
-                    )}
-                </AnimatePresence>,
-                document.body
+            {portal ? (
+                <ZPortal>
+                    <AnimatePresence mode="wait">
+                        {isOpen && dropdownContent}
+                    </AnimatePresence>
+                </ZPortal>
             ) : (
                 <AnimatePresence mode="wait">
                     {isOpen && dropdownContent}

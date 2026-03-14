@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw, Download, AlertTriangle, X, ExternalLink } from 'lucide-react';
+import { ZPortal } from './ui/ZPortal';
 import { Button } from './ui/Button';
 import { useAppStore } from '../store/useAppStore';
 // Imports updated
@@ -113,7 +114,7 @@ export function UpdateNotification() {
     if (!isVisible || status === 'idle' || status === 'checking' || status === 'not-available') return null;
 
     return (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full animate-in slide-in-from-bottom-5 duration-300">
+        <ZPortal className="absolute bottom-6 right-6 z-50 max-w-sm w-full animate-in slide-in-from-bottom-5 duration-300">
             <div className="bg-app-panel border border-app-border rounded-xl shadow-2xl p-4 backdrop-blur-xl bg-opacity-95 ring-1 ring-black/5">
                 <div className="flex items-start gap-4">
                     <div className="p-2.5 bg-app-accent/10 rounded-xl text-app-accent shrink-0">
@@ -180,6 +181,6 @@ export function UpdateNotification() {
                     </div>
                 </div>
             </div>
-        </div>
+        </ZPortal>
     );
 }

@@ -53,6 +53,7 @@ export function FileToolbar({
   const [isInvalid, setIsInvalid] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -96,6 +97,30 @@ export function FileToolbar({
     onTogglePathEdit(false);
     setIsInvalid(false);
   };
+
+  // New Menu Click-away & Escape dismiss
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isMenuOpen]);
 
   return (
     <div className={cn(
@@ -328,9 +353,9 @@ export function FileToolbar({
           </Button>
         )}
 
-        <div className="relative ml-2">
+        <div className="relative ml-2" ref={wrapperRef}>
           <Button
-            variant="primary" // Reverting to primary as per ButtonProps
+            variant="primary"
             size="sm"
             className={cn(
               "rounded-full font-medium shadow-sm active:scale-95 transition-all bg-app-accent hover:bg-app-accent/90 text-white",
@@ -344,12 +369,7 @@ export function FileToolbar({
           </Button>
 
           {isMenuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setIsMenuOpen(false)}
-              />
-              <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
+            <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
                 <button
                   onClick={() => {
                     onNewFolder();
@@ -382,7 +402,6 @@ export function FileToolbar({
                   <span>Upload Folder</span>
                 </button>
               </div>
-            </>
           )}
         </div>
       </div>

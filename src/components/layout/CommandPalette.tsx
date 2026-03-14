@@ -127,10 +127,10 @@ export function CommandPalette() {
     // If commandMode is FALSE: Show Connections (History)
 
     return (
-        <div className="fixed inset-0 z-[10000] flex items-start justify-center pt-[20vh] px-4">
+        <div className="absolute inset-0 z-[10000] flex items-start justify-center pt-[20vh] px-4 pointer-events-auto">
             {/* Backdrop */}
             <div
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+                className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
                 onClick={() => setOpen(false)}
             />
 

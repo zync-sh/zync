@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { CheckCircle } from 'lucide-react';
+import { ZPortal } from '../ui/ZPortal';
 import { useAppStore, Transfer } from '../../store/useAppStore';
 import { TransferPanel } from './TransferPanel';
 
@@ -145,15 +145,16 @@ export function StatusBarTransferIndicator() {
       </button>
 
       {/* Tooltip — portaled to body to escape overflow-hidden */}
-      {tooltip && !isOpen && rect && createPortal(
-        <div
-          className="fixed px-2 py-1 bg-app-panel border border-app-border rounded text-[10px] text-app-text whitespace-nowrap shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 pointer-events-none z-50"
-          style={{ bottom: window.innerHeight - rect.top + 6, right: window.innerWidth - rect.right }}
-        >
-          {tooltip}
-          <div className="absolute top-full right-2 w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-app-border" />
-        </div>,
-        document.body
+      {tooltip && !isOpen && rect && (
+        <ZPortal passive>
+          <div
+            className="absolute px-2 py-1 bg-app-panel border border-app-border rounded text-[10px] text-app-text whitespace-nowrap shadow-lg animate-in fade-in slide-in-from-bottom-1 duration-200 z-50"
+            style={{ bottom: window.innerHeight - rect.top + 6, right: window.innerWidth - rect.right }}
+          >
+            {tooltip}
+            <div className="absolute top-full right-2 w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-app-border" />
+          </div>
+        </ZPortal>
       )}
 
       {/* Transfer Panel Dropdown — portaled to body */}

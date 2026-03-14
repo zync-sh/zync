@@ -38,7 +38,7 @@ const TabLoading = () => (
 );
 
 const SplashScreen = () => (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-app-bg transition-colors duration-300">
+    <div className="absolute inset-0 z-[99999] flex items-center justify-center bg-app-bg transition-colors duration-300">
         <div className="flex flex-col items-center gap-3">
             <svg width="112" height="112" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-pulse">
                 <rect width="512" height="512" rx="128" className="fill-app-accent/10" />
@@ -52,17 +52,8 @@ const SplashScreen = () => (
 
 
 /**
- * Keeps the transparent native window visually opaque everywhere except views
- * that intentionally opt into true see-through rendering, such as the terminal
- * viewport. The compatibility settings still use the old vibrancy keys, but the
- * runtime behavior is terminal-only transparency.
+ * Transparency is now handled by the .bg-transparent class on the layout div.
  */
-function applyDocumentBackgroundMode(allowNativeShowThrough: boolean) {
-    const background = allowNativeShowThrough ? 'transparent' : 'var(--color-app-bg)';
-    document.documentElement.style.backgroundColor = background;
-    document.body.style.backgroundColor = background;
-    document.getElementById('root')?.style.setProperty('background-color', background);
-}
 
 function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connectionCount }: {
     isOpen: boolean;
@@ -554,8 +545,6 @@ export function MainLayout({ children }: { children: ReactNode }) {
             localStorage.removeItem('zync-accent-color');
         }
 
-        applyDocumentBackgroundMode(terminalTransparencyEnabled);
-
         window.requestAnimationFrame(() => {
             persistBootThemeColors();
         });
@@ -572,12 +561,8 @@ export function MainLayout({ children }: { children: ReactNode }) {
             window.clearTimeout(persistTimer);
         };
 
-    }, [theme, accentColor, isLoadingSettings, terminalTransparencyEnabled, persistBootThemeColors]);
+    }, [theme, accentColor, isLoadingSettings, persistBootThemeColors]);
 
-    const shellBackgroundStyle = {
-        backgroundColor: 'transparent',
-        background: 'transparent'
-    };
 
     const hideBootSplash = useCallback(() => {
         try {
@@ -626,21 +611,23 @@ export function MainLayout({ children }: { children: ReactNode }) {
         <div
             className={cn(
                 "relative flex h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
-                !isMaximized && "rounded-xl"
+                !isMaximized && "rounded-xl border border-app-border/20",
+                terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg"
             )}
-            style={shellBackgroundStyle}
         >
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />
             <ShortcutManager />
 
             {/* Sidebar Overlay for Mobile */}
-            {isSmallScreen && !sidebarCollapsed && (
-                <div
-                    className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[45] animate-in fade-in duration-300"
-                    onClick={() => updateSettings({ sidebarCollapsed: true })}
-                />
-            )}
+            {
+                isSmallScreen && !sidebarCollapsed && (
+                    <div
+                        className="absolute inset-0 bg-black/50 backdrop-blur-sm z-[45] animate-in fade-in duration-300"
+                        onClick={() => updateSettings({ sidebarCollapsed: true })}
+                    />
+                )
+            }
 
             <Sidebar className={isSmallScreen ? "fixed" : ""} />
 
@@ -674,7 +661,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 isShuttingDown={isShuttingDown}
                 connectionCount={activeConnections.length}
             />
-        </div>
+            {/* Portal Root for Modals/Overlays to ensure they stay within rounded corners */}
+            <div id="modal-portal-root" className="absolute inset-0 pointer-events-none z-[9999]" />
+        </div >
     );
 }
 

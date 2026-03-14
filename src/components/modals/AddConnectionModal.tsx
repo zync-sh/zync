@@ -8,7 +8,6 @@ import { useAppStore, Connection } from '../../store/useAppStore';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cn } from '../../lib/utils';
 import { Laptop, Key, Settings as SettingsIcon, ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText } from 'lucide-react';
-import { showToast } from '../ui/Toast';
 
 const ImportSshModal = lazy(() => import('./ImportSshModal').then(mod => ({ default: mod.ImportSshModal })));
 
@@ -41,6 +40,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
     const addConnection = useAppStore(state => state.addConnection);
     const editConnection = useAppStore(state => state.editConnection);
     const importConnections = useAppStore(state => state.importConnections);
+    const showToast = useAppStore(state => state.showToast);
 
     const [activeTab, setActiveTab] = useState<Tab>('general');
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -180,7 +180,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             const selected = await open({
                 multiple: false,
                 directory: false,
-                filters: [{ name: 'Key Files', extensions: ['pem', 'key', 'ppk', 'pub'] }]
+                filters: [{ name: 'Key Files', extensions: ['pem', 'key', 'ppk'] }]
             });
 
             if (selected) {
@@ -478,7 +478,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                         onClose={() => setIsImportModalOpen(false)}
                         onImport={(configs) => {
                             importConnections(configs);
-                            showToast(`Imported ${configs.length} connections.`, 'success');
+                            showToast('success', `Imported ${configs.length} connections.`);
                             onClose(); // Close parent modal too
                         }}
                     />

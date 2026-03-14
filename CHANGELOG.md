@@ -4,6 +4,18 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Window Corner & Edge Polish**: Implemented an internal portal root (`ZPortal`) and moved modals, tooltips, and dropdowns to absolute positioning. This preserves the anti-aliased rounded window corners without clipping issues. ([5003999])
+- **Transparent Window Artifacts**: Removed the hardcoded black background color (`backgroundColor: "#09090b"`) from the Tauri window configuration, fixing a solid square wrapper appearing around transparent window edges. ([aaf246a])
+- **Pointer Event Interactivity**: Fixed a stacking context mismatch in the `FileToolbar`, `SettingsModal`, and `TransferPanel` components by migrating to native click-away listeners and properly attaching refs, preventing invisible backdrops from blocking UI interactions. ([098b8c8])
+- **SFTP Transfer Cancellation**: Added a local loading state to prevent concurrent cancellation requests and improved error handling to display descriptive toasts if a cancellation fails. ([9ce71b4])
+- **ZPortal Dev Stability**: Removed redundant unmount cleanup in `ZPortal` to eliminate component flickering during React 18 Strict Mode development cycles. ([0d20343])
+- **Dialog.Portal Safety**: Added a safe `document.body` fallback to `GlobalConfirmDialog` to prevent crashes when the modal root is not yet mounted. ([3ce4e78])
+- **SSH Key File Filter**: Removed the `.pub` extension from the "Add Connection" private key file picker, preventing users from accidentally selecting public keys. ([b64f68d])
+- **Toast Accessibility & UI**: Migrated toasts to Zustand state, restored the bottom-center position with rounded window corner compatibility, eliminated the generic `X` icon collision for error states, and added full ARIA live region support (`role="status/alert"`) for screen readers. ([19de065])
+
+
 ## [2.5.5] - 2026-03-08
 
 ### Added
@@ -276,3 +288,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
+[5003999]: https://github.com/zync-sh/zync/commit/5003999
+[aaf246a]: https://github.com/zync-sh/zync/commit/aaf246a
+[9ce71b4]: https://github.com/zync-sh/zync/commit/9ce71b4
+[3ce4e78]: https://github.com/zync-sh/zync/commit/3ce4e78
+[b64f68d]: https://github.com/zync-sh/zync/commit/b64f68d
+[19de065]: https://github.com/zync-sh/zync/commit/19de065
+[0d20343]: https://github.com/zync-sh/zync/commit/0d20343
+[098b8c8]: https://github.com/zync-sh/zync/commit/098b8c8
+

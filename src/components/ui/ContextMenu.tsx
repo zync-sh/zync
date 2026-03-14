@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { ZPortal } from './ZPortal';
 import { cn } from '../../lib/utils';
 
 export type ContextMenuItem =
@@ -59,43 +59,44 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     style.top = y - 200; // rough height estimate
   }
 
-  return createPortal(
-    <div
-      ref={ref}
-      style={style}
-      className="fixed z-50 w-52 rounded-xl border border-app-border/50 bg-app-panel shadow-xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5 context-menu-container flex flex-col py-1"
-    >
-      {items.map((item, i) => {
-        if ('separator' in item) {
-          return <div key={i} className="h-[1px] bg-app-border/50 my-1 mx-2" />;
-        }
+  return (
+    <ZPortal>
+      <div
+        ref={ref}
+        style={style}
+        className="absolute z-50 w-52 rounded-xl border border-app-border/50 bg-app-panel shadow-xl overflow-hidden text-sm animate-in fade-in zoom-in-95 duration-100 ring-1 ring-white/5 context-menu-container flex flex-col py-1"
+      >
+        {items.map((item, i) => {
+          if ('separator' in item) {
+            return <div key={i} className="h-[1px] bg-app-border/50 my-1 mx-2" />;
+          }
 
-        return (
-          <button
-            key={i}
-            disabled={item.disabled}
-            onClick={() => {
-              if (item.disabled) return;
-              item.action();
-              onClose();
-            }}
-            className={cn(
-              'w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors relative mx-1 rounded-md text-xs',
-              // Fix width to account for margins
-              'w-[calc(100%-8px)]',
-              item.disabled
-                ? 'text-app-muted/50 cursor-not-allowed'
-                : item.variant === 'danger'
-                  ? 'text-app-danger hover:bg-app-danger/10'
-                  : 'text-app-text hover:bg-app-surface',
-            )}
-          >
-            {item.icon && <span className="text-current opacity-80">{item.icon}</span>}
-            <span>{item.label}</span>
-          </button>
-        );
-      })}
-    </div>,
-    document.body,
+          return (
+            <button
+              key={i}
+              disabled={item.disabled}
+              onClick={() => {
+                if (item.disabled) return;
+                item.action();
+                onClose();
+              }}
+              className={cn(
+                'w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors relative mx-1 rounded-md text-xs',
+                // Fix width to account for margins
+                'w-[calc(100%-8px)]',
+                item.disabled
+                  ? 'text-app-muted/50 cursor-not-allowed'
+                  : item.variant === 'danger'
+                    ? 'text-app-danger hover:bg-app-danger/10'
+                    : 'text-app-text hover:bg-app-surface',
+              )}
+            >
+              {item.icon && <span className="text-current opacity-80">{item.icon}</span>}
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </ZPortal>
   );
 }

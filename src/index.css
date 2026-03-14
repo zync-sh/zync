@@ -64,11 +64,11 @@
         overflow: hidden !important;
         margin: 0;
         padding: 0;
+        background-color: transparent !important;
     }
 
     body {
-        background-color: var(--color-app-bg);
-        /* Opaque by default; runtime toggles transparency only for vibrancy mode */
+        background-color: transparent;
         color: var(--color-app-text);
         font-family: var(--font-sans);
         -webkit-font-smoothing: antialiased;
@@ -142,8 +142,8 @@
 /* Terminal styles overrides */
 
 body {
-    background-color: var(--color-app-bg);
-    transition: background-color 0.2s, color 0.2s;
+    background-color: transparent;
+    transition: color 0.2s;
 }
 
 .terminal-transparent .xterm,
