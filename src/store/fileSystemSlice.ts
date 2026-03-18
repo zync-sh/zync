@@ -284,8 +284,9 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             const successfulSources: string[] = [];
 
             for (const source of sources) {
-                // Extract filename
-                const originalName = source.split('/').pop() || 'unknown';
+                // Extract filename handling both Unix (/) and Windows (\) slashes
+                // @ts-ignore
+                const originalName = source.split(/[/\\]/).pop() || 'unknown';
                 let destPath = currentPath === '/' ? `/${originalName}` : `${currentPath}/${originalName}`;
 
                 // Handle Collision (Auto-Rename)
