@@ -108,6 +108,7 @@ function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connect
         </Modal>
     );
 }
+const EMPTY_ARRAY: string[] = [];
 
 const TabContent = memo(function TabContent({ tab, isActive }: {
     tab: Tab;
@@ -163,12 +164,19 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         );
     }
 
+    if (!tab.connectionId) {
+        return null;
+    }
+
     const isConnecting = connection?.status === 'connecting';
     const isError = connection?.status === 'error';
 
     // Feature Pinning
     const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
-    const pinnedFeatures = connection?.pinnedFeatures || [];
+    const localPinnedFeatures = useAppStore(state => state.settings.localTerm?.pinnedFeatures);
+    
+    // Use a stable empty array to prevent unnecessary re-renders of child components
+    const pinnedFeatures = tab.connectionId === 'local' ? (localPinnedFeatures || EMPTY_ARRAY) : (connection?.pinnedFeatures || EMPTY_ARRAY);
 
     // Ensure active view is always in openFeatures
     useEffect(() => {
@@ -198,12 +206,15 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         }
     };
 
-    const handleOpenFeature = (feature: string) => {
-        if (!openFeatures.includes(feature) && !pinnedFeatures.includes(feature)) {
-            setOpenFeatures(prev => [...prev, feature]);
-        }
+    const handleOpenFeature = useCallback((feature: string) => {
+        setOpenFeatures(prev => {
+            if (!prev.includes(feature) && !pinnedFeatures.includes(feature)) {
+                return [...prev, feature];
+            }
+            return prev;
+        });
         setTabView(tab.id, feature as any);
-    };
+    }, [pinnedFeatures, setTabView, tab.id]);
 
     const handleTogglePin = (feature: string) => {
         if (tab.connectionId) {
@@ -282,7 +293,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 <>
                     {/* Unified Tab Bar */}
                     <CombinedTabBar
-                        connectionId={tab.connectionId!}
+                        connectionId={tab.connectionId}
                         activeView={tab.view}
                         activeTerminalId={activeTermId}
                         openFeatures={openFeatures}

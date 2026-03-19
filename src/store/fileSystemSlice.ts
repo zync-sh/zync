@@ -283,10 +283,13 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             const pathsToRemoveFromSource: string[] = [];
             const successfulSources: string[] = [];
 
+            const sourceConnectionId = get().clipboard?.sourceConnectionId || connectionId;
+            const isWindowsLocal = sourceConnectionId === 'local' && window.electronUtils?.platform === 'win32';
+
             for (const source of sources) {
-                // Extract filename handling both Unix (/) and Windows (\) slashes
-                // @ts-ignore
-                const originalName = source.split(/[/\\]/).pop() || 'unknown';
+                // Extract filename handling Windows slashes only when strictly necessary
+                const separatorRegex = isWindowsLocal ? /[/\\]/ : /\//;
+                const originalName = source.split(separatorRegex).pop() || 'unknown';
                 let destPath = currentPath === '/' ? `/${originalName}` : `${currentPath}/${originalName}`;
 
                 // Handle Collision (Auto-Rename)
