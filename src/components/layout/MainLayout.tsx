@@ -14,6 +14,8 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
+import { SnippetPicker } from '../snippets/SnippetPicker';
+import { SnippetSidebar } from '../snippets/SnippetSidebar';
 
 declare global {
     interface Window {
@@ -135,6 +137,10 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     // Local state for open feature tabs
     // Default open features? None, or maybe just what user opens.
     const [openFeatures, setOpenFeatures] = useState<string[]>([]);
+
+    // Snippet quick access overlay state
+    const [isSnippetPickerOpen, setIsSnippetPickerOpen] = useState(false);
+    const [isSnippetSidebarOpen, setIsSnippetSidebarOpen] = useState(false);
 
     // Global Tunnels Tab
     if (tab.type === 'port-forwarding') {
@@ -259,6 +265,30 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         return () => window.removeEventListener('ssh-ui:open-feature', handleFeatureEvent);
     }, [tab.id, handleOpenFeature]);
 
+    // Snippet picker toggle
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ev = e as CustomEvent;
+            if (ev.detail?.tabId === tab.id) {
+                setIsSnippetPickerOpen(true);
+            }
+        };
+        window.addEventListener('ssh-ui:open-snippet-picker', handler);
+        return () => window.removeEventListener('ssh-ui:open-snippet-picker', handler);
+    }, [tab.id]);
+
+    // Snippet sidebar toggle
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ev = e as CustomEvent;
+            if (ev.detail?.tabId === tab.id) {
+                setIsSnippetSidebarOpen(prev => !prev);
+            }
+        };
+        window.addEventListener('ssh-ui:toggle-snippet-sidebar', handler);
+        return () => window.removeEventListener('ssh-ui:toggle-snippet-sidebar', handler);
+    }, [tab.id]);
+
     // Ensure we start with at least 'terminal' available conceptually, 
     // though combined bar renders terminals from store.
 
@@ -359,7 +389,22 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                     isVisible={isActive && tab.view === 'terminal'}
                                     hideTabs={true}
                                 />
+                                {/* Snippet overlay sidebar — slides in from right over terminal */}
+                                <SnippetSidebar
+                                    connectionId={tab.connectionId}
+                                    isOpen={isSnippetSidebarOpen}
+                                    onClose={() => setIsSnippetSidebarOpen(false)}
+                                />
                             </div>
+
+                            {/* Snippet picker palette — renders via ZPortal over everything */}
+                            {isSnippetPickerOpen && (
+                                <SnippetPicker
+                                    connectionId={tab.connectionId}
+                                    isOpen={isSnippetPickerOpen}
+                                    onClose={() => setIsSnippetPickerOpen(false)}
+                                />
+                            )}
                         </Suspense>
                     </div>
                 </>
@@ -381,6 +426,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const tabs = useAppStore(state => state.tabs); // Updated Hook
     const activeTabId = useAppStore(state => state.activeTabId); // Updated Hook
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
+    const loadSnippets = useAppStore(state => state.loadSnippets);
+
+    // Pre-load snippets once on app startup so the picker/sidebar always have data
+    useEffect(() => {
+        loadSnippets();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
     const [showWizard, setShowWizard] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [windowWidth, setWindowWidth] = useState(window.innerWidth);
