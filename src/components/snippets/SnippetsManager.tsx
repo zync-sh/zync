@@ -12,7 +12,9 @@ import type { Snippet } from '../../store/useAppStore';
 
 export function SnippetsManager({ connectionId }: { connectionId?: string }) {
   const showToast = useAppStore((state) => state.showToast);
-  const activeConnectionId = connectionId || useAppStore(state => state.activeConnectionId);
+  const storeActiveConnectionId = useAppStore(state => state.activeConnectionId);
+  // Always call hook unconditionally. Use the prop if provided, otherwise fall back to the store.
+  const activeConnectionId = connectionId ?? storeActiveConnectionId;
 
   // Zustand State
   const snippets = useAppStore(state => state.snippets);
