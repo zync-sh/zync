@@ -292,7 +292,12 @@ impl SshManager {
         config: ConnectionConfig,
         tunnel_manager: Arc<crate::tunnel::TunnelManager>,
     ) -> Result<client::Handle<Client>> {
-        let client_config = client::Config::default();
+        // Keep-alive: send a heartbeat every 60s to prevent NAT/firewall timeouts on idle sessions
+        let client_config = client::Config {
+            keepalive_interval: Some(std::time::Duration::from_secs(60)),
+            keepalive_max: 3,
+            ..Default::default()
+        };
         let client_config = Arc::new(client_config);
 
         // Recursive Jump Host Logic

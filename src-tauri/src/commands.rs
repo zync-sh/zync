@@ -89,7 +89,104 @@ pub struct ConnectionHandle {
     pub detected_os: Option<String>,
 }
 
+/// Internal helper: establishes a full SSH connection (session + SFTP + OS detection)
+/// and returns a fresh `ConnectionHandle`. Used for initial `ssh_connect` and reactive reconnection.
+async fn reconnect_connection(
+    config: &ConnectionConfig,
+    ssh_manager: &crate::ssh::SshManager,
+    tunnel_manager: &crate::tunnel::TunnelManager,
+) -> Result<ConnectionHandle, String> {
+    println!(
+        "[SSH] (Re)connecting to {} ({}@{}:{})",
+        config.name, config.username, config.host, config.port
+    );
+
+    let session = ssh_manager
+        .connect(config.clone(), Arc::new(tunnel_manager.clone()))
+        .await
+        .map_err(|e| format!("Failed to connect: {}", e))?;
+
+    // Initialize SFTP session
+    let sftp_session = match session.channel_open_session().await {
+        Ok(channel) => {
+            if let Err(e) = channel.request_subsystem(true, "sftp").await {
+                eprintln!("[SSH] Failed to request SFTP subsystem: {}", e);
+                None
+            } else {
+                let stream = channel.into_stream();
+                match russh_sftp::client::SftpSession::new(stream).await {
+                    Ok(sftp) => Some(Arc::new(sftp)),
+                    Err(e) => {
+                        eprintln!("[SSH] Failed to initialize SFTP: {}", e);
+                        None
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[SSH] Failed to open channel for SFTP: {}", e);
+            None
+        }
+    };
+
+    // Detect OS (best-effort — reuse cached value if already known via caller)
+    let mut detected_os = None;
+    if let Ok(mut channel) = session.channel_open_session().await {
+        if let Ok(_) = channel.exec(true, "cat /etc/os-release").await {
+            let mut output = String::new();
+            while let Some(msg) = channel.wait().await {
+                match msg {
+                    russh::ChannelMsg::Data { data } => {
+                        output.push_str(&String::from_utf8_lossy(&data))
+                    }
+                    russh::ChannelMsg::ExitStatus { .. } => break,
+                    _ => {}
+                }
+            }
+            for line in output.lines() {
+                if line.starts_with("ID=") {
+                    let id = line.trim_start_matches("ID=").trim_matches('"');
+                    detected_os = Some(id.to_string());
+                    break;
+                }
+            }
+        }
+    }
+    if detected_os.is_none() {
+        if let Ok(mut channel) = session.channel_open_session().await {
+            if let Ok(_) = channel.exec(true, "uname -s").await {
+                let mut output = String::new();
+                while let Some(msg) = channel.wait().await {
+                    match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            output.push_str(&String::from_utf8_lossy(&data))
+                        }
+                        russh::ChannelMsg::ExitStatus { .. } => break,
+                        _ => {}
+                    }
+                }
+                let sys_name = output.trim().to_lowercase();
+                if sys_name == "darwin" {
+                    detected_os = Some("macos".to_string());
+                } else if !sys_name.is_empty() {
+                    detected_os = Some(sys_name);
+                }
+            }
+        }
+    }
+
+    println!("[SSH] (Re)connected. Detected OS: {:?}", detected_os);
+
+    Ok(ConnectionHandle {
+        config: config.clone(),
+        session: Some(Arc::new(Mutex::new(session))),
+        sftp_session,
+        detected_os,
+    })
+}
+
 #[tauri::command]
+
 pub async fn ssh_connect(
     config: ConnectionConfig,
     state: State<'_, AppState>,
@@ -99,113 +196,11 @@ pub async fn ssh_connect(
         config.name, config.username, config.host, config.port
     );
 
-    println!("[SSH] Attempting connection...");
-    match state
-        .ssh_manager
-        .connect(config.clone(), state.tunnel_manager.clone())
-        .await
-    {
-        Ok(session) => {
-            // Initialize SFTP session
-            let sftp_session = match session.channel_open_session().await {
-                Ok(channel) => {
-                    if let Err(e) = channel.request_subsystem(true, "sftp").await {
-                        eprintln!("[SSH] Failed to request SFTP subsystem: {}", e);
-                        None
-                    } else {
-                        let stream = channel.into_stream();
-                        match russh_sftp::client::SftpSession::new(stream).await {
-                            Ok(sftp) => Some(Arc::new(sftp)),
-                            Err(e) => {
-                                eprintln!("[SSH] Failed to initialize SFTP: {}", e);
-                                None
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[SSH] Failed to open channel for SFTP: {}", e);
-                    None
-                }
-            };
-
-            // Detect OS
-            let mut detected_os = None;
-            if let Ok(mut channel) = session.channel_open_session().await {
-                // 1. Try /etc/os-release (Linux)
-                if let Ok(_) = channel.exec(true, "cat /etc/os-release").await {
-                    let mut output = String::new();
-                    while let Some(msg) = channel.wait().await {
-                        match msg {
-                            russh::ChannelMsg::Data { data } => {
-                                output.push_str(&String::from_utf8_lossy(&data))
-                            }
-                            russh::ChannelMsg::ExitStatus { .. } => break,
-                            _ => {}
-                        }
-                    }
-                    // Parse ID=ubuntu or ID="ubuntu"
-                    for line in output.lines() {
-                        if line.starts_with("ID=") {
-                            let id = line.trim_start_matches("ID=").trim_matches('"');
-                            detected_os = Some(id.to_string());
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // 2. Fallback to uname -s (macOS / BSD / Legacy)
-            if detected_os.is_none() {
-                if let Ok(mut channel) = session.channel_open_session().await {
-                    if let Ok(_) = channel.exec(true, "uname -s").await {
-                        let mut output = String::new();
-                        while let Some(msg) = channel.wait().await {
-                            match msg {
-                                russh::ChannelMsg::Data { data } => {
-                                    output.push_str(&String::from_utf8_lossy(&data))
-                                }
-                                russh::ChannelMsg::ExitStatus { .. } => break,
-                                _ => {}
-                            }
-                        }
-                        let sys_name = output.trim().to_lowercase();
-                        if sys_name == "darwin" {
-                            detected_os = Some("macos".to_string());
-                        } else if !sys_name.is_empty() {
-                            detected_os = Some(sys_name);
-                        }
-                    }
-                }
-            }
-
-            println!(
-                "[SSH] Connected successfully. Detected OS: {:?}",
-                detected_os
-            );
-
-            // IMPORTANT: We need RE-STORE the session because session was moved?
-            // No, `session` variable is `Handle<Client>`.
-            // `let sftp_session` block above used `session.channel_open_session()`.
-            // `Handle` usually implements Clone? No, `session` returned by `connect` is likely `Handle`.
-            // Check Line 51: `state.ssh_manager.connect(...)` returns `Handle<Client>`.
-            // `Handle` is cheap to clone? It's an Arc internally usually.
-            // Wait, `impl Clone for Handle<T>`. Yes.
-            // So I can clone it for OS Check if needed, or just use it (reference or value).
-            // `session` is used below in `ConnectionHandle { ... session: Some(Arc::new(Mutex::new(session))) }`.
-            // If I use `session` above in `channel_open_session`, does it consume it?
-            // `channel_open_session(&self)`. It takes `&self`. So `session` is fine.
-
+    match reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await {
+        Ok(handle) => {
+            let detected_os = handle.detected_os.clone();
             let mut connections = state.connections.lock().await;
-            connections.insert(
-                config.id.clone(),
-                ConnectionHandle {
-                    config: config.clone(),
-                    session: Some(Arc::new(Mutex::new(session))),
-                    sftp_session,
-                    detected_os: detected_os.clone(),
-                },
-            );
+            connections.insert(config.id.clone(), handle);
 
             Ok(ConnectionResponse {
                 success: true,
@@ -216,7 +211,7 @@ pub async fn ssh_connect(
         }
         Err(e) => {
             println!("[SSH] Connection failed: {}", e);
-            Err(format!("Failed to connect: {}", e))
+            Err(e)
         }
     }
 }
@@ -550,24 +545,86 @@ pub async fn terminal_create(
         Ok(term_id)
     } else {
         println!("[TERM] Creating remote SSH session");
-        // Get the SSH session for this connection
-        let session = {
-            let connections = state.connections.lock().await;
-            connections
-                .get(&connection_id)
-                .and_then(|c| c.session.clone())
-                .ok_or_else(|| {
-                    format!("Connection {} not found or session closed", connection_id)
-                })?
-        };
 
-        // Open a new channel for the terminal
-        let channel = session
-            .lock()
-            .await
-            .channel_open_session()
-            .await
-            .map_err(|e| e.to_string())?;
+        // Helper: get live session, reconnecting if necessary
+        async fn get_live_session(
+            connection_id: &str,
+            state: &State<'_, AppState>,
+        ) -> Result<Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>, String> {
+            let existing = {
+                let connections = state.connections.lock().await;
+                connections
+                    .get(connection_id)
+                    .and_then(|c| c.session.clone())
+            };
+            if let Some(s) = existing {
+                return Ok(s);
+            }
+            // No session — reconnect using cached config
+            let config = {
+                let connections = state.connections.lock().await;
+                connections
+                    .get(connection_id)
+                    .map(|c| c.config.clone())
+                    .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
+            };
+            let mut new_handle = reconnect_connection(
+                &config,
+                &state.ssh_manager,
+                &state.tunnel_manager,
+            )
+            .await?;
+            let new_session = new_handle
+                .session
+                .take()
+                .ok_or("Reconnection did not produce a session")?;
+            new_handle.session = Some(new_session.clone());
+            state.connections.lock().await.insert(connection_id.to_string(), new_handle);
+            Ok(new_session)
+        }
+
+        // 1. Get (or reconnect to get) a live session
+        let session = get_live_session(&connection_id, &state).await?;
+
+        // 2. Try opening a channel; if it fails (session dead), reconnect once and retry
+        let channel = {
+            let ch_result = {
+                let guard = session.lock().await;
+                guard.channel_open_session().await
+            };
+            match ch_result {
+                Ok(ch) => ch,
+                Err(e) => {
+                    println!("[TERM] Channel open failed ({}), reconnecting...", e);
+                    // Drop stale session, force a fresh one
+                    let config = {
+                        let connections = state.connections.lock().await;
+                        connections
+                            .get(&connection_id)
+                            .map(|c| c.config.clone())
+                            .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
+                    };
+                    let mut new_handle = reconnect_connection(
+                        &config,
+                        &state.ssh_manager,
+                        &state.tunnel_manager,
+                    )
+                    .await
+                    .map_err(|e| format!("Auto-reconnect failed: {}", e))?;
+                    let new_session = new_handle
+                        .session
+                        .take()
+                        .ok_or("Reconnection did not produce a session")?;
+                    new_handle.session = Some(new_session.clone());
+                    state.connections.lock().await.insert(connection_id.clone(), new_handle);
+                    let guard = new_session.lock().await;
+                    guard
+                        .channel_open_session()
+                        .await
+                        .map_err(|e| format!("Channel open failed after reconnect: {}", e))?
+                }
+            }
+        };
 
         println!("[TERM] SSH channel opened, requesting PTY");
         state
@@ -580,6 +637,7 @@ pub async fn terminal_create(
     }
 }
 
+
 #[tauri::command]
 pub async fn terminal_close(term_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
@@ -589,20 +647,43 @@ pub async fn terminal_close(term_id: String, state: State<'_, AppState>) -> Resu
         .map_err(|e| e.to_string())
 }
 
-// Helper to get SFTP session without holding lock
-async fn get_sftp(
+// Helper to get SFTP session - reconnects automatically if session is dead.
+// Zero overhead for healthy connections; only re-establishes when needed.
+async fn get_sftp_or_reconnect(
     state: &State<'_, AppState>,
     id: &str,
 ) -> Result<Arc<russh_sftp::client::SftpSession>, String> {
-    let connections = state.connections.lock().await;
-    connections
-        .get(id)
-        .ok_or_else(|| format!("Connection {} not found", id))
-        .and_then(|c| {
-            c.sftp_session
-                .clone()
-                .ok_or_else(|| "SFTP not initialized".to_string())
-        })
+    // 1. Try to get existing SFTP session
+    let config = {
+        let connections = state.connections.lock().await;
+        let conn = connections.get(id)
+            .ok_or_else(|| format!("Connection {} not found, cannot reconnect for SFTP", id))?;
+            
+        if let Some(sftp) = &conn.sftp_session {
+            return Ok(sftp.clone());
+        }
+        conn.config.clone()
+    };
+
+    // 2. Session dropped — attempt full reconnect
+    println!("[SFTP] Session not found for '{}', attempting reconnect...", id);
+
+    let timeout_duration = std::time::Duration::from_secs(12);
+    let new_handle = match tokio::time::timeout(timeout_duration, reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager)).await {
+        Ok(Ok(h)) => h,
+        Ok(Err(e)) => return Err(format!("DISCONNECTED: Auto-reconnect failed: {}", e)),
+        Err(_) => return Err(format!("DISCONNECTED: Auto-reconnect timed out after {}s (Is the network down?)", timeout_duration.as_secs())),
+    };
+    let sftp = new_handle
+        .sftp_session
+        .clone()
+        .ok_or_else(|| "Reconnection succeeded but SFTP initialization failed".to_string())?;
+
+    let mut connections = state.connections.lock().await;
+    connections.insert(id.to_string(), new_handle);
+
+    println!("[SFTP] Reconnected successfully for '{}'", id);
+    Ok(sftp)
 }
 
 #[tauri::command]
@@ -618,12 +699,37 @@ pub async fn fs_list(
             .map_err(|e| e.to_string())
     } else {
         println!("[FS] Listing remote dir: {} on {}", path, connection_id);
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .list_remote(&sftp, &path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        
+        let timeout_duration = std::time::Duration::from_secs(10);
+        match tokio::time::timeout(timeout_duration, state.file_system.list_remote(&sftp, &path)).await {
+            Ok(Ok(res)) => Ok(res),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during list, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.list_remote(&sftp, &path)).await {
+                    Ok(Ok(res)) => Ok(res),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP listing timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP listing timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -640,12 +746,37 @@ pub async fn fs_read_file(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .read_remote(&sftp, &path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.read_remote(&sftp, &path)).await {
+            Ok(Ok(res)) => Ok(res),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during read, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.read_remote(&sftp, &path)).await {
+                    Ok(Ok(res)) => Ok(res),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP read timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP read timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -663,12 +794,37 @@ pub async fn fs_write_file(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .write_remote(&sftp, &path, content.as_bytes())
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.write_remote(&sftp, &path, content.as_bytes())).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during write, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.write_remote(&sftp, &path, content.as_bytes())).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP write timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP write timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -681,11 +837,36 @@ pub async fn fs_cwd(connection_id: String, state: State<'_, AppState>) -> Result
             .map_err(|e| e.to_string())
     } else {
         println!("[FS] Getting remote CWD for {}", connection_id);
-        let sftp = get_sftp(&state, &connection_id).await?;
-        // Canonicalize . to get cwd
-        match sftp.canonicalize(".").await {
-            Ok(path) => Ok(path),
-            Err(e) => Err(e.to_string()),
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, sftp.canonicalize(".")).await {
+            Ok(Ok(path)) => Ok(path),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during cwd, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, sftp.canonicalize(".")).await {
+                    Ok(Ok(path)) => Ok(path),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP cwd timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP cwd timed out after {}s", timeout_duration.as_secs()))
+            }
         }
     }
 }
@@ -703,12 +884,37 @@ pub async fn fs_mkdir(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .create_dir_remote(&sftp, &path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.create_dir_remote(&sftp, &path)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during mkdir, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.create_dir_remote(&sftp, &path)).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -726,12 +932,37 @@ pub async fn fs_rename(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .rename_remote(&sftp, &old_path, &new_path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.rename_remote(&sftp, &old_path, &new_path)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during rename, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.rename_remote(&sftp, &old_path, &new_path)).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP rename timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP rename timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -764,63 +995,74 @@ pub async fn fs_delete(
                 let cmd = format!("rm -rf '{}'", path.replace("'", "'\\''"));
                 println!("[FS] Attempting server-side delete: {}", cmd);
 
-                match session.lock().await.channel_open_session().await {
-                    Ok(mut channel) => {
-                        if let Ok(_) = channel.exec(true, cmd).await {
-                            // Wait for exit status
-                            let mut success = false;
-                            let mut output_log = String::new();
-
-                            while let Some(msg) = channel.wait().await {
-                                match msg {
-                                    russh::ChannelMsg::Data { data } => {
-                                        output_log.push_str(&String::from_utf8_lossy(&data));
-                                    }
-                                    russh::ChannelMsg::ExtendedData { data, .. } => {
-                                        output_log.push_str(&String::from_utf8_lossy(&data));
-                                    }
-                                    russh::ChannelMsg::ExitStatus { exit_status } => {
-                                        if exit_status == 0 {
-                                            success = true;
-                                        } else {
-                                            output_log
-                                                .push_str(&format!(" (Exit: {})", exit_status));
+                let timeout_duration = std::time::Duration::from_secs(10);
+                let optimize_fut = async {
+                    match session.lock().await.channel_open_session().await {
+                        Ok(mut channel) => {
+                            if let Ok(_) = channel.exec(true, cmd).await {
+                                let mut success = false;
+                                let mut output_log = String::new();
+                                while let Some(msg) = channel.wait().await {
+                                    match msg {
+                                        russh::ChannelMsg::Data { data } => output_log.push_str(&String::from_utf8_lossy(&data)),
+                                        russh::ChannelMsg::ExtendedData { data, .. } => output_log.push_str(&String::from_utf8_lossy(&data)),
+                                        russh::ChannelMsg::ExitStatus { exit_status } => {
+                                            if exit_status == 0 { success = true; }
+                                            break;
                                         }
-                                        break;
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
-                            }
-
-                            if success {
-                                println!(
-                                    "[FS] Server-side delete successful. Output: {}",
-                                    output_log
-                                );
-                                return Ok(());
-                            } else {
-                                println!(
-                                    "[FS] Server-side delete failed: {}. Checking SFTP fallback...",
-                                    output_log
-                                );
-                            }
+                                success
+                            } else { false }
                         }
+                        Err(_) => false,
                     }
-                    Err(e) => {
-                        println!("[FS] Failed to open channel for delete optimization: {}", e)
+                };
+
+                match tokio::time::timeout(timeout_duration, optimize_fut).await {
+                    Ok(true) => {
+                        println!("[FS] Server-side delete successful.");
+                        return Ok(());
                     }
+                    _ => println!("[FS] Server-side delete failed or timed out. Checking SFTP fallback..."),
                 }
             }
         }
 
         // Fallback to SFTP (recursive delete implemented there)
         println!("[FS] Falling back to SFTP delete...");
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .delete_remote(&sftp, &path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.delete_remote(&sftp, &path)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during delete, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.delete_remote(&sftp, &path)).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP delete timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP delete timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -887,14 +1129,37 @@ pub async fn fs_copy(
         }
 
         // Fallback to SFTP
-        println!("[FS] Falling back to SFTP copy...");
-        let sftp = get_sftp(&state, &connection_id).await?;
-        // Lock is DROPPED here
-        state
-            .file_system
-            .copy_remote(&sftp, &from, &to)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&sftp, &from, &to)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during copy, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&sftp, &from, &to)).await {
+                    Ok(Ok(_)) => Ok(()),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err(format!("DISCONNECTED: SFTP copy timed out after {}s", timeout_duration.as_secs())),
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => {
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                Err(format!("DISCONNECTED: SFTP copy timed out after {}s", timeout_duration.as_secs()))
+            }
+        }
     }
 }
 
@@ -970,13 +1235,38 @@ pub async fn fs_copy_batch(
         }
 
         // Final fallback: Sequential SFTP if no session or optimization fails
-        let sftp = get_sftp(&state, &connection_id).await?;
-        for op in operations {
-            state
-                .file_system
-                .copy_remote(&sftp, &op.from, &op.to)
-                .await
-                .map_err(|e| e.to_string())?;
+        let mut current_sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        let timeout_duration = std::time::Duration::from_secs(10);
+        
+        let mut idx = 0;
+        while idx < operations.len() {
+            let op = &operations[idx];
+            match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&current_sftp, &op.from, &op.to)).await {
+                Ok(Ok(_)) => {
+                    idx += 1;
+                }
+                Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                    println!("[FS] SFTP session closed during batch item {}, retrying...", idx);
+                    {
+                        let mut connections = state.connections.lock().await;
+                        if let Some(c) = connections.get_mut(&connection_id) {
+                            c.sftp_session = None;
+                        }
+                    }
+                    current_sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                    // Don't increment idx, retry the same operation with new SFTP
+                }
+                Ok(Err(e)) => return Err(e.to_string()),
+                Err(_) => {
+                    {
+                        let mut connections = state.connections.lock().await;
+                        if let Some(c) = connections.get_mut(&connection_id) {
+                            c.sftp_session = None;
+                        }
+                    }
+                    return Err(format!("DISCONNECTED: SFTP batch copy timed out at item {} after {}s", idx, timeout_duration.as_secs()));
+                }
+            }
         }
         Ok(())
     }
@@ -998,13 +1288,30 @@ pub async fn fs_rename_batch(
         }
         Ok(())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        for op in operations {
-            state
-                .file_system
-                .rename_remote(&sftp, &op.from, &op.to)
-                .await
-                .map_err(|e| e.to_string())?;
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        for op in &operations {
+            if let Err(e) = state.file_system.rename_remote(&sftp, &op.from, &op.to).await {
+                if e.to_string().to_lowercase().contains("session closed") {
+                    println!("[FS] SFTP session closed during batch rename, retrying...");
+                    {
+                        let mut connections = state.connections.lock().await;
+                        if let Some(c) = connections.get_mut(&connection_id) {
+                            c.sftp_session = None;
+                        }
+                    }
+                    let sftp_fresh = get_sftp_or_reconnect(&state, &connection_id).await?;
+                    // Resume from current op
+                    for retry_op in operations.iter().skip_while(|oo| oo.from != op.from) {
+                        state
+                            .file_system
+                            .rename_remote(&sftp_fresh, &retry_op.from, &retry_op.to)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                    return Ok(());
+                }
+                return Err(e.to_string());
+            }
         }
         Ok(())
     }
@@ -1023,12 +1330,26 @@ pub async fn fs_exists(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp(&state, &connection_id).await?;
-        state
-            .file_system
-            .exists_remote(&sftp, &path)
-            .await
-            .map_err(|e| e.to_string())
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+        match state.file_system.exists_remote(&sftp, &path).await {
+            Ok(res) => Ok(res),
+            Err(e) if e.to_string().to_lowercase().contains("session closed") => {
+                println!("[FS] SFTP session closed during exists check, retrying...");
+                {
+                    let mut connections = state.connections.lock().await;
+                    if let Some(c) = connections.get_mut(&connection_id) {
+                        c.sftp_session = None;
+                    }
+                }
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                state
+                    .file_system
+                    .exists_remote(&sftp, &path)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 
@@ -1867,7 +2188,7 @@ pub async fn sftp_put(
                 }
                 std::fs::copy(&local, &remote).map_err(|e| e.to_string())?;
             } else {
-                let sftp = get_sftp(&state, &connection_id).await?;
+                let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
                 let path = std::path::Path::new(&local);
 
                 // Calculate total size for progress bar
@@ -1981,7 +2302,7 @@ pub async fn sftp_copy_to_server(
 
         let result = async {
             // Shared SFTP session for size calculation
-            let src_sftp = get_sftp(&state, &src_id).await?;
+            let src_sftp = get_sftp_or_reconnect(&state, &src_id).await?;
             // Calculate size upfront for accurate progress
             let mut total_size = get_remote_size(&src_sftp, &src_path).await;
             if total_size == 0 {
@@ -2003,7 +2324,7 @@ pub async fn sftp_copy_to_server(
             }
 
             // Standard Mode (Proxied Streaming)
-            let dst_sftp = get_sftp(&state, &dst_id).await?;
+            let dst_sftp = get_sftp_or_reconnect(&state, &dst_id).await?;
             let mut transferred = 0;
 
             copy_recursive_optimized(
@@ -2423,7 +2744,7 @@ pub async fn sftp_get(
 
         let result = async {
             // Retrieve session
-            let sftp = get_sftp(&state, &connection_id).await?;
+            let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
             let local_p = std::path::Path::new(&local);
 
             // Prepare total size (Best effort)
@@ -2722,7 +3043,7 @@ pub async fn sftp_download_as_zip(
 
     // Estimate total size using SFTP (already connected) for progress reporting.
     let total_size = {
-        let sftp = get_sftp(&state, &connection_id).await?;
+        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let mut sz: u64 = 0;
         for rp in &remote_paths {
             sz += get_remote_size(&sftp, rp).await;
