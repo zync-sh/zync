@@ -7,7 +7,9 @@ use russh::client::Handle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
+use std::time::Duration;
 
 use crate::tunnel::TunnelManager;
 use serde::{Deserialize, Serialize};
@@ -1290,9 +1292,19 @@ pub async fn fs_rename_batch(
     } else {
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         for op in &operations {
-            if let Err(e) = state.file_system.rename_remote(&sftp, &op.from, &op.to).await {
-                if e.to_string().to_lowercase().contains("session closed") {
-                    println!("[FS] SFTP session closed during batch rename, retrying...");
+            let res = tokio::time::timeout(
+                Duration::from_secs(10),
+                state.file_system.rename_remote(&sftp, &op.from, &op.to)
+            ).await;
+
+            let final_res = match res {
+                Ok(inner) => inner.map_err(|e| e.to_string()),
+                Err(_) => Err("DISCONNECTED: SFTP session timeout".to_string()),
+            };
+
+            if let Err(e) = final_res {
+                if e.to_lowercase().contains("session closed") || e.contains("DISCONNECTED:") {
+                    println!("[FS] SFTP session closed or timed out during batch rename, retrying...");
                     {
                         let mut connections = state.connections.lock().await;
                         if let Some(c) = connections.get_mut(&connection_id) {
@@ -1302,15 +1314,19 @@ pub async fn fs_rename_batch(
                     let sftp_fresh = get_sftp_or_reconnect(&state, &connection_id).await?;
                     // Resume from current op
                     for retry_op in operations.iter().skip_while(|oo| oo.from != op.from) {
-                        state
-                            .file_system
-                            .rename_remote(&sftp_fresh, &retry_op.from, &retry_op.to)
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        let retry_res = tokio::time::timeout(
+                            Duration::from_secs(10),
+                            state.file_system.rename_remote(&sftp_fresh, &retry_op.from, &retry_op.to)
+                        ).await;
+
+                        match retry_res {
+                            Ok(inner) => inner.map_err(|e| e.to_string())?,
+                            Err(_) => return Err("DISCONNECTED: SFTP session timeout".to_string()),
+                        };
                     }
                     return Ok(());
                 }
-                return Err(e.to_string());
+                return Err(e);
             }
         }
         Ok(())
@@ -1331,10 +1347,21 @@ pub async fn fs_exists(
             .map_err(|e| e.to_string())
     } else {
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-        match state.file_system.exists_remote(&sftp, &path).await {
+        
+        let res = tokio::time::timeout(
+            Duration::from_secs(10),
+            state.file_system.exists_remote(&sftp, &path)
+        ).await;
+
+        let final_res = match res {
+            Ok(inner) => inner.map_err(|e| e.to_string()),
+            Err(_) => Err("DISCONNECTED: SFTP session timeout".to_string()),
+        };
+
+        match final_res {
             Ok(res) => Ok(res),
-            Err(e) if e.to_string().to_lowercase().contains("session closed") => {
-                println!("[FS] SFTP session closed during exists check, retrying...");
+            Err(e) if e.to_lowercase().contains("session closed") || e.contains("DISCONNECTED:") => {
+                println!("[FS] SFTP session closed or timed out during exists check, retrying...");
                 {
                     let mut connections = state.connections.lock().await;
                     if let Some(c) = connections.get_mut(&connection_id) {
@@ -1342,13 +1369,18 @@ pub async fn fs_exists(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                state
-                    .file_system
-                    .exists_remote(&sftp, &path)
-                    .await
-                    .map_err(|e| e.to_string())
+                
+                let retry_res = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    state.file_system.exists_remote(&sftp, &path)
+                ).await;
+
+                match retry_res {
+                    Ok(inner) => inner.map_err(|e| e.to_string()),
+                    Err(_) => Err("DISCONNECTED: SFTP session timeout".to_string()),
+                }
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e),
         }
     }
 }

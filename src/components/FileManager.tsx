@@ -473,9 +473,9 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       }
       setIsProcessing(false);
     } catch (error: any) {
+      setIsProcessing(false);
       if (handleConnectionError(activeConnectionId, error)) return;
       showToast('error', `Download failed: ${error.message || String(error)}`);
-      setIsProcessing(false);
     }
   };
 

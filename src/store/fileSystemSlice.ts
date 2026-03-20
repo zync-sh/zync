@@ -301,13 +301,20 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             const successfulSources: string[] = [];
 
             const sourceConnectionId = get().clipboard?.sourceConnectionId || connectionId;
-            const isWindowsLocal = sourceConnectionId === 'local' && window.electronUtils?.platform === 'win32';
+            const isSourceWindows = sourceConnectionId === 'local' && window.electronUtils?.platform === 'win32';
+            const isDestWindows = connectionId === 'local' && window.electronUtils?.platform === 'win32';
+            const isWindowsContext = isSourceWindows || isDestWindows;
 
-            for (const source of sources) {
-                // Extract filename handling Windows slashes only when strictly necessary
-                const separator = isWindowsLocal ? '\\' : '/';
-                const originalName = source.split(isWindowsLocal ? /[/\\]/ : /\//).pop() || 'unknown';
-                let destPath = currentPath.endsWith(separator) ? `${currentPath}${originalName}` : `${currentPath}${separator}${originalName}`;
+            // Highly strict normalization function to insulate equality checks from Windows backslashes
+            const normalizePath = (p: string) => isWindowsContext ? p.replace(/\\/g, '/') : p;
+            const normCurrentPath = normalizePath(currentPath);
+
+            for (const rawSource of sources) {
+                const source = normalizePath(rawSource);
+                const originalName = source.split('/').pop() || 'unknown';
+                
+                // Now safely construct destPath with standard forward slashes
+                let destPath = normCurrentPath.endsWith('/') ? `${normCurrentPath}${originalName}` : `${normCurrentPath}/${originalName}`;
 
                 // Handle Collision (Auto-Rename)
                 // If cut and same path, skip
