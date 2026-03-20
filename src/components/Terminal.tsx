@@ -786,6 +786,48 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
   }, [activeConnectionId, globalActiveId, isVisible]);
 
+  // Handle Automatic Reconnect Sync from File Manager
+  useEffect(() => {
+    const handleWakeup = (e: any) => {
+      // sessionId can be string | null | undefined, handle it carefully
+      if (sessionId && e.detail === sessionId) {
+        const cached = terminalCache.get(sessionId);
+        if (cached && !cached.spawned) {
+          console.log('[Terminal] Auto-waking terminal from File Manager reconnect');
+          
+          if (typeof (window as any).clearPendingInput === 'function') {
+            (window as any).clearPendingInput(sessionId);
+          }
+          cached.lastResize = null;
+          
+          cached.spawned = true;
+          termRef.current?.clear();
+          termRef.current?.reset();
+          
+          const isLocalTerminal = (connectionId || 'local') === 'local';
+          const shellSetting = isLocalTerminal ? settings.localTerm?.windowsShell : undefined;
+
+          window.ipcRenderer
+            .invoke('terminal:create', {
+              termId: sessionId,
+              connectionId: connectionId || 'local',
+              rows: termRef.current?.rows || 24,
+              cols: termRef.current?.cols || 80,
+              shell: shellSetting,
+            })
+            .catch((err) => {
+              console.error('Failed to auto-restart terminal:', err);
+              termRef.current?.write(`\r\n\x1b[31mFailed to automatically restart terminal: ${err}\x1b[0m\r\n`);
+              cached.spawned = false;
+            });
+        }
+      }
+    };
+    
+    window.addEventListener('connection-wakeup', handleWakeup);
+    return () => window.removeEventListener('connection-wakeup', handleWakeup);
+  }, [sessionId, connectionId, settings]);
+
   // Define Presets
   const THEME_PRESETS: Record<string, any> = {
     'red': { background: '#1a0b0b', cursor: '#ef4444', selectionBackground: 'rgba(239, 68, 68, 0.3)' },

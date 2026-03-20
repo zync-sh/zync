@@ -14,6 +14,8 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
+import { SnippetPicker } from '../snippets/SnippetPicker';
+import { SnippetSidebar } from '../snippets/SnippetSidebar';
 
 declare global {
     interface Window {
@@ -108,6 +110,7 @@ function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connect
         </Modal>
     );
 }
+const EMPTY_ARRAY: string[] = [];
 
 const TabContent = memo(function TabContent({ tab, isActive }: {
     tab: Tab;
@@ -131,11 +134,81 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
 
+    // Feature Pinning
+    const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
+    const localPinnedFeatures = useAppStore(state => state.settings.localTerm?.pinnedFeatures);
+
     // Local state for open feature tabs
-    // Default open features? None, or maybe just what user opens.
     const [openFeatures, setOpenFeatures] = useState<string[]>([]);
 
-    // Global Tunnels Tab
+    // Snippet quick access overlay state
+    const [isSnippetPickerOpen, setIsSnippetPickerOpen] = useState(false);
+    const [isSnippetSidebarOpen, setIsSnippetSidebarOpen] = useState(false);
+
+    // Effect hooks must be unconditional
+    // Ensure active view is always in openFeatures
+    const pinnedFeatures = tab.connectionId === 'local' ? (localPinnedFeatures || EMPTY_ARRAY) : (connection?.pinnedFeatures || EMPTY_ARRAY);
+
+    useEffect(() => {
+        if (tab.view && tab.view !== 'terminal' && !pinnedFeatures.includes(tab.view)) {
+            setOpenFeatures(prev => {
+                if (!prev.includes(tab.view)) {
+                    return [...prev, tab.view];
+                }
+                return prev;
+            });
+        }
+    }, [tab.view, pinnedFeatures]);
+
+    // Listen for keyboard shortcut events to open features
+    const handleOpenFeature = useCallback((feature: string) => {
+        setOpenFeatures(prev => {
+            if (!prev.includes(feature) && !pinnedFeatures.includes(feature)) {
+                return [...prev, feature];
+            }
+            return prev;
+        });
+        setTabView(tab.id, feature as any);
+    }, [pinnedFeatures, setTabView, tab.id]);
+
+    useEffect(() => {
+        const handleFeatureEvent = (e: Event) => {
+            const customEvent = e as CustomEvent;
+            if (customEvent.detail.tabId === tab.id) {
+                handleOpenFeature(customEvent.detail.feature);
+            }
+        };
+
+        window.addEventListener('ssh-ui:open-feature', handleFeatureEvent);
+        return () => window.removeEventListener('ssh-ui:open-feature', handleFeatureEvent);
+    }, [tab.id, handleOpenFeature]);
+
+    // Snippet picker toggle
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ev = e as CustomEvent;
+            if (ev.detail?.tabId === tab.id) {
+                setIsSnippetPickerOpen(true);
+            }
+        };
+        window.addEventListener('ssh-ui:open-snippet-picker', handler);
+        return () => window.removeEventListener('ssh-ui:open-snippet-picker', handler);
+    }, [tab.id]);
+
+    // Snippet sidebar toggle
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const ev = e as CustomEvent;
+            if (ev.detail?.tabId === tab.id) {
+                setIsSnippetSidebarOpen(prev => !prev);
+            }
+        };
+        window.addEventListener('ssh-ui:toggle-snippet-sidebar', handler);
+        return () => window.removeEventListener('ssh-ui:toggle-snippet-sidebar', handler);
+    }, [tab.id]);
+
+    // -- Conditional Returns for special tab types (Must be after ALL hooks) --
+
     if (tab.type === 'port-forwarding') {
         return (
             <div className={cn(
@@ -150,7 +223,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         );
     }
 
-    // Release Notes Tab
     if (tab.type === 'release-notes') {
         return (
             <div className={cn(
@@ -163,24 +235,12 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         );
     }
 
+    if (!tab.connectionId) {
+        return null;
+    }
+
     const isConnecting = connection?.status === 'connecting';
     const isError = connection?.status === 'error';
-
-    // Feature Pinning
-    const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
-    const pinnedFeatures = connection?.pinnedFeatures || [];
-
-    // Ensure active view is always in openFeatures
-    useEffect(() => {
-        if (tab.view && tab.view !== 'terminal' && !pinnedFeatures.includes(tab.view)) {
-            setOpenFeatures(prev => {
-                if (!prev.includes(tab.view)) {
-                    return [...prev, tab.view];
-                }
-                return prev;
-            });
-        }
-    }, [tab.view, pinnedFeatures]);
 
     // Handle Tab Selection
     const handleTabSelect = (view: any, termId?: string) => {
@@ -196,13 +256,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         if (tab.view === feature) {
             setTabView(tab.id, 'terminal');
         }
-    };
-
-    const handleOpenFeature = (feature: string) => {
-        if (!openFeatures.includes(feature) && !pinnedFeatures.includes(feature)) {
-            setOpenFeatures(prev => [...prev, feature]);
-        }
-        setTabView(tab.id, feature as any);
     };
 
     const handleTogglePin = (feature: string) => {
@@ -234,19 +287,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             setTabView(tab.id, 'terminal');
         }
     };
-
-    // Listen for keyboard shortcut events to open features
-    useEffect(() => {
-        const handleFeatureEvent = (e: Event) => {
-            const customEvent = e as CustomEvent;
-            if (customEvent.detail.tabId === tab.id) {
-                handleOpenFeature(customEvent.detail.feature);
-            }
-        };
-
-        window.addEventListener('ssh-ui:open-feature', handleFeatureEvent);
-        return () => window.removeEventListener('ssh-ui:open-feature', handleFeatureEvent);
-    }, [tab.id, handleOpenFeature]);
 
     // Ensure we start with at least 'terminal' available conceptually, 
     // though combined bar renders terminals from store.
@@ -282,7 +322,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 <>
                     {/* Unified Tab Bar */}
                     <CombinedTabBar
-                        connectionId={tab.connectionId!}
+                        connectionId={tab.connectionId}
                         activeView={tab.view}
                         activeTerminalId={activeTermId}
                         openFeatures={openFeatures}
@@ -348,7 +388,27 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                     isVisible={isActive && tab.view === 'terminal'}
                                     hideTabs={true}
                                 />
+                                {/* Snippet overlay sidebar — slides in from right over terminal */}
+                                <SnippetSidebar
+                                    connectionId={tab.connectionId}
+                                    isOpen={isSnippetSidebarOpen}
+                                    onClose={() => setIsSnippetSidebarOpen(false)}
+                                />
                             </div>
+
+                            {/* Snippet picker palette — renders via ZPortal over everything */}
+                            {isSnippetPickerOpen && (
+                                <SnippetPicker
+                                    connectionId={tab.connectionId}
+                                    /* 
+                                       Note: isOpen is technically redundant here because of the conditional 
+                                       rendering above, but we keep it because SnippetPicker uses it internally
+                                       for focus management and animation transitions.
+                                    */
+                                    isOpen={isSnippetPickerOpen}
+                                    onClose={() => setIsSnippetPickerOpen(false)}
+                                />
+                            )}
                         </Suspense>
                     </div>
                 </>
@@ -370,6 +430,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const tabs = useAppStore(state => state.tabs); // Updated Hook
     const activeTabId = useAppStore(state => state.activeTabId); // Updated Hook
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
+    const loadSnippets = useAppStore(state => state.loadSnippets);
+
+    // Pre-load snippets once on app startup so the picker/sidebar always have data
+    useEffect(() => {
+        loadSnippets();
+    }, [loadSnippets]);
     const [showWizard, setShowWizard] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [windowWidth, setWindowWidth] = useState(window.innerWidth);

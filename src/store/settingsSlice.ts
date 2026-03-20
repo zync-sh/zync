@@ -24,6 +24,7 @@ export interface AppSettings {
     };
     localTerm: {
         windowsShell: string;
+        pinnedFeatures?: string[];
     };
     keybindings: {
         toggleSidebar: string;

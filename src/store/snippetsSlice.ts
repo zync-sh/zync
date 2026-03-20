@@ -54,11 +54,11 @@ export const createSnippetsSlice: StateCreator<AppStore, [], [], SnippetsSlice> 
 
         try {
             await ipc.invoke('snippets_save', { snippet });
-            // Optionally reload to confirm (or rely on optimistic)
-            // await get().loadSnippets(); 
+            // Reload from backend to get the canonical, correctly-keyed data
+            await get().loadSnippets();
         } catch (error) {
             console.error('Failed to save snippet:', error);
-            // Revert on error could be implemented here
+            // Revert on error 
             set({ snippets: oldSnippets });
             get().showToast('error', 'Failed to save snippet');
         }

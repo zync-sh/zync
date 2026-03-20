@@ -129,13 +129,20 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
 
         } catch (error: any) {
             console.error('Failed to load files:', error);
+            const osError = error.message || String(error);
+
+            if (osError.includes('DISCONNECTED:')) {
+                set(state => ({
+                    isLoading: { ...state.isLoading, [connectionId]: false },
+                    error: { ...state.error, [connectionId]: 'DISCONNECTED' }
+                }));
+                return;
+            }
 
             set(state => ({
                 isLoading: { ...state.isLoading, [connectionId]: false },
-                error: { ...state.error, [connectionId]: error.message }
+                error: { ...state.error, [connectionId]: osError }
             }));
-
-            const osError = error.message || String(error);
 
             // Handle "No such file" (Directory deleted?)
             if (osError.includes('No such file') || osError.includes('does not exist')) {
@@ -175,11 +182,17 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
         set(state => ({ isLoading: { ...state.isLoading, [connectionId]: true } }));
         try {
             await ipc.invoke('fs_mkdir', { connectionId, path: fullPath });
-            // get().showToast('success', `Folder "${name}" created`);
             get().setLastAction(`Created folder "${name}"`, 'success');
             await get().refreshFiles(connectionId);
         } catch (error: any) {
-            get().showToast('error', `Failed to create folder: ${error.message}`);
+            const msg = error.message || String(error);
+            if (msg.includes('DISCONNECTED:')) {
+                set(state => ({ error: { ...state.error, [connectionId]: 'DISCONNECTED' } }));
+                set(state => ({ isLoading: { ...state.isLoading, [connectionId]: false } }));
+                return;
+            } else {
+                get().showToast('error', `Failed to create folder: ${msg}`);
+            }
             set(state => ({ isLoading: { ...state.isLoading, [connectionId]: false } }));
         }
     },
@@ -189,36 +202,40 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
         const oldPath = path === '/' ? `/${oldName}` : `${path}/${oldName}`;
         const newPath = path === '/' ? `/${newName}` : `${path}/${newName}`;
 
-        // set(state => ({ isLoading: { ...state.isLoading, [connectionId]: true } }));
         try {
             await ipc.invoke('fs_rename', { connectionId, oldPath, newPath });
             get().setLastAction(`Renaming to "${newName}"...`, 'info');
-            // Background op: Wait for event to refresh
         } catch (error: any) {
-            get().showToast('error', `Failed to rename: ${error.message}`);
+            const msg = error.message || String(error);
+            if (msg.includes('DISCONNECTED:')) {
+                set(state => ({ error: { ...state.error, [connectionId]: 'DISCONNECTED' } }));
+                return;
+            } else {
+                get().showToast('error', `Failed to rename: ${msg}`);
+            }
         }
     },
 
     deleteEntries: async (connectionId, paths) => {
-        // Optimistic Update: Immediately remove files from state
         set(state => {
             const currentFiles = state.files[connectionId] || [];
             const newFiles = currentFiles.filter(f => !paths.includes(f.path));
-            return {
-                files: { ...state.files, [connectionId]: newFiles }
-            };
+            return { files: { ...state.files, [connectionId]: newFiles } };
         });
 
-        // set(state => ({ isLoading: { ...state.isLoading, [connectionId]: true } }));
         try {
             for (const p of paths) {
                 await ipc.invoke('fs_delete', { connectionId, path: p });
             }
             get().setLastAction(`Deleting ${paths.length} item(s)...`, 'info');
-            // Background op: Wait for event to refresh
         } catch (error: any) {
-            get().showToast('error', `Delete failed: ${error.message}`);
-            // On error, refresh to restore true state
+            const msg = error.message || String(error);
+            if (msg.includes('DISCONNECTED:')) {
+                set(state => ({ error: { ...state.error, [connectionId]: 'DISCONNECTED' } }));
+                return;
+            } else {
+                get().showToast('error', `Delete failed: ${msg}`);
+            }
             get().refreshFiles(connectionId);
         }
     },
@@ -283,10 +300,21 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             const pathsToRemoveFromSource: string[] = [];
             const successfulSources: string[] = [];
 
-            for (const source of sources) {
-                // Extract filename
+            const sourceConnectionId = get().clipboard?.sourceConnectionId || connectionId;
+            const isSourceWindows = sourceConnectionId === 'local' && window.electronUtils?.platform === 'win32';
+            const isDestWindows = connectionId === 'local' && window.electronUtils?.platform === 'win32';
+            const isWindowsContext = isSourceWindows || isDestWindows;
+
+            // Highly strict normalization function to insulate equality checks from Windows backslashes
+            const normalizePath = (p: string) => isWindowsContext ? p.replace(/\\/g, '/') : p;
+            const normCurrentPath = normalizePath(currentPath);
+
+            for (const rawSource of sources) {
+                const source = normalizePath(rawSource);
                 const originalName = source.split('/').pop() || 'unknown';
-                let destPath = currentPath === '/' ? `/${originalName}` : `${currentPath}/${originalName}`;
+                
+                // Now safely construct destPath with standard forward slashes
+                let destPath = normCurrentPath.endsWith('/') ? `${normCurrentPath}${originalName}` : `${normCurrentPath}/${originalName}`;
 
                 // Handle Collision (Auto-Rename)
                 // If cut and same path, skip
@@ -394,9 +422,15 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             }
 
             get().setLastAction(`${op === 'copy' ? 'Copying' : 'Moving'} ${sources.length} item(s)...`, 'info');
-            // Background op: Wait for event
         } catch (error: any) {
-            get().showToast('error', `Paste failed: ${error.message}`);
+            const msg = error.message || String(error);
+            if (msg.includes('DISCONNECTED:')) {
+                set(state => ({ error: { ...state.error, [connectionId]: 'DISCONNECTED' } }));
+                set(state => ({ isLoading: { ...state.isLoading, [connectionId]: false } }));
+                return;
+            } else {
+                get().showToast('error', `Paste failed: ${msg}`);
+            }
             set(state => ({ isLoading: { ...state.isLoading, [connectionId]: false } }));
         }
     },

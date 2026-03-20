@@ -9,6 +9,7 @@ import {
   Server,
   Trash2,
   Upload,
+  Unplug,
 } from 'lucide-react';
 import { ConfirmModal } from './ui/ConfirmModal';
 import { useCallback, useEffect, useState, useRef } from 'react';
@@ -50,6 +51,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const filesMap = useAppStore(state => state.files);
   const currentPathMap = useAppStore(state => state.currentPath);
   const loadingMap = useAppStore(state => state.isLoading);
+  const errorMap = useAppStore(state => state.error);
   const loadFiles = useAppStore(state => state.loadFiles);
   const refreshFiles = useAppStore(state => state.refreshFiles);
   const createFolder = useAppStore(state => state.createFolder);
@@ -69,6 +71,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const files = activeConnectionId ? (filesMap[activeConnectionId] || []) : [];
   const currentPath = activeConnectionId ? (currentPathMap[activeConnectionId] || '') : '';
   const loading = activeConnectionId ? (loadingMap[activeConnectionId] || false) : false;
+  const currentError = activeConnectionId ? (errorMap[activeConnectionId] || null) : null;
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -135,6 +138,25 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     if (!activeConnectionId) return;
     await uploadAction(activeConnectionId, filePaths);
   }, [activeConnectionId, uploadAction]);
+
+  const handleConnectionError = useCallback((connectionId: string, err: any) => {
+    const msg = err.message || String(err);
+    if (msg.includes('DISCONNECTED:')) {
+      useAppStore.setState(state => ({
+        error: { ...state.error, [connectionId]: 'DISCONNECTED' }
+      }));
+      // Close any open modals to show the overlay clearly
+      setIsEditingPath(false);
+      setIsRenameModalOpen(false);
+      setEditingFile(null);
+      setIsCopyModalOpen(false);
+      setIsPropertiesOpen(false);
+      setIsDeleteModalOpen(false);
+      setIsNewFolderModalOpen(false);
+      return true;
+    }
+    return false;
+  }, []);
 
   const { isDraggingOver: isTauriDraggingOver } = useTauriFileDrop(useCallback((paths) => {
     // Clear any leftover HTML5 drag state (HTML5 drop won't fire when Tauri intercepts)
@@ -205,7 +227,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
         // Start actual transfer file via IPC
         window.ipcRenderer.invoke(command, args).catch(err => {
-          failTransfer(transferId, err.message);
+          failTransfer(transferId, err.message || String(err));
         });
       }
     }
@@ -235,7 +257,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       loadFiles(activeConnectionId, currentPath);
       setSelectedFiles([]); // Clear selection after move
     } catch (e: any) {
-      showToast('error', `Move failed: ${e.message}`);
+      if (handleConnectionError(activeConnectionId, e)) return;
+      showToast('error', `Move failed: ${e.message || String(e)}`);
       loadFiles(activeConnectionId, currentPath); // Refresh anyway
     } finally {
       setIsProcessing(false);
@@ -316,7 +339,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       setEditorContent(content);
       setEditingFile(file);
     } catch (error: any) {
-      showToast('error', `Failed to open file: ${error.message}`);
+      if (handleConnectionError(activeConnectionId, error)) return;
+      showToast('error', `Failed to open file: ${error.message || String(error)}`);
     } finally {
       setIsFileLoading(false);
     }
@@ -334,7 +358,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       });
       showToast('success', 'File saved');
     } catch (error: any) {
-      showToast('error', `Failed to save file: ${error.message}`);
+      if (handleConnectionError(activeConnectionId, error)) return;
+      showToast('error', `Failed to save file: ${error.message || String(error)}`);
       throw error;
     }
   };
@@ -409,7 +434,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       if (canceled || filePaths.length === 0) return;
       performUpload(filePaths);
     } catch (error: any) {
-      showToast('error', `Upload failed: ${error.message}`);
+      showToast('error', `Upload failed: ${error.message || String(error)}`);
     }
   };
 
@@ -443,13 +468,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           transferId,
         }).catch(err => {
           console.error('Download failed', err);
-          failTransfer(transferId, err.message);
+          failTransfer(transferId, err.message || String(err));
         });
       }
       setIsProcessing(false);
     } catch (error: any) {
-      showToast('error', `Download failed: ${error.message}`);
       setIsProcessing(false);
+      if (handleConnectionError(activeConnectionId, error)) return;
+      showToast('error', `Download failed: ${error.message || String(error)}`);
     }
   };
 
@@ -491,10 +517,11 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         transferId,
       }).catch((err: any) => {
         // Catches invoke-level errors (e.g. command not found) — backend errors come via transfer-error
-        failTransfer(transferId, err.message);
+        failTransfer(transferId, err.message || String(err));
       });
     } catch (error: any) {
-      showToast('error', `Archive download failed: ${error.message}`);
+      if (handleConnectionError(activeConnectionId, error)) return;
+      showToast('error', `Archive download failed: ${error.message || String(error)}`);
     } finally {
       setIsZipping(false);
     }
@@ -521,7 +548,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       setSelectedFiles([]);
       setIsDeleteModalOpen(false);
     } catch (e: any) {
-      showToast('error', `Delete failed: ${e.message}`);
+      if (handleConnectionError(activeConnectionId, e)) return;
+      showToast('error', `Delete failed: ${e.message || String(e)}`);
     } finally {
       setIsDeleting(false);
     }
@@ -1027,19 +1055,44 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: interactive div */}
       <div className="flex-1 overflow-hidden relative flex flex-col" onClick={() => setContextMenu(null)}>
-        <FileGrid
-          files={filteredFiles}
-          selectedFiles={selectedFiles}
-          focusedFile={focusedFile || undefined}
-          onSelect={handleSelect}
-          onNavigate={handleNavigate}
-          onContextMenu={handleContextMenu}
-          viewMode={viewMode}
-          isLoading={isLoading}
-          connectionId={activeConnectionId || undefined}
-          currentPath={currentPath}
-          onMove={handleMoveFiles}
-        />
+        {currentError === 'DISCONNECTED' ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-app-text p-8 text-center animate-in fade-in zoom-in-95 duration-300">
+            <div className="bg-app-surface/50 border border-app-border rounded-xl p-8 max-w-sm shadow-xl flex flex-col items-center">
+              <div className="bg-red-500/10 text-red-500 p-4 rounded-full mb-4">
+                <Unplug size={48} strokeWidth={1.5} />
+              </div>
+              <h2 className="text-xl font-bold mb-2">Connection Lost</h2>
+              <p className="text-sm text-app-muted mb-6">
+                Zync lost the connection to the server and could not automatically recover it. Please check your internet connection and try again.
+              </p>
+              <Button 
+                onClick={() => {
+                  if (activeConnectionId) {
+                    loadFiles(activeConnectionId, currentPath || '/');
+                  }
+                }}
+                className="w-full gap-2"
+              >
+                <RotateCw size={16} />
+                Reconnect
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <FileGrid
+            files={filteredFiles}
+            selectedFiles={selectedFiles}
+            focusedFile={focusedFile || undefined}
+            onSelect={handleSelect}
+            onNavigate={handleNavigate}
+            onContextMenu={handleContextMenu}
+            viewMode={viewMode}
+            isLoading={isLoading}
+            connectionId={activeConnectionId || undefined}
+            currentPath={currentPath}
+            onMove={handleMoveFiles}
+          />
+        )}
       </div>
 
       {isSmallScreen && (

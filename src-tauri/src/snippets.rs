@@ -3,12 +3,15 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Snippet {
     pub id: String,
     pub name: String,
     pub command: String,
     pub category: Option<String>,
     pub tags: Option<Vec<String>>,
+    // alias allows loading old snippets saved with snake_case key
+    #[serde(alias = "connection_id")]
     pub connection_id: Option<String>, // if scoped to a specific connection, or global
 }
 

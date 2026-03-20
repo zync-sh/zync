@@ -582,6 +582,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     toggleConnectionFeature: (connectionId, feature) => {
+        if (connectionId === 'local') {
+            const current = get().settings.localTerm?.pinnedFeatures || [];
+            const updated = current.includes(feature)
+                ? current.filter(f => f !== feature)
+                : [...current, feature];
+            // Use specific store method to sync pined features to local terminal settings
+            (get() as any as AppStore).updateLocalTermSettings({ pinnedFeatures: updated });
+            return;
+        }
+
         set(state => {
             const newConns = state.connections.map(c => {
                 if (c.id !== connectionId) return c;

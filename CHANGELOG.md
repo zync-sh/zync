@@ -4,8 +4,27 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Graceful SFTP Disconnect UI**: Replaced generic toasts with a dedicated "Connection Lost" overlay in the File Manager, featuring a prominent "Reconnect" button and stylized `Unplug` icon. ([3f73902])
+- **Automated Terminal Recovery**: Implemented a seamless "wakeup" system where reconnecting an SFTP session automatically restarts any associated terminal sessions. ([3f73902])
+- **SFTP Network Safeguards**: Added strict 10-second `tokio` timeouts to all remote file system commands (`ls`, `read`, `write`, `mkdir`, `rename`, `delete`, `copy`) to prevent UI hangs during silent network failures. ([3f73902])
+- **Snippet Quick Access (`Ctrl+Shift+S`)**: Implemented a high-performance, command-palette-style picker for instant snippet execution with fuzzy search and auto-focus. ([4c923ce])
+- **Snippet Sidebar (`Ctrl+Shift+``)**: Added a collapsible sidebar for managing and executing terminal snippets, featuring connection-scoped filtering and category grouping. ([4c923ce])
+- **Compact UI Refinement**: Overhauled snippet overlays with a high-density, single-column design, featuring glassmorphism effects, scope-specific icons (Globe/Server), and real-time command previews. ([4c923ce])
+
 ### Fixed
 
+- **Atomic SFTP Reconnection**: Eliminated TOCTOU (Time-Of-Check to Time-Of-Use) race conditions in the SFTP manager by consolidating session checks into atomic lock blocks. ([3f73902])
+- **Robust Batch Copies**: Refactored the SFTP copy batch logic to use an index-based resume system, ensuring data integrity and preventing duplicate work if a connection drops mid-transfer. ([3f73902])
+- **Terminal State Leak**: Added proper session cleanup (`clearPendingInput`, `lastResize`) during shell restarts to ensure fresh state after reconnection. ([3f73902])
+- **UI Loading State Leak**: Fixed an issue where a failed SFTP download would leave the `FileManager` stuck in an infinite loading state. ([1dca207])
+- **Cross-Platform Pathing**: Implemented strict Windows-to-POSIX path normalization (`\` to `/`) in the paste engine to prevent collision-detection failures. ([e3310ef], [1dca207])
+- **SSH Command Deadlocks**: Added missing 10-second `tokio` timeouts to batch renaming and file existence checks, completely preventing UI hangs on dead SSH channels. ([1dca207])
+- **Early Return Safety**: Added missing early returns in the `fileSystemSlice` catch blocks to prevent redundant file refresh attempts on disconnected sessions. ([3f73902])
+- **Snippet Shortcut Reliability**: Resolved a conflict in `ShortcutManager` where the terminal textarea would block global snippet shortcuts (`Ctrl+Shift+S` and `Ctrl+Shift+``). ([4c923ce])
+- **Snippet Scope Persistence**: Fixed a serialization mismatch in `snippets.rs` (CamelCase vs snake_case) that prevented snippet connection scope from persisting across application restarts. ([4c609d6])
+- **Snippet Overlay Accessibility**: Added global "Escape" key listener and intelligent auto-focus to ensure snippet views are keyboard-navigable and quickly closable. ([4c923ce])
 - **Window Corner & Edge Polish**: Implemented an internal portal root (`ZPortal`) and moved modals, tooltips, and dropdowns to absolute positioning. This preserves the anti-aliased rounded window corners without clipping issues. ([5003999])
 - **Transparent Window Artifacts**: Removed the hardcoded black background color (`backgroundColor: "#09090b"`) from the Tauri window configuration, fixing a solid square wrapper appearing around transparent window edges. ([aaf246a])
 - **Pointer Event Interactivity**: Fixed a stacking context mismatch in the `FileToolbar`, `SettingsModal`, and `TransferPanel` components by migrating to native click-away listeners and properly attaching refs, preventing invisible backdrops from blocking UI interactions. ([098b8c8])
@@ -14,6 +33,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Dialog.Portal Safety**: Added a safe `document.body` fallback to `GlobalConfirmDialog` to prevent crashes when the modal root is not yet mounted. ([3ce4e78])
 - **SSH Key File Filter**: Removed the `.pub` extension from the "Add Connection" private key file picker, preventing users from accidentally selecting public keys. ([b64f68d])
 - **Toast Accessibility & UI**: Migrated toasts to Zustand state, restored the bottom-center position with rounded window corner compatibility, eliminated the generic `X` icon collision for error states, and added full ARIA live region support (`role="status/alert"`) for screen readers. ([19de065])
+
+### Internal
+
+- **SFTP Stability Audit**: Performed a comprehensive audit of all SFTP and terminal synchronization logic, addressing 7 potential stability failure points. ([3f73902])
 
 
 ## [2.5.5] - 2026-03-08
