@@ -19,7 +19,7 @@
         "decorations": false,
         "transparent": true,
         "shadow": false,
-        "dragDropEnabled": true,
+        "dragDropEnabled": false,
         "visible": false
       }
     ],
