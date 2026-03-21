@@ -4,6 +4,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-03-21
+
+### Fixed
+
+- **Terminal Focus Restoration**: Refined snippet overlays to precisely restore keyboard focus back to the terminal shell when closed or when a snippet executes, utilizing transition tracking to eliminate ghost focus events. ([2846afa])
+
 ## [2.6.0] - 2026-03-20
 
 ### Added
@@ -293,7 +299,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.5.5...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/zync-sh/zync/compare/v2.5.5...v2.6.0
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
 [2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
@@ -321,4 +329,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [19de065]: https://github.com/zync-sh/zync/commit/19de065
 [0d20343]: https://github.com/zync-sh/zync/commit/0d20343
 [098b8c8]: https://github.com/zync-sh/zync/commit/098b8c8
+[2846afa]: https://github.com/zync-sh/zync/commit/2846afa
+
 

@@ -33,16 +33,30 @@ export const SnippetPicker = memo(function SnippetPicker({ connectionId, isOpen,
     // Auto-focus and set initial selection
     useEffect(() => {
         if (isOpen) {
-            setTimeout(() => inputRef.current?.focus(), 50);
+            const timerId = setTimeout(() => inputRef.current?.focus(), 50);
             if (filteredSnippets.length > 0 && !selectedValue) {
                 setSelectedValue(filteredSnippets[0].id);
             }
+            return () => clearTimeout(timerId);
         }
     }, [isOpen, filteredSnippets, selectedValue]);
 
-    // Close on Escape
+    const wasOpenRef = useRef(false);
+
+    // Close on Escape & handle focus restore
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) {
+            // Restore focus only if we were previously open
+            if (wasOpenRef.current) {
+                const rafId = requestAnimationFrame(() => {
+                    window.dispatchEvent(new CustomEvent('ssh-ui:term-focus'));
+                });
+                wasOpenRef.current = false;
+                return () => cancelAnimationFrame(rafId);
+            }
+            return;
+        }
+        wasOpenRef.current = true;
         const handleKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         };
