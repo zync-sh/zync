@@ -21,14 +21,20 @@ export const SnippetPicker = memo(function SnippetPicker({ connectionId, isOpen,
         !s.connectionId || s.connectionId === connectionId
     ), [snippets, connectionId]);
 
-    const runSnippet = useCallback((command: string) => {
+    const closeAndRestoreFocus = useCallback(() => {
+        if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+        }
+        window.dispatchEvent(new CustomEvent('ssh-ui:term-focus'));
         onClose();
-        requestAnimationFrame(() => {
-            window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
-                detail: { connectionId, command: command + '\r' }
-            }));
-        });
-    }, [connectionId, onClose]);
+    }, [onClose]);
+
+    const runSnippet = useCallback((command: string) => {
+        closeAndRestoreFocus();
+        window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
+            detail: { connectionId, command: command + '\r' }
+        }));
+    }, [connectionId, closeAndRestoreFocus]);
 
     // Auto-focus and set initial selection
     useEffect(() => {
@@ -41,24 +47,15 @@ export const SnippetPicker = memo(function SnippetPicker({ connectionId, isOpen,
         }
     }, [isOpen, filteredSnippets, selectedValue]);
 
-    const wasOpenRef = useRef(false);
-
-    // Close on Escape & handle focus restore
+    // Close on Escape
     useEffect(() => {
-        if (!isOpen) {
-            // Restore focus only if we were previously open
-            if (wasOpenRef.current) {
-                const rafId = requestAnimationFrame(() => {
-                    window.dispatchEvent(new CustomEvent('ssh-ui:term-focus'));
-                });
-                wasOpenRef.current = false;
-                return () => cancelAnimationFrame(rafId);
-            }
-            return;
-        }
-        wasOpenRef.current = true;
+        if (!isOpen) return;
+
         const handleKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeAndRestoreFocus();
+            }
         };
         window.addEventListener('keydown', handleKey, { capture: true });
         return () => window.removeEventListener('keydown', handleKey, { capture: true });
@@ -71,7 +68,7 @@ export const SnippetPicker = memo(function SnippetPicker({ connectionId, isOpen,
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
-                onClick={onClose}
+                onClick={closeAndRestoreFocus}
             />
 
             <div className="relative w-full max-w-xl animate-in fade-in zoom-in-95 duration-200">
