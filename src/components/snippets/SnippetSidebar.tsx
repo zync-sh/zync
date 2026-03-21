@@ -15,9 +15,23 @@ export function SnippetSidebar({ connectionId, isOpen, onClose }: SnippetSidebar
     const [search, setSearch] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
+    const wasOpenRef = useRef(isOpen);
+
     // Handle Escape key and auto-focus
     useEffect(() => {
-        if (!isOpen) return;
+        const wasOpen = wasOpenRef.current;
+        wasOpenRef.current = isOpen;
+
+        if (!isOpen && wasOpen) {
+            // Restore focus only when transitioning from open to closed
+            requestAnimationFrame(() => {
+                window.dispatchEvent(new CustomEvent('ssh-ui:term-focus'));
+            });
+            return;
+        }
+        if (!isOpen) {
+            return;
+        }
         
         // Auto-focus search input
         const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 100);
@@ -56,6 +70,10 @@ export function SnippetSidebar({ connectionId, isOpen, onClose }: SnippetSidebar
             detail: { connectionId, command: command + '\r' }
         }));
         showToast('success', 'Command sent to terminal');
+        // Restore focus immediately after running
+        requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent('ssh-ui:term-focus'));
+        });
     }, [connectionId, showToast]);
 
     return (

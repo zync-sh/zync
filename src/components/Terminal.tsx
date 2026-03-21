@@ -774,14 +774,22 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       }
     };
 
+    const handleGlobalFocus = () => {
+      if (isVisible) {
+        termRef.current?.focus();
+      }
+    };
+
     window.addEventListener('ssh-ui:term-copy', handleGlobalCopy);
     window.addEventListener('ssh-ui:term-paste', handleGlobalPaste);
     window.addEventListener('ssh-ui:term-find', handleGlobalFind);
+    window.addEventListener('ssh-ui:term-focus', handleGlobalFocus);
 
     return () => {
       window.removeEventListener('ssh-ui:term-copy', handleGlobalCopy);
       window.removeEventListener('ssh-ui:term-paste', handleGlobalPaste);
       window.removeEventListener('ssh-ui:term-find', handleGlobalFind);
+      window.removeEventListener('ssh-ui:term-focus', handleGlobalFocus);
     };
 
   }, [activeConnectionId, globalActiveId, isVisible]);
