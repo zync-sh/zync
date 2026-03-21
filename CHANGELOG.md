@@ -4,6 +4,14 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-03-21
+
+### Fixed
+
+- **Terminal Layout Overlap**: Resolved an issue where terminal text was obscured by the bottom status bar by implementing strict structural padding.
+- **Snippet Picker Focus Restoration**: Fixed a focus recovery failure when closing the snippet palette by implementing a synchronous blur-and-focus handoff mechanism.
+- **DRY Refactor**: Consolidated repetitive focus restoration logic in the Snippet Picker into a single maintainable helper.
+
 ## [2.6.1] - 2026-03-21
 
 ### Fixed
