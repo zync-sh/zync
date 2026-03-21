@@ -918,9 +918,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   return (
     <div
       key="connected"
-      className={cn("h-full w-full p-2 relative group outline-none", terminalTransparency.enabled ? "terminal-transparent" : "bg-app-bg")}
+      className={cn("h-full w-full relative group outline-none", terminalTransparency.enabled ? "terminal-transparent" : "bg-app-bg")}
       style={terminalHostStyle}
-      ref={containerRef}
       tabIndex={-1}
       onClick={() => {
         if (termRef.current) {
@@ -1025,6 +1024,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           ]}
         />
       )}
+
+      {/* Terminal Canvas Wrapper - Strict bottom padding */}
+      <div className="absolute inset-0 px-2 pt-2 pb-2 pointer-events-none">
+        <div ref={containerRef} className="h-full w-full terminal-container relative pointer-events-auto" />
+      </div>
     </div>
   );
 }
