@@ -490,6 +490,43 @@ impl FileSystem {
             .map_err(|e| anyhow!("Failed to check existence: {}", e))
     }
 
+    pub async fn get_unique_path_remote(
+        &self,
+        sftp: &russh_sftp::client::SftpSession,
+        path: &str,
+    ) -> Result<String> {
+        if !self.exists_remote(sftp, path).await? {
+            return Ok(path.to_string());
+        }
+
+        let path_buf = std::path::PathBuf::from(path);
+        let parent = path_buf.parent().unwrap_or_else(|| std::path::Path::new(""));
+        let file_stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let extension = path_buf.extension().and_then(|s| s.to_str()).unwrap_or("");
+
+        if file_stem.is_empty() {
+            return Err(anyhow!("Cannot generate unique path for root or invalid path"));
+        }
+
+        let mut counter = 1;
+        while counter <= 100 {
+            let new_name = if extension.is_empty() {
+                format!("{} ({})", file_stem, counter)
+            } else {
+                format!("{} ({}).{}", file_stem, counter, extension)
+            };
+            
+            let new_path = parent.join(new_name).to_string_lossy().to_string().replace("\\", "/");
+
+            if !self.exists_remote(sftp, &new_path).await? {
+                return Ok(new_path);
+            }
+            counter += 1;
+        }
+        
+        Err(anyhow!("Too many duplicate files (limit 100)"))
+    }
+
     fn copy_dir_recursive(from: &str, to: &str) -> Result<()> {
         fs::create_dir_all(to).map_err(|e| anyhow!("Failed to create destination dir: {}", e))?;
         for entry in fs::read_dir(from).map_err(|e| anyhow!("Failed to read source dir: {}", e))? {

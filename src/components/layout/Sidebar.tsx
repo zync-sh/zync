@@ -49,7 +49,17 @@ function SidebarSection({
                 e.preventDefault();
                 e.stopPropagation();
             } : undefined}
-            onDrop={onDrop}
+            onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const types = Array.from(e.dataTransfer.types || []);
+                const isExternal = types.includes('Files') || types.includes('text/uri-list');
+                if (isExternal) {
+                    useAppStore.getState().showToast('info', 'External drop here is currently disabled. We are working to bring this feature to Zync soon!');
+                    return;
+                }
+                onDrop?.(e);
+            }}
         >
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
@@ -1241,6 +1251,13 @@ function FolderItem({
 
                     const connId = e.dataTransfer.getData('connection-id');
                     const srcFolderPath = e.dataTransfer.getData('folder-path');
+
+                    // Friendly message for external file drops
+                    const types = Array.from(e.dataTransfer.types);
+                    if (!connId && !srcFolderPath && (types.includes('Files') || types.includes('text/uri-list'))) {
+                        useAppStore.getState().showToast('info', 'External file drop into sidebar is currently disabled. We are working to bring this feature soon!');
+                        return;
+                    }
 
                     if (connId) {
                         // Connection Drop -> Move Connection to this Folder

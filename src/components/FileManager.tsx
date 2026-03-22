@@ -22,6 +22,7 @@ import { getCurrentDragSource } from '../lib/dragDrop';
 import { FileToolbar } from './file-manager/FileToolbar';
 import type { FileEntry } from './file-manager/types';
 import { PropertiesPanel } from './file-manager/PropertiesPanel';
+import { ConflictModal, type ConflictAction } from './file-manager/ConflictModal';
 import { Info } from 'lucide-react'; // Add Info icon import
 import { Button } from './ui/Button';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
@@ -29,6 +30,14 @@ import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { useTauriFileDrop } from '../hooks/useTauriFileDrop';
 import { FileBottomToolbar } from './file-manager/FileBottomToolbar';
+
+export interface Conflict {
+  source: string;
+  target: string;
+  name: string;
+  op: 'move' | 'copy';
+  sourceConnectionId: string;
+}
 
 export function FileManager({ connectionId, isVisible }: { connectionId?: string; isVisible?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -107,6 +116,10 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const [isInternalDraggingOver, setIsInternalDraggingOver] = useState(false);
   const [dragType, setDragType] = useState<'local' | 'server' | null>(null);
   const [dragSourceConnectionId, setDragSourceConnectionId] = useState<string | null>(null);
+  
+  // Conflict Resolution State
+  const [pendingConflicts, setPendingConflicts] = useState<Conflict[]>([]);
+  const [currentConflict, setCurrentConflict] = useState<Conflict | null>(null);
 
   // Copy to Server State
   const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
@@ -180,86 +193,356 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     showToast('info', `${cut ? 'Cut' : 'Copied'} ${selectedEntries.length} item(s)`);
   };
 
+  const executeFileOperations = async (ops: { 
+    source: string; 
+    target: string; 
+    name: string; 
+    op: 'move' | 'copy'; 
+    sourceConnectionId: string 
+  }[], targetDirectory?: string) => {
+    if (!activeConnectionId || ops.length === 0) return;
+
+    setIsProcessing(true);
+    const conflicts: typeof pendingConflicts = [];
+    const executionList: typeof ops = [];
+
+    try {
+      // Pass 1: Check for existence (Parallelized)
+      const existenceResults = await Promise.all(ops.map(op => 
+        window.ipcRenderer.invoke('fs_exists', {
+          connectionId: activeConnectionId,
+          path: op.target,
+        })
+      ));
+
+      existenceResults.forEach((exists, i) => {
+        if (exists) {
+          conflicts.push(ops[i]);
+        } else {
+          executionList.push(ops[i]);
+        }
+      });
+
+      // Pass 2: Execute immediate actions
+      if (executionList.length > 0) {
+        const sameConnection = executionList.every(item => item.sourceConnectionId === activeConnectionId);
+        
+        if (sameConnection) {
+          // Group by operation type (move/copy) to ensure correct store action
+          const groups = executionList.reduce((acc, item) => {
+            if (!acc[item.op]) acc[item.op] = [];
+            acc[item.op].push(item.source);
+            return acc;
+          }, {} as Record<string, string[]>);
+
+          for (const [opType, sources] of Object.entries(groups)) {
+            await pasteEntries(activeConnectionId, sources, opType === 'move' ? 'cut' : 'copy', targetDirectory);
+          }
+        } else {
+          // Cross connection: Loop through and start transfers
+          for (const item of executionList) {
+            const transferId = addTransfer({
+              sourceConnectionId: item.sourceConnectionId,
+              sourcePath: item.source,
+              destinationConnectionId: activeConnectionId,
+              destinationPath: item.target,
+            });
+
+            let command = "sftp:copyToServer";
+            const args: any = { sourcePath: item.source, destinationPath: item.target, transferId };
+
+            if (item.sourceConnectionId === "local") {
+              command = "sftp:put";
+              args.id = activeConnectionId;
+              args.localPath = item.source;
+              args.remotePath = item.target;
+            } else if (activeConnectionId === "local") {
+              command = "sftp:get";
+              args.id = item.sourceConnectionId;
+              args.remotePath = item.source;
+              args.localPath = item.target;
+            } else {
+              args.sourceConnectionId = item.sourceConnectionId;
+              args.destinationConnectionId = activeConnectionId;
+            }
+
+            window.ipcRenderer.invoke(command, args).catch(err => {
+              failTransfer(transferId, err.message || String(err));
+            });
+          }
+          showToast('info', `Started background transfer of ${executionList.length} item(s)`);
+        }
+      }
+
+      // Pass 3: Handle Conflicts
+      if (conflicts.length > 0) {
+        setPendingConflicts(conflicts);
+        setCurrentConflict(conflicts[0]);
+      } else {
+        // Only clear clipboard if it was a successful 'cut' (move)
+        const isCut = ops.some(o => o.op === 'move' && clipboard?.op === 'cut');
+        if (isCut) clearClipboard();
+        setSelectedFiles([]);
+      }
+
+      if (executionList.length > 0) {
+        loadFiles(activeConnectionId, currentPath);
+      }
+
+    } catch (e: any) {
+      if (handleConnectionError(activeConnectionId, e)) return;
+      showToast('error', `Operation failed: ${e.message || String(e)}`);
+      loadFiles(activeConnectionId, currentPath);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handlePaste = async () => {
     if (!clipboard || !activeConnectionId) return;
     if (clipboard.files.length === 0) return;
 
-    if (clipboard.sourceConnectionId === activeConnectionId) {
-      // Same connection: Use fs_copy/fs_rename (via store action)
-      const sources = clipboard.files.map(f => f.path);
-      await pasteEntries(activeConnectionId, sources, clipboard.op);
+    const ops = clipboard.files.map(file => ({
+      source: file.path,
+      target: currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`,
+      name: file.name,
+      op: (clipboard.op === 'cut' ? 'move' : 'copy') as 'move' | 'copy',
+      sourceConnectionId: clipboard.sourceConnectionId
+    }));
 
-    } else {
-      // Loop through all the files and start background task
-      for (const file of clipboard.files) {
-        const destPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-
-        // Create transfer record in UI
-        const transferId = addTransfer({
-          sourceConnectionId: clipboard.sourceConnectionId,
-          sourcePath: file.path,
-          destinationConnectionId: activeConnectionId,
-          destinationPath: destPath,
-        });
-
-        let command = "sftp:copyToServer"
-
-        const args: any = {
-          sourcePath: file.path,
-          destinationPath: destPath,
-          transferId
-        }
-
-        if (clipboard.sourceConnectionId === "local") {
-          command = "sftp:put";
-          args.id = activeConnectionId;
-          args.localPath = file.path;
-          args.remotePath = destPath
-        } else if (activeConnectionId === "local") {
-          command = "sftp:get";
-          args.id = clipboard.sourceConnectionId;
-          args.remotePath = file.path;
-          args.localPath = destPath
-        } else {
-          args.sourceConnectionId = clipboard.sourceConnectionId;
-          args.destinationConnectionId = activeConnectionId;
-        }
-
-        // Start actual transfer file via IPC
-        window.ipcRenderer.invoke(command, args).catch(err => {
-          failTransfer(transferId, err.message || String(err));
-        });
-      }
-    }
-
-    if (clipboard.op === 'cut') {
-      clearClipboard();
-    }
+    await executeFileOperations(ops);
   };
 
-  const handleMoveFiles = async (moves: { source: string; target: string }[]) => {
+  const handleMoveFiles = async (moves: { source: string; target: string; sourceConnectionId?: string }[]) => {
     if (!activeConnectionId || moves.length === 0) return;
 
+    const ops = moves.map(m => ({
+      ...m,
+      name: m.target.split('/').pop() || 'unknown',
+      op: 'move' as const,
+      sourceConnectionId: m.sourceConnectionId || activeConnectionId
+    }));
+
+    // Extract target directory from the first move (they should all be to the same place)
+    const firstTarget = moves[0]?.target;
+    const targetDir = firstTarget ? firstTarget.substring(0, firstTarget.lastIndexOf('/')) || '/' : undefined;
+
+    await executeFileOperations(ops, targetDir);
+  };
+
+  const resolveConflict = async (action: ConflictAction, applyToAll = false) => {
+    if (!currentConflict || !activeConnectionId || isProcessing) return;
+
     setIsProcessing(true);
+    const toProcess = applyToAll ? [...pendingConflicts] : [currentConflict];
+    let successCount = 0;
+    
     try {
-      // Execute moves sequentially to ensure stability
-      let movedCount = 0;
-      for (const m of moves) {
-        await window.ipcRenderer.invoke('fs_rename', {
-          connectionId: activeConnectionId,
-          oldPath: m.source,
-          newPath: m.target,
-        });
-        movedCount++;
+      for (const conflict of toProcess) {
+        const { source, target, op, sourceConnectionId } = conflict;
+        
+        if (action === 'skip') {
+          // Just skip
+        } else {
+          // For Overwrite and Rename
+          
+          // Generate unique target if renaming (unified logic)
+          let finalTarget = target;
+          if (action === 'rename') {
+            let counter = 1;
+            const pathParts = target.match(/^(.*?)(\.[^.]*)?$/);
+            const base = pathParts ? pathParts[1] : target;
+            const ext = pathParts && pathParts[2] ? pathParts[2] : '';
+            
+            let exists = true;
+            while (exists) {
+              const candidate = `${base} (${counter})${ext}`;
+              exists = await window.ipcRenderer.invoke('fs_exists', {
+                connectionId: activeConnectionId,
+                path: candidate,
+              });
+              if (!exists) {
+                finalTarget = candidate;
+                break;
+              }
+              counter++;
+              if (counter > 100) {
+                showToast('error', `Could not find a unique name for "${conflict.name}" after 100 attempts. Skipping.`);
+                finalTarget = ''; // Flag as failed
+                break; 
+              }
+            }
+          }
+
+          if (!finalTarget) {
+            // Renaming failed or was skipped
+            continue;
+          }
+
+          if (action === 'overwrite') {
+            // Safe Overwrite: Rename existing to backup first
+            const backupPath = `${target}.bak-${Date.now()}`;
+            try {
+              await window.ipcRenderer.invoke('fs_rename', {
+                connectionId: activeConnectionId,
+                oldPath: target,
+                newPath: backupPath,
+                autoRename: false
+              });
+              
+              // Now perform the move/copy
+              let opSuccess = false;
+              try {
+                if (sourceConnectionId === activeConnectionId) {
+                  if (op === 'move') {
+                    await window.ipcRenderer.invoke('fs_rename', {
+                      connectionId: activeConnectionId,
+                      oldPath: source,
+                      newPath: finalTarget,
+                      autoRename: false
+                    });
+                  } else {
+                    await window.ipcRenderer.invoke('fs_copy_batch', {
+                      connectionId: activeConnectionId,
+                      operations: [{ from: source, to: finalTarget }]
+                    });
+                  }
+                } else {
+                    // Cross connection
+                    const transferId = addTransfer({
+                      sourceConnectionId,
+                      sourcePath: source,
+                      destinationConnectionId: activeConnectionId,
+                      destinationPath: finalTarget,
+                    });
+        
+                    const args: any = { sourcePath: source, destinationPath: finalTarget, transferId };
+                    let command = "sftp:copyToServer";
+        
+                    if (sourceConnectionId === "local") {
+                      command = "sftp:put";
+                      args.id = activeConnectionId;
+                      args.localPath = source;
+                      args.remotePath = finalTarget;
+                    } else if (activeConnectionId === "local") {
+                      command = "sftp:get";
+                      args.id = sourceConnectionId;
+                      args.remotePath = source;
+                      args.localPath = finalTarget;
+                    } else {
+                      args.sourceConnectionId = sourceConnectionId;
+                      args.destinationConnectionId = activeConnectionId;
+                    }
+        
+                    await window.ipcRenderer.invoke(command, args);
+                }
+                opSuccess = true;
+              } finally {
+                if (opSuccess) {
+                  // Success: Delete the backup
+                  await window.ipcRenderer.invoke('fs_delete', {
+                    connectionId: activeConnectionId,
+                    path: backupPath,
+                  }).catch(() => {}); // If delete fails, it's just a stray file
+                } else {
+                  // Failure: Restore the backup
+                  await window.ipcRenderer.invoke('fs_rename', {
+                    connectionId: activeConnectionId,
+                    oldPath: backupPath,
+                    newPath: target,
+                    autoRename: false
+                  }).catch(() => {});
+                }
+              }
+              successCount++;
+              continue; // Handled specially
+            } catch (err) {
+              showToast('error', `Failed to prepare overwrite for "${conflict.name}"`);
+              continue;
+            }
+          }
+
+          if (sourceConnectionId === activeConnectionId) {
+            // Same connection
+            if (op === 'move') {
+              await window.ipcRenderer.invoke('fs_rename', {
+                connectionId: activeConnectionId,
+                oldPath: source,
+                newPath: finalTarget,
+                autoRename: false, // We already handled it explicitly
+              });
+            } else {
+              // Same-connection copy: use fs_copy_batch with single operation for consistency
+              await window.ipcRenderer.invoke('fs_copy_batch', {
+                connectionId: activeConnectionId,
+                operations: [{ from: source, to: finalTarget }]
+              });
+            }
+          } else if (sourceConnectionId) {
+            // Cross connection
+            const transferId = addTransfer({
+              sourceConnectionId,
+              sourcePath: source,
+              destinationConnectionId: activeConnectionId,
+              destinationPath: finalTarget,
+            });
+
+            const args: any = { sourcePath: source, destinationPath: finalTarget, transferId };
+            let command = "sftp:copyToServer";
+
+            if (sourceConnectionId === "local") {
+              command = "sftp:put";
+              args.id = activeConnectionId;
+              args.localPath = source;
+              args.remotePath = finalTarget;
+            } else if (activeConnectionId === "local") {
+              command = "sftp:get";
+              args.id = sourceConnectionId;
+              args.remotePath = source;
+              args.localPath = finalTarget;
+            } else {
+              args.sourceConnectionId = sourceConnectionId;
+              args.destinationConnectionId = activeConnectionId;
+            }
+
+            try {
+              await window.ipcRenderer.invoke(command, args);
+            } catch (err: any) {
+              failTransfer(transferId, err.message || String(err));
+              continue; // Don't increment successCount if it failed to start
+            }
+          }
+        }
+        successCount++;
       }
 
-      showToast('success', `Moved ${movedCount} item(s)`);
+      const displayAction = action === 'overwrite' ? 'Overwritten' : (action === 'rename' ? 'Renamed' : 'Skipped');
+      showToast('success', `${displayAction} ${successCount} item(s)`);
+
+      // Refresh and move to next conflict or close
       loadFiles(activeConnectionId, currentPath);
-      setSelectedFiles([]); // Clear selection after move
+      
+      if (applyToAll) {
+        setPendingConflicts([]);
+        setCurrentConflict(null);
+        setSelectedFiles([]);
+        if (clipboard && clipboard.op === 'cut') clearClipboard();
+      } else {
+        const remaining = pendingConflicts.slice(1);
+        setPendingConflicts(remaining);
+        if (remaining.length > 0) {
+          setCurrentConflict(remaining[0]);
+        } else {
+          setCurrentConflict(null);
+          setSelectedFiles([]);
+          if (clipboard && clipboard.op === 'cut') clearClipboard();
+        }
+      }
+
     } catch (e: any) {
-      if (handleConnectionError(activeConnectionId, e)) return;
-      showToast('error', `Move failed: ${e.message || String(e)}`);
-      loadFiles(activeConnectionId, currentPath); // Refresh anyway
+      showToast('error', `Failed to resolve conflict: ${e.message || String(e)}`);
+      setCurrentConflict(null);
+      setPendingConflicts([]);
     } finally {
       setIsProcessing(false);
     }
@@ -588,8 +871,16 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     setDragType(null);
     setDragSourceConnectionId(null);
 
-    // OS file drops are handled by Rust's on_window_event → zync://file-drop
+
     const jsonData = e.dataTransfer.getData('application/json');
+
+    // Friendly message for external file drops
+    const types = Array.from(e.dataTransfer.types);
+    if (!jsonData && (types.includes('Files') || types.includes('text/uri-list'))) {
+      showToast('info', 'External file drop is currently disabled to ensure stability. We are working to bring this feature to Zync soon!');
+      return;
+    }
+
     if (!jsonData) {
       return;
     }
@@ -598,40 +889,51 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     try {
       const dragData = JSON.parse(jsonData);
       if (dragData.type === 'server-file' && activeConnectionId) {
-        // Check for Same Server (Relaxed check)
-        if (String(dragData.connectionId) === String(activeConnectionId)) {
-          // Same server drop logic
+        
+        // Prepare list of operations
+        const ops: { 
+          source: string; 
+          target: string; 
+          name: string; 
+          op: 'move' | 'copy'; 
+          sourceConnectionId: string 
+        }[] = [];
+
+        if (dragData.paths && Array.isArray(dragData.paths)) {
+          // Multi-file drag
+          dragData.paths.forEach((sourcePath: string, index: number) => {
+            const name = dragData.names?.[index] || sourcePath.split(/[/\\]/).pop() || 'unknown';
+            const destPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+            
+            // Avoid moving to same folder
+            if (sourcePath !== destPath) {
+              ops.push({
+                source: sourcePath,
+                target: destPath,
+                name: name,
+                op: 'move', // Default DND to move
+                sourceConnectionId: dragData.connectionId
+              });
+            }
+          });
+        } else {
+          // Single file drag
           const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
-
-          // If dragging to same folder, ignore
-          if (dragData.path === destPath) return;
-
-          // Default to Move for internal drag
-          handleMoveFiles([{ source: dragData.path, target: destPath }]);
-          return;
+          if (dragData.path !== destPath) {
+            ops.push({
+              source: dragData.path,
+              target: destPath,
+              name: dragData.name,
+              op: 'move',
+              sourceConnectionId: dragData.connectionId
+            });
+          }
         }
 
-        const destPath = currentPath === '/' ? `/${dragData.name}` : `${currentPath}/${dragData.name}`;
-
-        // Add transfer
-        const transferId = addTransfer({
-          sourceConnectionId: dragData.connectionId,
-          sourcePath: dragData.path,
-          destinationConnectionId: activeConnectionId,
-          destinationPath: destPath,
-        });
-
-        // Fire-and-forget: completion/failure reported via transfer events
-        // useTransferEvents handles refreshFiles on transfer-success
-        window.ipcRenderer.invoke('sftp:copyToServer', {
-          sourceConnectionId: dragData.connectionId,
-          sourcePath: dragData.path,
-          destinationConnectionId: activeConnectionId,
-          destinationPath: destPath,
-          transferId,
-        }).catch(() => {
-          // Transfer errors are shown in the TransferPanel
-        });
+        if (ops.length > 0) {
+          await executeFileOperations(ops);
+        }
+        return;
       }
     } catch (_err) {
       // Not valid JSON — ignore
@@ -1203,6 +1505,20 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         isOpen={isPropertiesOpen}
         onClose={() => setIsPropertiesOpen(false)}
         file={files.find(f => f.name === (focusedFile || selectedFiles[0])) || null}
+      />
+      {/* Conflict Resolution Modal */}
+      <ConflictModal
+        isOpen={!!currentConflict}
+        onClose={() => {
+          if (isProcessing) return;
+          setCurrentConflict(null);
+          setPendingConflicts([]);
+        }}
+        onResolve={resolveConflict}
+        fileName={currentConflict?.name || ''}
+        destinationPath={currentPath}
+        isBatch={pendingConflicts.length > 1}
+        isResolving={isProcessing}
       />
     </div>
   );

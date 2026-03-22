@@ -4,6 +4,31 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-03-22
+
+### Added
+
+- **Pro Conflict Resolution Modal**: Implemented a professional collision handler for all file operations (move, copy, paste). Features clear choices (**Overwrite**, **Skip**, **Keep Both**) and native cross-connection support. ([d6f1928])
+- **Batch Resolution ("Apply to All")**: Added a "Do this for all remaining conflicts" toggle to the Conflict Modal, allowing users to efficiently resolve multiple collisions in a single action. ([d6f1928])
+- **Unified Operation Engine**: Refactored all file movement and duplication logic into a consolidated `executeFileOperations` helper, improving maintainability and ensuring consistent behavior across the entire File Manager. ([b62e613])
+
+### Security
+
+- **Drag-and-Drop Hardening**: Replaced `innerHTML` with `textContent` in drag previews to prevent DOM injection via malicious file names. ([61dc6e8])
+
+### Fixed
+
+- **Atomic Overwrite Protection**: Implemented a safe "Rename-to-Backup -> Move -> Delete-Backup" pattern for all overwrite operations, ensuring no data loss if a move or copy operation fails mid-way. ([82c1612])
+- **Multi-File DND Stability**: Resolved a critical bug where drag-and-drop operations on the background or into subfolders would only process the first selected item. Selection-wide batch operations are now fully supported. ([3dc9898])
+- **Parallel Collision Detection**: Optimized remote existence checks in the file manager using parallel execution (`Promise.all`), significantly improving performance on high-latency SFTP connections. ([82c1612])
+- **Atomic SFTP Renaming**: Hardened the SFTP renaming logic with standard 10s timeout guards, automatic session reconnection, and a secondary backend-powered unique path generator. ([f28e04a])
+- **Unique Name Loop Safety**: Prevented potential infinite loops in the duplicate name generator by implementing a 100-attempt safety bail-out with automated user notification and explicit error propagation. ([f28e04a])
+- **DRY Refactor**: Extracted a unified `Conflict` type and grouped same-connection operations by `op` type for cleaner batch processing. ([82c1612])
+- **Descendant Drop Prevention**: Refactored `onDrop` logic to block invalid move operations where a folder is dropped into its own subdirectory. ([61dc6e8])
+- **Dotfile Renaming Truth**: Implemented `splitFileName` to correctly handle collisions for hidden files (e.g., `.env (1)` instead of `. (1).env`). ([61dc6e8])
+- **Context Menu Selection**: Synchronized context menu behavior to ensure items are selected on right-click before the menu opens. ([61dc6e8])
+- **Animation Polish**: Disabled "closure" layout animations during file movements to prevent visual artifacts and provide instant feedback. ([61dc6e8])
+
 ## [2.6.2] - 2026-03-21
 
 ### Fixed
@@ -308,7 +333,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/zync-sh/zync/compare/v2.6.2...v2.7.0
+[2.6.2]: https://github.com/zync-sh/zync/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/zync-sh/zync/compare/v2.5.5...v2.6.0
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
@@ -339,5 +366,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 [0d20343]: https://github.com/zync-sh/zync/commit/0d20343
 [098b8c8]: https://github.com/zync-sh/zync/commit/098b8c8
 [2846afa]: https://github.com/zync-sh/zync/commit/2846afa
+[d6f1928]: https://github.com/zync-sh/zync/commit/d6f1928
+[b62e613]: https://github.com/zync-sh/zync/commit/b62e613
+[61dc6e8]: https://github.com/zync-sh/zync/commit/61dc6e8
+[82c1612]: https://github.com/zync-sh/zync/commit/82c1612
+[f28e04a]: https://github.com/zync-sh/zync/commit/f28e04a
+[3dc9898]: https://github.com/zync-sh/zync/commit/3dc9898
 
 

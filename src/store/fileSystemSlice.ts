@@ -5,6 +5,27 @@ import type { FileEntry } from '../components/file-manager/types';
 // @ts-ignore
 const ipc = window.ipcRenderer;
 
+/**
+ * Splits a filename into base and extension, handling dotfiles correctly.
+ * .env -> base: .env, ext: ""
+ * test.txt -> base: test, ext: .txt
+ */
+export function splitFileName(name: string): { base: string; ext: string } {
+    // If it starts with a dot and has no other dots, it's a hidden file like .env
+    if (name.startsWith('.') && name.indexOf('.', 1) === -1) {
+        return { base: name, ext: '' };
+    }
+    const lastDot = name.lastIndexOf('.');
+    // If no dot, or dot is at the beginning (but we handled the single dot case above)
+    if (lastDot === -1 || lastDot === 0) {
+        return { base: name, ext: '' };
+    }
+    return {
+        base: name.slice(0, lastDot),
+        ext: name.slice(lastDot)
+    };
+}
+
 export interface FileSystemState {
     files: Record<string, FileEntry[]>; // keyed by connectionId
     currentPath: Record<string, string>; // keyed by connectionId
@@ -34,7 +55,7 @@ export interface FileSystemActions {
     navigateForward: (connectionId: string) => void;
     setClipboard: (files: FileEntry[], sourceConnectionId: string, sourcePath: string, op: 'copy' | 'cut') => void;
     clearClipboard: () => void;
-    pasteEntries: (connectionId: string, sources: string[], op: 'copy' | 'cut') => Promise<void>;
+    pasteEntries: (connectionId: string, sources: string[], op: 'copy' | 'cut', destinationDirectory?: string) => Promise<void>;
     checkPathExists: (connectionId: string, path: string) => Promise<boolean>;
 }
 
@@ -288,9 +309,9 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
         console.log('Download not fully implemented in store slice yet');
     },
 
-    pasteEntries: async (connectionId, sources, op) => {
+    pasteEntries: async (connectionId, sources, op, destinationDirectory) => {
         const state = get();
-        const currentPath = state.currentPath[connectionId] || '/';
+        const currentPath = destinationDirectory !== undefined ? destinationDirectory : (state.currentPath[connectionId] || '/');
 
         set(state => ({ isLoading: { ...state.isLoading, [connectionId]: true } }));
 
@@ -322,17 +343,15 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
 
                 // Collision Detection Loop
                 if (source === destPath || await get().checkPathExists(connectionId, destPath)) {
-                    const match = originalName.match(/^(.*?)(\.[^.]*)?$/);
-                    const base = match ? match[1] : originalName;
-                    const ext = match && match[2] ? match[2] : '';
+                    const { base, ext } = splitFileName(originalName);
                     let counter = 1;
 
                     while (true) {
                         const newName = `${base} (${counter})${ext}`;
-                        destPath = currentPath === '/' ? `/${newName}` : `${currentPath}/${newName}`;
+                        destPath = normCurrentPath === '/' ? `/${newName}` : `${normCurrentPath}/${newName}`;
 
                         // Check local optimistic list too to avoid collisions within the batch
-                        const collisionInBatch = newEntries.some(e => e.path === destPath);
+                        const collisionInBatch = newEntries.some(e => normalizePath(e.path) === destPath);
                         if (source !== destPath && !collisionInBatch && !(await get().checkPathExists(connectionId, destPath))) {
                             break;
                         }
@@ -350,7 +369,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 let entrySize = 0;
 
                 if (state.clipboard && state.clipboard.files) {
-                    const clipEntry = state.clipboard.files.find(f => f.path === source);
+                    const clipEntry = state.clipboard.files.find(f => normalizePath(f.path) === source);
                     if (clipEntry) {
                         entryType = clipEntry.type;
                         entrySize = clipEntry.size;
@@ -392,16 +411,26 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             // Apply Optimistic Updates
             set(state => {
                 const currentFiles = state.files[connectionId] || [];
-                let newFiles = [...currentFiles, ...newEntries];
+                
+                // 1. Remove sources if this is a move (cut)
+                let filesAfterRemoval = currentFiles;
+                const normalizedSourcesSet = new Set(sources.map(s => normalizePath(s)));
 
-                // If moving within same connection, remove sources
-                if (op === 'cut' && state.clipboard?.sourceConnectionId === connectionId) {
-                    newFiles = newFiles.filter(f => !pathsToRemoveFromSource.includes(f.path));
+                if (op === 'cut') {
+                    filesAfterRemoval = currentFiles.filter(f => !normalizedSourcesSet.has(normalizePath(f.path)));
                 }
 
+                // 2. Only add new entries if they belong in the CURRENT directory
+                const filteredNewEntries = newEntries.filter(entry => {
+                    const entryParent = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+                    return normalizePath(entryParent) === normCurrentPath;
+                });
+
+                const updatedFiles = filesAfterRemoval.concat(filteredNewEntries);
+
                 return {
-                    isLoading: { ...state.isLoading, [connectionId]: false }, // Done "loading"
-                    files: { ...state.files, [connectionId]: newFiles }
+                    isLoading: { ...state.isLoading, [connectionId]: false },
+                    files: { ...state.files, [connectionId]: updatedFiles }
                 };
             });
 
@@ -415,7 +444,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                     return {
                         files: {
                             ...state.files,
-                            [srcId]: srcFiles.filter(f => !pathsToRemoveFromSource.includes(f.path))
+                            [srcId]: srcFiles.filter(f => !pathsToRemoveFromSource.map(p => normalizePath(p)).includes(normalizePath(f.path)))
                         }
                     };
                 });

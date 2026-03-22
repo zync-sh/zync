@@ -16,13 +16,16 @@ import {
 } from 'lucide-react';
 import type React from 'react';
 import { cn, formatBytes, formatDate } from '../../lib/utils';
-import { Skeleton } from '../ui/Skeleton';
 import type { FileEntry } from './types';
 import { useAppStore } from '../../store/useAppStore';
 import { useState, useMemo, useEffect, memo } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
+
 import { setCurrentDragSource } from '../../lib/dragDrop';
+import { motion, AnimatePresence } from 'framer-motion';
+import { forwardRef } from 'react';
+import { buildDragData, startInternalDrag, validateAndBuildMoves } from './dragDropUtils';
 
 // Extended Icon Selector with Colors
 const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size: number }) {
@@ -97,7 +100,20 @@ const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size:
 });
 
 // Memoized File Item Component
-const FileGridItem = memo(({
+const FileGridItem = memo(forwardRef<HTMLDivElement, {
+  file: FileEntry;
+  viewMode: 'grid' | 'list';
+  compactMode: boolean;
+  isSelected: boolean;
+  selectedFiles: string[];
+  isFocused: boolean;
+  connectionId?: string;
+  currentPath?: string;
+  onSelect: (name: string, multi: boolean) => void;
+  onNavigate: (name: string) => void;
+  onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
+}>(({
   file,
   viewMode,
   compactMode,
@@ -110,20 +126,7 @@ const FileGridItem = memo(({
   onNavigate,
   onContextMenu,
   onMove
-}: {
-  file: FileEntry;
-  viewMode: 'grid' | 'list';
-  compactMode: boolean;
-  isSelected: boolean;
-  selectedFiles: string[];
-  isFocused: boolean;
-  connectionId?: string;
-  currentPath?: string;
-  onSelect: (name: string, multi: boolean) => void;
-  onNavigate: (name: string) => void;
-  onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
-  onMove?: (moves: { source: string; target: string }[]) => void;
-}) => {
+}, ref) => {
   const isFolder = file.type === 'd';
   const [imageError, setImageError] = useState(false);
 
@@ -137,64 +140,25 @@ const FileGridItem = memo(({
   }, [file.path]);
 
   return (
-    <div
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
       id={`file-item-${file.name}`}
       draggable={connectionId !== undefined}
-      onDragStart={(e) => {
+      onDragStart={(e: any) => {
         if (!connectionId || !currentPath) return;
-        const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-
-        let draggedFiles: { name: string; path: string }[] = [];
-        if (isSelected && selectedFiles.length > 0) {
-          draggedFiles = selectedFiles.map(name => ({
-            name,
-            path: currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
-          }));
-        } else {
-          draggedFiles = [{ name: file.name, path: fullPath }];
-        }
-
-        const dragData = {
-          type: 'server-file',
-          connectionId,
-          path: fullPath,
-          paths: draggedFiles.map(f => f.path),
-          names: draggedFiles.map(f => f.name),
-          name: file.name,
-          size: file.size,
-        };
-
-        setCurrentDragSource({ connectionId, path: fullPath });
-
-        const dragPreview = document.createElement('div');
-        dragPreview.style.cssText = `
-          position: absolute; top: -1000px; padding: 8px; border-radius: 8px;
-          background-color: var(--color-app-surface); border: 1px solid var(--color-app-border);
-          display: flex; align-items: center; gap: 8px; z-index: 1000; width: fit-content;
-        `;
-
-        const iconClone = document.createElement('div');
-        iconClone.innerHTML = draggedFiles.length > 1 ? '📚' : (isFolder ? '📁' : '📄');
-        dragPreview.appendChild(iconClone);
-
-        const nameNode = document.createElement('span');
-        nameNode.textContent = draggedFiles.length > 1 ? `${draggedFiles.length} items` : file.name;
-        nameNode.style.cssText = 'font-size: 12px; line-height: 1; font-weight: 500; color: var(--color-app-text); white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; display: block;';
-        dragPreview.appendChild(nameNode);
-
-        document.body.appendChild(dragPreview);
-        e.dataTransfer.setDragImage(dragPreview, 20, 20);
-        setTimeout(() => document.body.removeChild(dragPreview), 0);
-
-        e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-        e.dataTransfer.effectAllowed = 'copyMove';
-        if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '0.5';
+        const dragData = buildDragData(file, isSelected, selectedFiles, connectionId, currentPath);
+        const count = isSelected && selectedFiles.length > 0 ? selectedFiles.length : 1;
+        startInternalDrag(e, dragData, isFolder, count);
       }}
-      onDragEnd={(e) => {
+      onDragEnd={(e: any) => {
         setCurrentDragSource(null);
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '1';
       }}
-      onDragOver={(e) => {
+      onDragOver={(e: any) => {
         if (!isFolder || !onMove) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
@@ -203,14 +167,18 @@ const FileGridItem = memo(({
           e.currentTarget.style.outlineOffset = '-2px';
         }
       }}
-      onDragLeave={(e) => {
+      onDragLeave={(e: any) => {
         if (!isFolder || !onMove) return;
         if (e.currentTarget instanceof HTMLElement) {
           e.currentTarget.style.outline = 'none';
         }
       }}
-      onDrop={(e) => {
+      onDrop={(e: any) => {
         if (!isFolder || !onMove || !currentPath) return;
+
+        // Only handle internal drops, let external drops bubble up
+        if (!e.dataTransfer.types.includes('application/json')) return;
+        
         e.preventDefault();
         e.stopPropagation();
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.outline = 'none';
@@ -218,22 +186,9 @@ const FileGridItem = memo(({
         try {
           const data = JSON.parse(e.dataTransfer.getData('application/json'));
           if (data && onMove) {
-            if (data.paths && Array.isArray(data.paths) && data.paths.length > 0) {
-              const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-              const moves: { source: string; target: string }[] = [];
-              data.paths.forEach((sourcePath: string) => {
-                const sourceName = sourcePath.split(/[/\\]/).pop();
-                if (!sourceName || sourcePath === targetFolder) return;
-                moves.push({ source: sourcePath, target: `${targetFolder}/${sourceName}` });
-              });
-              if (moves.length > 0) onMove(moves);
-            } else if (data.path) {
-              const sourceFileName = data.name || data.path.split(/[/\\]/).pop();
-              const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-              if (data.path !== `${currentPath}/${file.name}`) {
-                onMove([{ source: data.path, target: `${targetFolder}/${sourceFileName}` }]);
-              }
-            }
+            const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+            const moves = validateAndBuildMoves(data, targetFolder);
+            if (moves.length > 0) onMove(moves);
           }
         } catch (err) {
           console.error('Failed to parse drag data', err);
@@ -250,8 +205,8 @@ const FileGridItem = memo(({
       }}
       onContextMenu={(e) => {
         e.stopPropagation();
-        onContextMenu(e, file);
         if (!isSelected) onSelect(file.name, false);
+        onContextMenu(e, file);
       }}
       className={cn(
         'group relative cursor-pointer select-none overflow-hidden transition-all duration-200',
@@ -260,7 +215,6 @@ const FileGridItem = memo(({
           ? cn(
             "flex flex-col items-center justify-start rounded-xl border border-transparent",
             "hover:bg-app-surface/50",
-            // Nautilus/GNOME Style: Taller aspect ratio, cleaner padding
             compactMode ? "w-[100px] h-[120px] p-2 gap-1" : "w-[120px] h-[140px] p-3 gap-2"
           )
           : cn(
@@ -272,15 +226,12 @@ const FileGridItem = memo(({
         ),
         isFocused && !isSelected && 'ring-1 ring-app-accent/40',
         isFocused && isSelected && 'ring-1 ring-app-accent/60',
-        // GNOME-like hover only on non-selected
         !isSelected && viewMode === 'grid' && "hover:bg-app-surface/60"
       )}
     >
-      {/* Minimalist Selection Overlay instead of yellow background */}
-
       <div className={cn(
         'flex items-center justify-center transition-transform duration-300',
-        viewMode === 'grid' ? 'w-full h-[64px] mb-1' : 'w-10 mr-4', // Fixed height for icon area
+        viewMode === 'grid' ? 'w-full h-[64px] mb-1' : 'w-10 mr-4',
         isFolder ? 'drop-shadow-sm' : 'text-app-muted/80 group-hover:text-app-text',
         isSelected && !isFolder && 'text-app-accent',
       )}>
@@ -318,11 +269,134 @@ const FileGridItem = memo(({
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
-});
+}));
+
+// Memoized File List Item Component
+const FileListItem = memo(forwardRef<HTMLTableRowElement, {
+  file: FileEntry;
+  isSelected: boolean;
+  selectedFiles: string[];
+  isFocused: boolean;
+  connectionId?: string;
+  currentPath?: string;
+  onSelect: (name: string, multi: boolean) => void;
+  onNavigate: (name: string) => void;
+  onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
+}>(({
+  file,
+  isSelected,
+  selectedFiles,
+  isFocused,
+  connectionId,
+  currentPath,
+  onSelect,
+  onNavigate,
+  onContextMenu,
+  onMove
+}, ref) => {
+  const isFolder = file.type === 'd';
+
+  return (
+    <motion.tr
+      ref={ref}
+      initial={{ opacity: 0, x: -10 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 10 }}
+      transition={{ duration: 0.2 }}
+      id={`file-item-${file.name}`}
+      draggable={connectionId !== undefined}
+      onDragStart={(e: any) => {
+        if (!connectionId || !currentPath) return;
+        const dragData = buildDragData(file, isSelected, selectedFiles, connectionId, currentPath);
+        const count = isSelected && selectedFiles.length > 0 ? selectedFiles.length : 1;
+        startInternalDrag(e, dragData, isFolder, count);
+      }}
+      onDragEnd={(e: any) => {
+        setCurrentDragSource(null);
+        if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '1';
+      }}
+      onDragOver={(e: any) => {
+        if (!isFolder || !onMove) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (e.currentTarget instanceof HTMLElement) {
+          e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
+        }
+      }}
+      onDragLeave={(e: any) => {
+        if (e.currentTarget instanceof HTMLElement) {
+          e.currentTarget.style.outline = 'none';
+        }
+      }}
+      onDrop={(e: any) => {
+        if (!isFolder || !onMove || !currentPath) return;
+
+        // Only handle internal drops, let external drops bubble up
+        if (!e.dataTransfer.types.includes('application/json')) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.outline = 'none';
+
+        try {
+          const data = JSON.parse(e.dataTransfer.getData('application/json'));
+          if (data && onMove) {
+            const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+            const moves = validateAndBuildMoves(data, targetFolder);
+            if (moves.length > 0) onMove(moves);
+          }
+        } catch (err) {
+          console.error('Failed to parse drag data', err);
+        }
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
+        const isMulti = e.ctrlKey || e.metaKey || e.shiftKey;
+        onSelect(file.name, isMulti);
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onNavigate(file.name);
+      }}
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        if (!isSelected) onSelect(file.name, false);
+        onContextMenu(e, file);
+      }}
+      className={cn(
+        'border-b border-app-border/20 cursor-pointer transition-colors outline-none',
+        'hover:bg-app-surface/40',
+        isSelected && 'bg-app-accent/10 hover:bg-app-accent/15',
+        isFocused && !isSelected && 'ring-1 ring-inset ring-app-accent/50 bg-app-surface/60',
+        isFocused && isSelected && 'ring-1 ring-inset ring-app-accent',
+      )}
+    >
+      <td className="py-2 px-4">
+        <div className="flex items-center gap-3">
+          <FileIcon file={file} size={20} />
+          <span className={cn('font-medium truncate', isSelected ? 'text-app-accent' : 'text-app-text')}>
+            {file.name}
+          </span>
+        </div>
+      </td>
+      <td className="py-2 px-4 text-sm text-app-muted font-mono">
+        {isFolder ? '—' : formatBytes(file.size)}
+      </td>
+      <td className="py-2 px-4 text-sm text-app-muted">
+        {isFolder ? 'Folder' : (file.name.split('.').pop()?.toUpperCase() || '—')}
+      </td>
+      <td className="py-2 px-4 text-sm text-app-muted">
+        {formatDate(file.lastModified)}
+      </td>
+    </motion.tr>
+  );
+}));
 
 FileGridItem.displayName = 'FileGridItem';
+FileListItem.displayName = 'FileListItem';
 
 interface FileGridProps {
   files: FileEntry[];
@@ -335,7 +409,7 @@ interface FileGridProps {
   connectionId?: string;
   currentPath?: string;
   focusedFile?: string | null;
-  onMove?: (moves: { source: string; target: string }[]) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
 }
 
 type SortColumn = 'name' | 'size' | 'type' | 'modified';
@@ -404,52 +478,84 @@ export function FileGrid({
   }, [files, sortColumn, sortDirection]);
 
 
-  if (isLoading) {
-    return (
-      <div className={cn(
-        "p-4 grid gap-4 animate-in fade-in duration-500",
-        compactMode
-          ? "grid-cols-[repeat(auto-fill,minmax(100px,1fr))]"
-          : "grid-cols-[repeat(auto-fill,minmax(120px,1fr))]"
-      )}>
-        {[...Array(16)].map((_, i) => (
-          <div
-            key={i}
-            className="flex flex-col aspect-[4/3] p-3 gap-2 border border-app-border/30 rounded-2xl bg-app-surface/10"
-            style={{ animationDelay: `${i * 50}ms` }}
-          >
-            <Skeleton className="w-full flex-1 rounded-xl bg-app-border/20" />
-            <Skeleton className="h-3 w-2/3 mx-auto rounded bg-app-border/20" />
-          </div>
-        ))}
-      </div>
-    );
-  }
 
-  if (files.length === 0) {
-    return (
-      // biome-ignore lint/a11y/noStaticElementInteractions: <explanation>
-      <div
-        className="flex-1 flex flex-col items-center justify-center text-app-muted opacity-50 select-none pb-20"
-        onContextMenu={(e) => onContextMenu(e)}
-      >
-        <Folder size={64} className="mb-4 stroke-1" />
-        <p>Empty directory</p>
-      </div>
-    );
-  }
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: <explanation>
     <div
-      className="flex-1 overflow-y-auto p-4"
+      className="flex-1 overflow-y-auto p-4 relative"
       onClick={() => onSelect('', false)}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu(e);
       }}
+      onDragOver={(e) => {
+        const types = Array.from(e.dataTransfer.types || []);
+        const isInternal = types.includes('application/json');
+        const isExternal = types.includes('Files') || types.includes('text/uri-list');
+
+        if (isInternal || isExternal) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          e.currentTarget.style.backgroundColor = 'var(--color-app-accent-transparent, rgba(var(--color-app-accent-rgb), 0.05))';
+        }
+      }}
+      onDragLeave={(e) => {
+        e.currentTarget.style.backgroundColor = '';
+      }}
+      onDrop={(e) => {
+        e.currentTarget.style.backgroundColor = '';
+        // Always prevent default to stop WebView from navigating to dropped file URL
+        e.preventDefault();
+        
+        const types = Array.from(e.dataTransfer.types || []);
+        const isExternal = types.includes('Files') || types.includes('text/uri-list');
+        if (isExternal) {
+            e.stopPropagation();
+            useAppStore.getState().showToast('info', 'External drop here is currently disabled. We are working to bring this feature to Zync soon!');
+            return;
+        }
+    }}
     >
-      {viewMode === 'list' ? (
+      {/* Smooth Native Progress Bar */}
+      <AnimatePresence>
+        {isLoading && (
+          <motion.div
+            initial={{ opacity: 0, scaleX: 0 }}
+            animate={{ opacity: 1, scaleX: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute top-0 left-0 right-0 h-0.5 bg-app-accent origin-left z-50 overflow-hidden shadow-[0_0_8px_rgba(var(--color-app-accent-rgb),0.5)]"
+          >
+            <motion.div
+               animate={{ x: ['-100%', '200%'] }}
+               transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+               className="h-full w-1/3 bg-white/30"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className={cn(
+        "flex-1 h-full transition-all duration-500",
+        isLoading && "opacity-40 grayscale-[0.3] scale-[0.99] pointer-events-none cursor-wait"
+      )}>
+        {files.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex-1 flex flex-col items-center justify-center text-app-muted opacity-50 select-none pb-20 h-full"
+            onContextMenu={(e) => onContextMenu(e)}
+          >
+            <Folder size={64} className="mb-4 stroke-1" />
+            <p className="text-lg font-medium opacity-80">Empty directory</p>
+            {(() => {
+              // Only show upload prompt if user is actually dragging external files
+              // OR if nothing is being dragged (default state)
+              return <p className="text-sm opacity-50">Drag files here to upload</p>;
+            })()}
+          </motion.div>
+        ) : viewMode === 'list' ? (
         <table className="w-full border-collapse">
           <thead className="sticky top-0 bg-app-panel/95 backdrop-blur-sm z-10 border-b border-app-border/40">
             <tr className="text-left text-xs text-app-muted uppercase tracking-wider">
@@ -483,125 +589,24 @@ export function FileGrid({
               </th>
             </tr>
           </thead>
-          <tbody>
-            {sortedFiles.map((file) => {
-              const isSelected = selectedFiles.includes(file.name);
-              const isFolder = file.type === 'd';
-              const isFocused = focusedFile === file.name;
-
-              return (
-                <tr
+          <tbody className="relative">
+            <AnimatePresence mode="popLayout">
+              {sortedFiles.map((file) => (
+                <FileListItem
                   key={file.name}
-                  id={`file-item-${file.name}`}
-                  draggable={connectionId !== undefined}
-                  onDragStart={(e) => {
-                    if (!connectionId || !currentPath) return;
-                    const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-                    let draggedFiles: { name: string; path: string }[] = [];
-                    if (isSelected && selectedFiles.length > 0) {
-                      draggedFiles = selectedFiles.map(name => ({
-                        name,
-                        path: currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
-                      }));
-                    } else {
-                      draggedFiles = [{ name: file.name, path: fullPath }];
-                    }
-                    const dragData = {
-                      type: 'server-file',
-                      connectionId,
-                      path: fullPath,
-                      paths: draggedFiles.map(f => f.path),
-                      names: draggedFiles.map(f => f.name),
-                      name: file.name,
-                      size: file.size,
-                    };
-                    e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-                    e.dataTransfer.effectAllowed = 'copyMove';
-
-                    const dragPreview = document.createElement('div');
-                    dragPreview.innerHTML = draggedFiles.length > 1 ? `📚 ${draggedFiles.length} items` : (isFolder ? `📁 ${file.name}` : `📄 ${file.name}`);
-                    dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px; background: var(--color-app-surface); border: 1px solid var(--color-app-border); border-radius: 8px; font-weight: 500; font-size: 14px;';
-                    document.body.appendChild(dragPreview);
-                    e.dataTransfer.setDragImage(dragPreview, 20, 20);
-                    setTimeout(() => document.body.removeChild(dragPreview), 0);
-                  }}
-                  onDragOver={(e) => {
-                    if (!isFolder || !onMove) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
-                  }}
-                  onDragLeave={(e) => {
-                    e.currentTarget.style.outline = 'none';
-                  }}
-                  onDrop={(e) => {
-                    if (!isFolder || !onMove) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.style.outline = 'none';
-                    try {
-                      const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                      if (data && onMove) {
-                        if (data.paths && Array.isArray(data.paths) && data.paths.length > 0) {
-                          const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-                          const moves: { source: string; target: string }[] = [];
-                          data.paths.forEach((sourcePath: string) => {
-                            const sourceName = sourcePath.split(/[/\\]/).pop();
-                            if (!sourceName || sourcePath === targetFolder) return;
-                            moves.push({ source: sourcePath, target: `${targetFolder}/${sourceName}` });
-                          });
-                          if (moves.length > 0) onMove(moves);
-                        } else if (data.path) {
-                          const n = data.name || data.path.split(/[/\\]/).pop();
-                          const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-                          if (data.path !== `${currentPath}/${file.name}`) {
-                            onMove([{ source: data.path, target: `${targetFolder}/${n}` }]);
-                          }
-                        }
-                      }
-                    } catch (err) { }
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const isMulti = e.ctrlKey || e.metaKey || e.shiftKey;
-                    onSelect(file.name, isMulti);
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    onNavigate(file.name);
-                  }}
-                  onContextMenu={(e) => {
-                    e.stopPropagation();
-                    onContextMenu(e, file);
-                  }}
-                  className={cn(
-                    'border-b border-app-border/20 cursor-pointer transition-colors outline-none',
-                    'hover:bg-app-surface/40',
-                    isSelected && 'bg-app-accent/10 hover:bg-app-accent/15',
-                    isFocused && !isSelected && 'ring-1 ring-inset ring-app-accent/50 bg-app-surface/60',
-                    isFocused && isSelected && 'ring-1 ring-inset ring-app-accent',
-                  )}
-                >
-                  <td className="py-2 px-4">
-                    <div className="flex items-center gap-3">
-                      <FileIcon file={file} size={20} />
-                      <span className={cn('font-medium truncate', isSelected ? 'text-app-accent' : 'text-app-text')}>
-                        {file.name}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-2 px-4 text-sm text-app-muted font-mono">
-                    {isFolder ? '—' : formatBytes(file.size)}
-                  </td>
-                  <td className="py-2 px-4 text-sm text-app-muted">
-                    {isFolder ? 'Folder' : (file.name.split('.').pop()?.toUpperCase() || '—')}
-                  </td>
-                  <td className="py-2 px-4 text-sm text-app-muted">
-                    {formatDate(file.lastModified)}
-                  </td>
-                </tr>
-              );
-            })}
+                  file={file}
+                  isSelected={selectedFiles.includes(file.name)}
+                  selectedFiles={selectedFiles}
+                  isFocused={focusedFile === file.name}
+                  connectionId={connectionId}
+                  currentPath={currentPath}
+                  onSelect={onSelect}
+                  onNavigate={onNavigate}
+                  onContextMenu={onContextMenu}
+                  onMove={onMove}
+                />
+              ))}
+            </AnimatePresence>
           </tbody>
         </table>
       ) : (
@@ -619,25 +624,28 @@ export function FileGrid({
               : 'flex flex-col gap-1',
           )}
         >
-          {sortedFiles.map((file) => (
-            <FileGridItem
-              key={file.name}
-              file={file}
-              viewMode={viewMode}
-              compactMode={compactMode}
-              isSelected={selectedFiles.includes(file.name)}
-              selectedFiles={selectedFiles}
-              isFocused={focusedFile === file.name}
-              connectionId={connectionId}
-              currentPath={currentPath}
-              onSelect={onSelect}
-              onNavigate={onNavigate}
-              onContextMenu={onContextMenu}
-              onMove={onMove}
-            />
-          ))}
+          <AnimatePresence mode="popLayout">
+            {sortedFiles.map((file) => (
+              <FileGridItem
+                key={file.name}
+                file={file}
+                viewMode={viewMode}
+                compactMode={compactMode}
+                isSelected={selectedFiles.includes(file.name)}
+                selectedFiles={selectedFiles}
+                isFocused={focusedFile === file.name}
+                connectionId={connectionId}
+                currentPath={currentPath}
+                onSelect={onSelect}
+                onNavigate={onNavigate}
+                onContextMenu={onContextMenu}
+                onMove={onMove}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       )}
+      </div>
     </div>
   );
 }
