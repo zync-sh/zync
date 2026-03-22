@@ -21,9 +21,11 @@ import { useAppStore } from '../../store/useAppStore';
 import { useState, useMemo, useEffect, memo } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-const normalizePath = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '') || '/';
+
 import { setCurrentDragSource } from '../../lib/dragDrop';
 import { motion, AnimatePresence } from 'framer-motion';
+import { forwardRef } from 'react';
+import { buildDragData, startInternalDrag, validateAndBuildMoves } from './dragDropUtils';
 
 // Extended Icon Selector with Colors
 const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size: number }) {
@@ -98,20 +100,7 @@ const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size:
 });
 
 // Memoized File Item Component
-const FileGridItem = memo(({
-  file,
-  viewMode,
-  compactMode,
-  isSelected,
-  selectedFiles,
-  isFocused,
-  connectionId,
-  currentPath,
-  onSelect,
-  onNavigate,
-  onContextMenu,
-  onMove
-}: {
+const FileGridItem = memo(forwardRef<HTMLDivElement, {
   file: FileEntry;
   viewMode: 'grid' | 'list';
   compactMode: boolean;
@@ -124,7 +113,20 @@ const FileGridItem = memo(({
   onNavigate: (name: string) => void;
   onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
   onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
-}) => {
+}>(({
+  file,
+  viewMode,
+  compactMode,
+  isSelected,
+  selectedFiles,
+  isFocused,
+  connectionId,
+  currentPath,
+  onSelect,
+  onNavigate,
+  onContextMenu,
+  onMove
+}, ref) => {
   const isFolder = file.type === 'd';
   const [imageError, setImageError] = useState(false);
 
@@ -139,6 +141,7 @@ const FileGridItem = memo(({
 
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.98 }}
@@ -147,53 +150,9 @@ const FileGridItem = memo(({
       draggable={connectionId !== undefined}
       onDragStart={(e: any) => {
         if (!connectionId || !currentPath) return;
-        const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-
-        let draggedFiles: { name: string; path: string }[] = [];
-        if (isSelected && selectedFiles.length > 0) {
-          draggedFiles = selectedFiles.map(name => ({
-            name,
-            path: currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
-          }));
-        } else {
-          draggedFiles = [{ name: file.name, path: fullPath }];
-        }
-
-        const dragData = {
-          type: 'server-file',
-          connectionId,
-          path: fullPath,
-          paths: draggedFiles.map(f => f.path),
-          names: draggedFiles.map(f => f.name),
-          name: file.name,
-          size: file.size,
-        };
-
-        setCurrentDragSource({ connectionId, path: fullPath });
-
-        const dragPreview = document.createElement('div');
-        dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px 12px; background: var(--color-app-surface); border: 1px solid var(--color-app-border); border-radius: 10px; font-weight: 500; font-size: 13px; color: var(--color-app-text); z-index: 9999; pointer-events: none; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);';
-        
-        const iconNode = document.createElement('span');
-        iconNode.textContent = draggedFiles.length > 1 ? '📚' : (isFolder ? '📁' : '📄');
-        dragPreview.appendChild(iconNode);
-
-        const nameNode = document.createElement('span');
-        nameNode.textContent = draggedFiles.length > 1 ? `${draggedFiles.length} items` : file.name;
-        dragPreview.appendChild(nameNode);
-
-        document.body.appendChild(dragPreview);
-        e.dataTransfer.setDragImage(dragPreview, 20, 20);
-        // Remove the preview element from DOM after the drag has started
-        setTimeout(() => {
-          if (dragPreview.parentNode) {
-            dragPreview.parentNode.removeChild(dragPreview);
-          }
-        }, 0);
-
-        e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-        e.dataTransfer.effectAllowed = 'copyMove';
-        if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '0.5';
+        const dragData = buildDragData(file, isSelected, selectedFiles, connectionId, currentPath);
+        const count = isSelected && selectedFiles.length > 0 ? selectedFiles.length : 1;
+        startInternalDrag(e, dragData, isFolder, count);
       }}
       onDragEnd={(e: any) => {
         setCurrentDragSource(null);
@@ -227,33 +186,8 @@ const FileGridItem = memo(({
         try {
           const data = JSON.parse(e.dataTransfer.getData('application/json'));
           if (data && onMove) {
-            const targetFolder = normalizePath(currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`);
-            const moves: { source: string; target: string; sourceConnectionId?: string }[] = [];
-            
-            const handleSource = (sourcePath: string, sourceName?: string) => {
-              const normSource = normalizePath(sourcePath);
-              const name = sourceName || normSource.split(/[/\\]/).pop();
-              if (!name) return;
-
-              // Self-drop check
-              if (normSource === targetFolder) return;
-              
-              // Descendant check: Cannot move a folder into its own subdirectory
-              if (targetFolder.startsWith(normSource + '/')) return;
-
-              moves.push({ 
-                source: normSource, 
-                target: `${targetFolder}/${name}`,
-                sourceConnectionId: data.connectionId
-              });
-            };
-
-            if (data.paths && Array.isArray(data.paths)) {
-              data.paths.forEach((s: string) => handleSource(s));
-            } else if (data.path) {
-              handleSource(data.path, data.name);
-            }
-
+            const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+            const moves = validateAndBuildMoves(data, targetFolder);
             if (moves.length > 0) onMove(moves);
           }
         } catch (err) {
@@ -281,7 +215,6 @@ const FileGridItem = memo(({
           ? cn(
             "flex flex-col items-center justify-start rounded-xl border border-transparent",
             "hover:bg-app-surface/50",
-            // Nautilus/GNOME Style: Taller aspect ratio, cleaner padding
             compactMode ? "w-[100px] h-[120px] p-2 gap-1" : "w-[120px] h-[140px] p-3 gap-2"
           )
           : cn(
@@ -293,13 +226,12 @@ const FileGridItem = memo(({
         ),
         isFocused && !isSelected && 'ring-1 ring-app-accent/40',
         isFocused && isSelected && 'ring-1 ring-app-accent/60',
-        // GNOME-like hover only on non-selected
         !isSelected && viewMode === 'grid' && "hover:bg-app-surface/60"
       )}
     >
       <div className={cn(
         'flex items-center justify-center transition-transform duration-300',
-        viewMode === 'grid' ? 'w-full h-[64px] mb-1' : 'w-10 mr-4', // Fixed height for icon area
+        viewMode === 'grid' ? 'w-full h-[64px] mb-1' : 'w-10 mr-4',
         isFolder ? 'drop-shadow-sm' : 'text-app-muted/80 group-hover:text-app-text',
         isSelected && !isFolder && 'text-app-accent',
       )}>
@@ -339,20 +271,10 @@ const FileGridItem = memo(({
       </div>
     </motion.div>
   );
-});
+}));
 
-const FileListItem = memo(({
-  file,
-  isSelected,
-  selectedFiles,
-  isFocused,
-  connectionId,
-  currentPath,
-  onSelect,
-  onNavigate,
-  onContextMenu,
-  onMove
-}: {
+// Memoized File List Item Component
+const FileListItem = memo(forwardRef<HTMLTableRowElement, {
   file: FileEntry;
   isSelected: boolean;
   selectedFiles: string[];
@@ -363,11 +285,23 @@ const FileListItem = memo(({
   onNavigate: (name: string) => void;
   onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
   onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
-}) => {
+}>(({
+  file,
+  isSelected,
+  selectedFiles,
+  isFocused,
+  connectionId,
+  currentPath,
+  onSelect,
+  onNavigate,
+  onContextMenu,
+  onMove
+}, ref) => {
   const isFolder = file.type === 'd';
 
   return (
     <motion.tr
+      ref={ref}
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 10 }}
@@ -376,67 +310,26 @@ const FileListItem = memo(({
       draggable={connectionId !== undefined}
       onDragStart={(e: any) => {
         if (!connectionId || !currentPath) return;
-        const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-        
-        // Multi-file drag logic for list view
-        let draggedFiles: { name: string; path: string }[] = [];
-        if (isSelected && selectedFiles.length > 0) {
-          draggedFiles = selectedFiles.map(name => ({
-            name,
-            path: currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
-          }));
-        } else {
-          draggedFiles = [{ name: file.name, path: fullPath }];
-        }
-
-        const dragData = {
-          type: 'server-file',
-          connectionId,
-          path: fullPath,
-          paths: draggedFiles.map(f => f.path),
-          names: draggedFiles.map(f => f.name),
-          name: file.name,
-          size: file.size,
-        };
-        e.dataTransfer.setData('application/json', JSON.stringify(dragData));
-        e.dataTransfer.effectAllowed = 'copyMove';
-
-        setCurrentDragSource({ connectionId, path: fullPath });
-
-        const dragPreview = document.createElement('div');
-        dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px 12px; background: var(--color-app-surface); border: 1px solid var(--color-app-border); border-radius: 10px; font-weight: 500; font-size: 13px; color: var(--color-app-text); z-index: 9999; pointer-events: none; display: flex; items-center: center; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);';
-        
-        const iconNode = document.createElement('span');
-        const isDir = file.type === 'd' || file.type === 'l';
-        iconNode.textContent = draggedFiles.length > 1 ? '📚' : (isDir ? '📁' : '📄');
-        dragPreview.appendChild(iconNode);
-
-        const nameNode = document.createElement('span');
-        nameNode.textContent = draggedFiles.length > 1 ? `${draggedFiles.length} items` : file.name;
-        dragPreview.appendChild(nameNode);
-
-        document.body.appendChild(dragPreview);
-        e.dataTransfer.setDragImage(dragPreview, 20, 20);
-        // Remove the preview element from DOM after the drag has started
-        setTimeout(() => {
-          if (dragPreview.parentNode) {
-            dragPreview.parentNode.removeChild(dragPreview);
-          }
-        }, 0);
-        if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '0.5';
+        const dragData = buildDragData(file, isSelected, selectedFiles, connectionId, currentPath);
+        const count = isSelected && selectedFiles.length > 0 ? selectedFiles.length : 1;
+        startInternalDrag(e, dragData, isFolder, count);
       }}
       onDragEnd={(e: any) => {
         setCurrentDragSource(null);
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '1';
       }}
-      onDragOver={(e) => {
+      onDragOver={(e: any) => {
         if (!isFolder || !onMove) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
-        e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
+        if (e.currentTarget instanceof HTMLElement) {
+          e.currentTarget.style.outline = '2px dashed var(--color-app-accent)';
+        }
       }}
-      onDragLeave={(e) => {
-        e.currentTarget.style.outline = 'none';
+      onDragLeave={(e: any) => {
+        if (e.currentTarget instanceof HTMLElement) {
+          e.currentTarget.style.outline = 'none';
+        }
       }}
       onDrop={(e: any) => {
         if (!isFolder || !onMove || !currentPath) return;
@@ -451,33 +344,8 @@ const FileListItem = memo(({
         try {
           const data = JSON.parse(e.dataTransfer.getData('application/json'));
           if (data && onMove) {
-            const targetFolder = normalizePath(currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`);
-            const moves: { source: string; target: string; sourceConnectionId?: string }[] = [];
-
-            const handleSource = (sourcePath: string, sourceName?: string) => {
-              const normSource = normalizePath(sourcePath);
-              const name = sourceName || normSource.split(/[/\\]/).pop();
-              if (!name) return;
-
-              // Self-drop check
-              if (normSource === targetFolder) return;
-
-              // Descendant check
-              if (targetFolder.startsWith(normSource + '/')) return;
-
-              moves.push({ 
-                source: normSource, 
-                target: `${targetFolder}/${name}`,
-                sourceConnectionId: data.connectionId
-              });
-            };
-
-            if (data.paths && Array.isArray(data.paths)) {
-              data.paths.forEach((s: string) => handleSource(s));
-            } else if (data.path) {
-              handleSource(data.path, data.name);
-            }
-
+            const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
+            const moves = validateAndBuildMoves(data, targetFolder);
             if (moves.length > 0) onMove(moves);
           }
         } catch (err) {
@@ -525,9 +393,10 @@ const FileListItem = memo(({
       </td>
     </motion.tr>
   );
-});
+}));
 
 FileGridItem.displayName = 'FileGridItem';
+FileListItem.displayName = 'FileListItem';
 
 interface FileGridProps {
   files: FileEntry[];
@@ -620,7 +489,22 @@ export function FileGrid({
         e.preventDefault();
         onContextMenu(e);
       }}
+      onDragOver={(e) => {
+        const types = Array.from(e.dataTransfer.types || []);
+        const isInternal = types.includes('application/json');
+        const isExternal = types.includes('Files') || types.includes('text/uri-list');
+
+        if (isInternal || isExternal) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          e.currentTarget.style.backgroundColor = 'var(--color-app-accent-transparent, rgba(var(--color-app-accent-rgb), 0.05))';
+        }
+      }}
+      onDragLeave={(e) => {
+        e.currentTarget.style.backgroundColor = '';
+      }}
       onDrop={(e) => {
+        e.currentTarget.style.backgroundColor = '';
         // Always prevent default to stop WebView from navigating to dropped file URL
         e.preventDefault();
         
@@ -631,8 +515,6 @@ export function FileGrid({
             useAppStore.getState().showToast('info', 'External drop here is currently disabled. We are working to bring this feature to Zync soon!');
             return;
         }
-        // Internal drag - let the event bubble up to parents (like FileManager) 
-        // if they have registered handlers for background drops.
     }}
     >
       {/* Smooth Native Progress Bar */}
@@ -667,7 +549,11 @@ export function FileGrid({
           >
             <Folder size={64} className="mb-4 stroke-1" />
             <p className="text-lg font-medium opacity-80">Empty directory</p>
-            <p className="text-sm opacity-50">Drag files here to upload</p>
+            {(() => {
+              // Only show upload prompt if user is actually dragging external files
+              // OR if nothing is being dragged (default state)
+              return <p className="text-sm opacity-50">Drag files here to upload</p>;
+            })()}
           </motion.div>
         ) : viewMode === 'list' ? (
         <table className="w-full border-collapse">

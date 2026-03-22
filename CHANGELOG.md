@@ -369,5 +369,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 [d6f1928]: https://github.com/zync-sh/zync/commit/d6f1928
 [b62e613]: https://github.com/zync-sh/zync/commit/b62e613
 [61dc6e8]: https://github.com/zync-sh/zync/commit/61dc6e8
+[82c1612]: https://github.com/zync-sh/zync/commit/82c1612
+[f28e04a]: https://github.com/zync-sh/zync/commit/f28e04a
+[3dc9898]: https://github.com/zync-sh/zync/commit/3dc9898
 
 

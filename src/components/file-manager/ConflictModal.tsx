@@ -13,6 +13,7 @@ interface ConflictModalProps {
     fileName: string;
     destinationPath: string;
     isBatch?: boolean;
+    isResolving?: boolean;
 }
 
 export function ConflictModal({
@@ -21,19 +22,23 @@ export function ConflictModal({
     onResolve,
     fileName,
     destinationPath,
-    isBatch = false
+    isBatch = false,
+    isResolving = false
 }: ConflictModalProps) {
     const [applyToAll, setApplyToAll] = useState(false);
 
     const handleClose = () => {
+        if (isResolving) return;
         setApplyToAll(false);
         onClose();
     };
 
     const handleResolve = (action: ConflictAction) => {
+        if (isResolving) return;
         onResolve(action, applyToAll);
-        setApplyToAll(false); // Reset for next time (though usually closed)
+        setApplyToAll(false); 
     };
+
     return (
         <Modal
             isOpen={isOpen}
@@ -60,7 +65,8 @@ export function ConflictModal({
                 <div className="grid grid-cols-1 gap-2 mb-6">
                     <button 
                         onClick={() => handleResolve('overwrite')}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group"
+                        disabled={isResolving}
+                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <div className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500 group-hover:scale-110 transition-transform">
                             <Copy size={16} />
@@ -73,7 +79,8 @@ export function ConflictModal({
 
                     <button 
                         onClick={() => handleResolve('rename')}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group"
+                        disabled={isResolving}
+                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:scale-110 transition-transform">
                             <FileText size={16} />
@@ -91,7 +98,8 @@ export function ConflictModal({
 
                     <button 
                         onClick={() => handleResolve('skip')}
-                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group"
+                        disabled={isResolving}
+                        className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all text-left group disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-app-text/60 group-hover:scale-110 transition-transform">
                             <SkipForward size={16} />
@@ -109,9 +117,10 @@ export function ConflictModal({
                             <div className="relative flex items-center justify-center">
                                 <input 
                                     type="checkbox" 
-                                    className="peer h-4 w-4 appearance-none rounded border border-app-border bg-app-surface/50 checked:bg-app-accent checked:border-app-accent transition-all cursor-pointer"
+                                    className="peer h-4 w-4 appearance-none rounded border border-app-border bg-app-surface/50 checked:bg-app-accent checked:border-app-accent transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                     checked={applyToAll}
                                     onChange={(e) => setApplyToAll(e.target.checked)}
+                                    disabled={isResolving}
                                 />
                                 <div className="absolute opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none text-white">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
@@ -128,6 +137,7 @@ export function ConflictModal({
                         <Button
                             variant="ghost"
                             onClick={handleClose}
+                            disabled={isResolving}
                             className="px-4 h-8 font-bold text-[10px] uppercase tracking-widest hover:bg-white/[0.05]"
                         >
                             {isBatch ? 'Cancel All' : 'Cancel'}

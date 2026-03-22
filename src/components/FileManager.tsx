@@ -331,8 +331,9 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   };
 
   const resolveConflict = async (action: ConflictAction, applyToAll = false) => {
-    if (!currentConflict || !activeConnectionId) return;
+    if (!currentConflict || !activeConnectionId || isProcessing) return;
 
+    setIsProcessing(true);
     const toProcess = applyToAll ? [...pendingConflicts] : [currentConflict];
     let successCount = 0;
     
@@ -542,6 +543,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       showToast('error', `Failed to resolve conflict: ${e.message || String(e)}`);
       setCurrentConflict(null);
       setPendingConflicts([]);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -1507,6 +1510,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       <ConflictModal
         isOpen={!!currentConflict}
         onClose={() => {
+          if (isProcessing) return;
           setCurrentConflict(null);
           setPendingConflicts([]);
         }}
@@ -1514,6 +1518,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         fileName={currentConflict?.name || ''}
         destinationPath={currentPath}
         isBatch={pendingConflicts.length > 1}
+        isResolving={isProcessing}
       />
     </div>
   );
