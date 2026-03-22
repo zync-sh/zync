@@ -6,9 +6,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Added
 
-- **Pro Conflict Resolution Modal**: Implemented a professional collision handler for all file operations (move, copy, paste). Features clear choices (**Overwrite**, **Skip**, **Keep Both**) and native cross-connection support. ([unreleased])
-- **Batch Resolution ("Apply to All")**: Added a "Do this for all remaining conflicts" toggle to the Conflict Modal, allowing users to efficiently resolve multiple collisions in a single action. ([unreleased])
-- **Unified Operation Engine**: Refactored all file movement and duplication logic into a consolidated `executeFileOperations` helper, improving maintainability and ensuring consistent behavior across the entire File Manager. ([unreleased])
+- **Pro Conflict Resolution Modal**: Implemented a professional collision handler for all file operations (move, copy, paste). Features clear choices (**Overwrite**, **Skip**, **Keep Both**) and native cross-connection support. ([d6f1928])
+- **Batch Resolution ("Apply to All")**: Added a "Do this for all remaining conflicts" toggle to the Conflict Modal, allowing users to efficiently resolve multiple collisions in a single action. ([d6f1928])
+- **Unified Operation Engine**: Refactored all file movement and duplication logic into a consolidated `executeFileOperations` helper, improving maintainability and ensuring consistent behavior across the entire File Manager. ([b62e613])
 
 ### Security
 
@@ -362,5 +362,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 [0d20343]: https://github.com/zync-sh/zync/commit/0d20343
 [098b8c8]: https://github.com/zync-sh/zync/commit/098b8c8
 [2846afa]: https://github.com/zync-sh/zync/commit/2846afa
+[d6f1928]: https://github.com/zync-sh/zync/commit/d6f1928
+[b62e613]: https://github.com/zync-sh/zync/commit/b62e613
+[61dc6e8]: https://github.com/zync-sh/zync/commit/61dc6e8
 
 
