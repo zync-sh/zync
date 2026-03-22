@@ -12,13 +12,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Fixed
 
-- **Atomic Overwrite Protection**: Implemented a safe "Rename-to-Backup -> Move -> Delete-Backup" pattern for all overwrite operations, ensuring no data loss if a move or copy operation fails mid-way. ([unreleased])
-- **Multi-File DND Stability**: Resolved a critical bug where drag-and-drop operations on the background or into subfolders would only process the first selected item. Selection-wide batch operations are now fully supported. ([unreleased])
-- **Parallel Collision Detection**: Optimized remote existence checks in the file manager using parallel execution (`Promise.all`), significantly improving performance on high-latency SFTP connections. ([unreleased])
-- **Atomic SFTP Renaming**: Hardened the SFTP renaming logic with standard 10s timeout guards, automatic session reconnection, and a secondary backend-powered unique path generator. ([unreleased])
-- **Unique Name Loop Safety**: Prevented potential infinite loops in the duplicate name generator by implementing a 100-attempt safety bail-out with automated user notification and explicit error propagation. ([unreleased])
-- **UI Consistency**: Synchronized the right-click selection behavior between Grid and List views and fixed the 'Keep Both' filename preview to match the actual `base (1).ext` convention. ([unreleased])
-- **DRY Refactor**: Extracted a unified `Conflict` type and grouped same-connection operations by `op` type for cleaner batch processing. ([unreleased])
+- **Atomic Overwrite Protection**: Implemented a safe "Rename-to-Backup -> Move -> Delete-Backup" pattern for all overwrite operations, ensuring no data loss if a move or copy operation fails mid-way. ([82c1612])
+- **Multi-File DND Stability**: Resolved a critical bug where drag-and-drop operations on the background or into subfolders would only process the first selected item. Selection-wide batch operations are now fully supported. ([3dc9898])
+- **Parallel Collision Detection**: Optimized remote existence checks in the file manager using parallel execution (`Promise.all`), significantly improving performance on high-latency SFTP connections. ([82c1612])
+- **Atomic SFTP Renaming**: Hardened the SFTP renaming logic with standard 10s timeout guards, automatic session reconnection, and a secondary backend-powered unique path generator. ([f28e04a])
+- **Unique Name Loop Safety**: Prevented potential infinite loops in the duplicate name generator by implementing a 100-attempt safety bail-out with automated user notification and explicit error propagation. ([f28e04a])
+- **UI Consistency**: Synchronized the right-click selection behavior between Grid and List views and fixed the 'Keep Both' filename preview to match the actual `base (1).ext` convention. ([53b46d8])
+- **DRY Refactor**: Extracted a unified `Conflict` type and grouped same-connection operations by `op` type for cleaner batch processing. ([82c1612])
 
 ## [2.6.2] - 2026-03-21
 
