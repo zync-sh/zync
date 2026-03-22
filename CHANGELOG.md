@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-03-22
+
 ### Added
 
 - **Pro Conflict Resolution Modal**: Implemented a professional collision handler for all file operations (move, copy, paste). Features clear choices (**Overwrite**, **Skip**, **Keep Both**) and native cross-connection support. ([d6f1928])
@@ -331,7 +333,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/zync-sh/zync/compare/v2.6.2...v2.7.0
+[2.6.2]: https://github.com/zync-sh/zync/compare/v2.6.1...v2.6.2
 [2.6.1]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/zync-sh/zync/compare/v2.5.5...v2.6.0
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
