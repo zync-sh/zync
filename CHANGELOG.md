@@ -10,6 +10,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Batch Resolution ("Apply to All")**: Added a "Do this for all remaining conflicts" toggle to the Conflict Modal, allowing users to efficiently resolve multiple collisions in a single action. ([unreleased])
 - **Unified Operation Engine**: Refactored all file movement and duplication logic into a consolidated `executeFileOperations` helper, improving maintainability and ensuring consistent behavior across the entire File Manager. ([unreleased])
 
+### Security
+
+- **Drag-and-Drop Hardening**: Replaced `innerHTML` with `textContent` in drag previews to prevent DOM injection via malicious file names. ([61dc6e8])
+
 ### Fixed
 
 - **Atomic Overwrite Protection**: Implemented a safe "Rename-to-Backup -> Move -> Delete-Backup" pattern for all overwrite operations, ensuring no data loss if a move or copy operation fails mid-way. ([82c1612])
@@ -17,8 +21,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Parallel Collision Detection**: Optimized remote existence checks in the file manager using parallel execution (`Promise.all`), significantly improving performance on high-latency SFTP connections. ([82c1612])
 - **Atomic SFTP Renaming**: Hardened the SFTP renaming logic with standard 10s timeout guards, automatic session reconnection, and a secondary backend-powered unique path generator. ([f28e04a])
 - **Unique Name Loop Safety**: Prevented potential infinite loops in the duplicate name generator by implementing a 100-attempt safety bail-out with automated user notification and explicit error propagation. ([f28e04a])
-- **UI Consistency**: Synchronized the right-click selection behavior between Grid and List views and fixed the 'Keep Both' filename preview to match the actual `base (1).ext` convention. ([53b46d8])
 - **DRY Refactor**: Extracted a unified `Conflict` type and grouped same-connection operations by `op` type for cleaner batch processing. ([82c1612])
+- **Descendant Drop Prevention**: Refactored `onDrop` logic to block invalid move operations where a folder is dropped into its own subdirectory. ([61dc6e8])
+- **Dotfile Renaming Truth**: Implemented `splitFileName` to correctly handle collisions for hidden files (e.g., `.env (1)` instead of `. (1).env`). ([61dc6e8])
+- **Context Menu Selection**: Synchronized context menu behavior to ensure items are selected on right-click before the menu opens. ([61dc6e8])
+- **Animation Polish**: Disabled "closure" layout animations during file movements to prevent visual artifacts and provide instant feedback. ([61dc6e8])
 
 ## [2.6.2] - 2026-03-21
 
