@@ -15,7 +15,7 @@ import { StreamLanguage, indentUnit } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { useAppStore } from '../store/useAppStore';
-import { AlertTriangle, FileCode, Loader2, Save, X } from 'lucide-react';
+import { AlertTriangle, FileCode, Loader2, Save, X, Search } from 'lucide-react';
 import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
@@ -182,6 +182,12 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
       return;
     }
     onClose();
+  };
+
+  const handleSearch = () => {
+    if (editorRef.current?.view) {
+      openSearchPanel(editorRef.current.view);
+    }
   };
 
   const onChange = useCallback(
@@ -351,6 +357,16 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleSearch}
+            title="Search (Ctrl+F)"
+            className="text-app-muted hover:text-app-text"
+          >
+            <Search size={18} />
+          </Button>
+          <div className="h-4 w-px bg-app-border mx-1" />
           <Button
             variant="primary"
             size="sm"
