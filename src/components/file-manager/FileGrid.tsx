@@ -122,7 +122,7 @@ const FileGridItem = memo(({
   onSelect: (name: string, multi: boolean) => void;
   onNavigate: (name: string) => void;
   onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
-  onMove?: (moves: { source: string; target: string }[]) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
 }) => {
   const isFolder = file.type === 'd';
   const [imageError, setImageError] = useState(false);
@@ -137,10 +137,14 @@ const FileGridItem = memo(({
   }, [file.path]);
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.2 }}
       id={`file-item-${file.name}`}
       draggable={connectionId !== undefined}
-      onDragStart={(e) => {
+      onDragStart={(e: any) => {
         if (!connectionId || !currentPath) return;
         const fullPath = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
 
@@ -184,17 +188,22 @@ const FileGridItem = memo(({
 
         document.body.appendChild(dragPreview);
         e.dataTransfer.setDragImage(dragPreview, 20, 20);
-        setTimeout(() => document.body.removeChild(dragPreview), 0);
+        // Remove the preview element from DOM after the drag has started
+        setTimeout(() => {
+          if (dragPreview.parentNode) {
+            dragPreview.parentNode.removeChild(dragPreview);
+          }
+        }, 0);
 
         e.dataTransfer.setData('application/json', JSON.stringify(dragData));
         e.dataTransfer.effectAllowed = 'copyMove';
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '0.5';
       }}
-      onDragEnd={(e) => {
+      onDragEnd={(e: any) => {
         setCurrentDragSource(null);
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '1';
       }}
-      onDragOver={(e) => {
+      onDragOver={(e: any) => {
         if (!isFolder || !onMove) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
@@ -203,13 +212,13 @@ const FileGridItem = memo(({
           e.currentTarget.style.outlineOffset = '-2px';
         }
       }}
-      onDragLeave={(e) => {
+      onDragLeave={(e: any) => {
         if (!isFolder || !onMove) return;
         if (e.currentTarget instanceof HTMLElement) {
           e.currentTarget.style.outline = 'none';
         }
       }}
-      onDrop={(e) => {
+      onDrop={(e: any) => {
         if (!isFolder || !onMove || !currentPath) return;
         e.preventDefault();
         e.stopPropagation();
@@ -220,18 +229,26 @@ const FileGridItem = memo(({
           if (data && onMove) {
             if (data.paths && Array.isArray(data.paths) && data.paths.length > 0) {
               const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
-              const moves: { source: string; target: string }[] = [];
+              const moves: { source: string; target: string; sourceConnectionId?: string }[] = [];
               data.paths.forEach((sourcePath: string) => {
                 const sourceName = sourcePath.split(/[/\\]/).pop();
                 if (!sourceName || sourcePath === targetFolder) return;
-                moves.push({ source: sourcePath, target: `${targetFolder}/${sourceName}` });
+                moves.push({ 
+                  source: sourcePath, 
+                  target: `${targetFolder}/${sourceName}`,
+                  sourceConnectionId: data.connectionId
+                });
               });
               if (moves.length > 0) onMove(moves);
             } else if (data.path) {
               const sourceFileName = data.name || data.path.split(/[/\\]/).pop();
               const targetFolder = currentPath === '/' ? `/${file.name}` : `${currentPath}/${file.name}`;
               if (data.path !== `${currentPath}/${file.name}`) {
-                onMove([{ source: data.path, target: `${targetFolder}/${sourceFileName}` }]);
+                onMove([{ 
+                  source: data.path, 
+                  target: `${targetFolder}/${sourceFileName}`,
+                  sourceConnectionId: data.connectionId
+                }]);
               }
             }
           }
@@ -250,8 +267,8 @@ const FileGridItem = memo(({
       }}
       onContextMenu={(e) => {
         e.stopPropagation();
-        onContextMenu(e, file);
         if (!isSelected) onSelect(file.name, false);
+        onContextMenu(e, file);
       }}
       className={cn(
         'group relative cursor-pointer select-none overflow-hidden transition-all duration-200',
@@ -276,18 +293,6 @@ const FileGridItem = memo(({
         !isSelected && viewMode === 'grid' && "hover:bg-app-surface/60"
       )}
     >
-      <motion.div
-        layout
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.98 }}
-        transition={{ duration: 0.2 }}
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-        className="w-full h-full flex flex-col items-center"
-      >
-        {/* Minimalist Selection Overlay instead of yellow background */}
-
       <div className={cn(
         'flex items-center justify-center transition-transform duration-300',
         viewMode === 'grid' ? 'w-full h-[64px] mb-1' : 'w-10 mr-4', // Fixed height for icon area
@@ -329,8 +334,7 @@ const FileGridItem = memo(({
         )}
       </div>
     </motion.div>
-  </div>
-);
+  );
 });
 
 const FileListItem = memo(({
@@ -354,13 +358,12 @@ const FileListItem = memo(({
   onSelect: (name: string, multi: boolean) => void;
   onNavigate: (name: string) => void;
   onContextMenu: (e: React.MouseEvent, file?: FileEntry) => void;
-  onMove?: (moves: { source: string; target: string }[]) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
 }) => {
   const isFolder = file.type === 'd';
 
   return (
     <motion.tr
-      layout
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 10 }}
@@ -401,7 +404,12 @@ const FileListItem = memo(({
         dragPreview.style.cssText = 'position: absolute; top: -1000px; padding: 8px; background: var(--color-app-surface); border: 1px solid var(--color-app-border); border-radius: 8px; font-weight: 500; font-size: 14px;';
         document.body.appendChild(dragPreview);
         e.dataTransfer.setDragImage(dragPreview, 20, 20);
-        setTimeout(() => document.body.removeChild(dragPreview), 0);
+        // Remove the preview element from DOM after the drag has started
+        setTimeout(() => {
+          if (dragPreview.parentNode) {
+            dragPreview.parentNode.removeChild(dragPreview);
+          }
+        }, 0);
         if (e.currentTarget instanceof HTMLElement) e.currentTarget.style.opacity = '0.5';
       }}
       onDragEnd={(e: any) => {
@@ -430,16 +438,24 @@ const FileListItem = memo(({
             
             // Handle multi-file paths (same logic as FileGridItem)
             if (data.paths && Array.isArray(data.paths) && data.paths.length > 0) {
-              const moves: { source: string; target: string }[] = [];
+              const moves: { source: string; target: string; sourceConnectionId?: string }[] = [];
               data.paths.forEach((sourcePath: string) => {
                 const sourceName = sourcePath.split(/[/\\]/).pop();
                 if (!sourceName || sourcePath === targetFolder) return;
-                moves.push({ source: sourcePath, target: `${targetFolder}/${sourceName}` });
+                moves.push({ 
+                  source: sourcePath, 
+                  target: `${targetFolder}/${sourceName}`,
+                  sourceConnectionId: data.connectionId
+                });
               });
               if (moves.length > 0) onMove(moves);
             } else if (data.path && data.path !== `${currentPath}/${file.name}`) {
               const sourceName = data.name || data.path.split(/[/\\]/).pop();
-              onMove([{ source: data.path, target: `${targetFolder}/${sourceName}` }]);
+              onMove([{ 
+                source: data.path, 
+                target: `${targetFolder}/${sourceName}`,
+                sourceConnectionId: data.connectionId
+              }]);
             }
           }
         } catch (err) {
@@ -457,8 +473,8 @@ const FileListItem = memo(({
       }}
       onContextMenu={(e) => {
         e.stopPropagation();
-        onContextMenu(e, file);
         if (!isSelected) onSelect(file.name, false);
+        onContextMenu(e, file);
       }}
       className={cn(
         'border-b border-app-border/20 cursor-pointer transition-colors outline-none',
@@ -502,7 +518,7 @@ interface FileGridProps {
   connectionId?: string;
   currentPath?: string;
   focusedFile?: string | null;
-  onMove?: (moves: { source: string; target: string }[]) => void;
+  onMove?: (moves: { source: string; target: string; sourceConnectionId?: string }[]) => void;
 }
 
 type SortColumn = 'name' | 'size' | 'type' | 'modified';
