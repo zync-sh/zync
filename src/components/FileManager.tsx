@@ -629,8 +629,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     }
   };
 
-  const handleSaveFile = async (content: string) => {
-    // ... (existing logic) ...
+  const handleSaveFile = useCallback(async (content: string) => {
     if (!activeConnectionId || !editingFile) return;
     try {
       const fullPath = currentPath === '/' ? `/${editingFile.name}` : `${currentPath}/${editingFile.name}`;
@@ -645,7 +644,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       showToast('error', `Failed to save file: ${error.message || String(error)}`);
       throw error;
     }
-  };
+  }, [activeConnectionId, editingFile, currentPath, handleConnectionError, showToast]);
 
   const handleSelect = (filename: string, multi: boolean) => {
     if (!filename) {

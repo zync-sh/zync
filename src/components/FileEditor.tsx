@@ -10,8 +10,8 @@ import { rust } from '@codemirror/lang-rust';
 import { yaml } from '@codemirror/lang-yaml';
 import { keymap, EditorView } from '@codemirror/view';
 import { searchKeymap, openSearchPanel } from '@codemirror/search';
-import { toggleComment } from '@codemirror/commands';
-import { StreamLanguage } from '@codemirror/language';
+import { toggleComment, defaultKeymap, historyKeymap } from '@codemirror/commands';
+import { StreamLanguage, indentUnit } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { useAppStore } from '../store/useAppStore';
@@ -34,7 +34,12 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   const [showConfirmClose, setShowConfirmClose] = useState(false);
   const [showGoToLine, setShowGoToLine] = useState(false);
   const [targetLine, setTargetLine] = useState('');
-  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
+  
+  // Refs for Status Bar direct updates (performance)
+  const lineRef = useRef<HTMLSpanElement>(null);
+  const colRef = useRef<HTMLSpanElement>(null);
+  const sizeRef = useRef<HTMLSpanElement>(null);
+
   const theme = useAppStore(state => state.settings.theme);
 
   // Custom Theme using Zync CSS variables
@@ -144,6 +149,16 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     setHasChanges(false);
   }, [initialContent]);
 
+  // Force Focus on Mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (editorRef.current?.view) {
+        editorRef.current.view.focus();
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [filename]);
+
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
@@ -249,13 +264,19 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         break;
     }
 
-    // 1b. Cursor Position Tracker
+    // 1b. Cursor Position & Filesize Tracker (Direct DOM updates)
     exts.push(EditorView.updateListener.of((update) => {
       if (update.selectionSet || update.docChanged) {
         const state = update.state;
         const pos = state.selection.main.head;
         const line = state.doc.lineAt(pos);
-        setCursorPos({ line: line.number, col: pos - line.from + 1 });
+        
+        if (lineRef.current) lineRef.current.textContent = line.number.toString();
+        if (colRef.current) colRef.current.textContent = (pos - line.from + 1).toString();
+        
+        if (update.docChanged && sizeRef.current) {
+          sizeRef.current.textContent = `${(state.doc.length / 1024).toFixed(1)} KB`;
+        }
       }
     }));
 
@@ -295,8 +316,11 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
       }
     }));
 
-    // 3. Search Shortcuts (Ctrl + F)
-    exts.push(keymap.of(searchKeymap));
+    // 3. Search & Standard Keymaps
+    exts.push(keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]));
+
+    // 4. Formatting
+    exts.push(indentUnit.of("    "));
 
     return exts;
   }, [filename, handleSave]);
@@ -341,10 +365,10 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto relative">
+      <div className="flex-1 overflow-hidden relative">
         <CodeMirror
           ref={editorRef}
-          value={initialContent} // initialization only
+          value={contentRef.current}
           height="100%"
           theme={editorTheme}
           autoFocus={true}
@@ -371,14 +395,14 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <span className="opacity-60 text-[9px]">LN</span>
-            <span className="text-app-text min-w-[12px]">{cursorPos.line}</span>
+            <span ref={lineRef} className="text-app-text min-w-[12px]">1</span>
             <span className="opacity-60 text-[9px] ml-1">COL</span>
-            <span className="text-app-text min-w-[12px]">{cursorPos.col}</span>
+            <span ref={colRef} className="text-app-text min-w-[12px]">1</span>
           </div>
           <div className="h-3 w-px bg-app-border/50" />
           <div className="flex items-center gap-1.5">
              <span className="opacity-60 text-[9px] uppercase">Filesize</span>
-             <span className="text-app-text">{(contentRef.current.length / 1024).toFixed(1)} KB</span>
+             <span ref={sizeRef} className="text-app-text">{(initialContent.length / 1024).toFixed(1)} KB</span>
           </div>
         </div>
         
