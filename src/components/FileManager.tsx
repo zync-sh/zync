@@ -199,7 +199,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     name: string; 
     op: 'move' | 'copy'; 
     sourceConnectionId: string 
-  }[]) => {
+  }[], targetDirectory?: string) => {
     if (!activeConnectionId || ops.length === 0) return;
 
     setIsProcessing(true);
@@ -236,7 +236,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           }, {} as Record<string, string[]>);
 
           for (const [opType, sources] of Object.entries(groups)) {
-            await pasteEntries(activeConnectionId, sources, opType === 'move' ? 'cut' : 'copy');
+            await pasteEntries(activeConnectionId, sources, opType === 'move' ? 'cut' : 'copy', targetDirectory);
           }
         } else {
           // Cross connection: Loop through and start transfers
@@ -313,17 +313,21 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     await executeFileOperations(ops);
   };
 
-  const handleMoveFiles = async (moves: { source: string; target: string }[]) => {
+  const handleMoveFiles = async (moves: { source: string; target: string; sourceConnectionId?: string }[]) => {
     if (!activeConnectionId || moves.length === 0) return;
 
     const ops = moves.map(m => ({
       ...m,
       name: m.target.split('/').pop() || 'unknown',
       op: 'move' as const,
-      sourceConnectionId: activeConnectionId // handleMoveFiles is always same-connection (DND)
+      sourceConnectionId: m.sourceConnectionId || activeConnectionId
     }));
 
-    await executeFileOperations(ops);
+    // Extract target directory from the first move (they should all be to the same place)
+    const firstTarget = moves[0]?.target;
+    const targetDir = firstTarget ? firstTarget.substring(0, firstTarget.lastIndexOf('/')) || '/' : undefined;
+
+    await executeFileOperations(ops, targetDir);
   };
 
   const resolveConflict = async (action: ConflictAction, applyToAll = false) => {
@@ -500,9 +504,12 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               args.destinationConnectionId = activeConnectionId;
             }
 
-            window.ipcRenderer.invoke(command, args).catch(err => {
+            try {
+              await window.ipcRenderer.invoke(command, args);
+            } catch (err: any) {
               failTransfer(transferId, err.message || String(err));
-            });
+              continue; // Don't increment successCount if it failed to start
+            }
           }
         }
         successCount++;

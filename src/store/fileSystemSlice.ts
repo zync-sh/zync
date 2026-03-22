@@ -34,7 +34,7 @@ export interface FileSystemActions {
     navigateForward: (connectionId: string) => void;
     setClipboard: (files: FileEntry[], sourceConnectionId: string, sourcePath: string, op: 'copy' | 'cut') => void;
     clearClipboard: () => void;
-    pasteEntries: (connectionId: string, sources: string[], op: 'copy' | 'cut') => Promise<void>;
+    pasteEntries: (connectionId: string, sources: string[], op: 'copy' | 'cut', destinationDirectory?: string) => Promise<void>;
     checkPathExists: (connectionId: string, path: string) => Promise<boolean>;
 }
 
@@ -288,9 +288,9 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
         console.log('Download not fully implemented in store slice yet');
     },
 
-    pasteEntries: async (connectionId, sources, op) => {
+    pasteEntries: async (connectionId, sources, op, destinationDirectory) => {
         const state = get();
-        const currentPath = state.currentPath[connectionId] || '/';
+        const currentPath = destinationDirectory !== undefined ? destinationDirectory : (state.currentPath[connectionId] || '/');
 
         set(state => ({ isLoading: { ...state.isLoading, [connectionId]: true } }));
 
@@ -329,7 +329,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
 
                     while (true) {
                         const newName = `${base} (${counter})${ext}`;
-                        destPath = currentPath === '/' ? `/${newName}` : `${currentPath}/${newName}`;
+                        destPath = normCurrentPath === '/' ? `/${newName}` : `${normCurrentPath}/${newName}`;
 
                         // Check local optimistic list too to avoid collisions within the batch
                         const collisionInBatch = newEntries.some(e => e.path === destPath);
@@ -350,7 +350,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 let entrySize = 0;
 
                 if (state.clipboard && state.clipboard.files) {
-                    const clipEntry = state.clipboard.files.find(f => f.path === source);
+                    const clipEntry = state.clipboard.files.find(f => normalizePath(f.path) === source);
                     if (clipEntry) {
                         entryType = clipEntry.type;
                         entrySize = clipEntry.size;
@@ -392,15 +392,25 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             // Apply Optimistic Updates
             set(state => {
                 const currentFiles = state.files[connectionId] || [];
-                let newFiles = [...currentFiles, ...newEntries];
-
-                // If moving within same connection, remove sources
-                if (op === 'cut' && state.clipboard?.sourceConnectionId === connectionId) {
-                    newFiles = newFiles.filter(f => !pathsToRemoveFromSource.includes(f.path));
+                
+                // 1. Remove sources if this is a move (cut)
+                let newFiles = currentFiles;
+                if (op === 'cut') {
+                    // Normalize paths for reliable comparison
+                    const normalizedSources = sources.map(s => normalizePath(s));
+                    newFiles = newFiles.filter(f => !normalizedSources.includes(normalizePath(f.path)));
                 }
 
+                // 2. Only add new entries if they belong in the CURRENT directory
+                const filteredNewEntries = newEntries.filter(entry => {
+                    const entryParent = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+                    return normalizePath(entryParent) === normCurrentPath;
+                });
+
+                newFiles = [...newFiles, ...filteredNewEntries];
+
                 return {
-                    isLoading: { ...state.isLoading, [connectionId]: false }, // Done "loading"
+                    isLoading: { ...state.isLoading, [connectionId]: false },
                     files: { ...state.files, [connectionId]: newFiles }
                 };
             });
@@ -415,7 +425,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                     return {
                         files: {
                             ...state.files,
-                            [srcId]: srcFiles.filter(f => !pathsToRemoveFromSource.includes(f.path))
+                            [srcId]: srcFiles.filter(f => !pathsToRemoveFromSource.map(p => normalizePath(p)).includes(normalizePath(f.path)))
                         }
                     };
                 });
