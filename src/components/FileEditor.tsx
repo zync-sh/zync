@@ -13,6 +13,7 @@ import { searchKeymap, openSearchPanel } from '@codemirror/search';
 import { toggleComment, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { StreamLanguage, indentUnit } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { autocompletion, completeAnyWord } from '@codemirror/autocomplete';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { useAppStore } from '../store/useAppStore';
 import { AlertTriangle, FileCode, Loader2, Save, X, Search } from 'lucide-react';
@@ -332,6 +333,11 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
 
     exts.push(indentUnit.of("    "));
 
+    // 5. Word Completion (buffer-based)
+    exts.push(autocompletion({
+      override: [completeAnyWord]
+    }));
+
     return exts;
   }, [filename]); // Stable across handleSave/onSave changes
 
@@ -406,7 +412,7 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
             indentOnInput: true,
             bracketMatching: true,
             closeBrackets: true,
-            autocompletion: true,
+            autocompletion: false, // Using custom extension instead
             highlightActiveLine: true,
             highlightSelectionMatches: true,
             tabSize: 4,
