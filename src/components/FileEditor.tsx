@@ -11,6 +11,8 @@ import { yaml } from '@codemirror/lang-yaml';
 import { keymap, EditorView } from '@codemirror/view';
 import { searchKeymap, openSearchPanel } from '@codemirror/search';
 import { toggleComment } from '@codemirror/commands';
+import { StreamLanguage } from '@codemirror/language';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { useAppStore } from '../store/useAppStore';
 import { AlertTriangle, FileCode, Loader2, Save, X } from 'lucide-react';
@@ -30,6 +32,9 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showConfirmClose, setShowConfirmClose] = useState(false);
+  const [showGoToLine, setShowGoToLine] = useState(false);
+  const [targetLine, setTargetLine] = useState('');
+  const [cursorPos, setCursorPos] = useState({ line: 1, col: 1 });
   const theme = useAppStore(state => state.settings.theme);
 
   // Custom Theme using Zync CSS variables
@@ -172,6 +177,25 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     [initialContent],
   );
 
+  const handleGoToLine = useCallback(() => {
+    const lineNum = parseInt(targetLine);
+    if (isNaN(lineNum) || !editorRef.current?.view) return;
+
+    const { view } = editorRef.current;
+    try {
+      const line = view.state.doc.line(Math.max(1, Math.min(lineNum, view.state.doc.lines)));
+      view.dispatch({
+        selection: { head: line.from, anchor: line.from },
+        scrollIntoView: true
+      });
+      setShowGoToLine(false);
+      setTargetLine('');
+      view.focus();
+    } catch (e) {
+      console.error("Failed to go to line:", e);
+    }
+  }, [targetLine]);
+
   // Detect Language extension - Memoized for performance
   const extensions = useMemo(() => {
     const exts = [];
@@ -217,7 +241,23 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
       case 'hpp':
         exts.push(cpp());
         break;
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+      case 'fish':
+        exts.push(StreamLanguage.define(shell));
+        break;
     }
+
+    // 1b. Cursor Position Tracker
+    exts.push(EditorView.updateListener.of((update) => {
+      if (update.selectionSet || update.docChanged) {
+        const state = update.state;
+        const pos = state.selection.main.head;
+        const line = state.doc.lineAt(pos);
+        setCursorPos({ line: line.number, col: pos - line.from + 1 });
+      }
+    }));
 
     // 2. Raw Event interceptor for ALL editor shortcuts
     // This catches events before they bubble to the browser or system
@@ -242,6 +282,13 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
           event.preventDefault();
           event.stopPropagation();
           openSearchPanel(view);
+          return true;
+        }
+        // Ctrl/Cmd + G (Go to Line)
+        if ((event.ctrlKey || event.metaKey) && event.key === 'g') {
+          event.preventDefault();
+          event.stopPropagation();
+          setShowGoToLine(true);
           return true;
         }
         return false;
@@ -318,6 +365,66 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
           }}
         />
       </div>
+
+      {/* Status Bar */}
+      <div className="h-7 bg-app-surface border-t border-app-border flex items-center justify-between px-3 text-[10px] text-app-muted font-medium select-none">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px]">LN</span>
+            <span className="text-app-text min-w-[12px]">{cursorPos.line}</span>
+            <span className="opacity-60 text-[9px] ml-1">COL</span>
+            <span className="text-app-text min-w-[12px]">{cursorPos.col}</span>
+          </div>
+          <div className="h-3 w-px bg-app-border/50" />
+          <div className="flex items-center gap-1.5">
+             <span className="opacity-60 text-[9px] uppercase">Filesize</span>
+             <span className="text-app-text">{(contentRef.current.length / 1024).toFixed(1)} KB</span>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px] uppercase">Language</span>
+            <span className="text-app-accent font-semibold">{filename.split('.').pop()?.toUpperCase() || 'TEXT'}</span>
+          </div>
+          <div className="h-3 w-px bg-app-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px] uppercase">Encoding</span>
+            <span className="text-app-text">UTF-8</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Go To Line Modal */}
+      <Modal
+        isOpen={showGoToLine}
+        onClose={() => setShowGoToLine(false)}
+        title="Go to Line"
+        width="max-w-[280px]"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-medium text-app-muted uppercase tracking-wider">Line Number</label>
+            <input
+              autoFocus
+              type="text"
+              placeholder="e.g. 42"
+              value={targetLine}
+              onChange={(e) => setTargetLine(e.target.value.replace(/\D/g, ''))}
+              onKeyDown={(e) => e.key === 'Enter' && handleGoToLine()}
+              className="w-full bg-app-surface border border-app-border rounded px-3 py-2 text-sm text-app-text outline-none focus:border-app-accent transition-colors"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setShowGoToLine(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleGoToLine} className="px-6">
+              Go
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={showConfirmClose}
