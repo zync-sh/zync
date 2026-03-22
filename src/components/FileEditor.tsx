@@ -171,6 +171,11 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     }
   }, [onSave]);
 
+  const saveRef = useRef(handleSave);
+  useEffect(() => {
+    saveRef.current = handleSave;
+  }, [handleSave]);
+
   const handleClose = async () => {
     if (hasChanges) {
       setShowConfirmClose(true);
@@ -295,7 +300,7 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         if ((event.ctrlKey || event.metaKey) && event.key === 's') {
           event.preventDefault();
           event.stopPropagation();
-          handleSave();
+          saveRef.current();
           return true;
         }
         // Ctrl/Cmd + F
@@ -319,14 +324,17 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     // 3. Search & Standard Keymaps
     exts.push(keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]));
 
-    // 4. Formatting
     exts.push(indentUnit.of("    "));
 
     return exts;
-  }, [filename, handleSave]);
+  }, [filename]); // Stable across handleSave/onSave changes
 
   return (
-    <div className="absolute inset-0 z-50 bg-app-bg flex flex-col animate-in fade-in duration-200">
+    <div 
+      className="absolute inset-0 z-50 bg-app-bg flex flex-col animate-in fade-in duration-200"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* Toolbar */}
       <div className="h-12 border-b border-app-border bg-app-panel flex items-center justify-between px-4 shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
