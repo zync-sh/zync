@@ -935,20 +935,24 @@ pub async fn fs_rename(
              let extension = path_buf.extension().and_then(|s| s.to_str()).unwrap_or("");
              let mut counter = 1;
 
-             loop {
+             let mut found_unique = false;
+             while counter <= 100 {
                  let new_name = if extension.is_empty() {
                      format!("{} ({})", file_stem, counter)
                  } else {
-                     format!("{} ({}) .{}", file_stem, counter, extension)
+                     format!("{} ({}).{}", file_stem, counter, extension)
                  };
-                 let new_name = new_name.replace(" .", ".");
                  let candidate = parent.join(new_name).to_string_lossy().to_string();
                  if !std::path::Path::new(&candidate).exists() {
                      new_path = candidate;
+                     found_unique = true;
                      break;
                  }
                  counter += 1;
-                 if counter > 100 { break; }
+             }
+             
+             if !found_unique {
+                 return Err("Too many existing files, cannot auto-rename".to_string());
              }
         }
 
@@ -958,12 +962,27 @@ pub async fn fs_rename(
             .await
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-
-        if auto_rename.unwrap_or(false) {
-            new_path = state.file_system.get_unique_path_remote(&sftp, &new_path).await.map_err(|e| e.to_string())?;
-        }
+        let mut sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
+        
+        if auto_rename.unwrap_or(false) {
+            // Wrap the unique path check in the same timeout/reconnect pattern as the rename itself
+            match tokio::time::timeout(timeout_duration, state.file_system.get_unique_path_remote(&sftp, &new_path)).await {
+                Ok(Ok(unique_path)) => {
+                    new_path = unique_path;
+                }
+                Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
+                    println!("[FS] SFTP session closed during name check, retrying...");
+                    sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                    new_path = tokio::time::timeout(timeout_duration, state.file_system.get_unique_path_remote(&sftp, &new_path))
+                        .await
+                        .map_err(|e| format!("Timeout generating unique path: {}", e))?
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(Err(e)) => return Err(e.to_string()),
+                Err(_) => return Err("Timeout generating unique path".to_string()),
+            }
+        }
         
         match tokio::time::timeout(timeout_duration, state.file_system.rename_remote(&sftp, &old_path, &new_path)).await {
             Ok(Ok(_)) => Ok(()),
