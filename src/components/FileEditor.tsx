@@ -10,10 +10,13 @@ import { rust } from '@codemirror/lang-rust';
 import { yaml } from '@codemirror/lang-yaml';
 import { keymap, EditorView } from '@codemirror/view';
 import { searchKeymap, openSearchPanel } from '@codemirror/search';
-import { toggleComment } from '@codemirror/commands';
+import { toggleComment, defaultKeymap, historyKeymap } from '@codemirror/commands';
+import { StreamLanguage, indentUnit } from '@codemirror/language';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { autocompletion, completeAnyWord } from '@codemirror/autocomplete';
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror';
 import { useAppStore } from '../store/useAppStore';
-import { AlertTriangle, FileCode, Loader2, Save, X } from 'lucide-react';
+import { AlertTriangle, FileCode, Loader2, Save, X, Search } from 'lucide-react';
 import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
@@ -30,6 +33,18 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showConfirmClose, setShowConfirmClose] = useState(false);
+  const [showGoToLine, setShowGoToLine] = useState(false);
+  const [targetLine, setTargetLine] = useState('');
+
+  // Refs for Status Bar direct updates (performance)
+  const lineRef = useRef<HTMLSpanElement>(null);
+  const colRef = useRef<HTMLSpanElement>(null);
+  const sizeRef = useRef<HTMLSpanElement>(null);
+  const sizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasChangesRef = useRef(false);
+  const isSavingRef = useRef(false);
+
   const theme = useAppStore(state => state.settings.theme);
 
   // Custom Theme using Zync CSS variables
@@ -126,6 +141,50 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
       ".cm-activeLineGutter": {
         backgroundColor: "rgba(255, 255, 255, 0.03)",
         color: "var(--color-app-text)"
+      },
+      // Autocomplete Tooltip
+      ".cm-tooltip": {
+        backgroundColor: "var(--color-app-panel) !important",
+        border: "1px solid var(--color-app-border) !important",
+        borderRadius: "6px !important",
+        overflow: "hidden !important",
+        boxShadow: "0 4px 12px rgba(0, 0, 0, 0.5) !important",
+        padding: "4px !important"
+      },
+      ".cm-tooltip-autocomplete ul": {
+        fontFamily: "var(--font-mono) !important",
+        fontSize: "12px !important",
+        maxHeight: "250px !important"
+      },
+      ".cm-tooltip-autocomplete ul li": {
+        borderRadius: "4px !important",
+        padding: "4px 8px !important",
+        color: "var(--color-app-text) !important",
+        display: "flex !important",
+        alignItems: "center !important",
+        gap: "8px !important"
+      },
+      ".cm-tooltip-autocomplete ul li[aria-selected]": {
+        backgroundColor: "var(--color-app-accent) !important",
+        color: "white !important"
+      },
+      ".cm-completionIcon": {
+        opacity: "0.6",
+        width: "12px !important",
+        marginRight: "4px !important"
+      },
+      ".cm-completionIcon-word::after": {
+        content: "'abc'",
+        fontSize: "8px",
+        fontWeight: "bold"
+      },
+      ".cm-completionLabel": {
+        flex: 1
+      },
+      ".cm-completionDetail": {
+        fontStyle: "italic",
+        opacity: "0.5",
+        fontSize: "10px"
       }
     }, { dark: theme === 'dark' });
   }, [theme]);
@@ -137,7 +196,32 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   useEffect(() => {
     contentRef.current = initialContent;
     setHasChanges(false);
+    hasChangesRef.current = false;
   }, [initialContent]);
+
+  useEffect(() => {
+    return () => {
+      if (sizeTimeoutRef.current) clearTimeout(sizeTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
+    hasChangesRef.current = hasChanges;
+  }, [hasChanges]);
+
+  // Force Focus on Mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (editorRef.current?.view) {
+        editorRef.current.view.focus();
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [filename]);
 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
@@ -151,12 +235,23 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     }
   }, [onSave]);
 
+  const saveRef = useRef(handleSave);
+  useEffect(() => {
+    saveRef.current = handleSave;
+  }, [handleSave]);
+
   const handleClose = async () => {
     if (hasChanges) {
       setShowConfirmClose(true);
       return;
     }
     onClose();
+  };
+
+  const handleSearch = () => {
+    if (editorRef.current?.view) {
+      openSearchPanel(editorRef.current.view);
+    }
   };
 
   const onChange = useCallback(
@@ -171,6 +266,25 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     },
     [initialContent],
   );
+
+  const handleGoToLine = useCallback(() => {
+    const lineNum = parseInt(targetLine);
+    if (isNaN(lineNum) || !editorRef.current?.view) return;
+
+    const { view } = editorRef.current;
+    try {
+      const line = view.state.doc.line(Math.max(1, Math.min(lineNum, view.state.doc.lines)));
+      view.dispatch({
+        selection: { head: line.from, anchor: line.from },
+        scrollIntoView: true
+      });
+      setShowGoToLine(false);
+      setTargetLine('');
+      view.focus();
+    } catch (e) {
+      console.error("Failed to go to line:", e);
+    }
+  }, [targetLine]);
 
   // Detect Language extension - Memoized for performance
   const extensions = useMemo(() => {
@@ -217,7 +331,36 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
       case 'hpp':
         exts.push(cpp());
         break;
+      case 'sh':
+      case 'bash':
+      case 'zsh':
+      case 'fish':
+        exts.push(StreamLanguage.define(shell));
+        break;
     }
+
+    // 1b. Cursor Position & Filesize Tracker (Direct DOM updates)
+    exts.push(EditorView.updateListener.of((update) => {
+      if (update.selectionSet || update.docChanged) {
+        const state = update.state;
+        const pos = state.selection.main.head;
+        const line = state.doc.lineAt(pos);
+
+        if (lineRef.current) lineRef.current.textContent = line.number.toString();
+        if (colRef.current) colRef.current.textContent = (pos - line.from + 1).toString();
+
+        if (update.docChanged && sizeRef.current) {
+          // Debounce actual byte-size calculation (O(N) work)
+          if (sizeTimeoutRef.current) clearTimeout(sizeTimeoutRef.current);
+          sizeTimeoutRef.current = setTimeout(() => {
+            if (sizeRef.current) {
+              const bytes = new TextEncoder().encode(state.doc.toString()).length;
+              sizeRef.current.textContent = `${(bytes / 1024).toFixed(1)} KB`;
+            }
+          }, 300);
+        }
+      }
+    }));
 
     // 2. Raw Event interceptor for ALL editor shortcuts
     // This catches events before they bubble to the browser or system
@@ -234,7 +377,10 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         if ((event.ctrlKey || event.metaKey) && event.key === 's') {
           event.preventDefault();
           event.stopPropagation();
-          handleSave();
+          // Guard save against overlaps and non-dirty saves
+          if (hasChangesRef.current && !isSavingRef.current) {
+            saveRef.current();
+          }
           return true;
         }
         // Ctrl/Cmd + F
@@ -244,18 +390,37 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
           openSearchPanel(view);
           return true;
         }
+        // Ctrl/Cmd + Shift + G (Go to Line)
+        // Switch to Shift+G to avoid conflict with searches 'Find Next' (Ctrl+G)
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'g') {
+          event.preventDefault();
+          event.stopPropagation();
+          setShowGoToLine(true);
+          return true;
+        }
         return false;
       }
     }));
 
-    // 3. Search Shortcuts (Ctrl + F)
-    exts.push(keymap.of(searchKeymap));
+    // 3. Search & Standard Keymaps
+    exts.push(keymap.of([...searchKeymap, ...defaultKeymap, ...historyKeymap]));
+
+    exts.push(indentUnit.of("    "));
+
+    // 5. Word Completion (buffer-based)
+    exts.push(autocompletion({
+      override: [completeAnyWord]
+    }));
 
     return exts;
-  }, [filename, handleSave]);
+  }, [filename]); // Stable across handleSave/onSave changes
 
   return (
-    <div className="absolute inset-0 z-50 bg-app-bg flex flex-col animate-in fade-in duration-200">
+    <div
+      className="absolute inset-0 z-50 bg-app-bg flex flex-col animate-in fade-in duration-200"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       {/* Toolbar */}
       <div className="h-12 border-b border-app-border bg-app-panel flex items-center justify-between px-4 shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
@@ -272,6 +437,17 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleSearch}
+            title="Search (Ctrl+F) | Find Next (Ctrl+G)"
+            aria-label="Search"
+            className="text-app-muted hover:text-app-text"
+          >
+            <Search size={18} />
+          </Button>
+          <div className="h-4 w-px bg-app-border mx-1" />
           <Button
             variant="primary"
             size="sm"
@@ -294,10 +470,11 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto relative">
+      <div className="flex-1 overflow-hidden relative">
         <CodeMirror
+          key={filename} // Force refresh on file switch
           ref={editorRef}
-          value={initialContent} // initialization only
+          value={contentRef.current}
           height="100%"
           theme={editorTheme}
           autoFocus={true}
@@ -311,13 +488,74 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
             indentOnInput: true,
             bracketMatching: true,
             closeBrackets: true,
-            autocompletion: true,
+            autocompletion: false, // Using custom extension instead
             highlightActiveLine: true,
             highlightSelectionMatches: true,
             tabSize: 4,
           }}
         />
       </div>
+
+      {/* Status Bar */}
+      <div className="h-7 bg-app-surface border-t border-app-border flex items-center justify-between px-3 text-[10px] text-app-muted font-medium select-none">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px]">LN</span>
+            <span ref={lineRef} className="text-app-text min-w-[12px]">1</span>
+            <span className="opacity-60 text-[9px] ml-1">COL</span>
+            <span ref={colRef} className="text-app-text min-w-[12px]">1</span>
+          </div>
+          <div className="h-3 w-px bg-app-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px] uppercase">Filesize</span>
+            <span ref={sizeRef} className="text-app-text">{(new TextEncoder().encode(initialContent).length / 1024).toFixed(1)} KB</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px] uppercase">Language</span>
+            <span className="text-app-accent font-semibold">{filename.split('.').pop()?.toUpperCase() || 'TEXT'}</span>
+          </div>
+          <div className="h-3 w-px bg-app-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className="opacity-60 text-[9px] uppercase">Encoding</span>
+            <span className="text-app-text">UTF-8</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Go To Line Modal */}
+      <Modal
+        isOpen={showGoToLine}
+        onClose={() => setShowGoToLine(false)}
+        title="Go to Line"
+        width="max-w-[280px]"
+      >
+        <div className="space-y-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="goToLineInput" className="text-[11px] font-medium text-app-muted uppercase tracking-wider">Line Number</label>
+            <input
+              id="goToLineInput"
+              autoFocus
+              type="text"
+              placeholder="e.g. 42"
+              value={targetLine}
+              onChange={(e) => setTargetLine(e.target.value.replace(/\D/g, ''))}
+              onKeyDown={(e) => e.key === 'Enter' && handleGoToLine()}
+              className="w-full bg-app-surface border border-app-border rounded px-3 py-2 text-sm text-app-text outline-none focus:border-app-accent transition-colors"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setShowGoToLine(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleGoToLine} className="px-6">
+              Go
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={showConfirmClose}

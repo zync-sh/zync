@@ -152,6 +152,7 @@ pub fn run() {
             commands::ssh_migrate_all_keys,
             commands::ssh_disconnect,
             commands::terminal_write,
+            commands::terminal_navigate,
             commands::terminal_resize,
             commands::terminal_create,
             commands::terminal_close,
