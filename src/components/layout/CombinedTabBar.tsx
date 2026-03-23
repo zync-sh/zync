@@ -88,6 +88,11 @@ export function CombinedTabBar({
                         <div
                             key={term.id}
                             onClick={() => onTabSelect('terminal', term.id)}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setContextMenu({ x: e.clientX, y: e.clientY, feature: `terminal:${term.id}` });
+                            }}
                             data-tauri-drag-region="false"
                             className={cn(
                                 "flex items-center gap-2 px-3 py-1.5 h-7 text-xs font-medium rounded-md transition-all cursor-pointer min-w-[100px] max-w-[200px] group border border-transparent drag-none shrink-0",
@@ -112,23 +117,23 @@ export function CombinedTabBar({
                     );
                 })}
 
-                {/* 2. Feature Tabs (Pinned & Open) */}
-                {visibleFeatures.map(feature => {
-                    const config = FEATURE_CONFIG[feature];
+                {/* 2. Feature Tabs */}
+                {visibleFeatures.map(featureId => {
+                    const config = FEATURE_CONFIG[featureId];
                     if (!config) return null;
-                    const isActive = activeView === feature;
-                    const isPinned = pinnedFeatures.includes(feature);
+
+                    const isActive = activeView === config.view;
+                    const isPinned = pinnedFeatures.includes(featureId);
                     const Icon = config.icon;
 
                     return (
                         <div
-                            key={feature}
+                            key={featureId}
                             onClick={() => onTabSelect(config.view)}
                             onContextMenu={(e) => {
                                 e.preventDefault();
-                                e.stopPropagation(); // Stop propagation to document
-                                console.log('[CombinedTabBar] Right-click on feature:', feature);
-                                setContextMenu({ x: e.clientX, y: e.clientY, feature });
+                                e.stopPropagation();
+                                setContextMenu({ x: e.clientX, y: e.clientY, feature: featureId });
                             }}
                             data-tauri-drag-region="false"
                             className={cn(
@@ -149,7 +154,7 @@ export function CombinedTabBar({
                             {/* Close Button (Hidden if Pinned) */}
                             {!isPinned && (
                                 <button
-                                    onClick={(e) => { e.stopPropagation(); onFeatureClose(feature); }}
+                                    onClick={(e) => { e.stopPropagation(); onFeatureClose(featureId); }}
                                     className={cn(
                                         "p-0.5 rounded hover:bg-app-bg hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100",
                                         isActive && "opacity-100"
@@ -221,9 +226,6 @@ export function CombinedTabBar({
 
                     {isDropdownOpen && (
                         <div className="absolute top-full right-0 mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
-
-
-
                             <button
                                 onClick={() => {
                                     onNewTerminal();
@@ -269,7 +271,6 @@ export function CombinedTabBar({
                                 );
                             })}
 
-                            {/* Plugin Panels Section */}
                             {pluginPanels.length > 0 && (
                                 <>
                                     <div className="h-[1px] bg-app-border/50 my-1 mx-2" />

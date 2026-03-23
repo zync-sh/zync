@@ -5,6 +5,9 @@ import { destroyTerminalInstance } from '../components/Terminal';
 export interface TerminalTab {
     id: string;
     title: string;
+    initialPath?: string;
+    lastKnownCwd?: string;
+    isSynced?: boolean;
 }
 
 export interface TerminalSlice {
@@ -12,14 +15,18 @@ export interface TerminalSlice {
     terminals: Record<string, TerminalTab[]>;
     /** Keyed by connectionId, stores the ID of the currently active terminal tab */
     activeTerminalIds: Record<string, string | null>;
+    /** Keyed by connectionId, stores the ID of the terminal that is currently synced with the File Manager */
+    syncedTerminalId: Record<string, string | null>;
 
     // Actions
     /**
      * Creates a new terminal tab for a specific connection.
      * @param connectionId The ID of the connection to create the terminal for.
+     * @param initialPath Optional starting directory.
+     * @param isSynced Whether this terminal should sync with File Manager navigation.
      * @returns The generated ID of the new terminal.
      */
-    createTerminal: (connectionId: string) => string;
+    createTerminal: (connectionId: string, initialPath?: string, isSynced?: boolean) => string;
 
     /**
      * Ensures at least one terminal exists for a connection. Creates one if none exist.
@@ -46,6 +53,16 @@ export interface TerminalSlice {
      * @param connectionId The ID of the connection to clear terminals for.
      */
     clearTerminals: (connectionId: string) => void;
+
+    /**
+     * Updates the last known CWD of a terminal.
+     */
+    setTerminalCwd: (connectionId: string, termId: string, path: string) => void;
+
+    /**
+     * Updates the initialPath of a terminal tab record.
+     */
+    setTerminalInitialPath: (connectionId: string, termId: string, path: string) => void;
 }
 
 // @ts-ignore
@@ -54,13 +71,25 @@ const ipc = window.ipcRenderer;
 export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> = (set, get) => ({
     terminals: {},
     activeTerminalIds: {},
+    syncedTerminalId: {},
 
     /** @inheritdoc */
-    createTerminal: (connectionId) => {
+    createTerminal: (connectionId, initialPath, isSynced) => {
         const newId = `term-${crypto.randomUUID()}`;
         set(state => {
             const currentTabs = state.terminals[connectionId] || [];
-            const newTab: TerminalTab = { id: newId, title: `Terminal ${currentTabs.length + 1}` };
+            const newTab: TerminalTab = { 
+                id: newId, 
+                title: isSynced ? `Synced Terminal` : `Terminal ${currentTabs.length + 1}`,
+                initialPath,
+                isSynced
+            };
+
+            const nextSyncedIds = { ...state.syncedTerminalId };
+            if (isSynced) {
+                // If we are creating a new synced terminal, it becomes the primary synced one for this connection
+                nextSyncedIds[connectionId] = newId;
+            }
 
             return {
                 terminals: {
@@ -70,7 +99,8 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 activeTerminalIds: {
                     ...state.activeTerminalIds,
                     [connectionId]: newId
-                }
+                },
+                syncedTerminalId: nextSyncedIds
             };
         });
         return newId;
@@ -103,6 +133,12 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
             }
 
+            // Cleanup synced terminal reference if closed
+            const nextSyncedIds = { ...state.syncedTerminalId };
+            if (nextSyncedIds[connectionId] === termId) {
+                nextSyncedIds[connectionId] = null;
+            }
+
             // 🗑️ Free AI conversation history for the closed tab (memory-safe)
             const { [termId]: _, ...nextConversations } = state.aiConversations;
 
@@ -118,6 +154,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                     ...state.activeTerminalIds,
                     [connectionId]: newActiveId
                 },
+                syncedTerminalId: nextSyncedIds,
                 aiConversations: nextConversations,
                 aiDisplayHistory: nextDisplay,
             };
@@ -150,6 +187,9 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             const newActiveIds = { ...state.activeTerminalIds };
             delete newActiveIds[connectionId];
 
+            const newSyncedIds = { ...state.syncedTerminalId };
+            delete newSyncedIds[connectionId];
+
             // 🗑️ Prune AI history for all cleared terminals
             const termIdsToRemove = new Set(tabs.map(t => t.id));
             const nextConversations = Object.fromEntries(
@@ -162,8 +202,41 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             return {
                 terminals: newTerminals,
                 activeTerminalIds: newActiveIds,
+                syncedTerminalId: newSyncedIds,
                 aiConversations: nextConversations,
                 aiDisplayHistory: nextDisplay
+            };
+        });
+    },
+
+    /** @inheritdoc */
+    setTerminalCwd: (connectionId, termId, path) => {
+        set(state => {
+            const currentTabs = state.terminals[connectionId] || [];
+            const newTabs = currentTabs.map(t => 
+                t.id === termId ? { ...t, lastKnownCwd: path } : t
+            );
+            return {
+                terminals: {
+                    ...state.terminals,
+                    [connectionId]: newTabs
+                }
+            };
+        });
+    },
+
+    /** @inheritdoc */
+    setTerminalInitialPath: (connectionId, termId, path) => {
+        set(state => {
+            const currentTabs = state.terminals[connectionId] || [];
+            const newTabs = currentTabs.map(t => 
+                t.id === termId ? { ...t, initialPath: path } : t
+            );
+            return {
+                terminals: {
+                    ...state.terminals,
+                    [connectionId]: newTabs
+                }
             };
         });
     }

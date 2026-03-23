@@ -80,6 +80,7 @@ impl PtyManager {
         rows: u16,
         app_handle: AppHandle,
         shell_override: Option<String>,
+        cwd: Option<String>,
     ) -> Result<()> {
         println!(
             "[PTY-DEBUG] create_local_session called for {} with shell override: {:?}",
@@ -141,6 +142,10 @@ impl PtyManager {
         let mut cmd = CommandBuilder::new(&shell);
         for arg in &args {
             cmd.arg(arg);
+        }
+
+        if let Some(path) = cwd {
+            cmd.cwd(path);
         }
 
         // Add interactive flag if not already present
@@ -243,6 +248,7 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
+        cwd: Option<String>,
     ) -> Result<()> {
         println!("[PTY] Creating remote session for {}", term_id);
 
@@ -268,6 +274,15 @@ impl PtyManager {
             .request_shell(false)
             .await
             .map_err(|e| anyhow!("Failed to request shell: {}", e))?;
+
+        // If cwd is provided, send a cd command immediately
+        if let Some(path) = cwd {
+            let cd_cmd = format!("cd '{}' && clear\r", path.replace("'", "'\\''"));
+            channel
+                .data(cd_cmd.as_bytes())
+                .await
+                .map_err(|e| anyhow!("Failed to send initial cd command: {}", e))?;
+        }
 
         // Create channels for communication
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
