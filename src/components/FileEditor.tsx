@@ -35,12 +35,13 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   const [showConfirmClose, setShowConfirmClose] = useState(false);
   const [showGoToLine, setShowGoToLine] = useState(false);
   const [targetLine, setTargetLine] = useState('');
-  
+
   // Refs for Status Bar direct updates (performance)
   const lineRef = useRef<HTMLSpanElement>(null);
   const colRef = useRef<HTMLSpanElement>(null);
   const sizeRef = useRef<HTMLSpanElement>(null);
   const sizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const hasChangesRef = useRef(false);
   const isSavingRef = useRef(false);
 
@@ -197,7 +198,13 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
     setHasChanges(false);
     hasChangesRef.current = false;
   }, [initialContent]);
-  
+
+  useEffect(() => {
+    return () => {
+      if (sizeTimeoutRef.current) clearTimeout(sizeTimeoutRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     isSavingRef.current = isSaving;
   }, [isSaving]);
@@ -338,18 +345,18 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         const state = update.state;
         const pos = state.selection.main.head;
         const line = state.doc.lineAt(pos);
-        
+
         if (lineRef.current) lineRef.current.textContent = line.number.toString();
         if (colRef.current) colRef.current.textContent = (pos - line.from + 1).toString();
-        
+
         if (update.docChanged && sizeRef.current) {
           // Debounce actual byte-size calculation (O(N) work)
           if (sizeTimeoutRef.current) clearTimeout(sizeTimeoutRef.current);
           sizeTimeoutRef.current = setTimeout(() => {
-             if (sizeRef.current) {
-                const bytes = new TextEncoder().encode(state.doc.toString()).length;
-                sizeRef.current.textContent = `${(bytes / 1024).toFixed(1)} KB`;
-             }
+            if (sizeRef.current) {
+              const bytes = new TextEncoder().encode(state.doc.toString()).length;
+              sizeRef.current.textContent = `${(bytes / 1024).toFixed(1)} KB`;
+            }
           }, 300);
         }
       }
@@ -409,7 +416,7 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
   }, [filename]); // Stable across handleSave/onSave changes
 
   return (
-    <div 
+    <div
       className="absolute inset-0 z-50 bg-app-bg flex flex-col animate-in fade-in duration-200"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
@@ -500,11 +507,11 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
           </div>
           <div className="h-3 w-px bg-app-border/50" />
           <div className="flex items-center gap-1.5">
-             <span className="opacity-60 text-[9px] uppercase">Filesize</span>
-             <span ref={sizeRef} className="text-app-text">{(new TextEncoder().encode(initialContent).length / 1024).toFixed(1)} KB</span>
+            <span className="opacity-60 text-[9px] uppercase">Filesize</span>
+            <span ref={sizeRef} className="text-app-text">{(new TextEncoder().encode(initialContent).length / 1024).toFixed(1)} KB</span>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <span className="opacity-60 text-[9px] uppercase">Language</span>
