@@ -8,6 +8,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { ContextMenu } from '../ui/ContextMenu';
+import { ConfirmModal } from '../ui/ConfirmModal';
 import { WindowControls } from './WindowControls';
 
 // Lazy Load Modals
@@ -166,6 +167,7 @@ export function Sidebar({ className }: { className?: string }) {
     const addFolder = useAppStore(state => state.addFolder);
     const updateConnectionFolder = useAppStore(state => state.updateConnectionFolder);
     const deleteFolder = useAppStore(state => state.deleteFolder);
+    const deleteConnection = useAppStore(state => state.deleteConnection);
     const renameFolder = useAppStore(state => state.renameFolder);
     const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
     const openAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(true);
@@ -193,6 +195,8 @@ export function Sidebar({ className }: { className?: string }) {
     // Add Menu State
     const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
+    const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
+    const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
 
     const addMenuRef = useRef<HTMLDivElement>(null);
 
@@ -566,6 +570,7 @@ export function Sidebar({ className }: { className?: string }) {
                                             conn={conn}
                                             isCollapsed={false} // Always render as if expanded inside the wrapper
                                             onEdit={openEditConnection}
+                                            onDelete={(c) => setDeletingConnection(c)}
                                             onViewDetails={(c: Connection) => setViewingDetailsId(c.id)}
                                         />
                                     ))}
@@ -604,9 +609,10 @@ export function Sidebar({ className }: { className?: string }) {
                                             toggleFolder={toggleFolder}
                                             updateConnectionFolder={updateConnectionFolder}
                                             deleteFolder={deleteFolder}
+                                            onDeleteFolder={(f) => setDeletingFolder(f)}
                                             onRenameFolder={handleRenameFolder}
                                             renameFolder={renameFolder}
-                                            connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
+                                            connectionItemProps={{ onEdit: openEditConnection, onDelete: (c: Connection) => setDeletingConnection(c), onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
                                         />
                                     ))}
                                     {treeRoot.connections.map(conn => (
@@ -615,6 +621,7 @@ export function Sidebar({ className }: { className?: string }) {
                                             conn={conn}
                                             isCollapsed={false}
                                             onEdit={openEditConnection}
+                                            onDelete={(c: Connection) => setDeletingConnection(c)}
                                             onViewDetails={c => setViewingDetailsId(c.id)}
                                         />
                                     ))}
@@ -634,9 +641,10 @@ export function Sidebar({ className }: { className?: string }) {
                                     toggleFolder={toggleFolder}
                                     updateConnectionFolder={updateConnectionFolder}
                                     deleteFolder={deleteFolder}
+                                    onDeleteFolder={(f) => setDeletingFolder(f)}
                                     onRenameFolder={handleRenameFolder}
                                     renameFolder={renameFolder}
-                                    connectionItemProps={{ onEdit: openEditConnection, onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
+                                    connectionItemProps={{ onEdit: openEditConnection, onDelete: (c: Connection) => setDeletingConnection(c), onViewDetails: (c: Connection) => setViewingDetailsId(c.id) }}
                                 />
                             ))}
                             {treeRoot.connections.map(conn => (
@@ -645,6 +653,7 @@ export function Sidebar({ className }: { className?: string }) {
                                     conn={conn}
                                     isCollapsed={false}
                                     onEdit={openEditConnection}
+                                    onDelete={(c: Connection) => setDeletingConnection(c)}
                                     onViewDetails={c => setViewingDetailsId(c.id)}
                                 />
                             ))}
@@ -735,9 +744,7 @@ export function Sidebar({ className }: { className?: string }) {
                                 icon: <Trash2 size={14} />,
                                 variant: 'danger',
                                 action: () => {
-                                    if (confirm(`Delete folder "${folderContextMenu.folderName}"? Connections will be ungrouped.`)) {
-                                        deleteFolder(folderContextMenu.folderName);
-                                    }
+                                    setDeletingFolder(folderContextMenu.folderName);
                                     setFolderContextMenu(null);
                                 }
                             }
@@ -766,6 +773,46 @@ export function Sidebar({ className }: { className?: string }) {
                     }
                     setIsRenameFolderModalOpen(false);
                 }}
+            />
+
+            {/* Delete Connection Confirmation */}
+            <ConfirmModal
+                isOpen={!!deletingConnection}
+                onClose={() => setDeletingConnection(null)}
+                onConfirm={() => {
+                    if (deletingConnection) {
+                        deleteConnection(deletingConnection.id);
+                        setDeletingConnection(null);
+                    }
+                }}
+                title="Delete Connection"
+                message={
+                    <span className="text-app-text/90">
+                        Are you sure you want to delete connection <span className="text-app-accent font-bold">"{deletingConnection?.name || deletingConnection?.host}"</span>? This action cannot be undone.
+                    </span>
+                }
+                confirmLabel="Delete"
+                variant="danger"
+            />
+
+            {/* Delete Folder Confirmation */}
+            <ConfirmModal
+                isOpen={!!deletingFolder}
+                onClose={() => setDeletingFolder(null)}
+                onConfirm={() => {
+                    if (deletingFolder) {
+                        deleteFolder(deletingFolder);
+                        setDeletingFolder(null);
+                    }
+                }}
+                title="Delete Folder"
+                message={
+                    <span className="text-app-text/90">
+                        Delete folder <span className="text-app-accent font-bold">"{deletingFolder}"</span>? Connections within this folder will be ungrouped.
+                    </span>
+                }
+                confirmLabel="Delete"
+                variant="danger"
             />
         </div >
     );
@@ -866,13 +913,12 @@ function CreateFolderModal({ isOpen, onClose, onCreate }: { isOpen: boolean; onC
 }
 
 // Helper Component for Connection Items
-function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Connection; isCollapsed: boolean; onEdit: (c: Connection) => void; onViewDetails: (c: Connection) => void }) {
+function ConnectionItem({ conn, isCollapsed, onEdit, onDelete, onViewDetails }: { conn: Connection; isCollapsed: boolean; onEdit: (c: Connection) => void; onDelete: (c: Connection) => void; onViewDetails: (c: Connection) => void }) {
     // Zustand Hooks
     const activeConnectionId = useAppStore(state => state.activeConnectionId);
     const openTab = useAppStore(state => state.openTab);
     const connect = useAppStore(state => state.connect);
     const disconnect = useAppStore(state => state.disconnect);
-    const deleteConnection = useAppStore(state => state.deleteConnection);
     const tabs = useAppStore(state => state.tabs);
 
     const hasTab = useMemo(() => tabs.some((t: any) => t.connectionId === conn.id), [tabs, conn.id]);
@@ -1105,11 +1151,7 @@ function ConnectionItem({ conn, isCollapsed, onEdit, onViewDetails }: { conn: Co
                                 label: "Delete",
                                 icon: <Trash2 size={14} />,
                                 variant: "danger",
-                                action: () => {
-                                    if (confirm('Are you sure you want to delete this connection?')) {
-                                        deleteConnection(conn.id);
-                                    }
-                                }
+                                action: () => onDelete(conn)
                             }
                         ]}
                         onClose={() => setContextMenu(null)}
@@ -1199,6 +1241,7 @@ function FolderItem({
     toggleFolder,
     updateConnectionFolder,
     deleteFolder,
+    onDeleteFolder,
     onRenameFolder,
     renameFolder, // Direct context action for DnD
     connectionItemProps
@@ -1210,9 +1253,10 @@ function FolderItem({
     toggleFolder: (p: string) => void;
     updateConnectionFolder: (id: string, f: string) => void;
     deleteFolder: (f: string) => void;
+    onDeleteFolder: (f: string) => void;
     onRenameFolder: (f: string) => void;
     renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
-    connectionItemProps: { onEdit: any; onViewDetails: any }
+    connectionItemProps: { onEdit: any; onDelete: any; onViewDetails: any }
 }) {
     const isExpanded = expandedFolders.has(node.path);
 
@@ -1315,9 +1359,7 @@ function FolderItem({
                                 className="h-5 w-5 hover:text-red-400"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (confirm(`Delete folder "${node.name}"?`)) {
-                                        deleteFolder(node.path);
-                                    }
+                                    onDeleteFolder(node.path);
                                 }}
                             >
                                 <Trash2 className="h-3 w-3" />
@@ -1348,6 +1390,7 @@ function FolderItem({
                                 onRenameFolder={onRenameFolder}
                                 renameFolder={renameFolder}
                                 connectionItemProps={connectionItemProps}
+                                onDeleteFolder={onDeleteFolder}
                             />
                         ))}
                         {node.connections.map((conn: Connection) => (
@@ -1356,6 +1399,7 @@ function FolderItem({
                                 conn={conn}
                                 isCollapsed={isCollapsed}
                                 onEdit={connectionItemProps.onEdit}
+                                onDelete={connectionItemProps.onDelete}
                                 onViewDetails={connectionItemProps.onViewDetails}
                             />
                         ))}

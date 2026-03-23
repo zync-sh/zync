@@ -4,6 +4,23 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Editor Polish Pass**: Enhanced `FileEditor.tsx` with high-performance "Pro" features.
+- **Shell Script Support**: Added syntax highlighting for `.sh`, `.bash`, `.zsh`, and `.fish` files. ([8e7c173])
+- **Interactive Status Bar**: Real-time Line/Column, Filesize, and Language tracking using direct DOM refs for zero-render performance. ([21ff87a])
+- **Go to Line (Ctrl+G)**: Implementation of a modal and shortcut for fast line migration. ([21ff87a])
+- **Search & Replace (Ctrl+F)**: Integrated CodeMirror search panels with a dedicated toolbar button. ([7c0035f])
+- **Word Completion**: Buffer-based autocompletion for a lightweight "LSP-lite" typing experience. ([ddb0687])
+- **UI Refinement**: Styled the editor autocompletion menu to match the Zync theme with premium typography and accent highlights. ([8e7c173])
+
+### Fixed
+
+- **Conflict Modal Guards**: Added re-entrancy protection to prevent duplicate operations during resolution. ([21ff87a])
+- **Editor Focus Stability**: Fixed a regression that caused the cursor to disappear or focus to be lost when clicking or moving the pointer. ([21ff87a])
+- **State Persistence**: Fixed a bug where the editor would reset to `initialContent` during rapid typing. ([21ff87a])
+- **Event Propagation Shield**: Implemented `stopPropagation` on the editor container to prevent parent components from interfering with keyboard events. ([21ff87a])
+
 ## [2.7.0] - 2026-03-22
 
 ### Added
@@ -372,5 +389,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 [82c1612]: https://github.com/zync-sh/zync/commit/82c1612
 [f28e04a]: https://github.com/zync-sh/zync/commit/f28e04a
 [3dc9898]: https://github.com/zync-sh/zync/commit/3dc9898
+[8e7c173]: https://github.com/zync-sh/zync/commit/8e7c173
+[ddb0687]: https://github.com/zync-sh/zync/commit/ddb0687
+[7c0035f]: https://github.com/zync-sh/zync/commit/7c0035f
+[21ff87a]: https://github.com/zync-sh/zync/commit/21ff87a
 
 
