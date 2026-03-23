@@ -6,6 +6,7 @@ export interface TerminalTab {
     id: string;
     title: string;
     initialPath?: string;
+    lastKnownCwd?: string;
     isSynced?: boolean;
 }
 
@@ -52,6 +53,11 @@ export interface TerminalSlice {
      * @param connectionId The ID of the connection to clear terminals for.
      */
     clearTerminals: (connectionId: string) => void;
+
+    /**
+     * Updates the last known CWD of a terminal.
+     */
+    setTerminalCwd: (connectionId: string, termId: string, path: string) => void;
 
     /**
      * Updates the initialPath of a terminal tab record.
@@ -199,6 +205,22 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 syncedTerminalId: newSyncedIds,
                 aiConversations: nextConversations,
                 aiDisplayHistory: nextDisplay
+            };
+        });
+    },
+
+    /** @inheritdoc */
+    setTerminalCwd: (connectionId, termId, path) => {
+        set(state => {
+            const currentTabs = state.terminals[connectionId] || [];
+            const newTabs = currentTabs.map(t => 
+                t.id === termId ? { ...t, lastKnownCwd: path } : t
+            );
+            return {
+                terminals: {
+                    ...state.terminals,
+                    [connectionId]: newTabs
+                }
             };
         });
     },

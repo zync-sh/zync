@@ -1233,6 +1233,12 @@ function RenameFolderModal({ isOpen, onClose, currentName, currentTags, onRename
     );
 }
 
+interface ConnectionItemProps {
+    onEdit: (conn: Connection) => void;
+    onDelete: (conn: Connection) => void;
+    onViewDetails: (conn: Connection) => void;
+}
+
 function FolderItem({
     node,
     isCollapsed,
@@ -1256,7 +1262,7 @@ function FolderItem({
     onDeleteFolder: (f: string) => void;
     onRenameFolder: (f: string) => void;
     renameFolder: (oldName: string, newName: string, newTags?: string[]) => void;
-    connectionItemProps: { onEdit: any; onDelete: any; onViewDetails: any }
+    connectionItemProps: ConnectionItemProps;
 }) {
     const isExpanded = expandedFolders.has(node.path);
 

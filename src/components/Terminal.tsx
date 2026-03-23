@@ -377,14 +377,15 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   };
 
   const activeConnectionId = connectionId || globalActiveId;
+  const terminalKey = activeConnectionId || 'local';
 
   // Find connection status
-  const isLocal = activeConnectionId === 'local';
-  const connection = !isLocal ? connections.find((c: Connection) => c.id === activeConnectionId) : null;
+  const isLocal = terminalKey === 'local';
+  const connection = !isLocal ? connections.find((c: Connection) => c.id === terminalKey) : null;
   const isConnected = isLocal || connection?.status === 'connected';
 
-  // Use termId if provided, otherwise fallback to connectionId
-  const sessionId = termId || activeConnectionId;
+  // Use termId if provided, otherwise fallback to terminalKey
+  const sessionId = termId || terminalKey;
 
   // Apply Settings Effect
   useEffect(() => {
@@ -576,10 +577,10 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         term.reset();
       }
 
-      // Get initial path if any
+      // Get initial/current path if any
       const terminals = useAppStore.getState().terminals;
-      const terminalTab = terminals[connectionId || 'local']?.find(t => t.id === sessionId);
-      const initialPath = terminalTab?.initialPath;
+      const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
+      const spawnCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
 
       window.ipcRenderer
         .invoke('terminal:create', {
@@ -588,7 +589,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           rows: term.rows,
           cols: term.cols,
           shell: shellSetting,
-          cwd: initialPath,
+          cwd: spawnCwd,
         })
         .catch((err) => {
           console.error('Failed to create terminal:', err);
@@ -613,17 +614,22 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           term.reset();
 
           // Get shell preference for local terminals on Windows
-          const isLocalTerminal = (connectionId || 'local') === 'local';
+          const isLocalTerminal = terminalKey === 'local';
           const shellSetting = isLocalTerminal ? settings.localTerm?.windowsShell : undefined;
+
+          // Resolve CWD for restart
+          const terminals = useAppStore.getState().terminals;
+          const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
+          const restartCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
 
           // Respawn the terminal session
           window.ipcRenderer
             .invoke('terminal:create', {
               termId: sessionId,
-              connectionId: connectionId || 'local',
               rows: term.rows,
               cols: term.cols,
               shell: shellSetting,
+              cwd: restartCwd,
             })
             .catch((err) => {
               console.error('Failed to restart terminal:', err);

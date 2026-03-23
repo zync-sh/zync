@@ -151,13 +151,11 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // Sync terminal to FM navigation if a synced terminal is active
   useEffect(() => {
     if (syncedTerminalId && currentPath && isVisible) {
-      const isLocal = (activeConnectionId === 'local' || !activeConnectionId);
-      const cdCmd = isLocal 
-        ? `cd "${currentPath.replace(/"/g, '\\"')}"\r`
-        : `cd '${currentPath.replace(/'/g, "'\\''")}' && clear\r`;
-      
       console.log('[FM] Syncing terminal to:', currentPath);
-      window.ipcRenderer.invoke('terminal:write', { termId: syncedTerminalId, data: cdCmd });
+      // Use the safe navigation IPC instead of manual string injection
+      window.ipcRenderer.invoke('terminal:navigate', { termId: syncedTerminalId, path: currentPath });
+      // Update store tracking
+      useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', syncedTerminalId, currentPath);
     }
   }, [currentPath, syncedTerminalId, activeConnectionId, isVisible]);
 
@@ -1016,8 +1014,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               : currentPath;
             
             const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
-            // Match if paths are identical, OR if it's the first/default terminal (initialPath undefined)
-            const existing = terminals.find(t => t.initialPath === targetPath && !t.isSynced);
+            // Match if current CWD is identical, OR if initial path matches, OR it's the adopted default
+            const existing = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
             const defaultTerm = !existing ? terminals.find(t => t.initialPath === undefined && !t.isSynced && terminals.length === 1) : null;
 
             if (existing) {
@@ -1026,15 +1024,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                 // Adopt the default terminal
                 useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', defaultTerm.id);
                 useAppStore.getState().setTerminalInitialPath(activeConnectionId || 'local', defaultTerm.id, targetPath);
+                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', defaultTerm.id, targetPath);
                 
-                const isLocal = activeConnectionId === 'local' || !activeConnectionId;
-                const cdCmd = isLocal 
-                    ? `cd "${targetPath.replace(/"/g, '\\"')}"\r`
-                    : `cd '${targetPath.replace(/'/g, "'\\''")}' && clear\r`;
-                window.ipcRenderer.invoke('terminal:write', { termId: defaultTerm.id, data: cdCmd });
+                // Use the safe navigation IPC instead of manual string injection
+                window.ipcRenderer.invoke('terminal:navigate', { termId: defaultTerm.id, path: targetPath });
             } else {
                 const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
                 useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
             }
 
             if (activeTabId) {
@@ -1059,8 +1056,12 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
             let termId: string;
             if (existingSynced) {
                 termId = existingSynced.id;
+                // CodeRabbit: Update reused synced terminal path and trigger navigation
+                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
+                window.ipcRenderer.invoke('terminal:navigate', { termId, path: targetPath });
             } else {
                 termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath, true);
+                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
             }
 
             if (activeTabId) {
