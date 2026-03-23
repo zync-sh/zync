@@ -13,6 +13,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Search & Replace (Ctrl+F)**: Integrated CodeMirror search panels with a dedicated toolbar button. ([7c0035f])
 - **Word Completion**: Buffer-based autocompletion for a lightweight "LSP-lite" typing experience. ([ddb0687])
 - **UI Refinement**: Styled the editor autocompletion menu to match the Zync theme with premium typography and accent highlights. ([8e7c173])
+- **Custom Deletion Modal**: Replaced native browser `confirm()` with a themed `ConfirmModal` in the sidebar, featuring highlighted host and folder names. ([f1aaa84])
 
 ### Fixed
 
@@ -393,5 +394,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [ddb0687]: https://github.com/zync-sh/zync/commit/ddb0687
 [7c0035f]: https://github.com/zync-sh/zync/commit/7c0035f
 [21ff87a]: https://github.com/zync-sh/zync/commit/21ff87a
+[f1aaa84]: https://github.com/zync-sh/zync/commit/f1aaa84
 
 
