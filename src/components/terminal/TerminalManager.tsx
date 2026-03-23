@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { TerminalComponent } from '../Terminal';
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
-import { Terminal as TerminalIcon, Plus, X } from 'lucide-react';
+import { Terminal as TerminalIcon, Plus, X, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AiCommandBar } from './AiCommandBar';
 import { once, type UnlistenFn } from '@tauri-apps/api/event';
@@ -201,7 +201,11 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
                                         : "bg-transparent border-transparent text-app-muted hover:bg-app-surface/50 hover:text-app-text"
                                 )}
                             >
-                                <TerminalIcon size={11} className={cn(activeTabId === tab.id ? "text-app-accent" : "text-app-muted group-hover:text-app-text opacity-70 group-hover:opacity-100")} />
+                                {tab.isSynced ? (
+                                    <Zap size={11} className="text-yellow-500 fill-yellow-500/20" />
+                                ) : (
+                                    <TerminalIcon size={11} className={cn(activeTabId === tab.id ? "text-app-accent" : "text-app-muted group-hover:text-app-text opacity-70 group-hover:opacity-100")} />
+                                )}
                                 <span className="truncate flex-1">{tab.title}</span>
                                 <button
                                     onClick={(e) => handleCloseTab(tab.id, e)}
