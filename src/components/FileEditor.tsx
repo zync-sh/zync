@@ -331,7 +331,9 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
         if (colRef.current) colRef.current.textContent = (pos - line.from + 1).toString();
         
         if (update.docChanged && sizeRef.current) {
-          sizeRef.current.textContent = `${(state.doc.length / 1024).toFixed(1)} KB`;
+          // Use TextEncoder to get actual UTF-8 byte length instead of UTF-16 code units
+          const bytes = new TextEncoder().encode(state.doc.toString()).length;
+          sizeRef.current.textContent = `${(bytes / 1024).toFixed(1)} KB`;
         }
       }
     }));
@@ -412,6 +414,7 @@ export function FileEditor({ filename, initialContent, onSave, onClose }: FileEd
             size="icon"
             onClick={handleSearch}
             title="Search (Ctrl+F)"
+            aria-label="Search"
             className="text-app-muted hover:text-app-text"
           >
             <Search size={18} />

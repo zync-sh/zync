@@ -478,6 +478,22 @@ pub async fn terminal_resize(
 }
 
 #[tauri::command]
+pub async fn terminal_navigate(
+    term_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // Escape single quotes for shell safety to prevent command injection
+    let escaped_path = path.replace("'", "'\\''");
+    let cd_cmd = format!("cd '{}' && clear\r", escaped_path);
+    state
+        .pty_manager
+        .write(&term_id, &cd_cmd)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn connections_get(app: AppHandle) -> Result<SavedData, String> {
     let data_dir = get_data_dir(&app);
     let file_path = data_dir.join("connections.json");

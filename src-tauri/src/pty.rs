@@ -278,7 +278,10 @@ impl PtyManager {
         // If cwd is provided, send a cd command immediately
         if let Some(path) = cwd {
             let cd_cmd = format!("cd '{}' && clear\r", path.replace("'", "'\\''"));
-            let _ = channel.data(cd_cmd.as_bytes()).await;
+            channel
+                .data(cd_cmd.as_bytes())
+                .await
+                .map_err(|e| anyhow!("Failed to send initial cd command: {}", e))?;
         }
 
         // Create channels for communication

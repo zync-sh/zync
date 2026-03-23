@@ -400,5 +400,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [21ff87a]: https://github.com/zync-sh/zync/commit/21ff87a
 [f1aaa84]: https://github.com/zync-sh/zync/commit/f1aaa84
 [86ea5db]: https://github.com/zync-sh/zync/commit/86ea5db
+[c53fde6]: https://github.com/zync-sh/zync/commit/c53fde6
 
 
