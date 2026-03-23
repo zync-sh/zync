@@ -20,12 +20,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Security & Technical Audit
 
-- **Secure Terminal Navigation**: Replaced manual `cd` string interpolation with a robust backend-escaped `terminal:navigate` IPC to prevent command injection.
-- **PTY Reliability**: Hardened error propagation in `pty.rs` to ensure transport failures correctly fail terminal session creation.
-- **Editor UX Hardening**: Implemented save handler guards and debounced O(N) filesize recomputation for smooth performance in large files.
-- **Memory Safety**: Added active timer cleanup for editor debounce cycles to prevent leaks on unmount.
-- **Accessibility Compliance**: Programmatically linked "Go to Line" labels and added `aria-label` descriptors to search controls.
-- **Type Safety**: Introduced strict interfaces for Sidebar connection items and eliminated `any` types across the layout layer.
+- **Secure Terminal Navigation**: Replaced manual `cd` string interpolation with a robust backend-escaped `terminal:navigate` IPC to prevent command injection. ([0dd4487])
+- **PTY Reliability**: Hardened error propagation in `pty.rs` to ensure transport failures correctly fail terminal session creation. ([0dd4487])
+- **Editor UX Hardening**: Implemented save handler guards and debounced O(N) filesize recomputation for smooth performance in large files. ([0dd4487])
+- **Memory Safety**: Added active timer cleanup for editor debounce cycles to prevent leaks on unmount. ([0dd4487])
+- **Accessibility Compliance**: Programmatically linked "Go to Line" labels and added `aria-label` descriptors to search controls. ([0dd4487])
+- **Type Safety**: Introduced strict interfaces for Sidebar connection items and eliminated `any` types across the layout layer. ([0dd4487])
 
 ### Fixed
 
@@ -410,5 +410,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [f1aaa84]: https://github.com/zync-sh/zync/commit/f1aaa84
 [86ea5db]: https://github.com/zync-sh/zync/commit/86ea5db
 [c53fde6]: https://github.com/zync-sh/zync/commit/c53fde6
+[0dd4487]: https://github.com/zync-sh/zync/commit/0dd4487
 
 
