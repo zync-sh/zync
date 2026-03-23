@@ -197,7 +197,7 @@ export function CombinedTabBar({
             </div>
 
             {/* 3. Actions: Add Terminal + Dropdown (Outside scrollable area) */}
-            <div className="flex items-center gap-0.5 bg-app-surface/30 rounded-lg p-0.5 border border-app-border/30 drag-none shrink-0 ml-1" data-tauri-drag-region="false">
+            <div className="relative flex items-center gap-0.5 bg-app-surface/30 rounded-lg p-0.5 border border-app-border/30 drag-none shrink-0 ml-1" data-tauri-drag-region="false" ref={dropdownRef}>
                 <button
                     onClick={onNewTerminal}
                     className="h-6 w-7 flex items-center justify-center rounded hover:bg-app-surface hover:text-white text-app-accent transition-colors"
@@ -207,8 +207,7 @@ export function CombinedTabBar({
                 </button>
                 <div className="w-[1px] h-4 bg-app-border/50" />
 
-                <div className="relative" ref={dropdownRef}>
-                    <button
+                <button
                         onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                         className={cn(
                             "h-6 w-6 flex items-center justify-center rounded hover:bg-app-surface transition-colors",
@@ -220,7 +219,7 @@ export function CombinedTabBar({
                     </button>
 
                     {isDropdownOpen && (
-                        <div className="absolute top-full right-0 mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+                        <div className="absolute top-full left-0 mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
 
 
 
@@ -303,7 +302,6 @@ export function CombinedTabBar({
                             )}
                         </div>
                     )}
-                </div>
             </div>
 
             {contextMenu && (
