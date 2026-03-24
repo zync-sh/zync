@@ -485,7 +485,7 @@ pub async fn terminal_navigate(
 ) -> Result<(), String> {
     // Escape single quotes for shell safety to prevent command injection
     let escaped_path = path.replace("'", "'\\''");
-    let cd_cmd = format!("cd '{}' && clear\r", escaped_path);
+    let cd_cmd = format!("cd '{}'\r", escaped_path);
     state
         .pty_manager
         .write(&term_id, &cd_cmd)

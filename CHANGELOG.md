@@ -4,6 +4,16 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **Smart "Open Terminal Here" Optimization**: Refactored the context menu to check if a terminal is already open at the target path, switching focus without forcing a reload or clearing the terminal history.
+- The `terminal:navigate` IPC command now only issues a `cd` command to the PTY instead of `cd && clear`. This prevents the entire terminal scroll-back buffer from being wiped out every time the user clicks a new folder in the File Manager while using Synced Mode.
+- Refactored `initHomeDirectory` in `FileManager.tsx` to automatically supply the active home directory to `ensureTerminal` upon successful connection, improving the reliability of the terminal bootstrap process so it starts natively at the remote directory rather than requiring a post-launch `cd` command.
+
+### Fixed
+
+- Fixed a bug where creating a new "Synced Terminal" from the background context menu failed to track its `lastKnownCwd`, breaking future path matching operations.
+- Removed an unnecessary `connectionId` argument from the background context menu's `terminal:navigate` IPC call to align with the core backend signature.
 ## [2.8.0] - 2026-03-24
 
 ### Added

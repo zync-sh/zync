@@ -564,17 +564,30 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   };
 
 
+  const ensureTerminal = useAppStore(state => state.ensureTerminal);
+
   const initHomeDirectory = useCallback(async () => {
     if (!activeConnectionId || !isConnected) return;
 
-    // If we already have a path for this connection, just ensure it's loaded
-    // If not, fetch home dir
     if (!currentPath) {
       try {
         const path = await window.ipcRenderer.invoke('fs_cwd', {
           connectionId: activeConnectionId,
         });
         loadFiles(activeConnectionId, path);
+
+        // Ensure a terminal exists for this connection and seed it with the home path.
+        // If TerminalManager already created one without a path, ensureTerminal is a no-op
+        // (terminal already exists). If none exists yet, it creates one with the path baked in.
+        // Either way, we then tag any still-untracked terminals (covers the race case).
+        ensureTerminal(activeConnectionId, path);
+        const store = useAppStore.getState();
+        store.terminals[activeConnectionId]?.forEach(t => {
+          if (!t.initialPath && !t.lastKnownCwd && !t.isSynced) {
+            store.setTerminalInitialPath(activeConnectionId, t.id, path);
+            store.setTerminalCwd(activeConnectionId, t.id, path);
+          }
+        });
       } catch (error: any) {
         if (error.message?.includes('Connection not found')) {
           useAppStore.getState().disconnect(activeConnectionId);
@@ -589,7 +602,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         loadFiles(activeConnectionId, currentPath);
       }
     }
-  }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles]);
+  }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles, ensureTerminal]);
 
   useEffect(() => {
     if (activeConnectionId && isConnected) {
@@ -1009,29 +1022,23 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           action: () => {
             if (!contextMenu?.file || !activeConnectionId) return;
             const item = contextMenu.file;
-            const targetPath = item.type === 'd' 
+            const targetPath = item.type === 'd'
               ? (currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`)
               : currentPath;
-            
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
-            // Match if current CWD is identical, OR if initial path matches, OR it's the adopted default
-            const existing = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
-            const defaultTerm = !existing ? terminals.find(t => t.initialPath === undefined && !t.isSynced && terminals.length === 1) : null;
 
-            if (existing) {
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', existing.id);
-            } else if (defaultTerm) {
-                // Adopt the default terminal
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', defaultTerm.id);
-                useAppStore.getState().setTerminalInitialPath(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                
-                // Use the safe navigation IPC instead of manual string injection
-                window.ipcRenderer.invoke('terminal:navigate', { termId: defaultTerm.id, path: targetPath });
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
+
+            // Case 1: A terminal is already at this exact path — just switch focus. Zero IPC.
+            const match = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
+            if (match) {
+                useAppStore.getState().setActiveTerminal(connId, match.id);
             } else {
+                // Case 2: No match — spawn a new terminal that starts natively at the target path.
+                // The shell opens there directly; no 'cd' command is ever typed.
                 const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
                 useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
+                useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
 
             if (activeTabId) {
@@ -1118,27 +1125,19 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           action: () => {
             if (!activeConnectionId) return;
             const targetPath = currentPath;
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
-            // Match if paths are identical, OR if it's the first/default terminal (initialPath undefined)
-            const existing = terminals.find(t => t.initialPath === targetPath && !t.isSynced);
-            const defaultTerm = !existing ? terminals.find(t => t.initialPath === undefined && !t.isSynced && terminals.length === 1) : null;
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
 
-            if (existing) {
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', existing.id);
-            } else if (defaultTerm) {
-                // Adopt the default terminal
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', defaultTerm.id);
-                useAppStore.getState().setTerminalInitialPath(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                
-                // Safe navigation IPC
-                window.ipcRenderer.invoke('terminal:navigate', { 
-                    connectionId: activeConnectionId || 'local',
-                    termId: defaultTerm.id, 
-                    path: targetPath 
-                });
+            // Case 1: A terminal is already at this exact path — switch focus only. Zero IPC.
+            const match = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
+            if (match) {
+                useAppStore.getState().setActiveTerminal(connId, match.id);
             } else {
+                // Case 2: No match — spawn a new terminal that starts natively at the target path.
+                // The shell opens there directly; no 'cd' command is ever typed.
                 const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
                 useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+                useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
 
             if (activeTabId) {
@@ -1152,21 +1151,19 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           icon: <Zap size={14} className="text-yellow-500" />,
           action: () => {
             if (!activeConnectionId) return;
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
             const existingSynced = terminals.find(t => t.isSynced);
 
             let termId: string;
             if (existingSynced) {
                 termId = existingSynced.id;
                 // Navigate existing synced terminal to current path
-                window.ipcRenderer.invoke('terminal:navigate', {
-                    connectionId: activeConnectionId || 'local',
-                    termId: termId,
-                    path: currentPath
-                });
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, currentPath);
+                window.ipcRenderer.invoke('terminal:navigate', { termId, path: currentPath });
+                useAppStore.getState().setTerminalCwd(connId, termId, currentPath);
             } else {
                 termId = useAppStore.getState().createTerminal(activeConnectionId, currentPath, true);
+                useAppStore.getState().setTerminalCwd(connId, termId, currentPath);
             }
 
             if (activeTabId) {
