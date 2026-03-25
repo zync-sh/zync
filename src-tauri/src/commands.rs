@@ -938,7 +938,15 @@ pub async fn fs_touch(
                 match tokio::time::timeout(timeout_duration, retry_fut).await {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP touch timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => {
+                        {
+                            let mut connections = state.connections.lock().await;
+                            if let Some(c) = connections.get_mut(&connection_id) {
+                                c.sftp_session = None;
+                            }
+                        }
+                        Err(format!("DISCONNECTED: SFTP touch timed out after {}s", timeout_duration.as_secs()))
+                    },
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1004,7 +1012,15 @@ pub async fn fs_mkdir(
                 match tokio::time::timeout(timeout_duration, retry_fut).await {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => {
+                        {
+                            let mut connections = state.connections.lock().await;
+                            if let Some(c) = connections.get_mut(&connection_id) {
+                                c.sftp_session = None;
+                            }
+                        }
+                        Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs()))
+                    },
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
