@@ -43,7 +43,9 @@ export function CombinedTabBar({
 
     // Dropdown State
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const [dropdownAlign, setDropdownAlign] = useState<'left' | 'right'>('left');
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const dropdownButtonRef = useRef<HTMLButtonElement>(null);
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, feature: string } | null>(null);
 
     useEffect(() => {
@@ -214,7 +216,15 @@ export function CombinedTabBar({
 
                 <div className="relative" ref={dropdownRef}>
                     <button
-                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                        ref={dropdownButtonRef}
+                        onClick={() => {
+                            if (!isDropdownOpen && dropdownButtonRef.current) {
+                                const rect = dropdownButtonRef.current.getBoundingClientRect();
+                                const spaceRight = window.innerWidth - rect.left;
+                                setDropdownAlign(spaceRight >= 208 ? 'left' : 'right');
+                            }
+                            setIsDropdownOpen(!isDropdownOpen);
+                        }}
                         className={cn(
                             "h-6 w-6 flex items-center justify-center rounded hover:bg-app-surface transition-colors",
                             isDropdownOpen ? "text-app-text bg-app-surface" : "text-app-muted"
@@ -225,7 +235,7 @@ export function CombinedTabBar({
                     </button>
 
                     {isDropdownOpen && (
-                        <div className="absolute top-full right-0 mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+                        <div className={cn("absolute top-full mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col", dropdownAlign === 'right' ? 'right-0' : 'left-0')}>
                             <button
                                 onClick={() => {
                                     onNewTerminal();

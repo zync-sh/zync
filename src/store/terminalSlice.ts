@@ -31,8 +31,10 @@ export interface TerminalSlice {
     /**
      * Ensures at least one terminal exists for a connection. Creates one if none exist.
      * @param connectionId The ID of the connection to check.
+     * @param initialPath Optional starting directory for the new terminal if one is created.
+     * @returns The ID of the ensured terminal.
      */
-    ensureTerminal: (connectionId: string) => void;
+    ensureTerminal: (connectionId: string, initialPath?: string) => string;
 
     /**
      * Closes a specific terminal tab and cleans up associated backend processes and AI history.
@@ -107,12 +109,17 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
     },
 
     /** @inheritdoc */
-    ensureTerminal: (connectionId) => {
+    ensureTerminal: (connectionId, initialPath) => {
         const state = get();
         const currentTabs = state.terminals[connectionId] || [];
         if (currentTabs.length === 0) {
-            get().createTerminal(connectionId);
+            return get().createTerminal(connectionId, initialPath);
         }
+        const activeId = state.activeTerminalIds[connectionId];
+        if (activeId) {
+            return activeId;
+        }
+        return currentTabs[0].id;
     },
 
     /** @inheritdoc */

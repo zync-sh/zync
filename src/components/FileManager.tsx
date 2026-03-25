@@ -3,7 +3,9 @@ import {
   Copy,
   Download,
   FileArchive,
+  FilePlus,
   FolderInput,
+  Plus,
   RotateCw,
   Scissors,
   Server,
@@ -100,6 +102,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // Modal States
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [isNewFileModalOpen, setIsNewFileModalOpen] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
   const [renameOldName, setRenameOldName] = useState('');
   const [renameNewName, setRenameNewName] = useState('');
@@ -120,7 +124,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const [isInternalDraggingOver, setIsInternalDraggingOver] = useState(false);
   const [dragType, setDragType] = useState<'local' | 'server' | null>(null);
   const [dragSourceConnectionId, setDragSourceConnectionId] = useState<string | null>(null);
-  
+
   // Conflict Resolution State
   const [pendingConflicts, setPendingConflicts] = useState<Conflict[]>([]);
   const [currentConflict, setCurrentConflict] = useState<Conflict | null>(null);
@@ -181,6 +185,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       setIsPropertiesOpen(false);
       setIsDeleteModalOpen(false);
       setIsNewFolderModalOpen(false);
+      setIsNewFileModalOpen(false);
       return true;
     }
     return false;
@@ -208,12 +213,12 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     showToast('info', `${cut ? 'Cut' : 'Copied'} ${selectedEntries.length} item(s)`);
   };
 
-  const executeFileOperations = async (ops: { 
-    source: string; 
-    target: string; 
-    name: string; 
-    op: 'move' | 'copy'; 
-    sourceConnectionId: string 
+  const executeFileOperations = async (ops: {
+    source: string;
+    target: string;
+    name: string;
+    op: 'move' | 'copy';
+    sourceConnectionId: string
   }[], targetDirectory?: string) => {
     if (!activeConnectionId || ops.length === 0) return;
 
@@ -223,7 +228,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
     try {
       // Pass 1: Check for existence (Parallelized)
-      const existenceResults = await Promise.all(ops.map(op => 
+      const existenceResults = await Promise.all(ops.map(op =>
         window.ipcRenderer.invoke('fs_exists', {
           connectionId: activeConnectionId,
           path: op.target,
@@ -241,7 +246,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       // Pass 2: Execute immediate actions
       if (executionList.length > 0) {
         const sameConnection = executionList.every(item => item.sourceConnectionId === activeConnectionId);
-        
+
         if (sameConnection) {
           // Group by operation type (move/copy) to ensure correct store action
           const groups = executionList.reduce((acc, item) => {
@@ -351,16 +356,16 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     setIsProcessing(true);
     const toProcess = applyToAll ? [...pendingConflicts] : [currentConflict];
     let successCount = 0;
-    
+
     try {
       for (const conflict of toProcess) {
         const { source, target, op, sourceConnectionId } = conflict;
-        
+
         if (action === 'skip') {
           // Just skip
         } else {
           // For Overwrite and Rename
-          
+
           // Generate unique target if renaming (unified logic)
           let finalTarget = target;
           if (action === 'rename') {
@@ -368,7 +373,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
             const pathParts = target.match(/^(.*?)(\.[^.]*)?$/);
             const base = pathParts ? pathParts[1] : target;
             const ext = pathParts && pathParts[2] ? pathParts[2] : '';
-            
+
             let exists = true;
             while (exists) {
               const candidate = `${base} (${counter})${ext}`;
@@ -384,7 +389,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               if (counter > 100) {
                 showToast('error', `Could not find a unique name for "${conflict.name}" after 100 attempts. Skipping.`);
                 finalTarget = ''; // Flag as failed
-                break; 
+                break;
               }
             }
           }
@@ -404,7 +409,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                 newPath: backupPath,
                 autoRename: false
               });
-              
+
               // Now perform the move/copy
               let opSuccess = false;
               try {
@@ -423,33 +428,33 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                     });
                   }
                 } else {
-                    // Cross connection
-                    const transferId = addTransfer({
-                      sourceConnectionId,
-                      sourcePath: source,
-                      destinationConnectionId: activeConnectionId,
-                      destinationPath: finalTarget,
-                    });
-        
-                    const args: any = { sourcePath: source, destinationPath: finalTarget, transferId };
-                    let command = "sftp:copyToServer";
-        
-                    if (sourceConnectionId === "local") {
-                      command = "sftp:put";
-                      args.id = activeConnectionId;
-                      args.localPath = source;
-                      args.remotePath = finalTarget;
-                    } else if (activeConnectionId === "local") {
-                      command = "sftp:get";
-                      args.id = sourceConnectionId;
-                      args.remotePath = source;
-                      args.localPath = finalTarget;
-                    } else {
-                      args.sourceConnectionId = sourceConnectionId;
-                      args.destinationConnectionId = activeConnectionId;
-                    }
-        
-                    await window.ipcRenderer.invoke(command, args);
+                  // Cross connection
+                  const transferId = addTransfer({
+                    sourceConnectionId,
+                    sourcePath: source,
+                    destinationConnectionId: activeConnectionId,
+                    destinationPath: finalTarget,
+                  });
+
+                  const args: any = { sourcePath: source, destinationPath: finalTarget, transferId };
+                  let command = "sftp:copyToServer";
+
+                  if (sourceConnectionId === "local") {
+                    command = "sftp:put";
+                    args.id = activeConnectionId;
+                    args.localPath = source;
+                    args.remotePath = finalTarget;
+                  } else if (activeConnectionId === "local") {
+                    command = "sftp:get";
+                    args.id = sourceConnectionId;
+                    args.remotePath = source;
+                    args.localPath = finalTarget;
+                  } else {
+                    args.sourceConnectionId = sourceConnectionId;
+                    args.destinationConnectionId = activeConnectionId;
+                  }
+
+                  await window.ipcRenderer.invoke(command, args);
                 }
                 opSuccess = true;
               } finally {
@@ -458,7 +463,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                   await window.ipcRenderer.invoke('fs_delete', {
                     connectionId: activeConnectionId,
                     path: backupPath,
-                  }).catch(() => {}); // If delete fails, it's just a stray file
+                  }).catch(() => { }); // If delete fails, it's just a stray file
                 } else {
                   // Failure: Restore the backup
                   await window.ipcRenderer.invoke('fs_rename', {
@@ -466,7 +471,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                     oldPath: backupPath,
                     newPath: target,
                     autoRename: false
-                  }).catch(() => {});
+                  }).catch(() => { });
                 }
               }
               successCount++;
@@ -536,7 +541,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
       // Refresh and move to next conflict or close
       loadFiles(activeConnectionId, currentPath);
-      
+
       if (applyToAll) {
         setPendingConflicts([]);
         setCurrentConflict(null);
@@ -564,17 +569,30 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   };
 
 
+  const ensureTerminal = useAppStore(state => state.ensureTerminal);
+
   const initHomeDirectory = useCallback(async () => {
     if (!activeConnectionId || !isConnected) return;
 
-    // If we already have a path for this connection, just ensure it's loaded
-    // If not, fetch home dir
     if (!currentPath) {
       try {
         const path = await window.ipcRenderer.invoke('fs_cwd', {
           connectionId: activeConnectionId,
         });
         loadFiles(activeConnectionId, path);
+
+        // Ensure a terminal exists for this connection and seed it with the home path.
+        // If TerminalManager already created one without a path, ensureTerminal is a no-op
+        // (terminal already exists). If none exists yet, it creates one with the path baked in.
+        // Either way, we then tag any still-untracked terminals (covers the race case).
+        // Either way, we then tag any still-untracked terminals (covers the race case).
+        const termId = ensureTerminal(activeConnectionId, path);
+        const store = useAppStore.getState();
+        const t = store.terminals[activeConnectionId]?.find(tab => tab.id === termId);
+        if (t && !t.initialPath && !t.lastKnownCwd && !t.isSynced) {
+          store.setTerminalInitialPath(activeConnectionId, t.id, path);
+          store.setTerminalCwd(activeConnectionId, t.id, path);
+        }
       } catch (error: any) {
         if (error.message?.includes('Connection not found')) {
           useAppStore.getState().disconnect(activeConnectionId);
@@ -589,7 +607,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         loadFiles(activeConnectionId, currentPath);
       }
     }
-  }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles]);
+  }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles, ensureTerminal]);
 
   useEffect(() => {
     if (activeConnectionId && isConnected) {
@@ -699,17 +717,62 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // --- Action Handlers (Create, Rename, Upload, Delete, Download) ---
 
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim() || !activeConnectionId) return;
-    await createFolder(activeConnectionId, newFolderName);
+    const trimmedName = newFolderName.trim();
+    if (!trimmedName || !activeConnectionId) return;
+    if (trimmedName.includes('/') || trimmedName.includes('\\') || trimmedName === '.' || trimmedName === '..') {
+      showToast('error', 'Invalid folder name: Contains invalid characters');
+      return;
+    }
+    // Check for local collision
+    if (files.some(f => f.name === trimmedName)) {
+      showToast('error', `A file or folder named "${trimmedName}" already exists.`);
+      return;
+    }
+    await createFolder(activeConnectionId, trimmedName);
     setIsNewFolderModalOpen(false);
     setNewFolderName('');
   };
 
-  const handleRename = async () => {
-    if (!renameNewName.trim() || !activeConnectionId) return;
+  const handleCreateFile = async () => {
+    const trimmedName = newFileName.trim();
+    if (!trimmedName || !activeConnectionId) return;
+    if (trimmedName.includes('/') || trimmedName.includes('\\') || trimmedName === '.' || trimmedName === '..') {
+      showToast('error', 'Invalid file name: Contains invalid characters');
+      return;
+    }
+    // Check for local collision
+    if (files.some(f => f.name === trimmedName)) {
+      showToast('error', `A file or folder named "${trimmedName}" already exists.`);
+      return;
+    }
+    try {
+      const fullPath = currentPath === '/' ? `/${trimmedName}` : `${currentPath}/${trimmedName}`;
+      await window.ipcRenderer.invoke('fs_touch', { connectionId: activeConnectionId, path: fullPath });
+      refreshFiles(activeConnectionId);
+      setIsNewFileModalOpen(false);
+      setNewFileName('');
+    } catch (error: any) {
+      if (handleConnectionError(activeConnectionId, error)) return;
+      showToast('error', `Failed to create file: ${error.message || String(error)}`);
+    }
+  };
 
-    if (renameNewName !== renameOldName) {
-      await renameEntry(activeConnectionId, renameOldName, renameNewName);
+
+  const handleRename = async () => {
+    const trimmedName = renameNewName.trim();
+    if (!trimmedName || !activeConnectionId) return;
+    if (trimmedName.includes('/') || trimmedName.includes('\\') || trimmedName === '.' || trimmedName === '..') {
+      showToast('error', 'Invalid name: Contains invalid characters');
+      return;
+    }
+
+    if (trimmedName !== renameOldName) {
+      // Check for local collision (exclude the current file being renamed to allow case-only changes)
+      if (files.some(f => f.name !== renameOldName && f.name === trimmedName)) {
+        showToast('error', `A file or folder named "${trimmedName}" already exists.`);
+        return;
+      }
+      await renameEntry(activeConnectionId, renameOldName, trimmedName);
     }
     setIsRenameModalOpen(false);
     setRenameNewName('');
@@ -903,14 +966,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     try {
       const dragData = JSON.parse(jsonData);
       if (dragData.type === 'server-file' && activeConnectionId) {
-        
+
         // Prepare list of operations
-        const ops: { 
-          source: string; 
-          target: string; 
-          name: string; 
-          op: 'move' | 'copy'; 
-          sourceConnectionId: string 
+        const ops: {
+          source: string;
+          target: string;
+          name: string;
+          op: 'move' | 'copy';
+          sourceConnectionId: string
         }[] = [];
 
         if (dragData.paths && Array.isArray(dragData.paths)) {
@@ -918,7 +981,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           dragData.paths.forEach((sourcePath: string, index: number) => {
             const name = dragData.names?.[index] || sourcePath.split(/[/\\]/).pop() || 'unknown';
             const destPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-            
+
             // Avoid moving to same folder
             if (sourcePath !== destPath) {
               ops.push({
@@ -1009,33 +1072,27 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           action: () => {
             if (!contextMenu?.file || !activeConnectionId) return;
             const item = contextMenu.file;
-            const targetPath = item.type === 'd' 
+            const targetPath = item.type === 'd'
               ? (currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`)
               : currentPath;
-            
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
-            // Match if current CWD is identical, OR if initial path matches, OR it's the adopted default
-            const existing = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
-            const defaultTerm = !existing ? terminals.find(t => t.initialPath === undefined && !t.isSynced && terminals.length === 1) : null;
 
-            if (existing) {
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', existing.id);
-            } else if (defaultTerm) {
-                // Adopt the default terminal
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', defaultTerm.id);
-                useAppStore.getState().setTerminalInitialPath(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                
-                // Use the safe navigation IPC instead of manual string injection
-                window.ipcRenderer.invoke('terminal:navigate', { termId: defaultTerm.id, path: targetPath });
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
+
+            // Case 1: A terminal is already at this exact path — just switch focus. Zero IPC.
+            const match = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
+            if (match) {
+              useAppStore.getState().setActiveTerminal(connId, match.id);
             } else {
-                const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
-                useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
+              // Case 2: No match — spawn a new terminal that starts natively at the target path.
+              // The shell opens there directly; no 'cd' command is ever typed.
+              const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
+              useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+              useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
 
             if (activeTabId) {
-                useAppStore.getState().setTabView(activeTabId, 'terminal');
+              useAppStore.getState().setTabView(activeTabId, 'terminal');
             }
             setContextMenu(null);
           }
@@ -1046,29 +1103,37 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           action: () => {
             if (!contextMenu?.file || !activeConnectionId) return;
             const item = contextMenu.file;
-            const targetPath = item.type === 'd' 
+            const targetPath = item.type === 'd'
               ? (currentPath === '/' ? `/${item.name}` : `${currentPath}/${item.name}`)
               : currentPath;
-            
+
             const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
             const existingSynced = terminals.find(t => t.isSynced);
 
-            let termId: string;
-            if (existingSynced) {
+            const handleSyncedTerminal = async () => {
+              let termId: string;
+              if (existingSynced) {
                 termId = existingSynced.id;
-                // CodeRabbit: Update reused synced terminal path and trigger navigation
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
-                window.ipcRenderer.invoke('terminal:navigate', { termId, path: targetPath });
-            } else {
+                // CodeRabbit: Await reused synced terminal IPC before updating store to prevent desync on failure
+                try {
+                  await window.ipcRenderer.invoke('terminal:navigate', { termId, path: targetPath });
+                  useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
+                } catch (err: any) {
+                  showToast('error', `Failed to navigate synced terminal: ${err.message || String(err)}`);
+                  return; // Halt on failure
+                }
+              } else {
                 termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath, true);
                 useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
-            }
+              }
 
-            if (activeTabId) {
+              if (activeTabId) {
                 useAppStore.getState().setTabView(activeTabId, 'terminal');
-            }
-            useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
-            setContextMenu(null);
+              }
+              useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+              setContextMenu(null);
+            };
+            handleSyncedTerminal();
           }
         },
         {
@@ -1118,31 +1183,23 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           action: () => {
             if (!activeConnectionId) return;
             const targetPath = currentPath;
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
-            // Match if paths are identical, OR if it's the first/default terminal (initialPath undefined)
-            const existing = terminals.find(t => t.initialPath === targetPath && !t.isSynced);
-            const defaultTerm = !existing ? terminals.find(t => t.initialPath === undefined && !t.isSynced && terminals.length === 1) : null;
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
 
-            if (existing) {
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', existing.id);
-            } else if (defaultTerm) {
-                // Adopt the default terminal
-                useAppStore.getState().setActiveTerminal(activeConnectionId || 'local', defaultTerm.id);
-                useAppStore.getState().setTerminalInitialPath(activeConnectionId || 'local', defaultTerm.id, targetPath);
-                
-                // Safe navigation IPC
-                window.ipcRenderer.invoke('terminal:navigate', { 
-                    connectionId: activeConnectionId || 'local',
-                    termId: defaultTerm.id, 
-                    path: targetPath 
-                });
+            // Case 1: A terminal is already at this exact path — switch focus only. Zero IPC.
+            const match = terminals.find(t => (t.lastKnownCwd === targetPath || t.initialPath === targetPath) && !t.isSynced);
+            if (match) {
+              useAppStore.getState().setActiveTerminal(connId, match.id);
             } else {
-                const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
-                useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+              // Case 2: No match — spawn a new terminal that starts natively at the target path.
+              // The shell opens there directly; no 'cd' command is ever typed.
+              const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
+              useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+              useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
 
             if (activeTabId) {
-                useAppStore.getState().setTabView(activeTabId, 'terminal');
+              useAppStore.getState().setTabView(activeTabId, 'terminal');
             }
             setContextMenu(null);
           }
@@ -1152,34 +1209,51 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           icon: <Zap size={14} className="text-yellow-500" />,
           action: () => {
             if (!activeConnectionId) return;
-            const terminals = useAppStore.getState().terminals[activeConnectionId || 'local'] || [];
+            const connId = activeConnectionId || 'local';
+            const terminals = useAppStore.getState().terminals[connId] || [];
             const existingSynced = terminals.find(t => t.isSynced);
 
-            let termId: string;
-            if (existingSynced) {
+            const handleSyncedTerminal = async () => {
+              let termId: string;
+              if (existingSynced) {
                 termId = existingSynced.id;
-                // Navigate existing synced terminal to current path
-                window.ipcRenderer.invoke('terminal:navigate', {
-                    connectionId: activeConnectionId || 'local',
-                    termId: termId,
-                    path: currentPath
-                });
-                useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, currentPath);
-            } else {
+                // Navigate existing synced terminal to current path safely
+                try {
+                  await window.ipcRenderer.invoke('terminal:navigate', { termId, path: currentPath });
+                  useAppStore.getState().setTerminalCwd(connId, termId, currentPath);
+                } catch (err: any) {
+                  showToast('error', `Failed to navigate synced terminal: ${err.message || String(err)}`);
+                  return; // Halt on failure
+                }
+              } else {
                 termId = useAppStore.getState().createTerminal(activeConnectionId, currentPath, true);
-            }
+                useAppStore.getState().setTerminalCwd(connId, termId, currentPath);
+              }
 
-            if (activeTabId) {
+              if (activeTabId) {
                 useAppStore.getState().setTabView(activeTabId, 'terminal');
-            }
-            useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
-            setContextMenu(null);
+              }
+              useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
+              setContextMenu(null);
+            };
+            handleSyncedTerminal();
           }
         },
         {
-          label: 'New Folder',
-          icon: <FolderInput size={14} />,
-          action: () => setIsNewFolderModalOpen(true),
+          label: 'New...',
+          icon: <Plus size={14} />,
+          children: [
+            {
+              label: 'New File',
+              icon: <FilePlus size={14} />,
+              action: () => setIsNewFileModalOpen(true),
+            },
+            {
+              label: 'New Folder',
+              icon: <FolderInput size={14} />,
+              action: () => setIsNewFolderModalOpen(true),
+            },
+          ]
         },
         {
           label: 'Refresh',
@@ -1196,7 +1270,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't interfere with background tabs, modals, inputs, or when strict focus is needed
-      if (!isVisible || isNewFolderModalOpen || isRenameModalOpen || editingFile || isCopyModalOpen || isPropertiesOpen) return;
+      if (!isVisible || isNewFolderModalOpen || isNewFileModalOpen || isRenameModalOpen || editingFile || isCopyModalOpen || isPropertiesOpen) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         // Special case: Allow arrow keys and Enter to pass through if we are in the search input
         // so that users can navigate results while typing.
@@ -1433,7 +1507,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    activeConnectionId, searchTerm, isSearchOpen, files, settings, isNewFolderModalOpen, isRenameModalOpen,
+    activeConnectionId, searchTerm, isSearchOpen, files, settings, isNewFolderModalOpen, isNewFileModalOpen, isRenameModalOpen,
     editingFile, selectedFiles, focusedFile, handleNavigate, handleCopy, handlePaste,
     handleDelete, isMatch, navigateBack, navigateForward
   ]);
@@ -1487,6 +1561,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           }
         }}
         onNewFolder={() => setIsNewFolderModalOpen(true)}
+        onNewFile={() => setIsNewFileModalOpen(true)}
         onDownloadAsZip={activeConnectionId !== 'local' ? handleDownloadAsZip : undefined}
         selectedCount={selectedFiles.length}
         viewMode={viewMode}
@@ -1513,7 +1588,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               <p className="text-sm text-app-muted mb-6">
                 Zync lost the connection to the server and could not automatically recover it. Please check your internet connection and try again.
               </p>
-              <Button 
+              <Button
                 onClick={() => {
                   if (activeConnectionId) {
                     loadFiles(activeConnectionId, currentPath || '/');
@@ -1566,6 +1641,26 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       )}
 
       {/* Modals */}
+      <Modal isOpen={isNewFileModalOpen} onClose={() => setIsNewFileModalOpen(false)} title="New File">
+        <div className="space-y-4">
+          <Input
+            label="File Name"
+            placeholder="my-file.txt"
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setIsNewFileModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateFile}>Create</Button>
+          </div>
+        </div>
+      </Modal>
+
+
       <Modal isOpen={isNewFolderModalOpen} onClose={() => setIsNewFolderModalOpen(false)} title="New Folder">
         <div className="space-y-4">
           <Input

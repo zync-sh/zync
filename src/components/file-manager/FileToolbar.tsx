@@ -1,4 +1,4 @@
-import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Upload, FolderInput, Hash, X, PanelLeft, FileArchive } from 'lucide-react';
+import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Upload, FolderInput, Hash, X, PanelLeft, FileArchive, FilePlus } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -11,6 +11,7 @@ interface FileToolbarProps {
   onUpload: () => void;
   onUploadFolder: () => void;
   onNewFolder: () => void;
+  onNewFile: () => void;
   onDownloadAsZip?: () => void;
   selectedCount?: number;
   viewMode: 'grid' | 'list';
@@ -32,6 +33,7 @@ export function FileToolbar({
   onUpload,
   onUploadFolder,
   onNewFolder,
+  onNewFile,
   onDownloadAsZip,
   selectedCount = 0,
   viewMode,
@@ -370,6 +372,17 @@ export function FileToolbar({
 
           {isMenuOpen && (
             <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
+                <button
+                  onClick={() => {
+                    onNewFile();
+                    setIsMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left text-sm text-app-text hover:bg-app-accent/10 hover:text-app-accent rounded-lg transition-colors"
+                >
+                  <FilePlus size={16} />
+                  <span>New File</span>
+                </button>
+                <div className="h-px bg-app-border/10 my-0.5 mx-2" />
                 <button
                   onClick={() => {
                     onNewFolder();

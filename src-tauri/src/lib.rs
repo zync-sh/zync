@@ -162,6 +162,7 @@ pub fn run() {
             commands::fs_read_file,
             commands::fs_write_file,
             commands::fs_cwd,
+            commands::fs_touch,
             commands::fs_mkdir,
             commands::fs_rename,
             commands::fs_rename_batch,

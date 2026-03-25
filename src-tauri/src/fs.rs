@@ -178,6 +178,19 @@ impl FileSystem {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
+    pub async fn create_file(&self, connection_id: &str, path: &str) -> Result<()> {
+        if connection_id == "local" {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|e| anyhow!("Failed to create file: {}", e))?;
+            Ok(())
+        } else {
+            Err(anyhow!("Remote connection not yet implemented"))
+        }
+    }
+
     pub async fn create_dir(&self, connection_id: &str, path: &str) -> Result<()> {
         if connection_id == "local" {
             fs::create_dir_all(path).map_err(|e| anyhow!("Failed to create directory: {}", e))
@@ -226,8 +239,7 @@ impl FileSystem {
         if connection_id == "local" {
             Ok(std::path::Path::new(path).exists())
         } else {
-            // TODO: Remote check
-            Err(anyhow!("Remote connection not yet implemented"))
+            Err(anyhow!("Remote connection not yet implemented in exists() - use exists_remote"))
         }
     }
 
@@ -264,6 +276,22 @@ impl FileSystem {
         file.write_all(content)
             .await
             .map_err(|e| anyhow!("Failed to write content to '{}': {}", path, e))?;
+        Ok(())
+    }
+
+    pub async fn create_file_remote(
+        &self,
+        sftp: &russh_sftp::client::SftpSession,
+        path: &str,
+    ) -> Result<()> {
+        use russh_sftp::protocol::OpenFlags;
+        let _file = sftp
+            .open_with_flags(
+                path,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to create file '{}': {}", path, e))?;
         Ok(())
     }
 
