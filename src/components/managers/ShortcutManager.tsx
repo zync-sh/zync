@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppStore, type Tab } from '../../store/useAppStore';
 import { matchShortcut } from '../../lib/shortcuts';
 
@@ -18,6 +18,8 @@ export function ShortcutManager() {
     const closeSettings = useAppStore(state => state.closeSettings);
     const updateSettings = useAppStore(state => state.updateSettings);
     const settings = useAppStore(state => state.settings);
+    const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
+    const collapseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const openAddConnectionModal = () => setAddConnectionModalOpen(true);
 
@@ -49,7 +51,16 @@ export function ShortcutManager() {
 
             if (matchShortcut(e, kb.toggleSidebar)) {
                 e.preventDefault();
+                // Signal layout transition start to freeze terminal fitting
+                window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
                 updateSettings({ sidebarCollapsed: !settings.sidebarCollapsed });
+                
+                // Manual timeout matching CSS 300ms transition time
+                if (collapseTimeoutRef.current) clearTimeout(collapseTimeoutRef.current);
+                collapseTimeoutRef.current = setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
+                    collapseTimeoutRef.current = null;
+                }, 320);
             }
             else if (matchShortcut(e, kb.openNewConnection)) {
                 e.preventDefault();
@@ -206,13 +217,16 @@ export function ShortcutManager() {
             }
             else if (matchShortcut(e, kb.aiCommandBar || 'Mod+I')) {
                 e.preventDefault();
-                window.dispatchEvent(new CustomEvent('zync:ai-command-bar'));
+                toggleAiSidebar();
             }
         };
 
         window.addEventListener('keydown', handleKeyDown, { capture: true });
-        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-    }, [openTab, activeTabId, activeConnectionId, isSettingsOpen, openSettings, closeSettings, setAddConnectionModalOpen, settings.sidebarCollapsed, settings.keybindings, updateSettings, tabs, activateTab]);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown, { capture: true });
+            if (collapseTimeoutRef.current) clearTimeout(collapseTimeoutRef.current);
+        };
+    }, [openTab, activeTabId, activeConnectionId, isSettingsOpen, openSettings, closeSettings, setAddConnectionModalOpen, settings, updateSettings, tabs, activateTab, toggleAiSidebar]);
 
     return null;
 }

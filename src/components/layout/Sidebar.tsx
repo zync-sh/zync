@@ -220,6 +220,7 @@ export function Sidebar({ className }: { className?: string }) {
         setIsResizing(true);
         e.preventDefault();
         document.body.style.cursor = 'col-resize';
+        window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
     }, []);
 
     useEffect(() => {
@@ -236,6 +237,8 @@ export function Sidebar({ className }: { className?: string }) {
             document.body.style.cursor = '';
             // Save final width
             updateSettings({ sidebarWidth: widthRef.current });
+            // Notify terminal that layout is now stable
+            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
         };
 
         window.addEventListener('mousemove', resize);

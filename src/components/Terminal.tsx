@@ -334,6 +334,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
+  
+  // Layout transition fast-path tracking
+  const isLayoutTransitioning = useRef(false);
+  // Layout transition React state for DOM class rendering
+  const [layoutTransitioning, setLayoutTransitioning] = useState(false);
 
   // Search State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -408,9 +413,10 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   // Force fit and focus when visibility changes (e.g. switching tabs) or connection becomes active
   useEffect(() => {
     if (isVisible && isConnected && fitAddonRef.current && termRef.current) {
+      let timer: ReturnType<typeof setTimeout>;
       // Small delay using requestAnimationFrame + setTimeout for layout stability
       const frameId = requestAnimationFrame(() => {
-        const timer = setTimeout(() => {
+        timer = setTimeout(() => {
           try {
             if (fitAddonRef.current) fitAddonRef.current.fit();
 
@@ -423,11 +429,57 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
             }
           } catch (e) { console.warn('Fit/Focus failed on visibility change', e); }
         }, 150); // Increased delay for layout settling
-        return () => clearTimeout(timer);
       });
-      return () => cancelAnimationFrame(frameId);
+      
+      return () => {
+        cancelAnimationFrame(frameId);
+        if (timer) clearTimeout(timer);
+      };
     }
   }, [isVisible, sessionId, isConnected]);
+
+  // Layout Transition Listener (Flicker Hardening V2)
+  useEffect(() => {
+    const handleStart = () => {
+      isLayoutTransitioning.current = true;
+      setLayoutTransitioning(true);
+
+      // V2 Width Pinning: Lock the terminal to its current pixel width instantly
+      // using our own container width to prevent the flex parent from squishing the canvas
+      if (containerRef.current) {
+        const currentWidth = containerRef.current.offsetWidth;
+        if (currentWidth && currentWidth > 0) {
+          containerRef.current.style.width = `${currentWidth}px`;
+          containerRef.current.style.flexShrink = '0';
+        }
+      }
+    };
+    const handleEnd = () => {
+      isLayoutTransitioning.current = false;
+      setLayoutTransitioning(false);
+      
+      // Unlock the fixed width
+      if (containerRef.current) {
+        containerRef.current.style.width = '';
+        containerRef.current.style.flexShrink = '';
+      }
+
+      // Trigger a final clean fit when the layout is stable
+      if (isVisible && isConnected && fitAddonRef.current && termRef.current) {
+        try {
+          fitAddonRef.current.fit();
+          syncTerminalResize(sessionId, termRef.current);
+        } catch (e) { console.warn('Final layout fit failed', e); }
+      }
+    };
+
+    window.addEventListener('zync:layout-transition-start', handleStart);
+    window.addEventListener('zync:layout-transition-end', handleEnd);
+    return () => {
+      window.removeEventListener('zync:layout-transition-start', handleStart);
+      window.removeEventListener('zync:layout-transition-end', handleEnd);
+    };
+  }, [isVisible, isConnected, sessionId]);
 
   useEffect(() => {
     if (!containerRef.current || !activeConnectionId || !sessionId || !isConnected) return;
@@ -682,26 +734,32 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       });
     }
 
-    let resizeTimer: any;
+    let ipcResizeTimer: any;
     const resizeObserver = new ResizeObserver(() => {
-      if (resizeTimer) return;
+      try {
+        if (!term.element || !containerRef.current) return;
+        
+        // Flicker Hardening: Skip fitting if we are currently animating/dragging a sidebar
+        if (isLayoutTransitioning.current) return;
 
-      resizeTimer = setTimeout(() => {
-        resizeTimer = null;
-        try {
-          requestAnimationFrame(() => {
-            if (!term.element || !containerRef.current) return;
+        // Only fit if dimensions are valid
+        const nextWidth = containerRef.current.clientWidth;
+        const nextHeight = containerRef.current.clientHeight;
+        if (nextWidth <= 0 || nextHeight <= 0) return;
 
-            // Prevent resizing if dimensions are invalid/hidden (0x0)
-            if (containerRef.current.clientWidth === 0 || containerRef.current.clientHeight === 0) return;
+        // Synchronous visual fit prevents tearing/flickering during layout changes!
+        // We MUST do this before the browser paints the next frame.
+        fitAddon.fit();
 
-            fitAddon.fit();
-            syncTerminalResize(sessionId, term);
-          });
-        } catch (e) {
-          console.warn('Resize failed', e);
-        }
-      }, 100); // Throttle resizes to at most 10fps during animations
+        // Throttle backend PTY resize communication (IPC) to prevent flooding Tauri
+        if (ipcResizeTimer) clearTimeout(ipcResizeTimer);
+        ipcResizeTimer = window.setTimeout(() => {
+          syncTerminalResize(sessionId, term);
+        }, 50);
+
+      } catch (e) {
+        console.warn('Xterm fit resize failed', e);
+      }
     });
 
     if (containerRef.current) {
@@ -713,7 +771,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       // and will be cleaned up when destroyTerminalInstance() is called.
       // This prevents duplicate listeners when the component remounts.
       resizeObserver.disconnect();
-      if (resizeTimer) clearTimeout(resizeTimer);
+      if (ipcResizeTimer) clearTimeout(ipcResizeTimer);
 
       const cachedForCleanup = terminalCache.get(sessionId);
       if (cachedForCleanup?.spawned) {
@@ -815,9 +873,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         if (cached && !cached.spawned) {
           console.log('[Terminal] Auto-waking terminal from File Manager reconnect');
           
-          if (typeof (window as any).clearPendingInput === 'function') {
-            (window as any).clearPendingInput(sessionId);
-          }
+          clearPendingInput(sessionId);
           cached.lastResize = null;
           
           cached.spawned = true;
@@ -1037,8 +1093,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         />
       )}
 
-      {/* Terminal Canvas Wrapper - Strict bottom padding */}
-      <div className="absolute inset-0 px-2 pt-2 pb-2 pointer-events-none">
+      {/* Terminal Canvas Wrapper - Strict bottom padding - Always overflow-hidden during transition */}
+      <div className={cn(
+        "absolute inset-0 px-2 pt-2 pb-2 pointer-events-none",
+        layoutTransitioning && "overflow-hidden"
+      )}>
         <div ref={containerRef} className="h-full w-full terminal-container relative pointer-events-auto" />
       </div>
     </div>

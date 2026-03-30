@@ -18,6 +18,7 @@ import { SnippetPicker } from '../snippets/SnippetPicker';
 import { SnippetSidebar } from '../snippets/SnippetSidebar';
 import { SetupWizard } from '../onboarding/SetupWizard';
 import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
+import { AiSidebar } from '../ai/AiSidebar';
 
 declare global {
     interface Window {
@@ -428,10 +429,11 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 export function MainLayout({ children }: { children: ReactNode }) {
     useFileSystemEvents(); // Enable global FS event listeners
 
-    const tabs = useAppStore(state => state.tabs); // Updated Hook
-    const activeTabId = useAppStore(state => state.activeTabId); // Updated Hook
+    const tabs = useAppStore(state => state.tabs);
+    const activeTabId = useAppStore(state => state.activeTabId);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const loadSnippets = useAppStore(state => state.loadSnippets);
+    const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
 
     // Pre-load snippets once on app startup so the picker/sidebar always have data
     useEffect(() => {
@@ -517,6 +519,21 @@ export function MainLayout({ children }: { children: ReactNode }) {
     useEffect(() => {
         checkConfig();
     }, []);
+
+    // Keyboard shortcut: Cmd/Ctrl+I toggles the AI Sidebar
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            const isMac = navigator.userAgent.includes('Mac');
+            const modKey = isMac ? e.metaKey : e.ctrlKey;
+            if (modKey && e.key.toLowerCase() === 'i') {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleAiSidebar();
+            }
+        };
+        window.addEventListener('keydown', handler, { capture: true });
+        return () => window.removeEventListener('keydown', handler, { capture: true });
+    }, [toggleAiSidebar]);
 
     // Version Tracking for Release Notes
     const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
@@ -722,6 +739,17 @@ export function MainLayout({ children }: { children: ReactNode }) {
                         )}
                     </div>
                 </div>
+
+                {/* AI Assistant Right Sidebar */}
+                {(() => {
+                    const activeTab = tabs.find(t => t.id === activeTabId);
+                    const connId = activeTab?.connectionId ?? null;
+                    return (
+                        <AiSidebar
+                            connectionId={connId}
+                        />
+                    );
+                })()}
             </div>
 
             {/* Bottom Unified Status Bar (Full Width) */}
