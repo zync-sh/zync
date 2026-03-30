@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -112,6 +112,8 @@ export function TabBar() {
     const updateSettings = useAppStore(state => state.updateSettings);
     const openSettings = useAppStore(state => state.openSettings);
     const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
+    const isAiSidebarOpen = useAppStore(state => state.isAiSidebarOpen);
 
     const [tabToClose, setTabToClose] = useState<string | null>(null);
 
@@ -320,20 +322,18 @@ export function TabBar() {
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0 drag-none px-1">
-                        {/* Sidebar Toggle (Only this stays on right) */}
+                        {/* Header Actions */}
                         <div className="flex items-center gap-1">
-                            <Tooltip content="Settings" position="bottom">
-                                <button
-                                    onClick={openSettings}
-                                    className="h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center group"
-                                >
-                                    <SettingsIcon size={14} />
-                                </button>
-                            </Tooltip>
-
+                            {/* Left Panel Toggle */}
                             <Tooltip content={settings.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"} position="bottom">
                                 <button
-                                    onClick={() => updateSettings({ sidebarCollapsed: !settings.sidebarCollapsed })}
+                                    onClick={() => {
+                                        window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
+                                        updateSettings({ sidebarCollapsed: !settings.sidebarCollapsed });
+                                        setTimeout(() => {
+                                            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
+                                        }, 320);
+                                    }}
                                     className={cn(
                                         "h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center",
                                         !settings.sidebarCollapsed && "text-app-accent bg-app-accent/10 border-app-accent/20"
@@ -341,6 +341,33 @@ export function TabBar() {
                                     aria-label={settings.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
                                 >
                                     <PanelLeft size={16} />
+                                </button>
+                            </Tooltip>
+
+                            {/* AI Panel Toggle */}
+                            <Tooltip content={`AI Assistant (${isMac ? '⌘I' : 'Ctrl+I'})`} position="bottom">
+                                <button
+                                    onClick={toggleAiSidebar}
+                                    className={cn(
+                                        "h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center",
+                                        isAiSidebarOpen && "text-app-accent bg-app-accent/10 border-app-accent/20"
+                                    )}
+                                    aria-label="Toggle AI Sidebar"
+                                >
+                                    <Sparkles size={14} />
+                                </button>
+                            </Tooltip>
+
+                            {/* Separator */}
+                            <div className="h-4 w-[1px] bg-app-border/40 mx-0.5" />
+
+                            {/* Settings */}
+                            <Tooltip content="Settings" position="bottom">
+                                <button
+                                    onClick={openSettings}
+                                    className="h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center group"
+                                >
+                                    <SettingsIcon size={14} />
                                 </button>
                             </Tooltip>
                         </div>

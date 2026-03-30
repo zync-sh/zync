@@ -5,7 +5,6 @@ import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { Terminal as TerminalIcon, Plus, X, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { AiCommandBar } from './AiCommandBar';
 import { once, type UnlistenFn } from '@tauri-apps/api/event';
 
 // TerminalTab interface is now in store/terminalSlice
@@ -24,7 +23,6 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
     const ensureTerminal = useAppStore(state => state.ensureTerminal);
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
-    const openAiCommandBar = useAppStore(state => state.openAiCommandBar);
     const terminalTransparencyEnabled = useAppStore(
         state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
     );
@@ -130,20 +128,16 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             }
         };
 
-        const handleAiCommandBar = () => openAiCommandBar();
-
         window.addEventListener('ssh-ui:run-command', handleRunCommand);
         window.addEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
         window.addEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
         window.addEventListener('zync:terminal:send', handlePluginTerminalSend);
-        window.addEventListener('zync:ai-command-bar', handleAiCommandBar);
 
         return () => {
             window.removeEventListener('ssh-ui:run-command', handleRunCommand);
             window.removeEventListener('ssh-ui:new-terminal-tab', handleTriggerNewTab);
             window.removeEventListener('ssh-ui:close-terminal-tab', handleTriggerCloseTab);
             window.removeEventListener('zync:terminal:send', handlePluginTerminalSend);
-            window.removeEventListener('zync:ai-command-bar', handleAiCommandBar);
 
             // Clear any pending timeouts and reset pendingReadyRef
             Object.values(pendingReadyRef.current).forEach(obj => {
@@ -161,7 +155,7 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
             // Cleanup only if connection changed or unmounting
             // We don't want to clear this when just switching tabs within same connection
         };
-    }, [activeConnectionId, openAiCommandBar]); // Remove activeTabId to prevent reset on tab switch
+    }, [activeConnectionId]); // Remove activeTabId to prevent reset on tab switch
 
 
     const handleCloseTab = (id: string, e: React.MouseEvent) => {
@@ -229,7 +223,6 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
 
             {/* Terminal Content Area */}
             <div ref={terminalContentRef} className={cn("flex-1 overflow-hidden relative", terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg")}>
-                <AiCommandBar connectionId={activeConnectionId} activeTermId={activeTabId} constraintRef={terminalContentRef} />
                 {tabs.length === 0 ? (
                     <div className={cn(
                         "h-full flex flex-col items-center justify-center text-app-muted z-20",
@@ -246,9 +239,9 @@ export function TerminalManager({ connectionId, isVisible, hideTabs = false }: {
                             className={cn("absolute inset-0", activeTabId === tab.id ? "z-10" : "z-0 invisible")}
                         >
                             {/* We keep the component mounted but use CSS visibility to hide it.
-                                This perserves the XTerm state/buffer but stops it from rendering.
+                                This preserves the XTerm state/buffer but stops it from rendering.
                             */}
-                            <div className={cn("h-full w-full", activeTabId !== tab.id && "hidden")}>
+                            <div className="h-full w-full">
                                 <TerminalComponent
                                     connectionId={activeConnectionId}
                                     termId={tab.id}
