@@ -4,6 +4,7 @@ import type { AppStore } from './useAppStore';
 
 export interface AppSettings {
     theme: string;
+    iconTheme: string;
     accentColor?: string;
     windowOpacity: number;
     enableVibrancy: boolean;
@@ -73,7 +74,6 @@ export interface AppSettings {
     expandedFolders: string[];
     ai: {
         provider: 'ollama' | 'gemini' | 'openai' | 'claude' | 'groq' | 'mistral';
-        keys?: { gemini?: string; openai?: string; claude?: string; groq?: string; mistral?: string };
         model?: string;
         ollamaUrl?: string;
         enabled: boolean;
@@ -83,6 +83,7 @@ export interface AppSettings {
 
 const defaultSettings: AppSettings = {
     theme: 'dark',
+    iconTheme: 'vscode-icons',
     accentColor: undefined,
     windowOpacity: 1.0,
     enableVibrancy: false,
@@ -161,6 +162,7 @@ export interface SettingsSlice {
     settings: AppSettings;
     isSettingsOpen: boolean;
     isLoadingSettings: boolean;
+    appRoot: string | null;
 
     // Actions
     updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
@@ -174,14 +176,14 @@ export interface SettingsSlice {
     openSettings: () => void;
     closeSettings: () => void;
     loadSettings: () => Promise<void>;
+    fetchSystemInfo: () => Promise<void>;
 }
-
-
 
 export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> = (set, get) => ({
     settings: defaultSettings,
     isSettingsOpen: false,
     isLoadingSettings: true,
+    appRoot: null,
 
     loadSettings: async () => {
         try {
@@ -193,18 +195,7 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                 keybindings: { ...defaultSettings.keybindings, ...(loaded?.keybindings || {}) },
-                ai: (() => {
-                    const ai = { ...defaultSettings.ai, ...(loaded?.ai || {}) };
-                    // Migrate old single apiKey to per-provider keys
-                    const oldKey = (loaded?.ai as any)?.apiKey;
-                    if (oldKey && !ai.keys) {
-                        const provider = ai.provider || 'ollama';
-                        if (provider !== 'ollama') {
-                            ai.keys = { [provider]: oldKey } as any;
-                        }
-                    }
-                    return ai;
-                })(),
+                ai: { ...defaultSettings.ai, ...(loaded?.ai || {}) },
                 expandedFolders: loaded?.expandedFolders || []
             };
             set({ settings: merged, isLoadingSettings: false });
@@ -314,4 +305,12 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
 
     openSettings: () => set({ isSettingsOpen: true }),
     closeSettings: () => set({ isSettingsOpen: false }),
+    fetchSystemInfo: async () => {
+        try {
+            const info = await invoke<{ app_root: string }>('get_system_info');
+            set({ appRoot: info.app_root });
+        } catch (e) {
+            console.error('Failed to fetch system info:', e);
+        }
+    }
 });

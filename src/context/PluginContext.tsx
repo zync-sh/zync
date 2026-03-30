@@ -12,8 +12,11 @@ interface Plugin {
         style?: string;
         mode?: string;
         preview_bg?: string;
-        preview_accent?: string;
         icon?: string;
+        type?: string;
+        /** Icon pack folder (camelCase from IPC JSON) */
+        iconsPath?: string;
+        icons_path?: string;
     };
     script?: string;
     style?: string;
@@ -226,6 +229,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     const workerUrl = URL.createObjectURL(blob);
 
                     const worker = new Worker(workerUrl);
+                    URL.revokeObjectURL(workerUrl);
 
                     // Handle messages FROM the worker
                     worker.onmessage = (e) => {

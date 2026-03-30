@@ -69,7 +69,8 @@
       "nsis",
       "app",
       "dmg"
-    ]
+    ],
+    "resources": {}
   },
   "plugins": {
     "updater": {

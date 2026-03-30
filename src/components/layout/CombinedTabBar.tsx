@@ -38,6 +38,8 @@ export function CombinedTabBar({
     const terminals = useAppStore(useShallow(state => state.terminals[connectionId] || []));
 
     // Window drag hook for Linux compatibility
+
+    // Window drag hook for Linux compatibility
     const dragRegionRef = useRef<HTMLDivElement>(null);
     useWindowDrag(dragRegionRef, true);
 
@@ -286,7 +288,7 @@ export function CombinedTabBar({
                                     <div className="h-[1px] bg-app-border/50 my-1 mx-2" />
                                     <div className="px-3 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider flex items-center gap-1.5">
                                         <Plug size={10} />
-                                        Plugins
+                                        Plugin Panels
                                     </div>
                                     {pluginPanels.map(panel => {
                                         const featureId = `plugin:${panel.id}`;
@@ -312,6 +314,7 @@ export function CombinedTabBar({
                                     })}
                                 </>
                             )}
+
                         </div>
                     )}
                 </div>

@@ -9,9 +9,16 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 use std::time::Duration;
+use tauri_plugin_store::StoreExt;
 
 use crate::tunnel::TunnelManager;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize)]
+pub struct SystemInfo {
+    pub data_dir: String,
+    pub app_root: String,
+}
 
 /// Helper function to get the data directory.
 /// Reads the configured `dataPath` from settings.json if available,
@@ -133,7 +140,7 @@ async fn reconnect_connection(
     // Detect OS (best-effort — reuse cached value if already known via caller)
     let mut detected_os = None;
     if let Ok(mut channel) = session.channel_open_session().await {
-        if let Ok(_) = channel.exec(true, "cat /etc/os-release").await {
+        if channel.exec(true, "cat /etc/os-release").await.is_ok() {
             let mut output = String::new();
             while let Some(msg) = channel.wait().await {
                 match msg {
@@ -155,7 +162,7 @@ async fn reconnect_connection(
     }
     if detected_os.is_none() {
         if let Ok(mut channel) = session.channel_open_session().await {
-            if let Ok(_) = channel.exec(true, "uname -s").await {
+            if channel.exec(true, "uname -s").await.is_ok() {
                 let mut output = String::new();
                 while let Some(msg) = channel.wait().await {
                     match msg {
@@ -187,7 +194,6 @@ async fn reconnect_connection(
 }
 
 #[tauri::command]
-
 pub async fn ssh_connect(
     config: ConnectionConfig,
     state: State<'_, AppState>,
@@ -236,7 +242,7 @@ pub async fn ssh_test_connection(
             // Try a simple command to verify session
             let result = match session.channel_open_session().await {
                 Ok(mut channel) => {
-                    if let Ok(_) = channel.exec(true, "echo success").await {
+                    if channel.exec(true, "echo success").await.is_ok() {
                         let mut success = false;
                         while let Some(msg) = channel.wait().await {
                             if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
@@ -261,6 +267,59 @@ pub async fn ssh_test_connection(
         }
         Err(e) => Err(format!("Connection Failed: {}", e)),
     }
+}
+
+#[tauri::command]
+pub async fn get_system_info(app: AppHandle) -> Result<SystemInfo, String> {
+    let data_dir = get_data_dir(&app);
+    
+    // Use Tauri's path resolver to find assets correctly in both Dev and Prod
+    let app_root = (|| {
+        if cfg!(debug_assertions) {
+            // In Dev, we climb up from the executable or search for a project marker
+            if let Ok(exe) = std::env::current_exe() {
+                let mut current = exe.parent();
+                while let Some(path) = current {
+                    if path.join("Cargo.toml").exists() {
+                        return Some(path.to_path_buf());
+                    }
+                    current = path.parent();
+                }
+                return Some(exe.to_path_buf());
+            }
+            None
+        } else {
+            // In Prod, use the official resource directory
+            app.path().resource_dir().ok()
+        }
+    })().unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    Ok(SystemInfo {
+        data_dir: data_dir.to_string_lossy().to_string(),
+        app_root: app_root.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub async fn save_secret(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    let store = app.store("secrets.json").map_err(|e| e.to_string())?;
+    store.set(key, serde_json::Value::String(value));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_secret(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    let store = app.store("secrets.json").map_err(|e| e.to_string())?;
+    Ok(store.get(key).and_then(|v| v.as_str().map(|s| s.to_string())))
+}
+
+#[tauri::command]
+pub async fn delete_secret(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    let store = app.store("secrets.json").map_err(|e| e.to_string())?;
+    store.delete(key);
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1233,6 +1292,139 @@ pub async fn fs_delete(
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct BatchDeleteError {
+    pub message: String,
+    pub failed_paths: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn fs_delete_batch(
+    connection_id: String,
+    paths: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), BatchDeleteError> {
+    if connection_id == "local" {
+        let mut failed_paths = Vec::new();
+        for path in &paths {
+            if let Err(e) = state.file_system.delete(&connection_id, path).await {
+                failed_paths.push(path.clone());
+                eprintln!("[FS] Local delete failed for {}: {}", path, e);
+            }
+        }
+        if !failed_paths.is_empty() {
+            return Err(BatchDeleteError {
+                message: "Some local files could not be deleted".to_string(),
+                failed_paths,
+            });
+        }
+        Ok(())
+    } else {
+        // Optimization: Single SSH channel for combined rm -rf calls
+        let (session_opt, should_optimize) = {
+            let connections = state.connections.lock().await;
+            let conn = connections.get(&connection_id);
+            (
+                conn.and_then(|c| c.session.clone()),
+                conn.map(|c| c.detected_os.is_some()).unwrap_or(false),
+            )
+        };
+
+        if should_optimize {
+            if let Some(session) = session_opt {
+                let timeout_duration = std::time::Duration::from_secs(15);
+                
+                let ssh_optimize_fut = async {
+                    let mut channel = session
+                        .lock()
+                        .await
+                        .channel_open_session()
+                        .await
+                        .map_err(|e| format!("Failed to open channel: {}", e))?;
+
+                    let paths_str = paths
+                        .iter()
+                        .map(|p| format!("'{}'", p.replace("'", "'\\''")))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    
+                    let cmd = format!("rm -rf {}", paths_str);
+                    println!("[FS] Attempting batch server-side delete: {}", cmd);
+                    
+                    channel.exec(true, cmd).await.map_err(|e| format!("Exec failed: {}", e))?;
+
+                    let mut success = false;
+                    while let Some(msg) = channel.wait().await {
+                        if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
+                            if exit_status == 0 { success = true; }
+                            break;
+                        }
+                    }
+                    Ok::<bool, String>(success)
+                };
+
+                match tokio::time::timeout(timeout_duration, ssh_optimize_fut).await {
+                    Ok(Ok(true)) => {
+                        println!("[FS] Batch server-side delete successful.");
+                        return Ok(());
+                    }
+                    Ok(Err(e)) => println!("[FS] Batch SSH delete error: {}. Falling back to SFTP...", e),
+                    Err(_) => println!("[FS] Batch SSH delete timed out after {}s. Falling back to SFTP...", timeout_duration.as_secs()),
+                    _ => println!("[FS] Batch SSH delete failed, falling back to SFTP..."),
+                }
+            }
+        }
+
+        // Fallback: Individual SFTP deletes with retry logic
+        async fn perform_sftp_batch_delete(
+            sftp: &Arc<russh_sftp::client::SftpSession>,
+            paths: &[String],
+            fs: &Arc<FileSystem>
+        ) -> Vec<String> {
+            let mut failed = Vec::new();
+            for path in paths {
+                if let Err(e) = fs.delete_remote(sftp, path).await {
+                    failed.push(path.clone());
+                    eprintln!("[FS] SFTP delete failed for {}: {}", path, e);
+                }
+            }
+            failed
+        }
+
+        let sftp = match get_sftp_or_reconnect(&state, &connection_id).await {
+            Ok(s) => s,
+            Err(e) => return Err(BatchDeleteError { message: e, failed_paths: paths }),
+        };
+
+        let mut failed_paths = perform_sftp_batch_delete(&sftp, &paths, &state.file_system).await;
+        
+        // If some failed, maybe it was a session disconnect? Try reconnecting ONCE for the failures
+        if !failed_paths.is_empty() {
+            println!("[FS] Some batch deletes failed, attempting one-time reconnect for {} items...", failed_paths.len());
+            {
+                let mut connections = state.connections.lock().await;
+                if let Some(c) = connections.get_mut(&connection_id) {
+                    c.sftp_session = None;
+                }
+            }
+            if let Ok(retry_sftp) = get_sftp_or_reconnect(&state, &connection_id).await {
+                // Only retry the previously failed paths
+                let still_failed = perform_sftp_batch_delete(&retry_sftp, &failed_paths, &state.file_system).await;
+                failed_paths = still_failed;
+            }
+        }
+
+        if !failed_paths.is_empty() {
+            return Err(BatchDeleteError {
+                message: "Some remote files could not be deleted".to_string(),
+                failed_paths,
+            });
+        }
+        
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub async fn fs_copy(
     connection_id: String,
@@ -1679,33 +1871,31 @@ pub async fn tunnel_stop(
 #[tauri::command]
 pub async fn window_is_maximized(app: AppHandle) -> bool {
     app.get_webview_window("main")
-        .map(|w| w.is_maximized().unwrap_or(false))
+        .and_then(|w| w.is_maximized().ok())
         .unwrap_or(false)
 }
 
 #[tauri::command]
-pub async fn window_maximize(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        if window.is_maximized().unwrap_or(false) {
-            window.unmaximize().unwrap();
-        } else {
-            window.maximize().unwrap();
-        }
+pub async fn window_maximize(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    if window.is_maximized().map_err(|e| e.to_string())? {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    } else {
+        window.maximize().map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn window_minimize(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        window.minimize().unwrap();
-    }
+pub async fn window_minimize(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    window.minimize().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn window_close(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        window.close().unwrap();
-    }
+pub async fn window_close(app: AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    window.close().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

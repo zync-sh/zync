@@ -1,27 +1,27 @@
 import { MainLayout } from './components/layout/MainLayout';
-// v2 Trigger
 import { UpdateNotification } from './components/UpdateNotification';
 import { ToastContainer } from './components/ui/Toast';
-
 import { useEffect } from 'react';
 import { useAppStore } from './store/useAppStore';
-
 import { WelcomeScreen } from './components/dashboard/WelcomeScreen';
-
 import { useTransferEvents } from './hooks/useTransferEvents';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { PluginProvider } from './context/PluginContext';
+import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
 
 function AppContent() {
-    const showToast = useAppStore((state) => state.showToast);
-    const loadConnections = useAppStore(state => state.loadConnections);
-    const loadSettings = useAppStore(state => state.loadSettings);
+    const loadConnections = useAppStore((state) => state.loadConnections);
+    const loadSettings = useAppStore((state) => state.loadSettings);
+    const fetchSystemInfo = useAppStore((state) => state.fetchSystemInfo);
 
     useTransferEvents();
 
     useEffect(() => {
-        showToast('info', 'Welcome to SSH UI');
         // Initialize State
         loadConnections();
         loadSettings();
+        fetchSystemInfo();
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- store actions are stable
     }, []);
 
     return (
@@ -36,10 +36,7 @@ function AppContent() {
     );
 }
 
-import { ErrorBoundary } from './components/ErrorBoundary';
 
-import { PluginProvider } from './context/PluginContext';
-import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
 
 function App() {
     return (
