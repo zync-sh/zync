@@ -13,6 +13,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Package Cleanup**: Removed legacy syntax highlighter and windowing type definitions from `package.json`. ([7f3480e])
 - **"Sandwich" Layout Modernization**: Implemented a modern app architecture with a full-width `TabBar` header and a persistent `StatusBar` footer, consolidating global workspace controls into a unified header. ([9aa7d67])
 - **Platform-Aware Workspace Shortcuts**: Dashboard search now automatically handles `⌘+P` (Mac) and `Ctrl+P` (Windows/Linux) based on the user's platform. ([9aa7d67])
+- **AI Sidebar Migration**: Unified all AI interactions into a persistent, high-performance side panel. ([ad807aa])
+- **Flicker-Free Terminal Transitions**: Implemented "Width Pinning" to completely eliminate visual shimmering and text-shaking during sidebar animations and manual resizing. ([ad807aa])
+
+### Changed
+
+- **Unified AI Shortcut**: Reassigned `Mod+I` to the new sidebar and removed the legacy AI modal. ([ad807aa])
+- **Header Layout Optimization**: Reorganized `TabBar` icons to a more logical grouping: `[Left Panel] [AI Assistant] | [Settings]`. ([ad807aa])
 
 ### Changed
 
@@ -468,6 +475,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [bb7f0d9]: https://github.com/zync-sh/zync/commit/bb7f0d9
 [7f3480e]: https://github.com/zync-sh/zync/commit/7f3480e
 [9aa7d67]: https://github.com/zync-sh/zync/commit/9aa7d67
+[ad807aa]: https://github.com/zync-sh/zync/commit/ad807aa
 [Unreleased]: https://github.com/zync-sh/zync/compare/2.8.1...HEAD
 [2.8.1]: https://github.com/zync-sh/zync/compare/2.8.0...2.8.1
 [2.8.0]: https://github.com/zync-sh/zync/compare/2.7.0...2.8.0
