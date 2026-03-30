@@ -115,6 +115,7 @@ export function TabBar() {
     const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
     const isAiSidebarOpen = useAppStore(state => state.isAiSidebarOpen);
 
+
     const [tabToClose, setTabToClose] = useState<string | null>(null);
 
     // Add menu state
@@ -237,7 +238,7 @@ export function TabBar() {
                             <svg width="20" height="20" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
                                 <rect width="512" height="512" rx="128" className="fill-app-accent/20" />
                                 <path d="M128 170.667L213.333 256L128 341.333" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
-                                <path d="M256 341.333H384" className="stroke-app-text" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M256 341.333H384" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                         </div>
                     </Tooltip>
@@ -372,7 +373,6 @@ export function TabBar() {
                             </Tooltip>
                         </div>
                     </div>
-
                     <DragOverlay>
                         {activeDragId ? (
                             <div className="opacity-80">
