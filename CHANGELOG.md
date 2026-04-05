@@ -4,6 +4,39 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Cascading Icon System**: Implemented a 3-tier cascading resolution logic for file icons (Semantic ID → Category Fallback → Lucide) ensuring compatibility with future high-fidelity icon packs. ([ee88b22])
+- **Success-Guarded Dynamic Icons**: Introduced an `isLoaded` state guard to hide `<img>` tags until SVG assets are confirmed, completely eliminating broken image placeholders (404s). ([ee88b22])
+- **Optimized Batch Deletion**: Introduced localized `fs_delete_batch` with SSH command bundling and SFTP fallback, significantly improving multi-file removal performance. ([ee88b22])
+- **Targeted UI Rollback**: Enhanced the File Manager to only restore specific items that failed during a batch operation, preventing unnecessary full-list reverts. ([ee88b22])
+
+### Changed
+
+- **Resilient Remote IPC**: Added 15-second `tokio` timeouts and automatic session reconnection logic to all batch file system operations. ([ee88b22])
+- **Monaco Editor Integration**: Successfully migrated from CodeMirror 6 to Monaco Editor for all file editing operations. Features include managed model lifecycles for memory efficiency, URI-based model reuse, and robust dirty-state detection for a seamless "Pro" development experience. ([7f3480e])
+- **Local Language Intelligence**: Integrated `@enjoys/context-engine` (v1.8.0) to provide local, zero-backend autocomplete, hover documentation, and definitions for 94+ languages, including improved detection for extensionless files like `Dockerfile` and `Makefile`. ([7f3480e])
+- **Expanded AI Providers**: Added support for **Groq** and **Mistral** AI providers (OpenAI-compatible) for ultra-fast command generation and reasoning. ([7f3480e])
+- **AI Agent Mode (v2.8.2)**: Introduced a new agentic reasoning engine with a step-by-step planning UI, a terminal feedback loop for automated diagnostics and fixes, and 35+ hardcoded safety rails. ([7f3480e])
+- **Package Cleanup**: Removed legacy syntax highlighter and windowing type definitions from `package.json`. ([7f3480e])
+- **"Sandwich" Layout Modernization**: Implemented a modern app architecture with a full-width `TabBar` header and a persistent `StatusBar` footer, consolidating global workspace controls into a unified header. ([9aa7d67])
+- **Platform-Aware Workspace Shortcuts**: Dashboard search now automatically handles `⌘+P` (Mac) and `Ctrl+P` (Windows/Linux) based on the user's platform. ([9aa7d67])
+- **AI Sidebar Migration**: Unified all AI interactions into a persistent, high-performance side panel. ([ad807aa])
+- **Flicker-Free Terminal Transitions**: Implemented "Width Pinning" to completely eliminate visual shimmering and text-shaking during sidebar animations and manual resizing. ([ad807aa])
+
+### Changed
+
+- **Unified AI Shortcut**: Reassigned `Mod+I` to the new sidebar and removed the legacy AI modal. ([ad807aa])
+- **Header Layout Optimization**: Reorganized `TabBar` icons to a more logical grouping: `[Left Panel] [AI Assistant] | [Settings]`. ([ad807aa])
+- **Technical Hardening & Reliability**: 
+    - Refactored Dashboard metrics polling with live store state to prevent desynchronization during tab switching. ([9aa7d67])
+    - Optimized React performance through memoization of expensive connection tree sets and event handlers. ([9aa7d67])
+    - Hardened IPC robustness by replacing module-level assertions with safe optional chaining in the layout layer. ([9aa7d67])
+    - Switched folder interaction logic to idiomatic React state management for consistent drag-and-drop feedback. ([9aa7d67])
+- **Sidebar De-cluttering**: Optimized the sidebar by removing redundant footers, maximizing space for connection browsing. ([9aa7d67])
+- **Tooltip Flexibility**: Added an optional `dismissOnClick` property for granular interaction control. ([9aa7d67])
+- **Audit & Type Safety**: Addressed CodeRabbit findings regarding modal lifecycle guards and type safety in the Tab layer. ([9aa7d67])
+
 ## [2.8.1] - 2026-03-25
 
 ### Added
@@ -445,6 +478,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 [e604f6f]: https://github.com/zync-sh/zync/commit/e604f6f
 [ad0e116]: https://github.com/zync-sh/zync/commit/ad0e116
 [bb7f0d9]: https://github.com/zync-sh/zync/commit/bb7f0d9
+[7f3480e]: https://github.com/zync-sh/zync/commit/7f3480e
+[9aa7d67]: https://github.com/zync-sh/zync/commit/9aa7d67
+[ad807aa]: https://github.com/zync-sh/zync/commit/ad807aa
 [Unreleased]: https://github.com/zync-sh/zync/compare/2.8.1...HEAD
 [2.8.1]: https://github.com/zync-sh/zync/compare/2.8.0...2.8.1
 [2.8.0]: https://github.com/zync-sh/zync/compare/2.7.0...2.8.0

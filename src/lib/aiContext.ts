@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getTerminalRecentLines } from '../components/Terminal';
+import type { AiContext } from '../ai/types/common';
+import { attachAiContext } from '../ai/lib/requestContext';
+import { redactSensitiveOutput } from '../ai/lib/redactContext';
 
 export interface TerminalContext {
     os: string | null;
@@ -7,6 +10,20 @@ export interface TerminalContext {
     cwd: string | null;
     recentOutput: string | null;
     connectionType: string;
+}
+
+export async function collectAiRequestContext(
+    connectionId: string | undefined,
+    termId: string | null,
+    attachedContext?: AiContext | null,
+    options?: { includeRecentOutput?: boolean; redact?: boolean }
+): Promise<Record<string, unknown>> {
+    try {
+        const terminalContext = await collectTerminalContext(connectionId, termId, options);
+        return attachAiContext({ ...terminalContext }, attachedContext);
+    } catch {
+        return attachAiContext({}, attachedContext);
+    }
 }
 
 /**
@@ -18,31 +35,29 @@ export async function collectTerminalContext(
     termId: string | null,
     options?: { includeRecentOutput?: boolean; redact?: boolean }
 ): Promise<TerminalContext> {
+    // Redaction is default-on. Callers must explicitly pass redact:false to disable it,
+    // which should only happen in local-only / non-cloud scenarios.
+    const shouldRedact = options?.redact !== false;
     const isLocal = !connectionId || connectionId === 'local';
     const connectionType = isLocal ? 'local' : 'ssh';
 
-    // OS detection: for SSH assume Linux (vast majority of servers);
-    // for local, detect from navigator
-    let os: string;
+    // For remote (SSH) connections, the backend detects the real OS and shell at
+    // connect time and overrides whatever we send here. Send null so the backend
+    // fallback ("unknown") is used only if detection failed rather than a wrong guess.
+    let os: string | null;
+    let shell: string | null;
     if (!isLocal) {
-        os = 'Linux';
+        os = null;
+        shell = null;
     } else {
         const ua = navigator.userAgent.toLowerCase();
         os = ua.includes('mac') ? 'macOS'
             : ua.includes('win') ? 'Windows'
                 : 'Linux';
-    }
-
-    // Shell detection: for local, infer from OS; for SSH, default to bash
-    let shell: string;
-    if (!isLocal) {
-        shell = 'bash';
-    } else if (os === 'Windows') {
-        shell = 'powershell';
-    } else if (os === 'macOS') {
-        shell = 'zsh';
-    } else {
-        shell = 'bash';
+        // Match the actual shell the backend uses: cmd /C on Windows, sh -c elsewhere.
+        shell = os === 'Windows' ? 'cmd'
+            : os === 'macOS' ? 'zsh'
+                : 'sh';
     }
 
     let cwd: string | null = null;
@@ -53,25 +68,11 @@ export async function collectTerminalContext(
         // cwd is optional context
     }
 
-    // Read recent terminal output from xterm buffer
     let recentOutput: string | null = null;
     if (options?.includeRecentOutput && termId) {
         const raw = getTerminalRecentLines(termId, 20);
-        recentOutput = options?.redact ? redactSensitiveOutput(raw) : raw;
+        recentOutput = shouldRedact ? redactSensitiveOutput(raw) : raw;
     }
 
     return { os, shell, cwd, recentOutput, connectionType };
-}
-
-function redactSensitiveOutput(text: string | null): string | null {
-    if (!text) return null;
-    return text
-        // key=value / key: value style (password, token, secret, api_key, access_key — supports quoted values)
-        .replace(/\b(password|token|secret|api[_-]?key|access[_-]?key)\b\s*[:=]\s*("([^"\n]*)"|'([^'\n]*)'|\S+)/gi, '$1=[REDACTED]')
-        // Authorization: Bearer <token>
-        .replace(/\b(authorization\s*:\s*bearer)\s+[^\s"']+/gi, '$1 [REDACTED]')
-        // Common vendor token formats: GitHub (ghp_, ghu_, ghs_, gho_, ghr_), OpenAI (sk-), AWS (AKIA/ASIA), Slack (xox*)
-        .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g, '[REDACTED_KEY]')
-        // PEM private key blocks
-        .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]');
 }

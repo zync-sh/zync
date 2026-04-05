@@ -219,3 +219,6 @@ export function ImportSshModal({ isOpen, onClose, onImport }: ImportSshModalProp
         </Modal>
     );
 }
+
+import { registerModal } from '../../lib/modalRegistry';
+registerModal('importSsh', ImportSshModal);

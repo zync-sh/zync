@@ -1,19 +1,7 @@
 import {
-  Database,
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileJson,
-  FileSpreadsheet,
-  FileTerminal,
-  FileText,
-  FileType,
-  FileVideo,
   Folder,
-  Lock,
 } from 'lucide-react';
+import { DynamicIcon } from '../ui/DynamicIcon';
 import type React from 'react';
 import { cn, formatBytes, formatDate } from '../../lib/utils';
 import type { FileEntry } from './types';
@@ -26,6 +14,7 @@ import { setCurrentDragSource } from '../../lib/dragDrop';
 import { motion, AnimatePresence } from 'framer-motion';
 import { forwardRef } from 'react';
 import { buildDragData, startInternalDrag, validateAndBuildMoves } from './dragDropUtils';
+import { Tooltip } from '../ui/Tooltip';
 
 // Extended Icon Selector with Colors
 const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size: number }) {
@@ -43,60 +32,14 @@ const FileIcon = memo(function FileIcon({ file, size }: { file: FileEntry; size:
     );
   }
 
-  const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
-  // Minimalist File Icons - Theme Muted Color
-  const fileColor = "text-app-muted/80";
-  const strokeWidth = 1.5;
-
-  // Code / Config
-  if (
-    ['js', 'ts', 'jsx', 'tsx', 'css', 'html', 'py', 'go', 'rb', 'php', 'java', 'c', 'cpp', 'rs', 'lua'].includes(ext)
-  ) {
-    return <FileCode size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['json', 'yml', 'yaml', 'xml', 'toml', 'ini', 'env'].includes(ext)) {
-    return <FileJson size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1'].includes(ext)) {
-    return <FileTerminal size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-
-  // Media
-  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'tiff'].includes(ext)) {
-    return <FileImage size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) {
-    return <FileAudio size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) {
-    return <FileVideo size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-
-  // Archives
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(ext)) {
-    return <FileArchive size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-
-  // Data / Docs
-  if (['csv', 'xlsx', 'xls', 'ods'].includes(ext)) {
-    return <FileSpreadsheet size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['sql', 'db', 'sqlite', 'mdb'].includes(ext)) {
-    return <Database size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['pdf'].includes(ext)) {
-    return <FileType size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['txt', 'md', 'log', 'rtf'].includes(ext)) {
-    return <FileText size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-  if (['pem', 'key', 'crt', 'cer'].includes(ext)) {
-    return <Lock size={size} className={fileColor} strokeWidth={strokeWidth} />;
-  }
-
-  // Default
-  return <File size={size} className={fileColor} strokeWidth={strokeWidth} />;
+  // Use the new DynamicIcon engine for files
+  return (
+    <DynamicIcon 
+        type={file.name} 
+        size={size} 
+        className="drop-shadow-sm group-hover:scale-110 transition-transform duration-300" 
+    />
+  );
 });
 
 // Memoized File Item Component
@@ -252,16 +195,17 @@ const FileGridItem = memo(forwardRef<HTMLDivElement, {
       </div>
 
       <div className="w-full text-center px-1 z-10">
-        <div
-          className={cn(
-            'truncate font-medium leading-tight transition-colors select-text',
-            viewMode === 'grid' ? (compactMode ? 'text-[11px]' : 'text-xs') : 'text-sm',
-            isSelected ? 'text-app-accent font-semibold' : 'text-app-text/90 group-hover:text-app-text',
-          )}
-          title={file.name}
-        >
-          {file.name}
-        </div>
+        <Tooltip content={file.name} position="bottom" className="w-full">
+          <div
+            className={cn(
+              'truncate font-medium leading-tight transition-colors select-text',
+              viewMode === 'grid' ? (compactMode ? 'text-[11px]' : 'text-xs') : 'text-sm',
+              isSelected ? 'text-app-accent font-semibold' : 'text-app-text/90 group-hover:text-app-text',
+            )}
+          >
+            {file.name}
+          </div>
+        </Tooltip>
 
         {viewMode === 'grid' && !compactMode && (
           <div className="text-[10px] text-app-muted/50 truncate opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -377,9 +321,11 @@ const FileListItem = memo(forwardRef<HTMLTableRowElement, {
       <td className="py-2 px-4">
         <div className="flex items-center gap-3">
           <FileIcon file={file} size={20} />
-          <span className={cn('font-medium truncate', isSelected ? 'text-app-accent' : 'text-app-text')}>
-            {file.name}
-          </span>
+          <Tooltip content={file.name} position="right">
+            <span className={cn('font-medium truncate', isSelected ? 'text-app-accent' : 'text-app-text')}>
+              {file.name}
+            </span>
+          </Tooltip>
         </div>
       </td>
       <td className="py-2 px-4 text-sm text-app-muted font-mono">

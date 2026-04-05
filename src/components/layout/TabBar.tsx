@@ -1,9 +1,11 @@
-import { X, Settings as SettingsIcon, PanelLeftOpen, Network, Gift } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
 import { WindowControls } from './WindowControls';
 import { useState, useEffect, useRef } from 'react';
+import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { matchShortcut } from '../../lib/shortcuts';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
@@ -62,24 +64,24 @@ function SortableTab({
             {...listeners}
             onClick={() => onActivate(tab.id)}
             className={cn(
-                "group flex items-center gap-2 px-2.5 py-1.5 h-8 text-sm rounded-md cursor-pointer select-none border border-transparent shrink-0 outline-none drag-none",
+                "group flex items-center gap-1 px-2 py-1 h-7 text-[11px] rounded-md cursor-pointer select-none border border-transparent shrink-0 outline-none drag-none transition-all duration-200",
                 isActive
-                    ? "bg-app-surface text-app-text shadow-sm font-medium"
-                    : "text-app-muted hover:bg-app-surface hover:text-app-text border-transparent"
+                    ? "bg-app-surface text-app-text shadow-sm font-semibold"
+                    : "text-app-muted hover:bg-app-surface/60 hover:text-app-text border-transparent"
             )}
             title={tab.title}
         >
             {/* Icon based on type */}
             {(() => {
-                if (tab.type === 'port-forwarding') return <Network size={13} />;
-                if (tab.type === 'settings') return <SettingsIcon size={13} />;
-                if (tab.type === 'release-notes') return <Gift size={13} className="text-[var(--color-app-accent)]" />;
+                if (tab.type === 'port-forwarding') return <Network size={12} />;
+                if (tab.type === 'settings') return <SettingsIcon size={12} />;
+                if (tab.type === 'release-notes') return <Gift size={12} className="text-[var(--color-app-accent)]" />;
 
                 const conn = connections.find((c: Connection) => c.id === tab.connectionId);
-                return <OSIcon icon={conn?.icon || 'Server'} className="w-[13px] h-[13px]" />;
+                return <OSIcon icon={conn?.icon || 'Server'} className="w-[12px] h-[12px]" />;
             })()}
 
-            <span className="truncate max-w-[120px]">{tab.title}</span>
+            <span className="truncate max-w-[90px]">{tab.title}</span>
 
             <button
                 onClick={(e) => onClose(tab.id, e)}
@@ -108,8 +110,30 @@ export function TabBar() {
     // Settings Slice
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
+    const openSettings = useAppStore(state => state.openSettings);
+    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
+    const isAiSidebarOpen = useAppStore(state => state.isAiSidebarOpen);
+
 
     const [tabToClose, setTabToClose] = useState<string | null>(null);
+
+    // Add menu state
+    const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+    const addMenuRef = useRef<HTMLDivElement>(null);
+
+    // Click outside to close the Add menu
+    useEffect(() => {
+        if (!isAddMenuOpen) return;
+
+        const handleClickOutside = (event: MouseEvent) => {
+            if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
+                setIsAddMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [isAddMenuOpen]);
 
     // Window drag hook for Linux compatibility
     const dragRegionRef = useRef<HTMLDivElement>(null);
@@ -195,28 +219,78 @@ export function TabBar() {
     return (
         <>
             <div ref={dragRegionRef} className={cn(
-                "flex h-12 bg-app-bg items-center pr-1 gap-2 app-drag-region shrink-0 select-none",
-                isMac && settings.sidebarCollapsed ? "pl-4" : "pl-1"
+                "relative z-[60] flex h-10 bg-app-bg items-center pr-1 gap-1 app-drag-region shrink-0 select-none",
+                isMac ? "pl-2" : "pl-1"
             )} data-tauri-drag-region>
 
-                {/* macOS Controls on Left (Only when sidebar is collapsed) */}
-                {isMac && settings.sidebarCollapsed && (
-                    <div className="shrink-0 flex items-center pr-2">
+                {/* macOS Controls on Left (Always at far edge) */}
+                {isMac && (
+                    <div className="shrink-0 flex items-center pr-2 pl-1">
                         <WindowControls />
                     </div>
                 )}
 
-                {/* Show Sidebar Toggle */}
-                {settings.sidebarCollapsed && (
-                    <button
-                        onClick={() => updateSettings({ sidebarCollapsed: false })}
-                        className="h-8 w-8 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center"
-                        title="Show Sidebar"
-                        aria-label="Show Sidebar"
-                    >
-                        <PanelLeftOpen size={16} />
-                    </button>
-                )}
+                {/* Brand & Add (Now back on left) */}
+                <div className="flex items-center gap-1.5 shrink-0 drag-none px-1">
+                    {/* Zync Icon */}
+                    <Tooltip content="Zync" position="bottom">
+                        <div className="shrink-0 flex items-center opacity-80 hover:opacity-100 transition-opacity cursor-default px-2">
+                            <svg width="20" height="20" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect width="512" height="512" rx="128" className="fill-app-accent/20" />
+                                <path d="M128 170.667L213.333 256L128 341.333" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M256 341.333H384" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                        </div>
+                    </Tooltip>
+
+                    {/* Add New Button */}
+                    <div className="relative shrink-0" ref={addMenuRef}>
+                        <Tooltip content="Add New..." position="bottom" disabled={isAddMenuOpen}>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
+                                className={cn(
+                                    "h-7 w-7 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0",
+                                    isAddMenuOpen
+                                        ? "bg-app-accent/20 text-app-text"
+                                        : "text-app-muted hover:bg-app-surface hover:text-app-text"
+                                )}
+                            >
+                                <Plus className="h-4 w-4" />
+                            </Button>
+                        </Tooltip>
+
+                        {isAddMenuOpen && (
+                            <div className="absolute top-full left-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 p-1">
+                                <button
+                                    onClick={() => { setAddConnectionModalOpen(true); setIsAddMenuOpen(false); }}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                >
+                                    <Laptop size={13} className="text-app-muted" />
+                                    <span>New Host</span>
+                                </button>
+                                <button
+                                    onClick={() => { window.dispatchEvent(new Event('ssh-ui:open-folder-modal')); setIsAddMenuOpen(false); }}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                >
+                                    <FolderPlus size={13} className="text-app-muted" />
+                                    <span>New Folder</span>
+                                </button>
+                                
+                                <div className="h-px bg-app-border/40 my-1 mx-2" />
+                                
+                                <button
+                                    onClick={() => { window.dispatchEvent(new Event('ssh-ui:open-new-tunnel')); setIsAddMenuOpen(false); }}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                >
+                                    <Network size={13} className="text-app-muted" />
+                                    <span>New Tunnel</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
 
                 <DndContext
                     sensors={sensors}
@@ -225,7 +299,7 @@ export function TabBar() {
                     onDragEnd={handleDragEnd}
                 >
                     <div
-                        className="flex items-center gap-2 flex-1 overflow-x-auto no-scrollbar min-w-0 h-full"
+                        className="flex items-center gap-1 flex-1 overflow-x-auto no-scrollbar min-w-0 h-full"
                         onDoubleClick={() => {
                             window.ipcRenderer?.send('window:maximize');
                         }}
@@ -248,6 +322,57 @@ export function TabBar() {
                         </SortableContext>
                     </div>
 
+                    <div className="flex items-center gap-1 shrink-0 drag-none px-1">
+                        {/* Header Actions */}
+                        <div className="flex items-center gap-1">
+                            {/* Left Panel Toggle */}
+                            <Tooltip content={settings.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"} position="bottom">
+                                <button
+                                    onClick={() => {
+                                        window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
+                                        updateSettings({ sidebarCollapsed: !settings.sidebarCollapsed });
+                                        setTimeout(() => {
+                                            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
+                                        }, 320);
+                                    }}
+                                    className={cn(
+                                        "h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center",
+                                        !settings.sidebarCollapsed && "text-app-accent bg-app-accent/10 border-app-accent/20"
+                                    )}
+                                    aria-label={settings.sidebarCollapsed ? "Show Sidebar" : "Hide Sidebar"}
+                                >
+                                    <PanelLeft size={16} />
+                                </button>
+                            </Tooltip>
+
+                            {/* AI Panel Toggle */}
+                            <Tooltip content={`AI Assistant (${isMac ? '⌘I' : 'Ctrl+I'})`} position="bottom">
+                                <button
+                                    onClick={toggleAiSidebar}
+                                    className={cn(
+                                        "h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center",
+                                        isAiSidebarOpen && "text-app-accent bg-app-accent/10 border-app-accent/20"
+                                    )}
+                                    aria-label="Toggle AI Sidebar"
+                                >
+                                    <Sparkles size={14} />
+                                </button>
+                            </Tooltip>
+
+                            {/* Separator */}
+                            <div className="h-4 w-[1px] bg-app-border/40 mx-0.5" />
+
+                            {/* Settings */}
+                            <Tooltip content="Settings" position="bottom">
+                                <button
+                                    onClick={openSettings}
+                                    className="h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center group"
+                                >
+                                    <SettingsIcon size={14} />
+                                </button>
+                            </Tooltip>
+                        </div>
+                    </div>
                     <DragOverlay>
                         {activeDragId ? (
                             <div className="opacity-80">

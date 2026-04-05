@@ -1,5 +1,5 @@
-import { Activity, Cpu, Gauge, LayoutDashboard } from 'lucide-react';
-import { useRef, useEffect, useState } from 'react';
+import { Activity, Cpu, Gauge, LayoutDashboard, Search } from 'lucide-react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { useAppStore, Connection } from '../../store/useAppStore';
 
 import { ResourceWidget } from './ResourceWidget';
@@ -33,15 +33,15 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
     cpu: { time: string; value: number }[];
     ram: { time: string; value: number }[];
   }>({
-    cpu: Array(20).fill({ time: '', value: 0 }),
-    ram: Array(20).fill({ time: '', value: 0 }),
+    cpu: Array.from({ length: 20 }, () => ({ time: '', value: 0 })),
+    ram: Array.from({ length: 20 }, () => ({ time: '', value: 0 })),
   });
 
   const [isSaturationDetected, setIsSaturationDetected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isFetching = useRef(false);
 
-  const fetchMetrics = async () => {
+  const fetchMetrics = useCallback(async () => {
     // Capture current ID to detect race conditions
     const targetId = activeConnectionId;
 
@@ -133,6 +133,9 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
           throw err; // Re-throw to hit the saturation catch block
         }
 
+        // Race condition check: obtain latest ID from store to ensure we haven't switched tabs
+        if (targetId !== useAppStore.getState().activeConnectionId) return true;
+
       } else {
         // --- Linux / Standard SSH Metrics ---
         // Combine ALL commands to reduce channel usage to exactly 1 per interval.
@@ -155,7 +158,8 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
         });
 
         // Race condition check: If active connection changed while awaiting, discard result
-        if (targetId !== activeConnectionId) return;
+        // Race condition check: obtain latest ID from store to ensure we haven't switched tabs
+        if (targetId !== useAppStore.getState().activeConnectionId) return true;
 
         // Parse output (newline separated)
         const lines = output.trim().split('\n');
@@ -267,7 +271,7 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
     } finally {
       isFetching.current = false;
     }
-  };
+  }, [activeConnectionId, isVisible]);
 
   useEffect(() => {
     if (!activeConnectionId || !isConnected || !isVisible) return;
@@ -296,7 +300,7 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
       isActive = false;
       clearTimeout(timeoutId);
     };
-  }, [activeConnectionId, isConnected, isSaturationDetected, isVisible]); // Re-run if visibility changes so polling stops immediately when hidden
+  }, [activeConnectionId, isConnected, isSaturationDetected, isVisible, fetchMetrics]); // Re-run if visibility changes so polling stops immediately when hidden
   // Ideally, if saturationDetected changes to true inside fetchMetrics, the NEXT schedule will see it.
   // But since scheduleNext reads state... Wait, scheduleNext uses closure?
   // We need to be careful. If we rely on closure, we might use stale `isSaturationDetected`.
@@ -307,13 +311,33 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
 
   if (!activeConnectionId) {
     return (
-      <div className="h-full flex flex-col items-center justify-center -mt-20">
-        <div className="w-20 h-20 rounded-3xl bg-app-surface/50 border border-app-border/40 flex items-center justify-center mb-6 shadow-sm">
+      <div className="h-full flex flex-col items-center justify-center -mt-20 px-6">
+        <div className="w-20 h-20 rounded-3xl bg-app-surface/50 border border-app-border/40 flex items-center justify-center mb-8 shadow-sm">
           <LayoutDashboard className="text-app-muted/40 w-10 h-10" />
         </div>
-        <h3 className="text-xl font-semibold text-app-text">System Dashboard</h3>
-        <p className="text-sm text-app-muted mt-2 max-w-xs text-center opacity-70">
-          Select a connection from the sidebar to view system metrics.
+
+        {/* Global Search Bar */}
+        <div 
+          className="relative group w-full max-w-md cursor-pointer mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"
+          onClick={() => {
+              const isMac = navigator.userAgent.includes('Mac');
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: isMac, ctrlKey: !isMac }));
+          }}
+        >
+          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-app-muted group-hover:text-app-accent transition-colors" />
+          </div>
+          <div className="w-full bg-app-surface/40 hover:bg-app-surface/80 border border-app-border/50 hover:border-app-accent/50 rounded-xl text-app-muted text-sm px-4 py-3 pl-10 shadow-sm transition-all flex items-center justify-between">
+              <span>Search servers, tunnels, settings...</span>
+              <div className="flex bg-app-bg/60 rounded px-1.5 py-0.5 border border-app-border/40 shadow-sm opacity-70 group-hover:bg-app-accent/10 group-hover:text-app-accent group-hover:border-app-accent/30 transition-all">
+                  <span className="text-[10px] font-mono font-medium tracking-wider">{navigator.userAgent.includes('Mac') ? '⌘' : 'Ctrl'}+P</span>
+              </div>
+          </div>
+        </div>
+
+        <h3 className="text-xl font-semibold text-app-text">Welcome to Zync</h3>
+        <p className="text-sm text-app-muted mt-2 max-w-sm text-center opacity-70 leading-relaxed">
+          Select a connection from the sidebar, or search for a host above to get started.
         </p>
       </div>
     );

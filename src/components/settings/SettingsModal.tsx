@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ZPortal } from '../ui/ZPortal';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
@@ -47,7 +47,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     // About / Update State
     const [appVersion, setAppVersion] = useState('');
     // Global Update State
-    // Global Update State
     const updateStatus = useAppStore(state => state.updateStatus);
     const updateInfo = useAppStore(state => state.updateInfo);
     const setUpdateStatus = useAppStore(state => state.setUpdateStatus);
@@ -68,9 +67,24 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [needsRestart, setNeedsRestart] = useState(false);
 
-    // AI tab: local draft for API key so we don't invoke on every keystroke
     const [apiKeyDraft, setApiKeyDraft] = useState('');
     const [apiKeySaved, setApiKeySaved] = useState(false);
+    const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+
+    const saveApiKey = async (provider: string, key: string) => {
+        if (provider === 'ollama') return;
+        
+        try {
+            setApiKeyError(null);
+            await invoke('save_secret', { key: provider, value: key });
+            setApiKeySaved(true);
+            setTimeout(() => setApiKeySaved(false), 2000);
+        } catch (err: any) {
+            console.error('Failed to save API key:', err);
+            setApiKeyError(err.toString());
+            setApiKeySaved(false);
+        }
+    };
 
     const { executeCommand } = usePlugins();
     const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
@@ -79,9 +93,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     // Sync apiKeyDraft when provider changes or tab opens
     const currentProvider = settings.ai?.provider || 'ollama';
     useEffect(() => {
-        const key = settings.ai?.keys?.[currentProvider as keyof typeof settings.ai.keys] || '';
-        setApiKeyDraft(key);
-        setApiKeySaved(false);
+        if (currentProvider === 'ollama') {
+            setApiKeyDraft('');
+            setApiKeySaved(false);
+            return;
+        }
+
+        invoke<string | null>('get_secret', { key: currentProvider })
+            .then(key => {
+                setApiKeyDraft(key || '');
+                setApiKeySaved(false);
+            })
+            .catch(err => console.error('Failed to load secret:', err));
     }, [currentProvider, activeTab]);
 
     useEffect(() => {
@@ -94,17 +117,26 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
             // Also fetch registry for version checking
             setIsLoadingRegistry(true);
-            fetch("https://raw.githubusercontent.com/zync-sh/zync-extensions/main/marketplace.json")
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+            fetch("https://raw.githubusercontent.com/zync-sh/zync-extensions/main/marketplace.json", {
+                signal: controller.signal
+            })
                 .then(res => res.json())
                 .then(data => setRegistry(data.plugins || []))
-                .catch(err => console.error('Failed to fetch registry', err))
-                .finally(() => setIsLoadingRegistry(false));
-        } else if (isOpen && activeTab === 'appearance') {
-            setIsLoadingPlugins(true);
-            window.ipcRenderer.invoke('plugins:load')
-                .then((list: any) => setPlugins(list))
-                .catch((err: any) => console.error('Failed to load plugins', err))
-                .finally(() => setIsLoadingPlugins(false));
+                .catch(err => {
+                    if (err.name === 'AbortError') {
+                        console.error('Plugin registry fetch timed out after 10s');
+                    } else {
+                        console.error('Failed to fetch registry', err);
+                    }
+                })
+                .finally(() => {
+                    clearTimeout(timeoutId);
+                    setIsLoadingRegistry(false);
+                });
         }
     }, [isOpen, activeTab]);
 
@@ -560,8 +592,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                             </button>
                                                         )}
                                                         <button
-                                                            onClick={() => {
-                                                                if (confirm("Are you sure you want to clear all connections? This cannot be undone.")) {
+                                                            onClick={async () => {
+                                                                const confirmed = await showConfirmDialog({
+                                                                    title: "Clear Connections",
+                                                                    message: "Are you sure you want to clear all connections? This cannot be undone.",
+                                                                    confirmText: "Clear ALL",
+                                                                    variant: "danger"
+                                                                });
+                                                                
+                                                                if (confirmed) {
                                                                     useAppStore.getState().clearConnections();
                                                                     showToast('info', 'Connections cleared.');
                                                                 }
@@ -617,8 +656,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         )}
                                                     </div>
                                                 </div>
+
                                             </div>
                                         </div>
+
+                                        <div className="h-px bg-[var(--color-app-border)]/20 my-4" />
                                     </div>
                                 </Section>
                             </div>
@@ -1021,24 +1063,64 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     {pluginTab === 'installed' ? (
                                         <div className="space-y-4">
                                             {/* Theme Selection - made compact */}
-                                            <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
-                                                        <Monitor size={16} />
+                                            <div className="flex flex-col gap-3">
+                                                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                            <Monitor size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Color Theme</h4>
+                                                            <p className="text-[10px] text-[var(--color-app-muted)]">
+                                                                Select from {plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length} themes
+                                                            </p>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <h4 className="text-xs font-medium text-[var(--color-app-text)]">Color Theme</h4>
-                                                        <p className="text-[10px] text-[var(--color-app-muted)]">
-                                                            Select from {plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length} themes
-                                                        </p>
-                                                    </div>
+                                                    <button
+                                                        onClick={() => executeCommand('workbench.action.selectTheme')}
+                                                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
+                                                    >
+                                                        Select Theme
+                                                    </button>
                                                 </div>
-                                                <button
-                                                    onClick={() => executeCommand('workbench.action.selectTheme')}
-                                                    className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
-                                                >
-                                                    Select Theme
-                                                </button>
+
+                                                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                                            <Package size={16} />
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Icon Theme</h4>
+                                                            <p className="text-[10px] text-[var(--color-app-muted)]">
+                                                                Select from {2 + plugins.filter(p => p.manifest.type === 'icon-theme').length} sets
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            const themes = [
+                                                                { label: 'VSCode Icons (Default)', id: 'vscode-icons' },
+                                                                { label: 'Lucide Minimalist', id: 'lucide' },
+                                                                ...plugins
+                                                                    .filter(p => p.manifest.type === 'icon-theme')
+                                                                    .map(p => ({ label: p.manifest.name, id: p.manifest.id }))
+                                                            ];
+
+                                                            window.dispatchEvent(new CustomEvent('zync:quick-pick', {
+                                                                detail: {
+                                                                    items: themes,
+                                                                    options: { placeHolder: 'Select Icon Theme' },
+                                                                    requestId: 'icon-theme-select',
+                                                                    pluginId: 'system'
+                                                                }
+                                                            }));
+                                                            onClose(); // Close settings to show palette
+                                                        }}
+                                                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
+                                                    >
+                                                        Select Icon Set
+                                                    </button>
+                                                </div>
                                             </div>
 
                                             <div className="h-px bg-[var(--color-app-border)]/20 my-1" />
@@ -1369,12 +1451,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             <div className="w-52">
                                                 <Select
                                                     value={settings.ai?.provider || 'ollama'}
-                                                    onChange={(v) => updateAiSettings({ provider: v as any })}
+                                                    onChange={(v) => updateAiSettings({ provider: v as any, model: undefined })}
                                                     options={[
                                                         { value: 'ollama', label: 'Ollama (Local / Free)' },
                                                         { value: 'gemini', label: 'Gemini (Free BYOK)' },
                                                         { value: 'openai', label: 'OpenAI (BYOK)' },
                                                         { value: 'claude', label: 'Claude (BYOK)' },
+                                                        { value: 'groq', label: 'Groq (BYOK)' },
+                                                        { value: 'mistral', label: 'Mistral (BYOK)' },
                                                     ]}
                                                 />
                                             </div>
@@ -1409,28 +1493,29 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     <input
                                                         type="password"
                                                         value={apiKeyDraft}
-                                                        onChange={(e) => { setApiKeyDraft(e.target.value); setApiKeySaved(false); }}
-                                                        onBlur={() => {
-                                                            const p = settings.ai?.provider as string;
-                                                            updateAiSettings({ keys: { ...settings.ai?.keys, [p]: apiKeyDraft } });
-                                                            setApiKeySaved(true);
-                                                            setTimeout(() => setApiKeySaved(false), 2000);
+                                                        onChange={(e) => {
+                                                            setApiKeyDraft(e.target.value);
+                                                            if (apiKeyError) setApiKeyError(null);
                                                         }}
+                                                        onBlur={() => saveApiKey(settings.ai?.provider as string, apiKeyDraft)}
                                                         placeholder={`Paste your ${settings.ai?.provider} API key...`}
-                                                        className="flex-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
+                                                        className={clsx(
+                                                            "flex-1 bg-[var(--color-app-bg)] border rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none transition-colors",
+                                                            apiKeyError ? "border-red-500/50 focus:border-red-500" : "border-[var(--color-app-border)] focus:border-[var(--color-app-accent)]"
+                                                        )}
                                                     />
                                                     <button
-                                                        onClick={() => {
-                                                            const p = settings.ai?.provider as string;
-                                                            updateAiSettings({ keys: { ...settings.ai?.keys, [p]: apiKeyDraft } });
-                                                            setApiKeySaved(true);
-                                                            setTimeout(() => setApiKeySaved(false), 2000);
-                                                        }}
+                                                        onClick={() => saveApiKey(settings.ai?.provider as string, apiKeyDraft)}
                                                         className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-app-accent)] text-white hover:opacity-90 transition-opacity shrink-0"
                                                     >
                                                         Save
                                                     </button>
                                                 </div>
+                                                {apiKeyError && (
+                                                    <p className="text-[10px] text-red-500 mt-1 animate-in fade-in slide-in-from-top-1">
+                                                        {apiKeyError}
+                                                    </p>
+                                                )}
                                                 <p className="text-xs text-[var(--color-app-muted)] mt-1">
                                                     {settings.ai?.provider === 'gemini' && (
                                                         <>Free tier available, no credit card needed.{' '}
@@ -1443,6 +1528,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     {settings.ai?.provider === 'claude' && (
                                                         <>Pay-as-you-go, credit card required.{' '}
                                                             <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Claude API key</a></>
+                                                    )}
+                                                    {settings.ai?.provider === 'groq' && (
+                                                        <>Fast OpenAI-compatible inference.{' '}
+                                                            <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Groq API key</a></>
+                                                    )}
+                                                    {settings.ai?.provider === 'mistral' && (
+                                                        <>OpenAI-compatible hosted models.{' '}
+                                                            <a href="https://console.mistral.ai/api-keys/" target="_blank" rel="noopener noreferrer" className="text-[var(--color-app-accent)] hover:underline">Get Mistral API key</a></>
                                                     )}
                                                 </p>
                                             </div>

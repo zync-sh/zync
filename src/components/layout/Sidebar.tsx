@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
-import { useAppStore, Connection, Folder } from '../../store/useAppStore'; // Updated Import
+import { useAppStore, Connection, Folder, Tab } from '../../store/useAppStore'; // Updated Import
 import { getCurrentDragSource } from '../../lib/dragDrop';
-import { Pencil, ChevronRight, Folder as FolderIcon, ChevronDown, FolderPlus, Settings, Plus, Laptop, Network, PanelLeftOpen, PanelLeftClose, Search, TerminalIcon, Trash2, FolderOpen, Files, Code, LayoutDashboard, Power, Info } from 'lucide-react';
+import { Pencil, ChevronRight, Folder as FolderIcon, ChevronDown, FolderPlus, Settings, Network, TerminalIcon, Trash2, FolderOpen, Files, Code, LayoutDashboard, Power, Info } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -9,12 +9,10 @@ import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { ContextMenu } from '../ui/ContextMenu';
 import { ConfirmModal } from '../ui/ConfirmModal';
-import { WindowControls } from './WindowControls';
 
 // Lazy Load Modals
 const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
 const AddTunnelModal = lazy(() => import('../modals/AddTunnelModal').then(mod => ({ default: mod.AddTunnelModal })));
-import { Tooltip } from '../ui/Tooltip';
 const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(show => ({ default: show.ConnectionDetailsModal })));
 const AddConnectionModal = lazy(() => import('../modals/AddConnectionModal').then(mod => ({ default: mod.AddConnectionModal })));
 
@@ -169,46 +167,31 @@ export function Sidebar({ className }: { className?: string }) {
     const deleteFolder = useAppStore(state => state.deleteFolder);
     const deleteConnection = useAppStore(state => state.deleteConnection);
     const renameFolder = useAppStore(state => state.renameFolder);
-    const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
-    const openAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(true);
-    const closeAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(false);
-
+    
     // Settings Store Hooks
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
+    
+    // Modal open/close actions extracted from store
     const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
-    const openSettings = useAppStore(state => state.openSettings);
     const closeSettings = useAppStore(state => state.closeSettings);
-    const updateStatus = useAppStore(state => state.updateStatus);
+    const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
+    const openAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(true);
+    const closeAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(false);
 
     const compactMode = settings.compactMode;
     // const [isAddModalOpen, setIsAddModalOpen] = useState(false); // Moved to context
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false); // State for Create Folder Modal
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [isRenameFolderModalOpen, setIsRenameFolderModalOpen] = useState(false);
     const [folderToRename, setFolderToRename] = useState<string | null>(null);
     const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderName: string } | null>(null);
     // const [isCollapsed, setIsCollapsed] = useState(false); // Moved to Settings
     const isCollapsed = settings.sidebarCollapsed;
 
-    // Add Menu State
-    const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
     const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
     const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
-
-    const addMenuRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
-                setIsAddMenuOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
 
     // const canAddTunnel = activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding';
 
@@ -223,8 +206,6 @@ export function Sidebar({ className }: { className?: string }) {
         widthRef.current = width;
     }, [width]);
 
-    const platform = window.electronUtils?.platform || 'linux';
-    const isMac = platform === 'darwin';
     const sidebarRef = useRef<HTMLDivElement>(null);
 
     // Sync width if settings change externally (e.g. via reset)
@@ -239,6 +220,7 @@ export function Sidebar({ className }: { className?: string }) {
         setIsResizing(true);
         e.preventDefault();
         document.body.style.cursor = 'col-resize';
+        window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
     }, []);
 
     useEffect(() => {
@@ -255,6 +237,8 @@ export function Sidebar({ className }: { className?: string }) {
             document.body.style.cursor = '';
             // Save final width
             updateSettings({ sidebarWidth: widthRef.current });
+            // Notify terminal that layout is now stable
+            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
         };
 
         window.addEventListener('mousemove', resize);
@@ -267,7 +251,6 @@ export function Sidebar({ className }: { className?: string }) {
     }, [isResizing, updateSettings]);
 
     // Compute Active Connections
-    // Compute Active Connections
     const activeConnections = useMemo(() => {
         return connections.filter((c: Connection) => c.status === 'connected');
     }, [connections]);
@@ -278,37 +261,19 @@ export function Sidebar({ className }: { className?: string }) {
     }, [connections]);
 
 
-    // ... (previous code)
-
-    // Form State - REMOVED (Moved to AddConnectionModal)
-    // const [formData, setFormData] = useState<Partial<Connection>>({...});
-    // const [authMethod, setAuthMethod] = useState<'password' | 'key'>('password');
     const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
 
-    // Reset when modal closes
+    // Reset editing state when modal closes
     useEffect(() => {
         if (!isAddConnectionModalOpen) {
             setEditingConnectionId(null);
-            // formData reset removed as it's now handled in modal
         }
     }, [isAddConnectionModalOpen]);
-
-    // handleSave REMOVED
 
     const openEditConnection = (conn: Connection) => {
         setEditingConnectionId(conn.id);
         openAddConnectionModal();
     };
-
-    // ... (rest of component logic)
-
-
-
-    // Helper components (FolderModal, RenameFolderModal) need to be preserved if they were inline or imported.
-    // Checking Sidebar.tsx again - I don't see FolderModal or RenameFolderModal inline definitions in the previous viewView (lines 1-800).
-    // Wait, I only viewed lines 1-800 of Sidebar.tsx!
-    // I need to be careful not to delete FolderModal if it's defined at the bottom.
-    // I will check lines 800+ of Sidebar.tsx before replacing.
 
     // Listen for global events (Command Palette)
     useEffect(() => {
@@ -324,41 +289,19 @@ export function Sidebar({ className }: { className?: string }) {
         };
     }, []);
 
-    // Filter out active connections for the main tree if NO search term is active
-    // If searching, we want to search everything
-    // Filter out active connections for the main tree if NO search term is active
-    // If searching, we want to search everything
+    // Filter out active connections for the main tree
     const treeConnections = useMemo(() => {
-        if (searchTerm) return connections;
         return connections.filter((c: Connection) => c.status !== 'connected');
-    }, [connections, searchTerm]);
+    }, [connections]);
 
     // Build Recursive Tree
-    // Build Recursive Tree
-    const treeRoot = useMemo(() => buildTree(treeConnections, folders, searchTerm), [treeConnections, folders, searchTerm]);
+    const treeRoot = useMemo(() => buildTree(treeConnections, folders, ''), [treeConnections, folders]);
 
     const toggleExpandedFolder = useAppStore(state => state.toggleExpandedFolder);
 
-    // Calculate all paths in the current filtered tree for search expansion
-    const searchExpandedFolders = useMemo(() => {
-        if (!searchTerm) return null;
-        const paths = new Set<string>();
-        const traverse = (node: TreeNode) => {
-            if (node.path) paths.add(node.path);
-            Object.values(node.children).forEach(traverse);
-        };
-        traverse(treeRoot);
-        return paths;
-    }, [treeRoot, searchTerm]);
-
-    // Use search expansion if searching, otherwise use persisted settings
-    const expandedFolders = searchTerm && searchExpandedFolders
-        ? searchExpandedFolders
-        : new Set(settings.expandedFolders);
+    const expandedFolders = useMemo(() => new Set(settings.expandedFolders), [settings.expandedFolders]);
 
     const toggleFolder = (folderPath: string) => {
-        // Prevent toggling persistence during search to avoid conflicts
-        if (searchTerm) return;
         toggleExpandedFolder(folderPath);
     };
 
@@ -394,36 +337,18 @@ export function Sidebar({ className }: { className?: string }) {
             {/* Content Wrapper */}
             <div
                 style={{ width: width, minWidth: width }}
-                className="flex flex-col h-full"
+                className="flex flex-col h-full pt-1.5"
             >
-                {/* Header */}
+                {/* Minimalist Title */}
                 <div
                     className={cn(
                         "flex items-center justify-between shrink-0 select-none relative z-10",
-                        compactMode ? "p-3.5 pb-2" : "p-4 pb-3",
-                        isMac && "pt-8" // Add space for traffic lights on Mac
+                        compactMode ? "px-3.5 py-2" : "px-4 py-3"
                     )}
-                    data-tauri-drag-region
                 >
-                    {isMac && (
-                        <div className="absolute top-4 left-4 drag-none">
-                            <WindowControls />
-                        </div>
-                    )}
-
                     <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
-                        <svg width={compactMode ? "22" : "28"} height={compactMode ? "22" : "28"} viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
-                            <rect width="512" height="512" rx="128" className="fill-app-accent/10" />
-                            <path d="M128 170.667L213.333 256L128 341.333" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M256 341.333H384" className="stroke-app-text" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
                         <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
-                            <span className="text-sm font-bold leading-none tracking-tight text-app-text">Hosts</span>
-                            {!compactMode && (
-                                <span className="rounded-full border border-app-border/60 bg-app-surface/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-app-muted/85">
-                                    Explorer
-                                </span>
-                            )}
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-app-muted/80">Connections</span>
                             <span
                                 className="rounded-full border border-app-border/60 bg-app-surface/40 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-app-muted/90"
                                 title="Saved hosts"
@@ -432,98 +357,9 @@ export function Sidebar({ className }: { className?: string }) {
                             </span>
                         </div>
                     </div>
-
-                    <div className="drag-none flex items-center gap-0.5 rounded-xl border border-app-border/50 bg-app-surface/30 p-1 backdrop-blur-sm">
-                        <div className="relative" ref={addMenuRef}>
-                            <Tooltip content="Add New..." position="bottom">
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => setIsAddMenuOpen(!isAddMenuOpen)}
-                                    className={cn(
-                                        "h-7 w-7 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0",
-                                        isAddMenuOpen
-                                            ? "bg-app-accent/20 text-app-text"
-                                            : "text-app-muted hover:bg-app-accent/15 hover:text-app-text"
-                                    )}
-                                    aria-label="Add new host, folder, or tunnel"
-                                    aria-expanded={isAddMenuOpen}
-                                    aria-haspopup="menu"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                </Button>
-                            </Tooltip>
-
-                            {/* Add Dropdown */}
-                            {isAddMenuOpen && (
-                                <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200 p-1">
-                                    <Tooltip content="Add a new SSH connection" position="right" className="w-full">
-                                        <button
-                                            onClick={() => { openAddConnectionModal(); setIsAddMenuOpen(false); }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
-                                        >
-                                            <Laptop size={14} className="text-app-muted" />
-                                            <span>New Host</span>
-                                        </button>
-                                    </Tooltip>
-                                    <Tooltip content="Organize hosts into folders" position="right" className="w-full">
-                                        <button
-                                            onClick={() => { setIsFolderModalOpen(true); setIsAddMenuOpen(false); }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
-                                        >
-                                            <FolderPlus size={14} className="text-app-muted" />
-                                            <span>New Folder</span>
-                                        </button>
-                                    </Tooltip>
-
-                                    <div className="h-px bg-app-border/50 my-1 mx-2" />
-
-                                    <Tooltip content="Create a new port forwarding tunnel" position="right" className="w-full">
-                                        <button
-                                            onClick={() => {
-                                                setIsAddTunnelModalOpen(true);
-                                                setIsAddMenuOpen(false);
-                                            }}
-                                            className="w-full text-left px-3 py-2 text-sm text-app-text hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
-                                        >
-                                            <Network size={14} className="text-app-muted" />
-                                            <span>New Tunnel</span>
-                                        </button>
-                                    </Tooltip>
-                                </div>
-                            )}
-                        </div>
-                        <Tooltip content={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} position="bottom">
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => updateSettings({ sidebarCollapsed: !isCollapsed })}
-                                className="h-7 w-7 rounded-lg text-app-muted transition-colors hover:bg-app-surface/70 hover:text-app-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0"
-                                aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                            >
-                                {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-                            </Button>
-                        </Tooltip>
-                    </div>
                 </div>
 
-                {/* Search */}
-                <div className={compactMode ? "px-3 mb-2" : "px-4 mb-3"}>
-                    <div className="relative group">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Search className="h-3.5 w-3.5 text-app-muted group-focus-within:text-app-text transition-colors" />
-                        </div>
-                        <input
-                            className={cn(
-                                "w-full bg-app-surface/50 hover:bg-app-surface border border-transparent focus:border-app-border/50 rounded-lg text-app-text focus:outline-none placeholder:text-app-muted/70 transition-all font-medium",
-                                compactMode ? "px-3 py-2 pl-9 text-xs" : "px-3 py-2.5 pl-9 text-sm"
-                            )}
-                            placeholder="Search..."
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-                </div>
+
 
                 {/* System Actions Column */}
                 <div className={cn(compactMode ? "px-3 mb-2" : "px-4 mb-2")}>
@@ -560,7 +396,7 @@ export function Sidebar({ className }: { className?: string }) {
                     compactMode ? "px-2 space-y-0.5" : "px-3 space-y-2"
                 )}>
                     {/* VISUAL SECTIONS LOGIC */}
-                    {!searchTerm && activeConnections.length > 0 ? (
+                    {activeConnections.length > 0 ? (
                         <>
                             <SidebarSection title="Active" count={activeConnections.length} compactMode={compactMode}>
                                 <div className={cn("space-y-1 mb-2 pl-1", compactMode && "space-y-0.5")}>
@@ -628,8 +464,7 @@ export function Sidebar({ className }: { className?: string }) {
                             </SidebarSection>
                         </>
                     ) : (
-                        /* Default / Search View: No sections, just the tree */
-                        <>
+                        <div className="pl-1">
                             {Object.keys(treeRoot.children).sort().map(key => (
                                 <FolderItem
                                     key={key}
@@ -655,30 +490,8 @@ export function Sidebar({ className }: { className?: string }) {
                                     onViewDetails={c => setViewingDetailsId(c.id)}
                                 />
                             ))}
-                        </>
+                        </div>
                     )}
-                </div>
-
-                {/* Footer / User */}
-                <div className={cn("p-3 border-t border-app-border/20 backdrop-blur-md bg-app-bg/50")}>
-                    <button
-                        onClick={openSettings}
-                        className={cn(
-                            "flex items-center gap-2.5 w-full px-3 py-2 rounded-lg transition-all duration-150 group relative",
-                            "hover:bg-app-surface/50 border border-transparent hover:border-app-border/20",
-                        )}
-                    >
-                        <div className="h-8 w-8 rounded-lg bg-app-surface border border-app-border/40 flex items-center justify-center shrink-0 group-hover:border-app-border/60 transition-all">
-                            <Settings className="text-app-muted group-hover:text-app-text w-4 h-4 transition-colors" />
-                        </div>
-                        <div className="flex-1 text-left overflow-hidden">
-                            <div className="text-sm font-medium text-app-text">Settings</div>
-                            <div className="text-[10px] text-app-muted/60 tracking-wide">Preferences</div>
-                        </div>
-                        {(updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready') && (
-                            <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-app-accent animate-pulse shadow-[0_0_8px_var(--color-app-accent)]" />
-                        )}
-                    </button>
                 </div>
             </div>
 
@@ -919,7 +732,7 @@ function ConnectionItem({ conn, isCollapsed, onEdit, onDelete, onViewDetails }: 
     const disconnect = useAppStore(state => state.disconnect);
     const tabs = useAppStore(state => state.tabs);
 
-    const hasTab = useMemo(() => tabs.some((t: any) => t.connectionId === conn.id), [tabs, conn.id]);
+    const hasTab = useMemo(() => tabs.some((t: Tab) => t.connectionId === conn.id), [tabs, conn.id]);
 
     const showToast = useAppStore((state) => state.showToast);
     const addTransfer = useAppStore(state => state.addTransfer);
@@ -1165,6 +978,7 @@ function RenameFolderModal({ isOpen, onClose, currentName, currentTags, onRename
     const [tags, setTags] = useState<string[]>([]);
 
     useEffect(() => {
+        if (!isOpen) return;
         setName(currentName);
         setTags(currentTags || []);
     }, [currentName, currentTags, isOpen]);
@@ -1185,7 +999,7 @@ function RenameFolderModal({ isOpen, onClose, currentName, currentTags, onRename
                         onChange={e => setName(e.target.value)}
                         autoFocus
                         className="py-2.5 text-center font-medium bg-app-surface/50 border-app-border focus:bg-app-bg transition-all"
-                        onKeyDown={e => e.key === 'Enter' && onRename(name, tags)}
+                        onKeyDown={e => e.key === 'Enter' && name.trim() !== '' && onRename(name, tags)}
                     />
 
                     {/* Tags Input */}
@@ -1261,7 +1075,7 @@ function FolderItem({
     connectionItemProps: ConnectionItemProps;
 }) {
     const isExpanded = expandedFolders.has(node.path);
-
+    const [isDragOver, setIsDragOver] = useState(false);
 
     return (
         <div className={cn("select-none transition-all duration-200", isExpanded && isCollapsed && "bg-app-surface/30 rounded-2xl pb-1 mb-2 border border-app-border/20")}>
@@ -1270,7 +1084,8 @@ function FolderItem({
                     "flex items-center group cursor-pointer transition-colors mb-1 rounded-lg relative select-none",
                     isCollapsed
                         ? "justify-center mx-auto w-10 h-10 hover:bg-app-surface/50 my-1"
-                        : cn(compactMode ? "px-2 py-1 text-xs gap-2" : "px-4 py-1.5 text-sm gap-2", "text-app-muted hover:text-app-text hover:bg-app-surface/30")
+                        : cn(compactMode ? "px-2 py-1 text-xs gap-2" : "px-4 py-1.5 text-sm gap-2", "text-app-muted hover:text-app-text hover:bg-app-surface/30"),
+                    isDragOver && "bg-app-accent/10"
                 )}
                 onClick={() => toggleFolder(node.path)}
                 draggable
@@ -1281,19 +1096,15 @@ function FolderItem({
                 onDragOver={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // Prevent dropping parent into child or self
-                    // We need to know what we are dragging. If it's a folder, check for cycles.
-                    // This is hard to check in dragOver without storing "draggingFolder" in state.
-                    // For now, just allow drop visual, and validate in onDrop.
-                    e.currentTarget.classList.add('bg-app-accent/10');
+                    setIsDragOver(true);
                 }}
-                onDragLeave={(e) => {
-                    e.currentTarget.classList.remove('bg-app-accent/10');
+                onDragLeave={() => {
+                    setIsDragOver(false);
                 }}
                 onDrop={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    e.currentTarget.classList.remove('bg-app-accent/10');
+                    setIsDragOver(false);
 
                     const connId = e.dataTransfer.getData('connection-id');
                     const srcFolderPath = e.dataTransfer.getData('folder-path');

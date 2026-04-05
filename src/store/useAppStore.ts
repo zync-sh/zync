@@ -10,8 +10,8 @@ import { FileSystemSlice, createFileSystemSlice } from './fileSystemSlice';
 import { UpdateSlice, createUpdateSlice } from './updateSlice';
 import { UiSlice, createUiSlice } from './uiSlice';
 import { AiSlice, createAiSlice } from './aiSlice';
+import { AiUiSlice, createAiUiSlice } from '../ai/store/agentStore';
 
-// Re-export types for convenience
 export type { Connection, Folder, Tab } from './connectionSlice';
 export type { AppSettings } from './settingsSlice';
 export type { Transfer } from './transferSlice';
@@ -20,14 +20,24 @@ export type { Snippet } from './snippetsSlice';
 export type { TunnelConfig } from './tunnelSlice';
 export type { TerminalTab } from './terminalSlice';
 
-export type AppStore = ConnectionSlice & SettingsSlice & TransferSlice & ToastSlice & SnippetsSlice & TunnelSlice & TerminalSlice & FileSystemSlice & UpdateSlice & UiSlice & AiSlice & {    // Global Feedback
-    lastAction: { message: string; type: 'success' | 'date' | 'info' | 'error' } | null;
-    setLastAction: (message: string, type?: 'success' | 'info' | 'error') => void;
-};
+export type AppStore =
+    ConnectionSlice &
+    SettingsSlice &
+    TransferSlice &
+    ToastSlice &
+    SnippetsSlice &
+    TunnelSlice &
+    TerminalSlice &
+    FileSystemSlice &
+    UpdateSlice &
+    UiSlice &
+    AiUiSlice &
+    AiSlice & {
+        lastAction: { message: string; type: 'success' | 'date' | 'info' | 'error' } | null;
+        setLastAction: (message: string, type?: 'success' | 'info' | 'error') => void;
+    };
 
 export const useAppStore = create<AppStore>()(
-    // Persist midleware for connection config? No, explicit load/save.
-    // Creating slices...
     (...a) => ({
         ...createConnectionSlice(...a),
         ...createSettingsSlice(...a),
@@ -39,6 +49,7 @@ export const useAppStore = create<AppStore>()(
         ...createFileSystemSlice(...a),
         ...createUpdateSlice(...a),
         ...createUiSlice(...a),
+        ...createAiUiSlice(...a),
         ...createAiSlice(...a),
 
         lastAction: null,
@@ -46,9 +57,7 @@ export const useAppStore = create<AppStore>()(
             // @ts-ignore
             a[0]({ lastAction: { message, type, date: Date.now() } });
 
-            // Auto-clear after 4 seconds
             setTimeout(() => {
-                // Check if it's still the same action? Naive clear is okay for now
                 // @ts-ignore
                 const current = a[1]().lastAction;
                 if (current && current.message === message) {

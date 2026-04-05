@@ -240,3 +240,6 @@ export function ImportSSHCommandModal({
         </Modal>
     );
 }
+
+import { registerModal } from '../../lib/modalRegistry';
+registerModal('importSSHCommand', ImportSSHCommandModal);
