@@ -9,15 +9,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Fixed
 
-- **Agent Stop Button**: Wrapped `call_provider` calls in `tokio::select!` with the cancel flag so the Stop button works immediately during AI API calls instead of hanging until the response arrives. ([5182246])
-- **Brain Session Cleanup**: Clear button now deletes only the current conversation's session folders instead of wiping the entire connection history, preserving other sessions for future history management. ([5182246])
-- **Brain Path Resolution**: Fixed `ai_clear_brain_sessions` using `app_data_dir()` instead of `get_data_dir()`, which caused clearing to silently fail when a custom data path was configured. ([5182246])
+- **Agent Stop Button**: Wrapped `call_provider` calls in `tokio::select!` with the cancel flag so the Stop button works immediately during AI API calls instead of hanging until the response arrives. ([88bb61a])
+- **Brain Session Cleanup**: Clear button now deletes only the current conversation's session folders instead of wiping the entire connection history, preserving other sessions for future history management. ([88bb61a])
+- **Brain Path Resolution**: Fixed `ai_clear_brain_sessions` using `app_data_dir()` instead of `get_data_dir()`, which caused clearing to silently fail when a custom data path was configured. ([88bb61a])
 
 ### Changed
 
-- **Path Traversal Hardening**: Added `std::fs::canonicalize` to brain session deletion to prevent directory traversal via crafted paths. ([5182246])
-- **Shared Slug Utility**: Extracted `slugify` from `brain.rs` into a reusable `ai::util` module. ([5182246])
-- **Agent Store Modularity**: Added `getSessionPaths(scope)` helper to `agentRunStore` to cleanly extract brain session paths from conversation messages. ([5182246])
+- **Path Traversal Hardening**: Added `std::fs::canonicalize` to brain session deletion to prevent directory traversal via crafted paths. ([88bb61a])
+- **Shared Slug Utility**: Extracted `slugify` from `brain.rs` into a reusable `ai::util` module. ([88bb61a])
+- **Agent Store Modularity**: Added `getSessionPaths(scope)` helper to `agentRunStore` to cleanly extract brain session paths from conversation messages. ([88bb61a])
 
 ## [2.9.0]
 
@@ -498,7 +498,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [7f3480e]: https://github.com/zync-sh/zync/commit/7f3480e
 [9aa7d67]: https://github.com/zync-sh/zync/commit/9aa7d67
 [ad807aa]: https://github.com/zync-sh/zync/commit/ad807aa
-[5182246]: https://github.com/zync-sh/zync/commit/c7a430f
+[88bb61a]: https://github.com/zync-sh/zync/commit/c7a430f
 [Unreleased]: https://github.com/zync-sh/zync/compare/2.9.1...HEAD
 [2.9.1]: https://github.com/zync-sh/zync/compare/2.9.0...2.9.1
 [2.8.1]: https://github.com/zync-sh/zync/compare/2.8.0...2.8.1
