@@ -19,6 +19,14 @@ import { SnippetSidebar } from '../snippets/SnippetSidebar';
 import { SetupWizard } from '../onboarding/SetupWizard';
 import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
 import { AiSidebar } from '../ai/AiSidebar';
+import { ModalRoot } from '../ui/ModalRoot';
+
+// Side-effect imports — these register each modal into the registry at startup.
+// Add new modals here. Plugins register their own modals in their entry point.
+import '../../components/modals/AddConnectionModal';
+import '../../components/modals/AddTunnelModal';
+import '../../components/modals/ImportSSHCommandModal';
+import '../../components/modals/ImportSshModal';
 
 declare global {
     interface Window {
@@ -431,9 +439,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     const tabs = useAppStore(state => state.tabs);
     const activeTabId = useAppStore(state => state.activeTabId);
+    const activeTerminalIds = useAppStore(state => state.activeTerminalIds);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const loadSnippets = useAppStore(state => state.loadSnippets);
-    const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
 
     // Pre-load snippets once on app startup so the picker/sidebar always have data
     useEffect(() => {
@@ -520,20 +528,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
         checkConfig();
     }, []);
 
-    // Keyboard shortcut: Cmd/Ctrl+I toggles the AI Sidebar
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            const isMac = navigator.userAgent.includes('Mac');
-            const modKey = isMac ? e.metaKey : e.ctrlKey;
-            if (modKey && e.key.toLowerCase() === 'i') {
-                e.preventDefault();
-                e.stopPropagation();
-                toggleAiSidebar();
-            }
-        };
-        window.addEventListener('keydown', handler, { capture: true });
-        return () => window.removeEventListener('keydown', handler, { capture: true });
-    }, [toggleAiSidebar]);
+    // Ctrl+I is handled centrally by ShortcutManager.
+    // This effect is intentionally empty but preserved to keep hook count stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {}, []);
 
     // Version Tracking for Release Notes
     const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
@@ -664,6 +662,18 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    const handleAiRunCommand = useCallback((connectionId: string, command: string) => {
+        const normalizedCommand = command.endsWith('\r') ? command : `${command}\r`;
+        window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
+            detail: { connectionId, command: normalizedCommand },
+        }));
+
+        const currentTabId = useAppStore.getState().activeTabId;
+        if (currentTabId) {
+            useAppStore.getState().setTabView(currentTabId, 'terminal');
+        }
+    }, []);
+
     useEffect(() => {
         if (isLoading || isLoadingSettings) return;
         hideBootSplash();
@@ -706,6 +716,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />
             <ShortcutManager />
+            <ModalRoot />
 
             {/* Top Unified Header (TabBar) */}
             <TabBar />
@@ -744,9 +755,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 {(() => {
                     const activeTab = tabs.find(t => t.id === activeTabId);
                     const connId = activeTab?.connectionId ?? null;
+                    const activeTermId = connId ? (activeTerminalIds[connId] || null) : null;
                     return (
                         <AiSidebar
                             connectionId={connId}
+                            activeTermId={activeTermId}
+                            onRunCommand={handleAiRunCommand}
                         />
                     );
                 })()}

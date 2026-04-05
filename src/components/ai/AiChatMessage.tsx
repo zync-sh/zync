@@ -1,7 +1,8 @@
 import { memo, useCallback } from 'react';
-import { Copy, Play, ShieldCheck, ShieldAlert, AlertTriangle, Terminal, Bot, User, AlertCircle } from 'lucide-react';
+import { Copy, Play, ShieldCheck, ShieldAlert, AlertTriangle, Terminal, User, AlertCircle } from 'lucide-react';
+import { AgentIcon } from './AgentIcon';
 import { cn } from '../../lib/utils';
-import type { AiDisplayEntry } from '../../store/aiSlice';
+import type { AiDisplayEntry } from '../../ai/types/common';
 
 interface AiChatMessageProps {
     entry: AiDisplayEntry;
@@ -103,7 +104,7 @@ export const AiChatMessage = memo(function AiChatMessage({ entry, onRunCommand }
             <div className="flex items-start gap-2.5 ml-1 mt-1">
                 <div className="shrink-0 mt-0 w-6 h-6 rounded-full bg-gradient-to-br from-purple-500/20 to-app-accent/20 border border-purple-500/30 shadow-sm flex items-center justify-center relative">
                     <div className="absolute inset-0 bg-purple-500/10 blur-sm rounded-full" />
-                    <Bot size={13} className="text-purple-400 relative z-10" />
+                    <AgentIcon size={13} className="text-purple-400 relative z-10" />
                 </div>
                 <div className="flex-1 min-w-0 space-y-3 pt-0.5">
                     {error ? (
@@ -179,3 +180,4 @@ export const AiChatMessage = memo(function AiChatMessage({ entry, onRunCommand }
         </div>
     );
 });
+
