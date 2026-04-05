@@ -121,8 +121,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    // Only handle graceful shutdown for the main window
+                    // Cancel all active agent runs so backend tasks don't outlive the window.
                     if window.label() == "main" {
+                        if let Some(state) = window.try_state::<AppState>() {
+                            if let Ok(runs) = state.agent_runs.try_lock() {
+                                for cancel in runs.values() {
+                                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            }
+                        }
                         api.prevent_close();
                         let _ = window.emit("app:request-close", ());
                     }
@@ -226,8 +233,17 @@ pub fn run() {
             commands::ai_check_ollama,
             commands::ai_get_ollama_models,
             commands::ai_get_provider_models,
+            commands::ai_agent_run,
+            commands::ai_agent_stop,
+            commands::ai_agent_checkpoint_respond,
+            commands::ai_agent_whitelist_command,
+            commands::ai_clear_brain_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+
+
 

@@ -5,6 +5,7 @@ use crate::types::*;
 use anyhow::Result;
 use russh::client::Handle;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
@@ -72,7 +73,13 @@ pub struct AppState {
     pub ssh_manager: Arc<SshManager>,
     pub tunnel_manager: Arc<TunnelManager>,
     pub snippets_manager: Arc<crate::snippets::SnippetsManager>,
-    pub transfers: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    pub transfers: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    // Agent v2: active run cancellation tokens
+    pub agent_runs: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    // Agent v2: pending checkpoint responders (ask_user tool)
+    pub agent_checkpoints: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
+    // Agent v2: per-scope command whitelist (scope = connection_id or "local")
+    pub command_whitelist: Arc<Mutex<HashMap<String, std::collections::HashSet<String>>>>,
 }
 
 impl AppState {
@@ -85,6 +92,9 @@ impl AppState {
             tunnel_manager: Arc::new(TunnelManager::new()),
             snippets_manager: Arc::new(crate::snippets::SnippetsManager::new(data_dir)),
             transfers: Arc::new(Mutex::new(HashMap::new())),
+            agent_runs: Arc::new(Mutex::new(HashMap::new())),
+            agent_checkpoints: Arc::new(Mutex::new(HashMap::new())),
+            command_whitelist: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -95,6 +105,7 @@ pub struct ConnectionHandle {
     pub session: Option<Arc<Mutex<Handle<Client>>>>,
     pub sftp_session: Option<Arc<russh_sftp::client::SftpSession>>,
     pub detected_os: Option<String>,
+    pub detected_shell: Option<String>,
 }
 
 /// Internal helper: establishes a full SSH connection (session + SFTP + OS detection)
@@ -183,13 +194,35 @@ async fn reconnect_connection(
         }
     }
 
-    println!("[SSH] (Re)connected. Detected OS: {:?}", detected_os);
+    // Detect login shell (best-effort)
+    let mut detected_shell = None;
+    if let Ok(mut channel) = session.channel_open_session().await {
+        if channel.exec(true, "basename \"${SHELL:-}\"").await.is_ok() {
+            let mut output = String::new();
+            while let Some(msg) = channel.wait().await {
+                match msg {
+                    russh::ChannelMsg::Data { data } => {
+                        output.push_str(&String::from_utf8_lossy(&data))
+                    }
+                    russh::ChannelMsg::ExitStatus { .. } => break,
+                    _ => {}
+                }
+            }
+            let shell_name = output.trim().to_string();
+            if !shell_name.is_empty() {
+                detected_shell = Some(shell_name);
+            }
+        }
+    }
+
+    println!("[SSH] (Re)connected. Detected OS: {:?}, shell: {:?}", detected_os, detected_shell);
 
     Ok(ConnectionHandle {
         config: config.clone(),
         session: Some(Arc::new(Mutex::new(session))),
         sftp_session,
         detected_os,
+        detected_shell,
     })
 }
 
@@ -3618,7 +3651,7 @@ pub async fn ai_translate(
 ) -> Result<crate::ai::AiTranslateResponse, String> {
     let config = crate::ai::read_ai_config(&app);
     if !config.enabled {
-        return Err("AI is disabled in Settings â†’ AI.".to_string());
+        return Err("AI is disabled in Settings -> AI.".to_string());
     }
     crate::ai::translate(&app, query, context, request_id, config).await
 }
@@ -3633,7 +3666,7 @@ pub async fn ai_translate_stream(
 ) -> Result<(), String> {
     let config = crate::ai::read_ai_config(&app);
     if !config.enabled {
-        return Err("AI is disabled in Settings â†’ AI.".to_string());
+        return Err("AI is disabled in Settings -> AI.".to_string());
     }
     tauri::async_runtime::spawn(crate::ai::translate_stream(
         app, query, context, request_id, config, history,
@@ -3659,4 +3692,102 @@ pub async fn ai_get_ollama_models(app: AppHandle) -> Result<Vec<String>, String>
 #[tauri::command]
 pub async fn ai_get_provider_models(app: AppHandle) -> Result<Vec<String>, String> {
     crate::ai::get_provider_models(&app).await
+}
+
+// Agent v2 commands
+
+/// Start an agentic run. Returns immediately; the loop runs in the background
+/// and emits events: ai:agent-thinking, ai:tool-start, ai:tool-output,
+/// ai:tool-done, ai:tool-diff, ai:agent-checkpoint, ai:agent-done, ai:agent-error.
+#[tauri::command]
+pub async fn ai_agent_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::ai::AgentRunRequest,
+) -> Result<(), String> {
+    let config = crate::ai::read_ai_config(&app);
+    if !config.enabled {
+        return Err("AI is disabled in Settings -> AI.".to_string());
+    }
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let run_id = request.run_id.clone();
+
+    {
+        let mut runs = state.agent_runs.lock().await;
+        runs.insert(run_id.clone(), cancel.clone());
+    }
+
+    // Clone what we need to move into the spawned task
+    let app_clone = app.clone();
+    let state_clone = state.inner().clone();
+
+    tokio::spawn(async move {
+        crate::ai::agent_loop::run(&app_clone, &state_clone, request, config, cancel).await;
+
+        // Clean up run entry when the loop finishes
+        let mut runs = state_clone.agent_runs.lock().await;
+        runs.remove(&run_id);
+    });
+
+    Ok(())
+}
+
+/// Cancel a running agent loop by its run_id.
+#[tauri::command]
+pub async fn ai_agent_stop(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<(), String> {
+    let runs = state.agent_runs.lock().await;
+    if let Some(cancel) = runs.get(&run_id) {
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Respond to a pending ask_user checkpoint inside an agent run.
+/// `proceed = true` means continue; `proceed = false` means stop.
+#[tauri::command]
+pub async fn ai_agent_checkpoint_respond(
+    state: State<'_, AppState>,
+    checkpoint_id: String,
+    proceed: bool,
+) -> Result<(), String> {
+    let mut checkpoints = state.agent_checkpoints.lock().await;
+    if let Some(tx) = checkpoints.remove(&checkpoint_id) {
+        let _ = tx.send(proceed);
+    }
+    Ok(())
+}
+
+/// Add a command to the per-scope whitelist so it bypasses safety-net checkpoints
+/// for the rest of this session. Scope is the connection_id or "local".
+#[tauri::command]
+pub async fn ai_agent_whitelist_command(
+    state: State<'_, AppState>,
+    scope: String,
+    command: String,
+) -> Result<(), String> {
+    let mut whitelist = state.command_whitelist.lock().await;
+    whitelist.entry(scope).or_default().insert(command);
+    Ok(())
+}
+
+/// Clear all brain sessions (persistent history) for a given scope.
+/// Scope is the connection_id or "local". Deletes the entire brain/{scope}/ folder.
+#[tauri::command]
+pub async fn ai_clear_brain_sessions(
+    app: tauri::AppHandle,
+    scope: String,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let brain_dir = data_dir.join("brain").join(&scope);
+
+    if brain_dir.exists() {
+        std::fs::remove_dir_all(&brain_dir)
+            .map_err(|e| format!("Failed to delete brain sessions: {}", e))?;
+    }
+    Ok(())
 }
