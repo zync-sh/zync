@@ -239,11 +239,17 @@ async fn run_inner(
         iterations += 1;
 
         // ── Call AI ──
-        let response = call_provider(
-            app, run_id, &messages, &config,
-            AGENT_SYSTEM_PROMPT,
-            tools::execution_tool_schemas(&config),
-        ).await?;
+        let response = tokio::select! {
+            result = call_provider(
+                app, run_id, &messages, &config,
+                AGENT_SYSTEM_PROMPT,
+                tools::execution_tool_schemas(&config),
+            ) => result?,
+            _ = poll_until_cancel(&cancel) => {
+                finish!(false, "Stopped by user.", action_log);
+                return Ok(());
+            }
+        };
 
         // ── No tool calls → check for text-based tool call fallback ──
         // Some models (e.g. Mistral in degraded mode) output tool calls as raw JSON text

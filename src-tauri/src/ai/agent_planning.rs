@@ -66,15 +66,19 @@ where
         }
         iterations += 1;
 
-        let response = call_provider(
-            app,
-            run_id,
-            &messages,
-            config,
-            PLANNING_SYSTEM_PROMPT,
-            tools::planning_tool_schemas(config),
-        )
-        .await?;
+        let response = tokio::select! {
+            result = call_provider(
+                app,
+                run_id,
+                &messages,
+                config,
+                PLANNING_SYSTEM_PROMPT,
+                tools::planning_tool_schemas(config),
+            ) => result?,
+            _ = poll_until_cancel(cancel) => {
+                return Ok(None);
+            }
+        };
 
         if !response.thinking_streamed {
             if let Some(text) = &response.text {

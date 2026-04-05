@@ -46,6 +46,8 @@ interface AgentRunStore {
    * Used to skip re-planning when the user retries after a failed run.
    */
   getLastApprovedPlan: (scope: string) => import('../types/agent').AgentPlanStep[] | null;
+  /** Returns brain session folder paths from all done messages in this scope. */
+  getSessionPaths: (scope: string) => string[];
 
   // ── Mutations ───────────────────────────────────────────────────────────────
   /** Add the user's goal as the first message of a new run. */
@@ -197,6 +199,14 @@ export const useAgentRunStore = create<AgentRunStore>()(
       }
     }
     return null;
+  },
+
+  getSessionPaths(scope) {
+    const msgs = get().conversations[scope] ?? [];
+    return msgs
+      .filter((m): m is Extract<ConversationMessage, { type: 'done' }> => m.type === 'done')
+      .map(m => m.sessionPath)
+      .filter((p): p is string => !!p);
   },
 
   startRun(scope, runId, goal) {

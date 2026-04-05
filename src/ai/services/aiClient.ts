@@ -57,8 +57,8 @@ export async function whitelistCommand(scope: string, command: string): Promise<
     await invoke('ai_agent_whitelist_command', { scope, command });
 }
 
-export async function clearBrainSessions(scope: string): Promise<void> {
-    await invoke('ai_clear_brain_sessions', { scope });
+export async function clearBrainSessions(paths: string[]): Promise<void> {
+    await invoke('ai_clear_brain_sessions', { paths });
 }
 
 export async function stopAgentRun(runId: string): Promise<void> {

@@ -16,6 +16,7 @@ mod tool_schemas;
 mod translate;
 mod transport;
 mod types;
+pub(crate) mod util;
 pub mod tools;
 pub mod agent_loop;
 
