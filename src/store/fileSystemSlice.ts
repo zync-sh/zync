@@ -225,7 +225,8 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
 
         try {
             await ipc.invoke('fs_rename', { connectionId, oldPath, newPath });
-            get().setLastAction(`Renaming to "${newName}"...`, 'info');
+            get().setLastAction(`Renamed to "${newName}"`, 'success');
+            await get().refreshFiles(connectionId);
         } catch (error: any) {
             const msg = error.message || String(error);
             if (msg.includes('DISCONNECTED:')) {
@@ -238,6 +239,8 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
     },
 
     deleteEntries: async (connectionId, paths) => {
+        // Optimistic update: Remove from state immediately
+        const previousFiles = get().files[connectionId] || [];
         set(state => {
             const currentFiles = state.files[connectionId] || [];
             const newFiles = currentFiles.filter(f => !paths.includes(f.path));
@@ -245,19 +248,34 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
         });
 
         try {
-            for (const p of paths) {
-                await ipc.invoke('fs_delete', { connectionId, path: p });
-            }
-            get().setLastAction(`Deleting ${paths.length} item(s)...`, 'info');
+            await ipc.invoke('fs_delete_batch', { connectionId, paths });
+            get().setLastAction(`Deleted ${paths.length} item(s)`, 'success');
         } catch (error: any) {
+            const failedPaths: string[] = error.failed_paths || [];
             const msg = error.message || String(error);
+            
+            // Targeted rollback: Only restore paths that actually failed
+            if (failedPaths.length > 0) {
+                const successfullyDeleted = paths.filter(p => !failedPaths.includes(p));
+                set(state => {
+                    const finalFiles = previousFiles.filter(f => !successfullyDeleted.includes(f.path));
+                    return { files: { ...state.files, [connectionId]: finalFiles } };
+                });
+            } else {
+                // Full rollback if error is opaque or all failed
+                set(state => ({
+                    files: { ...state.files, [connectionId]: previousFiles }
+                }));
+            }
+
             if (msg.includes('DISCONNECTED:')) {
                 set(state => ({ error: { ...state.error, [connectionId]: 'DISCONNECTED' } }));
                 return;
             } else {
                 get().showToast('error', `Delete failed: ${msg}`);
             }
-            get().refreshFiles(connectionId);
+            // Final safety refresh
+            await get().refreshFiles(connectionId);
         }
     },
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ZPortal } from './ZPortal';
-import { cn } from '../../lib/utils';
+import { ZPortal } from './ZPortal.js';
+import { cn } from '../../lib/utils.js';
 import { ChevronRight } from 'lucide-react';
 
 export type ContextMenuItem =

@@ -63,46 +63,51 @@ pub fn run() {
                         
                         // Write to bootstrap location
                         if !default_dir.exists() {
-                            let _ = std::fs::create_dir_all(&default_dir);
+                            if let Err(e) = std::fs::create_dir_all(&default_dir) {
+                                eprintln!("Failed to create default app_data_dir at {:?}: {}", default_dir, e);
+                            }
                         }
                         let json = serde_json::to_string_pretty(&settings).unwrap_or_default();
-                        let _ = std::fs::write(&settings_path, &json);
+                        if let Err(e) = std::fs::write(&settings_path, &json) {
+                            eprintln!("Failed to write settings at {:?}: {}", settings_path, e);
+                        }
                         
                         // Also write to exe directory
                         if !exe_dir.exists() {
-                            let _ = std::fs::create_dir_all(exe_dir);
+                            if let Err(e) = std::fs::create_dir_all(exe_dir) {
+                                eprintln!("Failed to create exe_dir at {:?}: {}", exe_dir, e);
+                            }
                         }
-                        let _ = std::fs::write(exe_dir.join("settings.json"), &json);
+                        let exe_settings_path = exe_dir.join("settings.json");
+                        if let Err(e) = std::fs::write(&exe_settings_path, &json) {
+                            eprintln!("Failed to write settings at {:?}: {}", exe_settings_path, e);
+                        }
                     }
                 }
             }
             
             // Now read the final data directory (will pick up the configured dataPath)
-            let data_dir = if settings_path.exists() {
-                if let Ok(data) = std::fs::read_to_string(&settings_path) {
-                    if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&data) {
-                        if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
-                            if !data_path.is_empty() {
-                                let custom_dir = std::path::PathBuf::from(data_path);
-                                if !custom_dir.exists() {
-                                    let _ = std::fs::create_dir_all(&custom_dir);
-                                }
-                                custom_dir
-                            } else {
-                                default_dir.clone()
-                            }
-                        } else {
-                            default_dir.clone()
-                        }
-                    } else {
-                        default_dir.clone()
-                    }
-                } else {
-                    default_dir.clone()
+            let data_dir = (|| -> Option<std::path::PathBuf> {
+                if !settings_path.exists() {
+                    return Some(default_dir.clone());
                 }
-            } else {
-                default_dir.clone()
-            };
+
+                let data = std::fs::read_to_string(&settings_path).ok()?;
+                let settings = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+                let data_path = settings.get("dataPath")?.as_str()?;
+
+                if data_path.is_empty() {
+                    return None;
+                }
+
+                let custom_dir = std::path::PathBuf::from(data_path);
+                if !custom_dir.exists() {
+                    if let Err(e) = std::fs::create_dir_all(&custom_dir) {
+                        eprintln!("Failed to create custom data directory at {:?}: {}", custom_dir, e);
+                    }
+                }
+                Some(custom_dir)
+            })().unwrap_or(default_dir);
             
             let app_state = AppState::new(data_dir);
             app.manage(app_state);
@@ -116,8 +121,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    // Only handle graceful shutdown for the main window
+                    // Cancel all active agent runs so backend tasks don't outlive the window.
                     if window.label() == "main" {
+                        if let Some(state) = window.try_state::<AppState>() {
+                            if let Ok(runs) = state.agent_runs.try_lock() {
+                                for cancel in runs.values() {
+                                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            }
+                        }
                         api.prevent_close();
                         let _ = window.emit("app:request-close", ());
                     }
@@ -165,10 +177,11 @@ pub fn run() {
             commands::fs_touch,
             commands::fs_mkdir,
             commands::fs_rename,
-            commands::fs_rename_batch,
             commands::fs_delete,
+            commands::fs_delete_batch,
             commands::fs_copy,
             commands::fs_copy_batch,
+            commands::fs_rename_batch,
             commands::fs_exists,
             commands::tunnel_get_all,
             commands::tunnel_start_local,
@@ -188,6 +201,10 @@ pub fn run() {
             commands::snippets_list,
             commands::snippets_save,
             commands::snippets_delete,
+            commands::save_secret,
+            commands::get_secret,
+            commands::delete_secret,
+            commands::get_system_info,
             commands::settings_get,
             commands::settings_set,
             commands::sftp_put,
@@ -216,8 +233,17 @@ pub fn run() {
             commands::ai_check_ollama,
             commands::ai_get_ollama_models,
             commands::ai_get_provider_models,
+            commands::ai_agent_run,
+            commands::ai_agent_stop,
+            commands::ai_agent_checkpoint_respond,
+            commands::ai_agent_whitelist_command,
+            commands::ai_clear_brain_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+
+
 

@@ -59,6 +59,9 @@ Download the latest release for your platform from the [Releases Page](https://g
 | **Frontend** | [React](https://reactjs.org/) 19 + [TypeScript](https://www.typescriptlang.org/) |
 | **Build Tool** | [Vite](https://vitejs.dev/) 7 |
 | **Styling** | [Tailwind CSS](https://tailwindcss.com/) 4 |
+| **Editor Engine** | [@monaco-editor/react](https://github.com/suren-atoyan/monaco-react) |
+| **Language Intelligence** | [@enjoys/context-engine](https://github.com/enjoys-sh/context-engine) |
+| **Icon System** | [VS Code Icons](https://github.com/vscode-icons/vscode-icons) + [Lucide Icons](https://lucide.dev/) |
 | **State Management** | [Zustand](https://github.com/pmndrs/zustand) |
 
 ## Architecture
@@ -101,12 +104,13 @@ Zync follows a layered architecture with clear separation between the native bac
 |---------|---------|
 | **@tauri-apps/api** | Tauri API bindings for the webview |
 | **@tauri-apps/plugin-\*** | Clipboard, dialog, opener, process, updater |
-| **@uiw/react-codemirror** | Code editor with syntax highlighting |
+| **@monaco-editor/react** | Pro-grade code editor engine (the VS Code core) |
+| **@enjoys/context-engine** | Offline language intelligence (autocompletion, hover, definitions) |
 | **xterm** + addons | Terminal emulation (fit, search, web links, WebGL) |
 | **framer-motion** | Animations and transitions |
 | **cmdk** | Command palette UI |
 | **recharts** | Charts and data visualization |
-| **lucide-react** | Icon set |
+| **lucide-react** + **vscode-icons** | Dual-tier icon system with cascading fallbacks |
 | **react-window** | Virtualized lists for performance |
 | **@dnd-kit/core** | Drag-and-drop for file manager |
 | **zustand** | State management |

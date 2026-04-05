@@ -16,10 +16,27 @@ import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
 import { SnippetPicker } from '../snippets/SnippetPicker';
 import { SnippetSidebar } from '../snippets/SnippetSidebar';
+import { SetupWizard } from '../onboarding/SetupWizard';
+import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
+import { AiSidebar } from '../ai/AiSidebar';
+import { ModalRoot } from '../ui/ModalRoot';
+
+// Side-effect imports — these register each modal into the registry at startup.
+// Add new modals here. Plugins register their own modals in their entry point.
+import '../../components/modals/AddConnectionModal';
+import '../../components/modals/AddTunnelModal';
+import '../../components/modals/ImportSSHCommandModal';
+import '../../components/modals/ImportSshModal';
 
 declare global {
     interface Window {
         __zyncHideBootSplash?: () => void;
+        ipcRenderer: {
+            send(channel: string, ...args: any[]): void;
+            on(channel: string, listener: (event: any, ...args: any[]) => void): () => void;
+            off(channel: string, listener: (event: any, ...args: any[]) => void): void;
+            invoke(channel: string, ...args: any[]): Promise<any>;
+        };
     }
 }
 
@@ -168,7 +185,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             }
             return prev;
         });
-        setTabView(tab.id, feature as any);
+        setTabView(tab.id, feature as Tab['view']);
     }, [pinnedFeatures, setTabView, tab.id]);
 
     useEffect(() => {
@@ -243,22 +260,22 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const isError = connection?.status === 'error';
 
     // Handle Tab Selection
-    const handleTabSelect = (view: any, termId?: string) => {
+    const handleTabSelect = useCallback((view: Tab['view'], termId?: string) => {
         setTabView(tab.id, view);
         if (view === 'terminal' && termId && tab.connectionId) {
             setActiveTerminal(tab.connectionId, termId);
         }
-    };
+    }, [setTabView, tab.id, tab.connectionId, setActiveTerminal]);
 
-    const handleFeatureClose = (feature: string) => {
+    const handleFeatureClose = useCallback((feature: string) => {
         setOpenFeatures(prev => prev.filter(f => f !== feature));
         // If we closed the active view, switch back to terminal
         if (tab.view === feature) {
             setTabView(tab.id, 'terminal');
         }
-    };
+    }, [setOpenFeatures, tab.view, tab.id, setTabView]);
 
-    const handleTogglePin = (feature: string) => {
+    const handleTogglePin = useCallback((feature: string) => {
         if (tab.connectionId) {
             toggleConnectionFeature(tab.connectionId, feature);
             // If we are unpinning, ensure it stays open in local state
@@ -271,22 +288,20 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 setOpenFeatures(prev => prev.filter(f => f !== feature));
             }
         }
-    };
+    }, [tab.connectionId, toggleConnectionFeature, pinnedFeatures, openFeatures, setOpenFeatures]);
 
-    const handleTerminalClose = (termId: string) => {
+    const handleTerminalClose = useCallback((termId: string) => {
         if (tab.connectionId) {
             closeTerminal(tab.connectionId, termId);
-            // If we closed the last terminal, maybe we should create a new one automatically?
-            // Store handles active ID update, but empty state is handled by TerminalManager
         }
-    };
+    }, [tab.connectionId, closeTerminal]);
 
-    const handleNewTerminal = () => {
+    const handleNewTerminal = useCallback(() => {
         if (tab.connectionId) {
             createTerminal(tab.connectionId);
             setTabView(tab.id, 'terminal');
         }
-    };
+    }, [tab.connectionId, createTerminal, tab.id, setTabView]);
 
     // Ensure we start with at least 'terminal' available conceptually, 
     // though combined bar renders terminals from store.
@@ -361,6 +376,8 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                             {pluginPanels.map(panel => {
                                 const viewId = `plugin:${panel.id}`;
                                 if (tab.view !== viewId) return null;
+                                // Race condition check: obtain latest ID from store to ensure we haven't switched tabs
+                                if (tab.connectionId !== useAppStore.getState().activeConnectionId) return null;
                                 return (
                                     <PluginPanel
                                         key={panel.id}
@@ -417,18 +434,12 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     );
 });
 
-
-import { SetupWizard } from '../onboarding/SetupWizard';
-// @ts-ignore
-const ipc = window.ipcRenderer;
-
-import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
-
 export function MainLayout({ children }: { children: ReactNode }) {
     useFileSystemEvents(); // Enable global FS event listeners
 
-    const tabs = useAppStore(state => state.tabs); // Updated Hook
-    const activeTabId = useAppStore(state => state.activeTabId); // Updated Hook
+    const tabs = useAppStore(state => state.tabs);
+    const activeTabId = useAppStore(state => state.activeTabId);
+    const activeTerminalIds = useAppStore(state => state.activeTerminalIds);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const loadSnippets = useAppStore(state => state.loadSnippets);
 
@@ -505,15 +516,22 @@ export function MainLayout({ children }: { children: ReactNode }) {
     }, []);
 
     // Auto-collapse sidebar on tablet/mobile if it was open
+    const initialCollapseRef = useRef(false);
     useEffect(() => {
-        if (!isLoadingSettings && isTablet && !sidebarCollapsed) {
+        if (!initialCollapseRef.current && !isLoadingSettings && isTablet && !sidebarCollapsed) {
             updateSettings({ sidebarCollapsed: true });
+            initialCollapseRef.current = true;
         }
-    }, [isTablet, updateSettings, isLoadingSettings]); // only run once when threshold crossed
+    }, [isTablet, updateSettings, isLoadingSettings, sidebarCollapsed]); // only run once when threshold crossed
 
     useEffect(() => {
         checkConfig();
     }, []);
+
+    // Ctrl+I is handled centrally by ShortcutManager.
+    // This effect is intentionally empty but preserved to keep hook count stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {}, []);
 
     // Version Tracking for Release Notes
     const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
@@ -526,7 +544,8 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
         const checkVersionAndShowNotes = async () => {
             try {
-                const currentVersion = await ipc.invoke('app:getVersion');
+                const currentVersion = await window.ipcRenderer?.invoke('app:getVersion');
+                if (!currentVersion) return;
                 const storedVersion = useAppStore.getState().settings.lastSeenVersion;
 
                 // Signal 1: 'zync-just-updated' flag is written by UpdateNotification
@@ -643,6 +662,18 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    const handleAiRunCommand = useCallback((connectionId: string, command: string) => {
+        const normalizedCommand = command.endsWith('\r') ? command : `${command}\r`;
+        window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
+            detail: { connectionId, command: normalizedCommand },
+        }));
+
+        const currentTabId = useAppStore.getState().activeTabId;
+        if (currentTabId) {
+            useAppStore.getState().setTabView(currentTabId, 'terminal');
+        }
+    }, []);
+
     useEffect(() => {
         if (isLoading || isLoadingSettings) return;
         hideBootSplash();
@@ -658,8 +689,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
             }
 
             // Mac/Linux: Check config and show wizard if needed
-            const config = await ipc.invoke('config:get');
-            if (!config || !config.isConfigured) {
+            const config = await window.ipcRenderer?.invoke('config:get');
+            if (!config) return;
+            if (!config.isConfigured) {
                 setShowWizard(true);
             }
         } catch (error) {
@@ -676,7 +708,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     return (
         <div
             className={cn(
-                "relative flex h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
+                "relative flex flex-col h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
                 !isMaximized && "rounded-xl border border-app-border/20",
                 terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg"
             )}
@@ -684,41 +716,58 @@ export function MainLayout({ children }: { children: ReactNode }) {
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
             <CommandPalette />
             <ShortcutManager />
+            <ModalRoot />
 
-            {/* Sidebar Overlay for Mobile */}
-            {
-                isSmallScreen && !sidebarCollapsed && (
-                    <div
-                        className="absolute inset-0 bg-black/50 backdrop-blur-sm z-[45] animate-in fade-in duration-300"
-                        onClick={() => updateSettings({ sidebarCollapsed: true })}
-                    />
-                )
-            }
+            {/* Top Unified Header (TabBar) */}
+            <TabBar />
 
-            <Sidebar className={isSmallScreen ? "fixed" : ""} />
+            <div className="flex-1 flex overflow-hidden relative">
+                {/* Sidebar Overlay for Mobile */}
+                {
+                    isSmallScreen && !sidebarCollapsed && (
+                        <div
+                            className="absolute inset-0 bg-black/50 backdrop-blur-sm z-[45] animate-in fade-in duration-300"
+                            onClick={() => updateSettings({ sidebarCollapsed: true })}
+                        />
+                    )
+                }
 
-            <div className="flex-1 flex flex-col min-w-0">
-                {/* Tab Bar */}
-                <TabBar />
+                <Sidebar className={isSmallScreen ? "fixed" : ""} />
 
-                {/* Main Content Area */}
-                <div className="flex-1 overflow-hidden relative flex flex-col">
-                    {tabs.length > 0 ? (
-                        tabs.map((tab: Tab) => (
-                            <TabContent
-                                key={tab.id}
-                                tab={tab}
-                                isActive={tab.id === activeTabId}
-                            />
-                        ))
-                    ) : (
-                        <div className="flex-1 bg-app-bg">{children}</div>
-                    )}
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                    {/* Main Content Area */}
+                    <div className="flex-1 overflow-hidden relative flex flex-col">
+                        {tabs.length > 0 ? (
+                            tabs.map((tab: Tab) => (
+                                <TabContent
+                                    key={tab.id}
+                                    tab={tab}
+                                    isActive={tab.id === activeTabId}
+                                />
+                            ))
+                        ) : (
+                            <div className="flex-1 bg-app-bg">{children}</div>
+                        )}
+                    </div>
                 </div>
 
-                {/* Status Bar */}
-                <StatusBar />
+                {/* AI Assistant Right Sidebar */}
+                {(() => {
+                    const activeTab = tabs.find(t => t.id === activeTabId);
+                    const connId = activeTab?.connectionId ?? null;
+                    const activeTermId = connId ? (activeTerminalIds[connId] || null) : null;
+                    return (
+                        <AiSidebar
+                            connectionId={connId}
+                            activeTermId={activeTermId}
+                            onRunCommand={handleAiRunCommand}
+                        />
+                    );
+                })()}
             </div>
+
+            {/* Bottom Unified Status Bar (Full Width) */}
+            <StatusBar />
 
             <ConfirmCloseModal
                 isOpen={isShutdownModalOpen}

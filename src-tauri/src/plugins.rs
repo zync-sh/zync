@@ -18,6 +18,12 @@ pub struct Manifest {
     pub preview_bg: Option<String>,
     pub preview_accent: Option<String>,
     pub icon: Option<String>,
+    /// e.g. `"icon-theme"` for file icon packs (matches `manifest.json` key `"type"`)
+    #[serde(default, rename = "type")]
+    pub manifest_type: Option<String>,
+    /// Relative folder under the plugin root containing SVGs (matches `manifest.json` key `iconsPath`)
+    #[serde(default, rename = "iconsPath")]
+    pub icons_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +147,8 @@ impl PluginScanner {
                 preview_bg: None,
                 preview_accent: None,
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: Some(r#"
                 zync.on('ready', () => {
@@ -246,6 +254,8 @@ impl PluginScanner {
                 preview_bg: Some("#282a36".to_string()),
                 preview_accent: Some("#d282af".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -279,6 +289,8 @@ impl PluginScanner {
                 preview_bg: Some("#272822".to_string()),
                 preview_accent: Some("#9ebf52".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -312,6 +324,8 @@ impl PluginScanner {
                 preview_bg: Some("#0f111a".to_string()),
                 preview_accent: Some("#797bce".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -345,6 +359,8 @@ impl PluginScanner {
                 preview_bg: Some("#2d2a2e".to_string()),
                 preview_accent: Some("#ffd866".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -378,6 +394,8 @@ impl PluginScanner {
                 preview_bg: Some("#f4f4f5".to_string()),
                 preview_accent: Some("#2563eb".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -411,6 +429,8 @@ impl PluginScanner {
                 preview_bg: Some("#fbf1c7".to_string()),
                 preview_accent: Some("#d65d0e".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -444,6 +464,8 @@ impl PluginScanner {
                 preview_bg: Some("#fdf6e3".to_string()),
                 preview_accent: Some("#268bd2".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -477,6 +499,8 @@ impl PluginScanner {
                 preview_bg: Some("#eff1f5".to_string()),
                 preview_accent: Some("#ea76cb".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -510,6 +534,8 @@ impl PluginScanner {
                 preview_bg: Some("#e1e2e7".to_string()),
                 preview_accent: Some("#3760bf".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -543,6 +569,8 @@ impl PluginScanner {
                 preview_bg: Some("#2b213a".to_string()),
                 preview_accent: Some("#ff7edb".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(
@@ -576,6 +604,8 @@ impl PluginScanner {
                 preview_bg: Some("#2e3440".to_string()),
                 preview_accent: Some("#88c0d0".to_string()),
                 icon: None,
+                manifest_type: None,
+                icons_path: None,
             },
             script: None,
             style: Some(

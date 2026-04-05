@@ -487,3 +487,6 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         </Modal >
     );
 }
+
+import { registerModal } from '../../lib/modalRegistry';
+registerModal('addConnection', AddConnectionModal);

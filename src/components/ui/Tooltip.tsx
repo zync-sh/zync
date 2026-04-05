@@ -7,15 +7,18 @@ interface TooltipProps {
   children: ReactNode;
   position?: 'top' | 'bottom' | 'left' | 'right';
   className?: string;
+  contentClassName?: string;
+  disabled?: boolean;
+  dismissOnClick?: boolean;
 }
 
-export function Tooltip({ content, children, position = 'top', className }: TooltipProps) {
+export function Tooltip({ content, children, position = 'top', className, contentClassName, disabled = false, dismissOnClick = true }: TooltipProps) {
   const [show, setShow] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
 
   useLayoutEffect(() => {
-    if (show && triggerRef.current) {
+    if (show && !disabled && triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
       const spacing = 8; // Distance from trigger
 
@@ -43,7 +46,7 @@ export function Tooltip({ content, children, position = 'top', className }: Tool
 
       setCoords({ top, left });
     }
-  }, [show, position]);
+  }, [show, position, disabled]);
 
   return (
     <div
@@ -53,9 +56,10 @@ export function Tooltip({ content, children, position = 'top', className }: Tool
       onMouseLeave={() => setShow(false)}
       onFocus={() => setShow(true)}
       onBlur={() => setShow(false)}
+      onClick={() => dismissOnClick && setShow(false)}
     >
       {children}
-      {show && (
+      {show && !disabled && (
         <ZPortal passive={true}>
           <div
             style={{ top: coords.top, left: coords.left }}
@@ -65,7 +69,7 @@ export function Tooltip({ content, children, position = 'top', className }: Tool
                 position === 'bottom' ? "-translate-x-1/2 slide-in-from-top-1" :
                   position === 'left' ? "-translate-x-full -translate-y-1/2 slide-in-from-right-1" :
                     "-translate-y-1/2 slide-in-from-left-1",
-              className
+              contentClassName
             )}
           >
             {content}

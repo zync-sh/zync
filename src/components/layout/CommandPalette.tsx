@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { useShallow } from 'zustand/react/shallow';
+import { useEffect, useState, memo } from "react";
 import { Command } from "cmdk";
 import {
     Settings,
@@ -12,15 +11,29 @@ import {
     FolderPlus
 } from "lucide-react";
 import { useAppStore, Connection } from "../../store/useAppStore";
+import { useShallow } from 'zustand/react/shallow';
 import { usePlugins } from "../../context/PluginContext";
 import { clsx } from "clsx";
 import { OSIcon } from "../icons/OSIcon";
 
-// You can move this to a separate CSS file or use Tailwind directly in the components
-// cmdk styling is usually headless, so we need to style it.
-// I'll add a style block or use Tailwind classes deep in the structure.
+interface QuickPickItem {
+    id: string;
+    label: string;
+    description?: string;
+    detail?: string;
+    kind?: 'item' | 'separator' | 'group';
+}
 
-// ... imports
+interface QuickPickDetail {
+    items: QuickPickItem[];
+    options: {
+        placeHolder?: string;
+        requestId: string;
+        pluginId: string;
+    };
+    requestId: string;
+    pluginId: string;
+}
 
 export function CommandPalette() {
     const [open, setOpen] = useState(false);
@@ -29,17 +42,21 @@ export function CommandPalette() {
 
     // Quick Pick State
     const [quickPickMode, setQuickPickMode] = useState(false);
-    const [quickPickItems, setQuickPickItems] = useState<{ label: string, id: string }[]>([]);
+    const [quickPickItems, setQuickPickItems] = useState<QuickPickItem[]>([]);
     const [quickPickOptions, setQuickPickOptions] = useState<{ placeHolder?: string, requestId: string, pluginId: string } | null>(null);
 
-    // Optimize selectors
-    const connections = useAppStore(useShallow(state => state.connections));
-    const openTab = useAppStore(state => state.openTab);
-    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
-    const openSettings = useAppStore(state => state.openSettings);
+    // Optimize selectors with shallow comparison
+    const { connections, setAddConnectionModalOpen, openTab, openSettings } = useAppStore(
+        useShallow(state => ({
+            connections: state.connections,
+            setAddConnectionModalOpen: state.setAddConnectionModalOpen,
+            openTab: state.openTab,
+            openSettings: state.openSettings
+        }))
+    );
 
     // Plugins
-    const { commands: pluginCommands, executeCommand } = usePlugins();
+    const { commands: pluginCommands, executeCommand, plugins } = usePlugins();
 
     const openAddConnectionModal = () => setAddConnectionModalOpen(true);
 
@@ -71,7 +88,7 @@ export function CommandPalette() {
             }
         };
 
-        const handleQuickPick = (e: any) => {
+        const handleQuickPick = (e: CustomEvent<QuickPickDetail>) => {
             const { items, options, requestId, pluginId } = e.detail;
             setQuickPickItems(items);
             setQuickPickOptions({ ...options, requestId, pluginId });
@@ -81,10 +98,10 @@ export function CommandPalette() {
         };
 
         window.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('zync:quick-pick', handleQuickPick);
+        window.addEventListener('zync:quick-pick', handleQuickPick as EventListener);
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
-            window.removeEventListener('zync:quick-pick', handleQuickPick);
+            window.removeEventListener('zync:quick-pick', handleQuickPick as EventListener);
         };
     }, [open, quickPickMode]);
 
@@ -106,10 +123,18 @@ export function CommandPalette() {
         });
     };
 
-    const handleQuickPickSelect = (item: any) => {
+    const handleQuickPickSelect = (item: QuickPickItem) => {
         setOpen(false);
         setQuickPickMode(false);
         if (quickPickOptions) {
+            // Handle internal system Quick Picks
+            if (quickPickOptions.pluginId === 'system') {
+                if (quickPickOptions.requestId === 'icon-theme-select') {
+                    useAppStore.getState().updateSettings({ iconTheme: item.id });
+                }
+                return;
+            }
+
             window.dispatchEvent(new CustomEvent('zync:quick-pick-select', {
                 detail: {
                     requestId: quickPickOptions.requestId,
@@ -192,22 +217,47 @@ export function CommandPalette() {
                         {commandMode && !quickPickMode && (
                             <>
                                 {/* Plugin Commands */}
-                                {pluginCommands.length > 0 && (
-                                    <Command.Group heading="Plugins" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
-                                        {pluginCommands.map(cmd => (
-                                            <Command.Item
-                                                key={cmd.id}
-                                                value={cmd.title} // cmdk uses this for filtering. If user types "> Say", we need to strip ">" or match logic
-                                                onSelect={() => runCommand(() => executeCommand(cmd.id))}
-                                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
-                                            >
-                                                <Code className="mr-2 h-4 w-4 opacity-70" />
-                                                <span>{cmd.title}</span>
-                                                <span className="ml-auto text-[10px] opacity-50 font-mono">{cmd.pluginId.split('.').pop()}</span>
-                                            </Command.Item>
-                                        ))}
-                                    </Command.Group>
-                                )}
+                                <Command.Group heading="Plugins" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
+                                    <Command.Item
+                                        value="Preferences: Icon Theme"
+                                        onSelect={() => {
+                                            const themes = [
+                                                { label: 'VSCode Icons (Default)', id: 'vscode-icons' },
+                                                { label: 'Lucide Minimalist', id: 'lucide' },
+                                                ...plugins
+                                                    .filter(p => p.manifest.type === 'icon-theme')
+                                                    .map(p => ({ label: p.manifest.name, id: p.manifest.id }))
+                                            ];
+
+                                            setQuickPickItems(themes);
+                                            setQuickPickOptions({ 
+                                                placeHolder: 'Select Icon Theme', 
+                                                requestId: 'icon-theme-select',
+                                                pluginId: 'system' 
+                                            });
+                                            setQuickPickMode(true);
+                                            setSearch("");
+                                        }}
+                                        className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                                    >
+                                        <Code className="mr-2 h-4 w-4 opacity-70" />
+                                        <span>Preferences: Icon Theme</span>
+                                        <span className="ml-auto text-[10px] opacity-50 font-mono">system</span>
+                                    </Command.Item>
+
+                                    {pluginCommands.map(cmd => (
+                                        <Command.Item
+                                            key={cmd.id}
+                                            value={cmd.title}
+                                            onSelect={() => runCommand(() => executeCommand(cmd.id))}
+                                            className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                                        >
+                                            <Code className="mr-2 h-4 w-4 opacity-70" />
+                                            <span>{cmd.title}</span>
+                                            <span className="ml-auto text-[10px] opacity-50 font-mono">{cmd.pluginId.split('.').pop()}</span>
+                                        </Command.Item>
+                                    ))}
+                                </Command.Group>
 
                                 <Command.Group heading="Actions" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
                                     <Command.Item
@@ -238,6 +288,7 @@ export function CommandPalette() {
                                         <span>Settings</span>
                                         <span className="ml-auto text-[10px] opacity-50">Cmd+,</span>
                                     </Command.Item>
+
 
                                     <Command.Item
                                         value="Reload Window"
@@ -322,7 +373,7 @@ export function CommandPalette() {
     );
 }
 
-import { memo } from 'react';
+
 
 const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: Connection; onSelect: () => void }) {
     return (

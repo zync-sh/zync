@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [react()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -29,4 +29,26 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
-}));
+
+  // Monaco Editor: Exclude monaco worker scripts from Vite's module resolution.
+  // Context Engine: Prevent Vite from pre-bundling 2,444 JSON files on startup.
+  optimizeDeps: {
+    exclude: ["@enjoys/context-engine"],
+    include: ["@monaco-editor/react"],
+  },
+
+  build: {
+    rollupOptions: {
+      output: {
+        // Split Monaco into its own chunk to avoid bloating the main bundle
+        manualChunks: {
+          monaco: ["@monaco-editor/react", "monaco-editor"],
+        },
+      },
+    },
+  },
+
+  worker: {
+    format: "es",
+  },
+});

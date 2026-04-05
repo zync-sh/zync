@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { Wifi, WifiOff } from 'lucide-react';
+import { CircleAlert, Wifi, WifiOff } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { cn } from '../../lib/utils';
 import { StatusBarTransferIndicator } from '../file-manager/StatusBarTransferIndicator';
@@ -8,20 +7,13 @@ export function StatusBar() {
   const activeConnectionId = useAppStore(state => state.activeConnectionId);
   const connections = useAppStore(state => state.connections);
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
+  const version = useAppStore(state => state.settings.lastSeenVersion);
+  const editorDiagnosticsCount = useAppStore(state => state.editorDiagnosticsCount);
+  const editorDiagnosticsSeverity = useAppStore(state => state.editorDiagnosticsSeverity);
+  const editorDiagnosticsVisible = useAppStore(state => state.editorDiagnosticsVisible);
+  const setEditorDiagnosticsVisible = useAppStore(state => state.setEditorDiagnosticsVisible);
 
-  // Plugin status bar slots: { [id]: text }
-  const [pluginSlots, setPluginSlots] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const handler = (e: any) => {
-      const { id, text } = e.detail;
-      setPluginSlots(prev => ({ ...prev, [id]: text }));
-    };
-    window.addEventListener('zync:statusbar:set', handler);
-    return () => window.removeEventListener('zync:statusbar:set', handler);
-  }, []);
-
-  const pluginTexts = Object.values(pluginSlots).filter(Boolean);
 
   return (
     <div className="h-6 bg-app-panel border-t border-app-border flex items-center px-3 text-[10px] select-none text-app-text/80 justify-between shrink-0">
@@ -39,17 +31,38 @@ export function StatusBar() {
             </>
           )}
         </div>
-        {/* Plugin Status Bar Slots */}
-        {pluginTexts.map((text, i) => (
-          <span key={i} className="text-app-muted font-mono">{text}</span>
-        ))}
+
+        {/* Plugin Status Bar Slots (Temporarily disabled per UX request) */}
       </div>
 
       <div className="flex items-center gap-4">
+        {/* High-performance container for Editor cursor status (no React re-renders) */}
+        <span id="global-editor-status" className="text-app-muted font-mono text-[10px] tracking-wide" />
+        {editorDiagnosticsCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setEditorDiagnosticsVisible(!editorDiagnosticsVisible)}
+            className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 hover:bg-app-surface/60"
+            title={`${editorDiagnosticsVisible ? 'Hide' : 'Show'} diagnostics (${editorDiagnosticsCount})`}
+          >
+            <CircleAlert
+              size={12}
+              className={cn(
+                editorDiagnosticsSeverity === 'error' ? 'text-app-danger' : 'text-app-warning',
+                editorDiagnosticsVisible && 'opacity-100',
+                !editorDiagnosticsVisible && 'opacity-85',
+              )}
+            />
+            <span className="font-mono text-[10px] text-app-muted">{editorDiagnosticsCount}</span>
+          </button>
+        )}
+        
         <StatusBarTransferIndicator />
         {/* Active Action Feedback */}
         <StatusMessage />
         <span>Ready</span>
+        <div className="h-3 w-px bg-app-border mx-1" />
+        <span className="text-app-muted cursor-default hover:text-app-text transition-colors">v{version || '0.0.0'}</span>
       </div>
     </div>
   );

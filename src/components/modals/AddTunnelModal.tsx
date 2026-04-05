@@ -719,3 +719,6 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
         </Modal >
     );
 }
+
+import { registerModal } from '../../lib/modalRegistry';
+registerModal('addTunnel', AddTunnelModal);
