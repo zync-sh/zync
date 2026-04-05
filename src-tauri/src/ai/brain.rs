@@ -12,6 +12,7 @@ use tauri::AppHandle;
 use serde::{Deserialize, Serialize};
 
 use crate::commands::get_data_dir;
+use super::util::slugify;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -159,22 +160,6 @@ fn write_actions(dir: &Path, actions: &[String]) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Converts a string to a filesystem-safe lowercase slug using first 5 words.
-fn slugify(text: &str) -> String {
-    text
-        .split_whitespace()
-        .take(5)
-        .map(|word| {
-            word.chars()
-                .filter(|c| c.is_alphanumeric())
-                .map(|c| c.to_ascii_lowercase())
-                .collect::<String>()
-        })
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 /// Returns current UTC time as "YYYY-MM-DD_HH-mm".
 /// Uses only std — no chrono dep needed.
 fn format_now() -> String {
@@ -222,14 +207,6 @@ fn is_leap(year: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_slugify() {
-        assert_eq!(slugify("Set up a Node.js server!"), "set-up-a-nodejs-server");
-        assert_eq!(slugify("rm -rf everything else here"), "rm-rf-everything-else-here");
-        assert_eq!(slugify("Write a comprehensive Python script that does amazing things"), "write-a-comprehensive-python-script");
-        assert_eq!(slugify("  spaces  "), "spaces");
-    }
 
     #[test]
     fn test_epoch_to_datetime() {

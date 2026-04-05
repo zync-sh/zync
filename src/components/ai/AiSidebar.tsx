@@ -283,16 +283,17 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
     }, [handleSubmit]);
 
     const handleClearAgentThread = useCallback(async () => {
+        const sessionPaths = agentAct().getSessionPaths(agentScope);
         agentAct().clearConversation(agentScope);
-        try {
-            // Brain folder naming: "local" for local, "local_{id}" for SSH without label, "{label}_{id}" with label.
-            // For local sessions: connectionId is null, so brainScope should be "local".
-            const brainScope = connectionId ? agentScope : 'local';
-            await clearBrainSessions(brainScope);
-        } catch (err) {
-            console.error('[AiSidebar] Failed to clear brain sessions:', err);
+
+        if (sessionPaths.length > 0) {
+            try {
+                await clearBrainSessions(sessionPaths);
+            } catch (err) {
+                console.error('[AiSidebar] Failed to clear brain sessions:', err);
+            }
         }
-    }, [agentScope, connectionId]);
+    }, [agentScope]);
 
     // ── Render ───────────────────────────────────────────────────────────
     return (

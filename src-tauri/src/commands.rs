@@ -3774,20 +3774,48 @@ pub async fn ai_agent_whitelist_command(
     Ok(())
 }
 
-/// Clear all brain sessions (persistent history) for a given scope.
-/// Scope is the connection_id or "local". Deletes the entire brain/{scope}/ folder.
+/// Clear specific brain session folders by their absolute paths.
+/// Only deletes directories that live inside the brain/ folder (safety check).
 #[tauri::command]
 pub async fn ai_clear_brain_sessions(
     app: tauri::AppHandle,
-    scope: String,
+    paths: Vec<String>,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    let brain_dir = data_dir.join("brain").join(&scope);
+    let data_dir = get_data_dir(&app);
+    let brain_dir = data_dir.join("brain");
 
+    let canon_brain = match std::fs::canonicalize(&brain_dir) {
+        Ok(p) => p,
+        Err(_) => return Ok(()), // brain dir doesn't exist yet
+    };
+
+    for path_str in &paths {
+        let path = std::path::PathBuf::from(path_str);
+        // Safety: canonicalize to resolve any ".." and verify containment.
+        let canon_path = match std::fs::canonicalize(&path) {
+            Ok(p) => p,
+            Err(_) => continue, // path doesn't exist or is inaccessible, skip
+        };
+        if canon_path.starts_with(&canon_brain) && canon_path.is_dir() {
+            let _ = std::fs::remove_dir_all(&canon_path);
+        }
+    }
+
+    // Clean up empty connection folders left behind after session deletion.
     if brain_dir.exists() {
-        std::fs::remove_dir_all(&brain_dir)
-            .map_err(|e| format!("Failed to delete brain sessions: {}", e))?;
+        if let Ok(entries) = std::fs::read_dir(&brain_dir) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if dir.is_dir() {
+                    let is_empty = std::fs::read_dir(&dir)
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false);
+                    if is_empty {
+                        let _ = std::fs::remove_dir(&dir);
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
