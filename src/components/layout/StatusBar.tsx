@@ -1,4 +1,4 @@
-import { Wifi, WifiOff } from 'lucide-react';
+import { CircleAlert, Wifi, WifiOff } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { cn } from '../../lib/utils';
 import { StatusBarTransferIndicator } from '../file-manager/StatusBarTransferIndicator';
@@ -8,6 +8,10 @@ export function StatusBar() {
   const connections = useAppStore(state => state.connections);
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
   const version = useAppStore(state => state.settings.lastSeenVersion);
+  const editorDiagnosticsCount = useAppStore(state => state.editorDiagnosticsCount);
+  const editorDiagnosticsSeverity = useAppStore(state => state.editorDiagnosticsSeverity);
+  const editorDiagnosticsVisible = useAppStore(state => state.editorDiagnosticsVisible);
+  const setEditorDiagnosticsVisible = useAppStore(state => state.setEditorDiagnosticsVisible);
 
 
 
@@ -34,6 +38,24 @@ export function StatusBar() {
       <div className="flex items-center gap-4">
         {/* High-performance container for Editor cursor status (no React re-renders) */}
         <span id="global-editor-status" className="text-app-muted font-mono text-[10px] tracking-wide" />
+        {editorDiagnosticsCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setEditorDiagnosticsVisible(!editorDiagnosticsVisible)}
+            className="inline-flex items-center gap-1 rounded-sm px-1 py-0.5 hover:bg-app-surface/60"
+            title={`${editorDiagnosticsVisible ? 'Hide' : 'Show'} diagnostics (${editorDiagnosticsCount})`}
+          >
+            <CircleAlert
+              size={12}
+              className={cn(
+                editorDiagnosticsSeverity === 'error' ? 'text-app-danger' : 'text-app-warning',
+                editorDiagnosticsVisible && 'opacity-100',
+                !editorDiagnosticsVisible && 'opacity-85',
+              )}
+            />
+            <span className="font-mono text-[10px] text-app-muted">{editorDiagnosticsCount}</span>
+          </button>
+        )}
         
         <StatusBarTransferIndicator />
         {/* Active Action Feedback */}
