@@ -120,8 +120,9 @@ pub fn save_artifact(session_dir: &Path, tool_call_id: &str, content: &str) -> O
         return None;
     }
     
-    // Convert all backslashes to forward slashes for AI consistency
-    Some(file_path.to_string_lossy().replace('\\', "/"))
+    // Convert all backslashes to forward slashes for AI consistency.
+    // Return relative path to session_dir: artifacts/{safe_id}.txt
+    Some(format!("artifacts/{}.txt", safe_id))
 }
 
 // ── Writers ───────────────────────────────────────────────────────────────────

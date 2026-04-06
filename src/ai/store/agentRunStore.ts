@@ -248,7 +248,7 @@ export const useAgentRunStore = create<AgentRunStore>()(
       const msgs = getOrInit(s.conversations, scope);
       const last = msgs[msgs.length - 1];
       // Accumulate into an existing thinking bubble for this run
-      if (last?.type === 'thinking' && last.id.startsWith(runId)) {
+      if (last?.type === 'thinking' && last.id.startsWith(`${runId}-`)) {
         return {
           conversations: {
             ...s.conversations,
