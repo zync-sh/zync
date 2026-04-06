@@ -56,7 +56,7 @@ pub(crate) async fn read_file(
             .map_err(|e| format!("Cannot read {}: {}", path, e))?
     };
 
-    let capped = cap_output(content);
+    let capped = cap_output(ctx.session_dir.as_deref(), Some(tool_call_id), content);
     emit_output(ctx.app, ctx.run_id, tool_call_id, &capped);
     Ok(capped)
 }
@@ -172,7 +172,7 @@ pub(crate) async fn list_files(
 ) -> Result<String, String> {
     let cmd = build_list_files_command(path);
     let out = exec_silent(ctx, &cmd).await?;
-    let capped = cap_output(out);
+    let capped = cap_output(ctx.session_dir.as_deref(), Some(tool_call_id), out);
     emit_output(ctx.app, ctx.run_id, tool_call_id, &capped);
     Ok(capped)
 }
@@ -188,6 +188,7 @@ pub(crate) async fn file_exists(
         connections,
         connection_id,
         run_id: "",
+        session_dir: None,
     };
     let cmd = build_file_exists_command(path);
     match exec_silent(&ctx, &cmd).await {

@@ -190,6 +190,7 @@ where
                         connections: &state.connections,
                         connection_id: conn_id,
                         run_id,
+                        session_dir: None,
                     };
                     let result = tokio::select! {
                         value = tools::execute_tool(&tool_ctx, tool_call) => value,

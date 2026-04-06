@@ -96,22 +96,56 @@ pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub(crate) fn cap_output(output: String) -> String {
-    const MAX_OUTPUT_LEN: usize = 8_000;
+/// Truncates overly large terminal outputs to prevent blowing out the AI context window.
+/// If `session_dir` and `tool_call_id` are provided, the full output is securely written 
+/// to the session's artifact folder before truncation, and a file path reference is 
+/// injected directly into the truncated string to inform the AI.
+pub(crate) fn cap_output(
+    session_dir: Option<&std::path::Path>,
+    tool_call_id: Option<&str>,
+    output: String,
+) -> String {
+    const MAX_OUTPUT_LEN: usize = 8_192;
+    const HALF: usize = MAX_OUTPUT_LEN / 2; // Exact 4 KB each for head and tail
+
     if output.len() <= MAX_OUTPUT_LEN {
         return output;
     }
 
-    let safe_index = output
+    // Find a safe UTF-8 boundary at or after the HALF mark for the head.
+    let head_end = output
         .char_indices()
-        .map(|(index, _)| index)
-        .find(|&index| index >= MAX_OUTPUT_LEN)
+        .map(|(i, _)| i)
+        .find(|&i| i >= HALF)
         .unwrap_or(output.len());
 
+    // Find a safe UTF-8 boundary at or before (len - HALF) for the tail.
+    let tail_target = output.len().saturating_sub(HALF);
+    let tail_start = output
+        .char_indices()
+        .map(|(i, _)| i)
+        .find(|&i| i >= tail_target)
+        .unwrap_or(output.len());
+
+    let size_kb = output.len() / 1024;
+    
+    let path_msg = match (session_dir, tool_call_id) {
+        (Some(dir), Some(id)) => {
+            if let Some(path) = crate::ai::brain::save_artifact(dir, id, &output) {
+                format!(" - if you need more details you can see {}", path)
+            } else {
+                String::new()
+            }
+        }
+        _ => " - use smaller commands to read selectively".to_string()
+    };
+
     format!(
-        "{}\n[... output capped at {} characters ...]",
-        &output[..safe_index],
-        MAX_OUTPUT_LEN
+        "{}\n\n[truncated: output was {}KB{}]\n\n{}",
+        &output[..head_end],
+        size_kb,
+        path_msg,
+        &output[tail_start..],
     )
 }
 
@@ -157,9 +191,39 @@ mod tests {
     }
 
     #[test]
-    fn caps_large_output() {
-        let long = "a".repeat(9000);
-        let capped = cap_output(long);
-        assert!(capped.contains("[... output capped at 8000 characters ...]"));
+    fn caps_large_output_with_head_and_tail() {
+        let long = format!("{}{}{}", "H".repeat(5000), "M".repeat(5000), "T".repeat(5000));
+        let capped = cap_output(None, None, long);
+        assert!(capped.starts_with("HHHH"));
+        assert!(capped.ends_with("TTTT"));
+        assert!(capped.contains("[truncated"));
+    }
+
+    #[test]
+    fn preserves_short_output() {
+        let short = "hello world".to_string();
+        assert_eq!(cap_output(None, None, short.clone()), short);
+    }
+
+    #[test]
+    fn tests_saves_artifact_to_disk() {
+        let tmp = std::env::temp_dir().join(format!("zync_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let long = "A".repeat(10000);
+        let capped = cap_output(Some(&tmp), Some("call_123"), long.clone());
+
+        // Verify the message contains the path
+        assert!(capped.contains("if you need more details you can see"));
+        assert!(capped.contains("call_123.txt"));
+
+        // Verify the file actually exists and contains the full content
+        let artifact_path = tmp.join("artifacts").join("call_123.txt");
+        assert!(artifact_path.exists());
+        let saved_content = std::fs::read_to_string(artifact_path).unwrap();
+        assert_eq!(saved_content, long);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(tmp);
     }
 }

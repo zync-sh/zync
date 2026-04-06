@@ -55,6 +55,7 @@ interface AgentRunStore {
   /** Mark the run as no longer active (done or errored). */
   endRun: (scope: string) => void;
 
+  clearThinking: (scope: string, runId: string) => void;
   appendThinking: (scope: string, runId: string, text: string) => void;
   addToolCall: (
     scope: string,
@@ -228,12 +229,26 @@ export const useAgentRunStore = create<AgentRunStore>()(
     }));
   },
 
+  clearThinking(scope, runId) {
+    set((s) => {
+      const msgs = getOrInit(s.conversations, scope);
+      return {
+        conversations: {
+          ...s.conversations,
+          [scope]: msgs.filter(
+            (m) => !(m.type === 'thinking' && m.id.startsWith(`${runId}-`))
+          ),
+        },
+      };
+    });
+  },
+
   appendThinking(scope, runId, text) {
     set((s) => {
       const msgs = getOrInit(s.conversations, scope);
       const last = msgs[msgs.length - 1];
       // Accumulate into an existing thinking bubble for this run
-      if (last?.type === 'thinking' && last.id.startsWith(runId)) {
+      if (last?.type === 'thinking' && last.id.startsWith(`${runId}-`)) {
         return {
           conversations: {
             ...s.conversations,

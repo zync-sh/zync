@@ -4,6 +4,27 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.9.2]
+
+### Added
+- **Large Output Artifacts**: Tool outputs exceeding 8 KB are now automatically saved as text files within the session folder, preventing IPC bottlenecks and keeping the chat history lightweight. ([ece9793])
+- **Reference-Aware Truncation**: Capped terminal outputs now include a clickable file path reference, allowing the agent to "remember" detailed logs without cluttering the prompt. ([ece9793])
+
+### Changed
+- **Thinking Architecture**: Reasoning bubbles are now treated as ephemeral; they are automatically cleared and replaced by the final DONE summary to prevent visual duplication during streaming. ([ece9793])
+- **Prompt Privacy**: Tools now return relative `artifacts/` paths, shielding local user directory structures from AI exposure. ([4bd3e05])
+- **Session Auditability**: Every AI run—even those that fail during planning or provider calls—now generates a complete session history, eliminating orphaned "ghost" directories. ([4bd3e05])
+- **Reliable Checkpoints**: Refactored the "Always Allow" security handler to guarantee a response to the backend, preventing agent hangs if whitelisting fails. ([ece9793])
+
+### Fixed
+- **Summary Deduplication**: Eliminated the "echo" effect where streaming models (Groq/Mistral) would repeat their thinking text inside the final completion bubble. ([ece9793])
+- **Timestamp Synchronization**: Synchronized `walkthrough.md` generation with the session directory timestamp to ensure log consistency. ([ece9793])
+- **Robust IPC**: Added explicit error propagation and logging to `save_artifact` to prevent silent disk-write failures. ([ece9793])
+- **Network Resilience**: Added `504 Gateway Timeout` to the list of retryable errors for transient API failures. ([ece9793])
+- **Command Persistence**: Fixed a bug where background executors bypassed the truncation layer, potentially crashing the frontend with massive raw strings. ([ece9793])
+- **Technical Formatting**: Frontend now automatically detects and highlights technical terms in single quotes (like 'file.js') as inline code. ([ece9793])
+- **Done Bubble Alignment**: Fixed status icon positioning in completion bubbles to prevent it from floating in the middle of long summaries. ([ece9793])
+
 
 ## [2.9.1]
 
@@ -444,14 +465,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Multiple themes (Dark, Light, Dracula)
 
 [Unreleased]: https://github.com/zync-sh/zync/compare/v2.9.1...HEAD
-[2.8.0]: https://github.com/zync-sh/zync/compare/v2.7.0...v2.8.0
-[2.7.0]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.7.0
-[2.6.2]: https://github.com/zync-sh/zync/compare/v2.6.1...v2.6.2
-[2.6.1]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.6.1
-[2.6.0]: https://github.com/zync-sh/zync/compare/v2.5.5...v2.6.0
-[2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
-[2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
-[2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -460,14 +473,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [0b4e9f8]: https://github.com/zync-sh/zync/commit/0b4e9f8
 [42eeb4c]: https://github.com/zync-sh/zync/commit/42eeb4c
 [bc4ec09]: https://github.com/zync-sh/zync/commit/bc4ec09
-[2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
-[2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
-[2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
-[2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
-[2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
-[2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
-[2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
 [5003999]: https://github.com/zync-sh/zync/commit/5003999
 [aaf246a]: https://github.com/zync-sh/zync/commit/aaf246a
 [9ce71b4]: https://github.com/zync-sh/zync/commit/9ce71b4
@@ -499,8 +504,25 @@ All notable changes to Zync are documented in this file. The format is based on 
 [9aa7d67]: https://github.com/zync-sh/zync/commit/9aa7d67
 [ad807aa]: https://github.com/zync-sh/zync/commit/ad807aa
 [88bb61a]: https://github.com/zync-sh/zync/commit/88bb61a
+[ece9793]: https://github.com/zync-sh/zync/commit/ece9793
+[4bd3e05]: https://github.com/zync-sh/zync/commit/4bd3e05
+[2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/zync-sh/zync/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/zync-sh/zync/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/zync-sh/zync/compare/v2.8.0...v2.8.1
-
-
+[2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
+[2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
+[2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
+[2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
+[2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
+[2.8.0]: https://github.com/zync-sh/zync/compare/v2.7.0...v2.8.0
+[2.7.0]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.7.0
+[2.6.2]: https://github.com/zync-sh/zync/compare/v2.6.1...v2.6.2
+[2.6.1]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/zync-sh/zync/compare/v2.5.5...v2.6.0
+[2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
+[2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
+[2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3

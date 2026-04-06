@@ -80,6 +80,18 @@ function EmptyState({ isLocal }: { isLocal?: boolean }) {
   );
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Converts technical-looking terms wrapped in single quotes (e.g. 'index.js')
+ * into markdown backticks so they render with the proper monospace styling.
+ */
+function formatTechnicalTerms(text: string): string {
+  if (!text) return text;
+  // Match 'something' where 'something' has no spaces and at least one character
+  return text.replace(/'([^'\s]+)'/g, '`$1`');
+}
+
 // ── Message renderers ──────────────────────────────────────────────────────────
 
 function ThinkingBubble({ text, isActive }: { text: string; isActive: boolean }) {
@@ -97,7 +109,9 @@ function ThinkingBubble({ text, isActive }: { text: string; isActive: boolean })
         [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:bg-black/20 [&_pre]:overflow-x-auto [&_pre]:mb-1.5
         [&_pre_code]:bg-transparent [&_pre_code]:border-0 [&_pre_code]:p-0 [&_pre_code]:text-app-text/80
         [&_strong]:text-app-text [&_em]:text-app-text/70">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {formatTechnicalTerms(text)}
+        </ReactMarkdown>
         {isActive && (
           <span className="inline-block w-[2px] h-[13px] ml-0.5 bg-app-accent/70 align-bottom animate-pulse" />
         )}
@@ -141,11 +155,11 @@ function DoneBubble({ success, summary, actions = [], sessionPath }: { success: 
       )}
     >
       {/* Header row */}
-      <div className="flex items-center gap-2 px-3 py-2.5">
+      <div className="flex items-start gap-2 px-3 py-2.5">
         {success ? (
-          <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+          <CheckCircle2 size={14} className="shrink-0 text-emerald-400 mt-0.5" />
         ) : (
-          <XCircle size={14} className="shrink-0 text-app-muted" />
+          <XCircle size={14} className="shrink-0 text-app-muted mt-0.5" />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
@@ -161,12 +175,14 @@ function DoneBubble({ success, summary, actions = [], sessionPath }: { success: 
               </span>
             )}
           </div>
-          {summary && summary !== 'Done.' && (
+          {summary && (
             <div className="text-[12px] text-app-text/80 leading-relaxed
               [&_p]:mb-0 [&_strong]:text-app-text [&_em]:text-app-text/70
               [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-app-surface/60
               [&_code]:border [&_code]:border-app-border/30 [&_code]:font-mono [&_code]:text-[11px]">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {formatTechnicalTerms(summary)}
+              </ReactMarkdown>
             </div>
           )}
         </div>
@@ -179,7 +195,7 @@ function DoneBubble({ success, summary, actions = [], sessionPath }: { success: 
             const isFailed = action.startsWith('✗');
             return (
               <p
-                key={i}
+                key={`${action}-${i}`}
                 className={cn(
                   'text-[11px] font-mono leading-relaxed truncate',
                   isFailed ? 'text-red-400/70' : 'text-app-muted/60',
@@ -316,6 +332,7 @@ export function ConversationThread({ scope, activeRunId, isLocal }: Conversation
 
         await listen<AgentDoneEvent>('ai:agent-done', ({ payload }) => {
           if (payload.runId !== runId) return;
+          act().clearThinking(scope, runId);
           act().addDone(scope, payload.success, payload.summary, payload.actions ?? [], payload.sessionPath);
           act().endRun(scope);
         }),
@@ -371,10 +388,14 @@ export function ConversationThread({ scope, activeRunId, isLocal }: Conversation
     async (checkpointId: string, command: string) => {
       act().answerCheckpoint(scope, checkpointId, 'continue');
       try {
-        await whitelistCommand(scope, command);
+        // Optimistically attempt to whitelist, but dont let failure here
+        // block the final response to the backend agent.
+        await whitelistCommand(scope, command).catch((e) => {
+          console.warn('[ConversationThread] Failed to whitelist command:', e);
+        });
         await respondToCheckpoint(checkpointId, true);
-      } catch {
-        // backend already cleaned up on error
+      } catch (error) {
+        console.error('[ConversationThread] Failed to respond to checkpoint:', error);
       }
     },
     [scope],
