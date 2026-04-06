@@ -12,6 +12,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 - **Thinking Architecture**: Reasoning bubbles are now treated as ephemeral; they are automatically cleared and replaced by the final DONE summary to prevent visual duplication during streaming. ([ece9793])
+- **Prompt Privacy**: Tools now return relative `artifacts/` paths, shielding local user directory structures from AI exposure. ([4bd3e05])
+- **Session Auditability**: Every AI run—even those that fail during planning or provider calls—now generates a complete session history, eliminating orphaned "ghost" directories. ([4bd3e05])
 - **Reliable Checkpoints**: Refactored the "Always Allow" security handler to guarantee a response to the backend, preventing agent hangs if whitelisting fails. ([ece9793])
 
 ### Fixed
@@ -503,6 +505,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [ad807aa]: https://github.com/zync-sh/zync/commit/ad807aa
 [88bb61a]: https://github.com/zync-sh/zync/commit/88bb61a
 [ece9793]: https://github.com/zync-sh/zync/commit/ece9793
+[4bd3e05]: https://github.com/zync-sh/zync/commit/4bd3e05
 [2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/zync-sh/zync/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/zync-sh/zync/compare/v2.8.1...v2.9.0
@@ -523,5 +526,3 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
 [2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
-
-

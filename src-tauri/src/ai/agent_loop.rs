@@ -119,6 +119,41 @@ async fn run_inner(
         None => (None, None),
     };
 
+    // Accumulates a human-readable action log shown in the DONE bubble.
+    let mut action_log: Vec<String> = Vec::new();
+
+    // Saves the brain session folder and emits the done event.
+    // Using a macro because closures can't move out of captured &mut action_log.
+    macro_rules! finish {
+        ($success:expr, $summary:expr, $actions:expr) => {{
+            let success = $success;
+            let summary = $summary;
+            let actions = $actions;
+
+            let session_path = if let Some(dir) = &session_dir {
+                if let Some(ts) = &session_ts {
+                    if let Err(e) = super::brain::finalize_session(
+                        dir,
+                        ts,
+                        run_id,
+                        &request.goal,
+                        conn_label,
+                        model_name,
+                        success,
+                        summary,
+                        &actions,
+                    ) {
+                        eprintln!("[brain] failed to finalize session: {}", e);
+                    }
+                }
+                Some(dir.to_string_lossy().to_string())
+            } else {
+                None
+            };
+            emit_done(app, run_id, success, summary, actions, session_path);
+        }};
+    }
+
     // Override frontend OS/shell guesses with values detected at connect time.
     // The frontend can only guess (e.g. always sends "Linux"/"bash" for SSH),
     // whereas the backend probed the real environment when the connection was established.
@@ -159,29 +194,21 @@ async fn run_inner(
                 Box::pin(call_provider(app, run_id, messages, config, system, tool_schemas))
             },
             |cancel| Box::pin(poll_until_cancel(cancel)),
-        ).await? {
-            Some(steps) => steps,
-            None => {
+        ).await {
+            Ok(Some(steps)) => steps,
+            Ok(None) => {
                 let was_cancelled = cancel.load(Ordering::Relaxed);
                 let summary = if was_cancelled {
                     "Stopped by user."
                 } else {
                     "Plan rejected — no changes were made."
                 };
-                let session_path = if let Some(dir) = &session_dir {
-                    if let Some(ts) = &session_ts {
-                    if let Err(e) = super::brain::finalize_session(
-                        dir, ts, run_id, &request.goal, conn_label, model_name,
-                        false, summary, &[],
-                    ) {
-                        eprintln!("[brain] failed to finalize session: {}", e);
-                    }
-                    }
-                    Some(dir.to_string_lossy().to_string())
-                } else {
-                    None
-                };
-                emit_done(app, run_id, false, summary, vec![], session_path);
+                finish!(false, summary, action_log);
+                return Ok(());
+            }
+            Err(e) => {
+                let summary = format!("Planning error: {}", e);
+                finish!(false, &summary, action_log);
                 return Ok(());
             }
         }
@@ -213,36 +240,7 @@ async fn run_inner(
 
     messages.push(AgentMessage::User(goal_message));
     let mut iterations = 0usize;
-    // Accumulates a human-readable action log shown in the DONE bubble.
-    let mut action_log: Vec<String> = Vec::new();
 
-    // Saves the brain session folder and emits the done event.
-    // Using a macro because closures can't move out of captured &mut action_log.
-    macro_rules! finish {
-        ($success:expr, $summary:expr, $actions:expr) => {{
-            let session_path = if let Some(dir) = &session_dir {
-                if let Some(ts) = &session_ts {
-                    if let Err(e) = super::brain::finalize_session(
-                        dir,
-                        ts,
-                        run_id,
-                        &request.goal,
-                        conn_label,
-                        model_name,
-                        $success,
-                        $summary,
-                        &$actions,
-                    ) {
-                        eprintln!("[brain] failed to finalize session: {}", e);
-                    }
-                }
-                Some(dir.to_string_lossy().to_string())
-            } else {
-                None
-            };
-            emit_done(app, run_id, $success, $summary, $actions, session_path);
-        }};
-    }
     // Set to true when the AI calls ask_user and the user approves, so the
     // safety-net checkpoint is skipped for the immediately following run_command
     // (the AI already asked — prompting again would be a duplicate).
@@ -279,7 +277,10 @@ async fn run_inner(
                 finish!(false, "Stopped by user.", action_log);
                 return Ok(());
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                finish!(false, &e, action_log);
+                return Ok(());
+            }
         };
 
         // ── No tool calls → check for text-based tool call fallback ──
@@ -298,11 +299,10 @@ async fn run_inner(
                     // Detect model refusing to use tools ("I don't have the capability...")
                     // and surface it as a clear error rather than silently completing.
                     if is_capability_refusal(text) {
-                        return Err(
-                            "The model responded with instructions instead of using tools. \
-                             Try a more capable model (e.g. claude-sonnet, gpt-4o, mistral-large)."
-                                .to_string(),
-                        );
+                        let msg = "The model responded with instructions instead of using tools. \
+                             Try a more capable model (e.g. claude-sonnet, gpt-4o, mistral-large).";
+                        finish!(false, msg, action_log);
+                        return Ok(());
                     }
                     // Use the AI's text as the DONE summary regardless of whether it was
                     // already streamed as thinking chunks. The DONE bubble shows a compact
@@ -637,7 +637,7 @@ async fn call_provider_with_retry(
                 "ai:agent-thinking",
                 AgentThinkingEvent {
                     run_id: run_id.to_string(),
-                    text: format!("\n\n*Retrying in {}s (attempt {}/{})...*\n\n", delay_secs, attempt + 1, MAX_RETRIES + 1),
+                    text: format!("\n\n*Retrying in {}s (retry {}/{})...*\n\n", delay_secs, attempt, MAX_RETRIES),
                 },
             );
 
