@@ -55,6 +55,7 @@ interface AgentRunStore {
   /** Mark the run as no longer active (done or errored). */
   endRun: (scope: string) => void;
 
+  clearThinking: (scope: string, runId: string) => void;
   appendThinking: (scope: string, runId: string, text: string) => void;
   addToolCall: (
     scope: string,
@@ -226,6 +227,20 @@ export const useAgentRunStore = create<AgentRunStore>()(
     set((s) => ({
       activeRunIds: { ...s.activeRunIds, [scope]: null },
     }));
+  },
+
+  clearThinking(scope, runId) {
+    set((s) => {
+      const msgs = getOrInit(s.conversations, scope);
+      return {
+        conversations: {
+          ...s.conversations,
+          [scope]: msgs.filter(
+            (m) => !(m.type === 'thinking' && m.id.startsWith(runId))
+          ),
+        },
+      };
+    });
   },
 
   appendThinking(scope, runId, text) {

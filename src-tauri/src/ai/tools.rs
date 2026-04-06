@@ -2,6 +2,7 @@
 //! and tool execution logic.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
@@ -41,11 +42,16 @@ pub fn planning_tool_schemas(config: &crate::ai::AiConfig) -> serde_json::Value 
 }
 
 /// Borrowed context passed into every tool execution call.
+/// 
+/// Note: `session_dir` tracks the active session path, allowing heavily verbose
+/// tool outputs (like large read_file or command actions) to automatically stream
+/// artifacts to disk to circumvent AI buffer overruns.
 pub struct ToolContext<'a> {
     pub app: &'a AppHandle,
     pub connections: &'a Arc<Mutex<HashMap<String, ConnectionHandle>>>,
     pub connection_id: Option<&'a str>,
     pub run_id: &'a str,
+    pub session_dir: Option<PathBuf>,
 }
 
 pub async fn execute_tool(ctx: &ToolContext<'_>, tool_call: &ToolCall) -> Result<String, String> {

@@ -32,20 +32,15 @@ struct Meta {
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
-/// Write the session folder for a completed agent run.
-/// Returns the absolute path to the session folder, or None if saving fails
-/// (non-fatal — the agent run itself already completed).
-pub fn save_session(
+
+
+/// Initialize the session directory early, allowing artifacts to be saved during the run.
+pub fn init_session(
     app: &AppHandle,
-    run_id: &str,
     goal: &str,
     connection_id: Option<&str>,
     connection_label: Option<&str>,
-    model: &str,
-    success: bool,
-    summary: &str,
-    actions: &[String],
-) -> Option<PathBuf> {
+) -> Option<(PathBuf, String)> {
     let data_dir = get_data_dir(app);
     if data_dir.as_os_str().is_empty() {
         return None;
@@ -75,11 +70,44 @@ pub fn save_session(
         return None;
     }
 
-    write_meta(&session_dir, run_id, goal, connection_label, model, success, summary, actions);
-    write_walkthrough(&session_dir, goal, connection_label, model, &ts, success, summary, actions);
-    write_actions(&session_dir, actions);
+    Some((session_dir, ts))
+}
 
-    Some(session_dir)
+/// Finalize an already initialized session directory with the run's completion data.
+pub fn finalize_session(
+    session_dir: &Path,
+    ts: &str,
+    run_id: &str,
+    goal: &str,
+    connection_label: Option<&str>,
+    model: &str,
+    success: bool,
+    summary: &str,
+    actions: &[String],
+) {
+    write_meta(session_dir, run_id, goal, connection_label, model, success, summary, actions);
+    write_walkthrough(session_dir, goal, connection_label, model, ts, success, summary, actions);
+    write_actions(session_dir, actions);
+}
+
+/// Saves a temporary artifact (like a large truncated tool output) into the active session.
+/// Returns the full file path if successful, or None if the write failed.
+pub fn save_artifact(session_dir: &Path, tool_call_id: &str, content: &str) -> Option<String> {
+    let artifacts_dir = session_dir.join("artifacts");
+    if let Err(e) = std::fs::create_dir_all(&artifacts_dir) {
+        eprintln!("[brain] failed to create artifacts dir {:?}: {}", artifacts_dir, e);
+        return None;
+    }
+
+    // Write full output
+    let file_path = artifacts_dir.join(format!("{}.txt", tool_call_id));
+    if let Err(e) = std::fs::write(&file_path, content) {
+        eprintln!("[brain] failed to write artifact {:?}: {}", file_path, e);
+        return None;
+    }
+    
+    // Convert all backslashes to forward slashes for AI consistency
+    Some(file_path.to_string_lossy().replace('\\', "/"))
 }
 
 // ── Writers ───────────────────────────────────────────────────────────────────

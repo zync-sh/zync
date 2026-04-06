@@ -114,6 +114,11 @@ async fn run_inner(
     let conn_label = request.connection_label.as_deref();
     let model_name = config.model.as_deref().unwrap_or("unknown");
 
+    let (session_dir, session_ts) = match super::brain::init_session(app, &request.goal, conn_id, conn_label) {
+        Some((dir, ts)) => (Some(dir), Some(ts)),
+        None => (None, None),
+    };
+
     // Override frontend OS/shell guesses with values detected at connect time.
     // The frontend can only guess (e.g. always sends "Linux"/"bash" for SSH),
     // whereas the backend probed the real environment when the connection was established.
@@ -163,10 +168,17 @@ async fn run_inner(
                 } else {
                     "Plan rejected — no changes were made."
                 };
-                let session_path = super::brain::save_session(
-                    app, run_id, &request.goal, conn_id, conn_label, model_name,
-                    false, summary, &[],
-                ).map(|p| p.to_string_lossy().to_string());
+                let session_path = if let Some(dir) = &session_dir {
+                    if let Some(ts) = &session_ts {
+                        super::brain::finalize_session(
+                            dir, ts, run_id, &request.goal, conn_label, model_name,
+                            false, summary, &[],
+                        );
+                    }
+                    Some(dir.to_string_lossy().to_string())
+                } else {
+                    None
+                };
                 emit_done(app, run_id, false, summary, vec![], session_path);
                 return Ok(());
             }
@@ -206,18 +218,24 @@ async fn run_inner(
     // Using a macro because closures can't move out of captured &mut action_log.
     macro_rules! finish {
         ($success:expr, $summary:expr, $actions:expr) => {{
-            let session_path = super::brain::save_session(
-                app,
-                run_id,
-                &request.goal,
-                conn_id,
-                conn_label,
-                model_name,
-                $success,
-                $summary,
-                &$actions,
-            )
-            .map(|p| p.to_string_lossy().to_string());
+            let session_path = if let Some(dir) = &session_dir {
+                if let Some(ts) = &session_ts {
+                    super::brain::finalize_session(
+                        dir,
+                        ts,
+                        run_id,
+                        &request.goal,
+                        conn_label,
+                        model_name,
+                        $success,
+                        $summary,
+                        &$actions,
+                    );
+                }
+                Some(dir.to_string_lossy().to_string())
+            } else {
+                None
+            };
             emit_done(app, run_id, $success, $summary, $actions, session_path);
         }};
     }
@@ -244,17 +262,20 @@ async fn run_inner(
         }
         iterations += 1;
 
-        // ── Call AI ──
-        let response = tokio::select! {
-            result = call_provider(
-                app, run_id, &messages, &config,
-                AGENT_SYSTEM_PROMPT,
-                tools::execution_tool_schemas(&config),
-            ) => result?,
-            _ = poll_until_cancel(&cancel) => {
+        // ── Call AI (with retry) ──
+        let response = call_provider_with_retry(
+            app, run_id, &messages, &config,
+            AGENT_SYSTEM_PROMPT,
+            tools::execution_tool_schemas(&config),
+            &cancel,
+        ).await;
+        let response = match response {
+            Ok(r) => r,
+            Err(_) if cancel.load(Ordering::Relaxed) => {
                 finish!(false, "Stopped by user.", action_log);
                 return Ok(());
             }
+            Err(e) => return Err(e),
         };
 
         // ── No tool calls → check for text-based tool call fallback ──
@@ -488,6 +509,7 @@ async fn run_inner(
                 connections: &state.connections,
                 connection_id: conn_id,
                 run_id,
+                session_dir: session_dir.clone(),
             };
             let exec_result = tokio::select! {
                 result = tools::execute_tool(&tool_ctx, tool_call) => result,
@@ -579,6 +601,70 @@ async fn call_provider(
         }
         other => Err(format!("Unknown provider: {}", other)),
     }
+}
+
+// ── Provider retry ───────────────────────────────────────────────────────────
+
+use super::util::is_retryable_error;
+
+/// Calls `call_provider` with up to 3 retries on transient errors.
+/// Uses exponential backoff (1s, 3s, 9s) and races each wait against the cancel flag.
+async fn call_provider_with_retry(
+    app: &AppHandle,
+    run_id: &str,
+    messages: &[AgentMessage],
+    config: &AiConfig,
+    system: &str,
+    tool_schemas: serde_json::Value,
+    cancel: &Arc<AtomicBool>,
+) -> Result<AssistantResponse, String> {
+    const MAX_RETRIES: usize = 3;
+    const BACKOFF_BASE: u64 = 1; // seconds
+
+    for attempt in 0..=MAX_RETRIES {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Stopped by user.".to_string());
+        }
+
+        // Wait before retries (not before the first attempt)
+        if attempt > 0 {
+            let delay_secs = BACKOFF_BASE * 3u64.pow(attempt as u32 - 1); // 1s, 3s, 9s
+            let _ = app.emit(
+                "ai:agent-thinking",
+                AgentThinkingEvent {
+                    run_id: run_id.to_string(),
+                    text: format!("\n\n*Retrying in {}s (attempt {}/{})...*\n\n", delay_secs, attempt + 1, MAX_RETRIES + 1),
+                },
+            );
+
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(delay_secs)) => {}
+                _ = poll_until_cancel(cancel) => {
+                    return Err("Stopped by user.".to_string());
+                }
+            }
+        }
+
+        let result = tokio::select! {
+            result = call_provider(app, run_id, messages, config, system, tool_schemas.clone()) => result,
+            _ = poll_until_cancel(cancel) => {
+                return Err("Stopped by user.".to_string());
+            }
+        };
+
+        match result {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                if attempt < MAX_RETRIES && is_retryable_error(&e) {
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    // Unreachable: the loop above either handles retries or returns Err(e) on the last attempt.
+    unreachable!("retry loop should always return")
 }
 
 // ── Checkpoint (ask_user) ─────────────────────────────────────────────────────

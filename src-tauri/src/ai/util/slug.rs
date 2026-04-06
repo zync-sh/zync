@@ -5,7 +5,7 @@ pub(crate) fn slugify(text: &str) -> String {
         .map(|word| {
             word.chars()
                 .filter(|c| c.is_alphanumeric())
-                .map(|c| c.to_ascii_lowercase())
+                .flat_map(|c| c.to_lowercase())
                 .collect::<String>()
         })
         .filter(|w| !w.is_empty())
@@ -29,5 +29,6 @@ mod tests {
         assert_eq!(slugify(""), "");
         assert_eq!(slugify("!!!"), "");
         assert_eq!(slugify("🚀 rocket"), "rocket");
+        assert_eq!(slugify("Café Naïve"), "café-naïve");
     }
 }

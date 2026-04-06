@@ -4,6 +4,22 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Large Output Artifacts**: Tool outputs exceeding 8 KB are now automatically saved as text files within the session folder, preventing IPC bottlenecks and keeping the chat history lightweight.
+- **Reference-Aware Truncation**: Capped terminal outputs now include a clickable file path reference, allowing the agent to "remember" detailed logs without cluttering the prompt.
+
+### Changed
+- **Thinking Architecture**: Reasoning bubbles are now treated as ephemeral; they are automatically cleared and replaced by the final DONE summary to prevent visual duplication during streaming.
+- **Reliable Checkpoints**: Refactored the "Always Allow" security handler to guarantee a response to the backend, preventing agent hangs if whitelisting fails.
+
+### Fixed
+
+- **Summary Deduplication**: Eliminated the "echo" effect where streaming models (Groq/Mistral) would repeat their thinking text inside the final completion bubble.
+- **Timestamp Synchronization**: Synchronized `walkthrough.md` generation with the session directory timestamp to ensure log consistency.
+- **Robust IPC**: Added explicit error propagation and logging to `save_artifact` to prevent silent disk-write failures.
+- **Network Resilience**: Added `504 Gateway Timeout` to the list of retryable errors for transient API failures.
+- **Command Persistence**: Fixed a bug where background executors bypassed the truncation layer, potentially crashing the frontend with massive raw strings.
+
 
 ## [2.9.1]
 
