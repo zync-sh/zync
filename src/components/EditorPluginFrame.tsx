@@ -289,16 +289,22 @@ export function EditorPluginFrame({
 
   return (
       <div className="absolute inset-0 z-[70] flex min-h-0 flex-col bg-app-panel">
-        <div className="flex h-11 items-center justify-between border-b border-app-border px-3">
-          <h3 className="truncate text-base font-semibold text-app-text">{filename} · {plugin.manifest.editor?.displayName || plugin.manifest.name}</h3>
-          <button
-            type="button"
-            onClick={() => { void requestClose(); }}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
-            aria-label="Close editor"
-          >
-            ×
-          </button>
+        <div className="flex h-10 items-center justify-between border-b border-app-border px-3">
+          <h3 className="truncate text-base font-semibold text-app-text">
+            {filename} · {plugin.manifest.editor?.displayName || plugin.manifest.name}
+          </h3>
+          <div className="flex items-center gap-3 text-xs text-app-muted">
+            <span>{isReady ? 'Connected' : 'Connecting…'}</span>
+            <span>{dirty ? 'Modified' : 'Saved'}</span>
+            <button
+              type="button"
+              onClick={() => { void requestClose(); }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
+              aria-label="Close editor"
+            >
+              ×
+            </button>
+          </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
         {saveError && (
@@ -311,10 +317,6 @@ export function EditorPluginFrame({
             Editor warning: {lastError}
           </div>
         )}
-        <div className="flex h-10 items-center justify-between border-b border-app-border px-3 text-xs text-app-muted">
-          <span>{isReady ? 'Plugin editor connected' : 'Waiting for plugin editor…'}</span>
-          <span>{dirty ? 'Modified' : 'Saved'}</span>
-        </div>
         <div className="min-h-0 flex-1 overflow-hidden bg-app-bg">
           <iframe
             ref={iframeRef}
