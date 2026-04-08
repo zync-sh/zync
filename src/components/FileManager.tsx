@@ -14,9 +14,10 @@ import {
   Unplug,
   Terminal,
   Zap,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { ConfirmModal } from './ui/ConfirmModal';
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useAppStore, Connection } from '../store/useAppStore';
 import { isMatch } from '../lib/keyboard';
 import { FileEditor } from './FileEditor';
@@ -34,6 +35,9 @@ import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { useTauriFileDrop } from '../hooks/useTauriFileDrop';
 import { FileBottomToolbar } from './file-manager/FileBottomToolbar';
+import { usePlugins } from '../context/PluginContext';
+import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID } from './editor/providers';
+import { clearEditorOverlayOpen, markEditorOverlayOpen } from './editor/overlayState';
 
 export interface Conflict {
   source: string;
@@ -60,6 +64,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const isConnected = isLocal || connection?.status === 'connected';
 
   const settings = useAppStore(state => state.settings);
+  const { editorProviders } = usePlugins();
   const showToast = useAppStore((state) => state.showToast);
 
   // Zustand Store Hooks
@@ -98,6 +103,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // Editor State
   const [editingFile, setEditingFile] = useState<FileEntry | null>(null);
   const [editorContent, setEditorContent] = useState('');
+  const [editorProviderOverride, setEditorProviderOverride] = useState<string | null>(null);
 
   // Modal States
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -145,6 +151,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
 
   const isSmallScreen = windowWidth < 640;
+  const editorProviderOptions = useMemo(() => buildEditorProviderOptions(editorProviders), [editorProviders]);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -643,7 +650,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     loadFiles(activeConnectionId, newPath);
   };
 
-  const handleOpenFile = async (file: FileEntry) => {
+  const handleOpenFile = useCallback(async (file: FileEntry, providerOverride?: string) => {
     if (!activeConnectionId) return;
     setIsFileLoading(true);
     try {
@@ -652,6 +659,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         connectionId: activeConnectionId,
         path: fullPath,
       });
+      setEditorProviderOverride(providerOverride ?? null);
       setEditorContent(content);
       setEditingFile(file);
     } catch (error: any) {
@@ -660,7 +668,28 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     } finally {
       setIsFileLoading(false);
     }
-  };
+  }, [activeConnectionId, currentPath, handleConnectionError, showToast]);
+
+  const handleOpenFileWithProvider = useCallback(async (file: FileEntry, providerId: string) => {
+    await handleOpenFile(file, providerId);
+    const providerLabel = editorProviderOptions.find((option) => option.value === providerId)?.label ?? providerId;
+    showToast('info', `Opening ${file.name} with ${providerLabel}`);
+  }, [editorProviderOptions, handleOpenFile, showToast]);
+
+  const handleSetDefaultEditorProvider = useCallback(async (providerId: string) => {
+    const currentProvider = settings.editor?.defaultProvider ?? CODEMIRROR_EDITOR_ID;
+    if (providerId === currentProvider) return;
+
+    await updateSettings({
+      editor: {
+        ...(settings.editor || {}),
+        defaultProvider: providerId,
+      },
+    });
+
+    const providerLabel = editorProviderOptions.find((option) => option.value === providerId)?.label ?? providerId;
+    showToast('success', `Default editor set to ${providerLabel}`);
+  }, [editorProviderOptions, settings.editor, showToast, updateSettings]);
 
   const handleSaveFile = useCallback(async (content: string) => {
     if (!activeConnectionId || !editingFile) return;
@@ -671,6 +700,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         path: fullPath,
         content,
       });
+      setEditorContent(content);
       showToast('success', 'File saved');
     } catch (error: any) {
       if (handleConnectionError(activeConnectionId, error)) return;
@@ -1029,6 +1059,24 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           icon: <Download size={14} />,
           action: handleDownload,
         },
+        ...(contextMenu.file.type === '-' ? [{
+          label: 'Open With…',
+          icon: <FilePlus size={14} />,
+          children: editorProviderOptions.map((option) => ({
+            label: `${option.value === (settings.editor?.defaultProvider ?? 'com.zync.editor.codemirror') ? '✓ ' : ''}${option.label}`,
+            action: () => {
+              if (!contextMenu?.file) return;
+              void handleOpenFileWithProvider(contextMenu.file, option.value);
+            },
+          })),
+        } as ContextMenuItem, {
+          label: 'Set Default Editor',
+          icon: <SettingsIcon size={14} />,
+          children: editorProviderOptions.map((option) => ({
+            label: `${option.value === (settings.editor?.defaultProvider ?? 'com.zync.editor.codemirror') ? '✓ ' : ''}${option.label}`,
+            action: () => { void handleSetDefaultEditorProvider(option.value); },
+          })),
+        } as ContextMenuItem] : []),
         {
           label: 'Download as Archive (.tar.gz)',
           icon: <FileArchive size={14} />,
@@ -1519,6 +1567,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     }
   }, [isVisible]);
 
+  useEffect(() => {
+    if (!editingFile) return;
+    markEditorOverlayOpen();
+    return () => {
+      clearEditorOverlayOpen();
+    };
+  }, [editingFile]);
+
   return (
     <div
       ref={containerRef}
@@ -1717,8 +1773,12 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         <FileEditor
           filename={editingFile.name}
           initialContent={editorContent}
+          preferredProviderId={editorProviderOverride ?? undefined}
           onSave={handleSaveFile}
-          onClose={() => setEditingFile(null)}
+          onClose={() => {
+            setEditingFile(null);
+            setEditorProviderOverride(null);
+          }}
         />
       )}
 

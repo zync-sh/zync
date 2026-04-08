@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Search, Download, Trash2, Loader2, Package, Plug, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Monitor, FileText, Settings as SettingsIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePlugins } from '../../context/PluginContext';
+import { formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel, type PluginCategory } from '../editor/providers';
 import { ipcRenderer } from '../../lib/tauri-ipc';
+import { Select } from '../ui/Select';
 
 // Registry Data Type
 interface RegistryPlugin {
@@ -15,7 +17,11 @@ interface RegistryPlugin {
     thumbnailUrl?: string; // Optional
     icon?: string; // Lucide icon name
     mode?: 'dark' | 'light';
-    type?: 'theme' | 'tool';
+    type?: 'theme' | 'tool' | 'editor-provider' | 'icon-theme';
+    editor?: {
+        displayName?: string;
+        supports?: string[];
+    };
 }
 
 interface MarketplaceProps {
@@ -63,6 +69,7 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [installingId, setInstallingId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [categoryFilter, setCategoryFilter] = useState<'all' | PluginCategory>('all');
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -97,23 +104,21 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
             // For the mock "Oceanic", let's assume it might fail if the URL isn't real.
             // But the flow is correct.
             await ipcRenderer.invoke('plugins_install', { url: plugin.downloadUrl });
-
-            // 2. Reload Plugins locally (Backend doesn't auto-reload yet, or maybe it does?)
-            // We should trigger a reload.
-            await ipcRenderer.invoke('plugins:load'); // Trigger backend scan
-
-            // 3. Notify
-            // (Ideally reload happens automatically via event, but we can force it)
-            if (onInstallSuccess) {
-                onInstallSuccess();
-            } else {
-                window.location.reload(); // Fallback
-            }
+            await refreshInstalledPlugins();
         } catch (err: any) {
             console.error(err);
             alert(`Failed to install: ${err.message || err}`);
         } finally {
             setInstallingId(null);
+        }
+    };
+
+    const refreshInstalledPlugins = async () => {
+        await ipcRenderer.invoke('plugins:load');
+        if (onInstallSuccess) {
+            onInstallSuccess();
+        } else {
+            window.location.reload();
         }
     };
 
@@ -141,9 +146,20 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
     };
 
     const filteredPlugins = registry.filter(p =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.description.toLowerCase().includes(searchQuery.toLowerCase())
+        (categoryFilter === 'all' || getPluginCategory(p) === categoryFilter) &&
+        (
+            p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.description.toLowerCase().includes(searchQuery.toLowerCase())
+        )
     );
+
+    const categoryFilters: Array<{ value: 'all' | PluginCategory; label: string }> = [
+        { value: 'all', label: 'All' },
+        { value: 'editor-provider', label: getPluginCategoryLabel('editor-provider') },
+        { value: 'theme', label: getPluginCategoryLabel('theme') },
+        { value: 'icon-theme', label: getPluginCategoryLabel('icon-theme') },
+        { value: 'tool', label: getPluginCategoryLabel('tool') },
+    ];
 
     return (
         <div className="flex flex-col h-full bg-[var(--color-app-bg)] text-[var(--color-app-text)]">
@@ -157,6 +173,18 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                 />
+                <div className="w-[150px] shrink-0">
+                    <Select
+                        value={categoryFilter}
+                        onChange={(value) => setCategoryFilter(value as 'all' | PluginCategory)}
+                        options={categoryFilters.map((item) => ({ value: item.value, label: item.label }))}
+                        showSearch={false}
+                        placeholder="Category"
+                        triggerClassName="h-8 rounded-md border-[var(--color-app-border)] text-xs"
+                        itemClassName="text-xs"
+                        showCheck={false}
+                    />
+                </div>
             </div>
 
             {/* List */}
@@ -173,6 +201,7 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                         const installed = isInstalled(plugin.id);
                         const localVersion = getInstalledVersion(plugin.id);
                         const processing = installingId === plugin.id;
+                        const categoryLabel = getPluginCategoryLabel(getPluginCategory(plugin));
 
                         return (
                             <div
@@ -191,7 +220,12 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-start justify-between">
                                         <div>
-                                            <h3 className="font-medium text-sm text-[var(--color-app-text)] leading-tight">{plugin.name}</h3>
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-medium text-sm text-[var(--color-app-text)] leading-tight">{plugin.name}</h3>
+                                                <span className="rounded-full border border-[var(--color-app-border)] bg-[var(--color-app-bg)] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-[var(--color-app-muted)]">
+                                                    {categoryLabel}
+                                                </span>
+                                            </div>
                                             <p className="text-[10px] text-[var(--color-app-muted)] mt-0.5">v{plugin.version} • by {plugin.author}</p>
                                         </div>
                                         {/* Action Button */}
@@ -246,6 +280,11 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                                     <p className="text-[11px] text-[var(--color-app-muted)] mt-1 line-clamp-1 opacity-80">
                                         {plugin.description}
                                     </p>
+                                    {getPluginCategory(plugin) === 'editor-provider' && plugin.editor?.supports?.length ? (
+                                        <p className="mt-1 text-[10px] text-[var(--color-app-muted)]">
+                                            Capabilities: {formatEditorCapabilities(plugin.editor.supports, 4)}
+                                        </p>
+                                    ) : null}
                                 </div>
                             </div>
                         );

@@ -218,6 +218,7 @@ pub fn run() {
             commands::plugins_load,
             commands::plugins_toggle,
             commands::plugins_install,
+            commands::plugins_install_local,
             commands::plugins_uninstall,
             commands::plugin_fs_read,
             commands::plugin_fs_write,

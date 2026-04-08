@@ -1,11 +1,15 @@
 import { StateCreator } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AppStore } from './useAppStore';
+import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
 
 export interface AppSettings {
     theme: string;
     iconTheme: string;
     accentColor?: string;
+    editor: {
+        defaultProvider: string;
+    };
     windowOpacity: number;
     enableVibrancy: boolean;
     compactMode: boolean;
@@ -85,6 +89,9 @@ const defaultSettings: AppSettings = {
     theme: 'dark',
     iconTheme: 'vscode-icons',
     accentColor: undefined,
+    editor: {
+        defaultProvider: CODEMIRROR_EDITOR_ID
+    },
     windowOpacity: 1.0,
     enableVibrancy: false,
     compactMode: true,
@@ -167,6 +174,7 @@ export interface SettingsSlice {
     // Actions
     updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
     updateAiSettings: (updates: Partial<AppSettings['ai']>) => Promise<void>;
+    updateEditorSettings: (updates: Partial<AppSettings['editor']>) => Promise<void>;
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
@@ -191,6 +199,7 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             const merged = {
                 ...defaultSettings,
                 ...loaded,
+                editor: { ...defaultSettings.editor, ...(loaded?.editor || {}) },
                 terminal: { ...defaultSettings.terminal, ...(loaded?.terminal || {}) },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
@@ -233,6 +242,19 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save AI settings:', error);
+        }
+    },
+
+    updateEditorSettings: async (updates) => {
+        const updated = {
+            ...get().settings,
+            editor: { ...get().settings.editor, ...updates }
+        };
+        set({ settings: updated });
+        try {
+            await invoke('settings_set', { settings: updated });
+        } catch (error) {
+            console.error('Failed to save editor settings:', error);
         }
     },
 

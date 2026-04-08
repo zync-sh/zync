@@ -4,6 +4,33 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.10.0]
+
+### Added
+- **Plugin-Hosted Editor Runtime**: Introduced `FileEditorHost` with provider-aware rendering, built-in plain fallback, and CodeMirror default provider surfaces. ([a9afb01])
+- **CodeMirror Helper Test Surface**: Added `tests/codeMirrorHelpers.test.mjs` to lock language mapping, comment shortcuts, status formatting, and provider helper behavior. ([a9afb01])
+- **Editor Provider Quick Actions**: Added File Manager context menu actions for `Open With…` (per-open provider override) and `Set Default Editor` (global editor preference update). ([a332012])
+- **Local Plugin Install Command**: Added `plugins_install_local` so provider/theme plugins can be installed from local ZIP or folder paths during pre-marketplace validation. ([5e86529])
+- **Developer Plugin Testing Tab**: Added `Settings → Plugins → Developer` with dedicated local install actions for ZIP packages and unpacked folders. ([42c2b66])
+
+### Changed
+- **Editor Platform Migration**: Removed the legacy `light-editor` subsystem from active code paths and routed file editing through provider-hosted components (`CodeMirrorFileEditor`, `PlainFileEditor`, `EditorPluginFrame`). ([a9afb01])
+- **Marketplace Filter UX**: Replaced ad-hoc category control with Zync's shared `Select` dropdown and aligned filter/category presentation with plugin category labels. ([a332012])
+- **Editor Settings UX**: Added provider capability summary visibility and improved provider option ordering/metadata for default editor selection. ([a332012])
+- **Editor Escape Behavior**: `Esc` now closes go-to-line/find overlays before any editor-close behavior. ([a9afb01])
+- **Editor Dirty Baseline After Save**: Saving now updates editor baseline state so close confirmation no longer reports false unsaved changes. ([a332012])
+- **Ctrl/Cmd+W Host Conflict**: While a file editor overlay is open, tab/host close shortcuts are blocked and `Ctrl/Cmd+W` is scoped to closing only the editor overlay. ([a332012])
+- **Editor Overlay Focus Reliability**: Added stronger focus handoff on open so users can type immediately without requiring an extra click. ([a332012])
+- **Go-to-Line Submit & Compact Bar**: Fixed go-to-line submit behavior and tightened the inline go-to-line bar layout. ([a332012])
+- **Replace Input Focus Recovery**: Fixed focus interception that prevented typing in replace after opening find/replace. ([a332012])
+- **Editor Completion Popup Styling**: Made autocomplete popup theme-aware for dark/light palette consistency. ([a332012])
+- **Plugin Frame Messaging Reliability**: Updated editor iframe postMessage target handling for srcDoc scenarios and reduced false-fatal handler escalation on non-fatal parsing/runtime exceptions. ([a332012])
+- **Plugins Settings Structure**: Refactored plugin tab rendering into dedicated subcomponents (`PluginsInstalledTab`, `PluginsMarketplaceTab`, `PluginsDeveloperTab`) for better readability and maintenance. ([42c2b66])
+
+### Fixed
+- **Runtime Blocking During Local Install**: Moved local plugin installation filesystem work into `spawn_blocking` to avoid blocking async runtime threads. ([5e86529])
+- **Conflicting Local-Install Toasts**: Success toast is now gated by plugin-list reload success to avoid warning + success toast conflicts on refresh failure. ([42c2b66])
+
 ## [2.9.2]
 
 ### Added
@@ -464,7 +491,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.9.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.10.0...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -506,6 +533,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 [88bb61a]: https://github.com/zync-sh/zync/commit/88bb61a
 [ece9793]: https://github.com/zync-sh/zync/commit/ece9793
 [4bd3e05]: https://github.com/zync-sh/zync/commit/4bd3e05
+[a9afb01]: https://github.com/zync-sh/zync/commit/a9afb01
+[a332012]: https://github.com/zync-sh/zync/commit/a332012
+[5e86529]: https://github.com/zync-sh/zync/commit/5e86529
+[42c2b66]: https://github.com/zync-sh/zync/commit/42c2b66
 [2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/zync-sh/zync/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/zync-sh/zync/compare/v2.8.1...v2.9.0
@@ -526,3 +557,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
 [2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
+
+[2.10.0]: https://github.com/zync-sh/zync/compare/v2.9.2...v2.10.0
+

@@ -3283,6 +3283,19 @@ pub async fn plugins_install(app: AppHandle, url: String) -> Result<String, Stri
 }
 
 #[tauri::command]
+pub async fn plugins_install_local(app: AppHandle, path: String) -> Result<String, String> {
+    let app_handle = app.clone();
+    let local_path = path.clone();
+
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::PluginScanner::install_plugin_from_local_path(&app_handle, &local_path)
+    })
+    .await
+    .map_err(|e| format!("Local plugin install task failed: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn plugins_uninstall(app: AppHandle, id: String) -> Result<(), String> {
     crate::plugins::PluginScanner::uninstall_plugin(&app, &id).map_err(|e| e.to_string())
 }

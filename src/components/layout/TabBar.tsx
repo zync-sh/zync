@@ -9,6 +9,7 @@ import { Tooltip } from '../ui/Tooltip';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { matchShortcut } from '../../lib/shortcuts';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
+import { isEditorOverlayOpen } from '../editor/overlayState';
 import {
     DndContext,
     closestCenter,
@@ -170,6 +171,10 @@ export function TabBar() {
     // Handle Ctrl+W (or configured keybinding) to close active tab
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (isEditorOverlayOpen()) {
+                return;
+            }
+
             const state = useAppStore.getState();
             const closeTabShortcut = state.settings.keybindings?.closeTab || 'Mod+W';
 

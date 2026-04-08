@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { ZPortal } from '../ui/ZPortal';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
-import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, FolderOpen, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
 import { ToastContainer } from '../ui/Toast';
 import { Select } from '../ui/Select';
 
 import { clsx } from 'clsx';
 import { Marketplace } from './Marketplace';
+import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID, formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel } from '../editor/providers';
 
 
 interface SettingsModalProps {
@@ -26,10 +28,11 @@ interface RegistryPlugin {
     downloadUrl: string;
     thumbnailUrl?: string; // Optional
     mode?: 'dark' | 'light';
-    type?: 'theme' | 'tool';
+    type?: 'theme' | 'tool' | 'editor-provider' | 'icon-theme';
 }
 
 type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'ai' | 'about';
+const BUILTIN_ICON_THEME_COUNT = 2; // VSCode Icons + Lucide
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const settings = useAppStore(state => state.settings);
@@ -40,7 +43,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const updateLocalTermSettings = useAppStore(state => state.updateLocalTermSettings);
     const updateKeybindings = useAppStore(state => state.updateKeybindings);
     const [activeTab, setActiveTab] = useState<Tab>('terminal');
-    const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace'>('installed');
+    const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace' | 'developer'>('installed');
     const [isTransitioning, setIsTransitioning] = useState(false);
     const [wslDistros, setWslDistros] = useState<string[]>([]);
 
@@ -66,6 +69,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [needsRestart, setNeedsRestart] = useState(false);
+    const [localPluginInstallMode, setLocalPluginInstallMode] = useState<'zip' | 'folder' | null>(null);
 
     const [apiKeyDraft, setApiKeyDraft] = useState('');
     const [apiKeySaved, setApiKeySaved] = useState(false);
@@ -86,9 +90,85 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }
     };
 
-    const { executeCommand } = usePlugins();
+    const { executeCommand, editorProviders } = usePlugins();
     const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
     const showToast = useAppStore(state => state.showToast);
+    const editorProviderOptions = useMemo(() => buildEditorProviderOptions(editorProviders), [editorProviders]);
+    const activeEditorProvider = useMemo(() => {
+        const selectedId = settings.editor?.defaultProvider;
+        return editorProviders.find((provider) => provider.manifest.id === selectedId) ?? null;
+    }, [editorProviders, settings.editor?.defaultProvider]);
+    const activeEditorCapabilitySummary = useMemo(
+        () => formatEditorCapabilities(activeEditorProvider?.manifest.editor?.supports, 5),
+        [activeEditorProvider?.manifest.editor?.supports]
+    );
+
+    const reloadPluginsInModal = async () => {
+        try {
+            const list = await window.ipcRenderer.invoke('plugins:load');
+            setPlugins(list);
+            return true;
+        } catch (error) {
+            console.error('Failed to reload plugins list', error);
+            showToast('warning', 'Plugin installed, but list refresh failed. Reopen Settings to refresh.');
+            return false;
+        }
+    };
+
+    const localInstallActions = [
+        {
+            mode: 'zip' as const,
+            label: 'Install ZIP package',
+            title: 'Load packaged plugin build',
+            description: 'Pick a local .zip to validate marketplace-ready packages before release.',
+            hint: 'Archive should include plugin.json at package root.',
+            icon: Package,
+        },
+        {
+            mode: 'folder' as const,
+            label: 'Install from folder',
+            title: 'Load unpacked plugin directory',
+            description: 'Use this during active editor-provider or theme development without zipping every build.',
+            hint: 'Folder should contain plugin.json and dist/assets if used.',
+            icon: FolderOpen,
+        },
+    ];
+
+    const handleInstallLocalPlugin = async (mode: 'zip' | 'folder') => {
+        setLocalPluginInstallMode(mode);
+        const modeLabel = mode === 'zip' ? 'ZIP package' : 'plugin folder';
+        try {
+            const selection = await open(
+                mode === 'zip'
+                    ? {
+                        multiple: false,
+                        directory: false,
+                        filters: [{ name: 'Zip Archive', extensions: ['zip'] }],
+                    }
+                    : {
+                        multiple: false,
+                        directory: true,
+                    }
+            );
+
+            if (!selection) return;
+
+            const selectedPath = Array.isArray(selection) ? selection[0] : selection;
+            if (!selectedPath) return;
+
+            await window.ipcRenderer.invoke('plugins:install_local', { path: selectedPath });
+            const reloaded = await reloadPluginsInModal();
+            setNeedsRestart(true);
+            if (reloaded) {
+                showToast('success', `${modeLabel} installed successfully`);
+            }
+        } catch (error: any) {
+            console.error('Failed to install local plugin', error);
+            showToast('error', `Failed to install ${modeLabel}. Check plugin.json and package layout.`);
+        } finally {
+            setLocalPluginInstallMode(null);
+        }
+    };
 
     // Sync apiKeyDraft when provider changes or tab opens
     const currentProvider = settings.ai?.provider || 'ollama';
@@ -363,6 +443,45 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }, 150);
     };
 
+    const renderPluginTabContent = () => {
+        switch (pluginTab) {
+            case 'installed':
+                return (
+                    <PluginsInstalledTab
+                        plugins={plugins}
+                        registry={registry}
+                        isLoadingPlugins={isLoadingPlugins}
+                        processingId={processingId}
+                        activeMenu={activeMenu}
+                        setActiveMenu={setActiveMenu}
+                        executeCommand={executeCommand}
+                        onClose={onClose}
+                        onTogglePlugin={handleTogglePlugin}
+                        onUpdatePlugin={handleUpdatePlugin}
+                        onUninstallPlugin={handleUninstallPlugin}
+                        IconRenderer={IconResolver}
+                    />
+                );
+            case 'marketplace':
+                return (
+                    <PluginsMarketplaceTab
+                        isLoadingRegistry={isLoadingRegistry}
+                        onInstallSuccess={() => setNeedsRestart(true)}
+                    />
+                );
+            case 'developer':
+                return (
+                    <PluginsDeveloperTab
+                        localInstallActions={localInstallActions}
+                        localPluginInstallMode={localPluginInstallMode}
+                        onInstallLocalPlugin={handleInstallLocalPlugin}
+                    />
+                );
+            default:
+                return null;
+        }
+    };
+
 
 
 
@@ -551,6 +670,38 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         }`}
                                                 />
                                             </button>
+                                        </div>
+                                    </div>
+                                </Section>
+
+                                <Section title="Editor">
+                                    <div className="space-y-3 rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-surface)]/50 p-4">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="min-w-0">
+                                                <h4 className="text-sm font-medium text-[var(--color-app-text)]">Default File Editor</h4>
+                                                <p className="mt-1 text-xs text-[var(--color-app-muted)]">
+                                                    Choose which editor opens files from the file manager. Plugin-based editors appear here automatically, and CodeMirror is the recommended default.
+                                                </p>
+                                            </div>
+                                            <div className="w-64 shrink-0">
+                                                <Select
+                                                    value={settings.editor?.defaultProvider ?? CODEMIRROR_EDITOR_ID}
+                                                    onChange={(value) => updateSettings({
+                                                        editor: {
+                                                            ...(settings.editor || {}),
+                                                            defaultProvider: value
+                                                        }
+                                                    })}
+                                                    options={editorProviderOptions}
+                                                    showSearch={false}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="rounded-md border border-[var(--color-app-border)] bg-[var(--color-app-bg)]/40 px-3 py-2 text-xs text-[var(--color-app-muted)]">
+                                            <span className="font-medium text-[var(--color-app-text)]">Capabilities:</span>{' '}
+                                            {activeEditorProvider
+                                                ? activeEditorCapabilitySummary
+                                                : 'Built-in fallback editor'}
                                         </div>
                                     </div>
                                 </Section>
@@ -1012,29 +1163,45 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         {activeTab === 'plugins' && (
                             <div className="h-full flex flex-col space-y-4 animate-in fade-in duration-300 overflow-hidden">
                                 {/* Sub-tabs Navigation */}
-                                <div className="flex bg-[var(--color-app-surface)]/50 p-1 rounded-lg border border-[var(--color-app-border)]/50 mx-6 shrink-0">
-                                    <button
-                                        onClick={() => setPluginTab('installed')}
-                                        className={clsx(
-                                            "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
-                                            pluginTab === 'installed'
-                                                ? "bg-[var(--color-app-accent)] text-white shadow-sm"
-                                                : "text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]"
-                                        )}
-                                    >
-                                        Installed
-                                    </button>
-                                    <button
-                                        onClick={() => setPluginTab('marketplace')}
-                                        className={clsx(
-                                            "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
-                                            pluginTab === 'marketplace'
-                                                ? "bg-[var(--color-app-accent)] text-white shadow-sm"
-                                                : "text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]"
-                                        )}
-                                    >
-                                        Marketplace
-                                    </button>
+                                <div className="mx-6 shrink-0">
+                                    <div className="flex bg-[var(--color-app-surface)]/50 p-1 rounded-lg border border-[var(--color-app-border)]/50">
+                                        <button
+                                            onClick={() => setPluginTab('installed')}
+                                            className={clsx(
+                                                "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
+                                                pluginTab === 'installed'
+                                                    ? "bg-[var(--color-app-accent)] text-white shadow-sm"
+                                                    : "text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]"
+                                            )}
+                                            type="button"
+                                        >
+                                            Installed
+                                        </button>
+                                        <button
+                                            onClick={() => setPluginTab('marketplace')}
+                                            className={clsx(
+                                                "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
+                                                pluginTab === 'marketplace'
+                                                    ? "bg-[var(--color-app-accent)] text-white shadow-sm"
+                                                    : "text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]"
+                                            )}
+                                            type="button"
+                                        >
+                                            Marketplace
+                                        </button>
+                                        <button
+                                            onClick={() => setPluginTab('developer')}
+                                            className={clsx(
+                                                "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
+                                                pluginTab === 'developer'
+                                                    ? "bg-[var(--color-app-accent)] text-white shadow-sm"
+                                                    : "text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]"
+                                            )}
+                                            type="button"
+                                        >
+                                            Developer
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Restart Required Banner */}
@@ -1060,191 +1227,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 )}
 
                                 <div className="flex-1 overflow-y-auto px-6 pb-6 scrollbar-hide">
-                                    {pluginTab === 'installed' ? (
-                                        <div className="space-y-4">
-                                            {/* Theme Selection - made compact */}
-                                            <div className="flex flex-col gap-3">
-                                                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
-                                                            <Monitor size={16} />
-                                                        </div>
-                                                        <div>
-                                                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Color Theme</h4>
-                                                            <p className="text-[10px] text-[var(--color-app-muted)]">
-                                                                Select from {plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length} themes
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => executeCommand('workbench.action.selectTheme')}
-                                                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
-                                                    >
-                                                        Select Theme
-                                                    </button>
-                                                </div>
-
-                                                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
-                                                            <Package size={16} />
-                                                        </div>
-                                                        <div>
-                                                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Icon Theme</h4>
-                                                            <p className="text-[10px] text-[var(--color-app-muted)]">
-                                                                Select from {2 + plugins.filter(p => p.manifest.type === 'icon-theme').length} sets
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => {
-                                                            const themes = [
-                                                                { label: 'VSCode Icons (Default)', id: 'vscode-icons' },
-                                                                { label: 'Lucide Minimalist', id: 'lucide' },
-                                                                ...plugins
-                                                                    .filter(p => p.manifest.type === 'icon-theme')
-                                                                    .map(p => ({ label: p.manifest.name, id: p.manifest.id }))
-                                                            ];
-
-                                                            window.dispatchEvent(new CustomEvent('zync:quick-pick', {
-                                                                detail: {
-                                                                    items: themes,
-                                                                    options: { placeHolder: 'Select Icon Theme' },
-                                                                    requestId: 'icon-theme-select',
-                                                                    pluginId: 'system'
-                                                                }
-                                                            }));
-                                                            onClose(); // Close settings to show palette
-                                                        }}
-                                                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
-                                                    >
-                                                        Select Icon Set
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <div className="h-px bg-[var(--color-app-border)]/20 my-1" />
-
-                                            <div className="space-y-2">
-                                                {isLoadingPlugins ? (
-                                                    <div className="flex items-center justify-center py-10 text-[var(--color-app-muted)] gap-2">
-                                                        <RefreshCw size={14} className="animate-spin" />
-                                                        <span className="text-xs">Scanning...</span>
-                                                    </div>
-                                                ) : plugins.filter(p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager').length === 0 ? (
-                                                    <div className="p-8 text-center text-[var(--color-app-muted)] bg-[var(--color-app-surface)]/30 rounded-lg border border-[var(--color-app-border)] border-dashed">
-                                                        <p className="text-xs">No plugins installed.</p>
-                                                    </div>
-                                                ) : (
-                                                    plugins
-                                                        .filter(p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager')
-                                                        .map((plugin) => {
-                                                            const registryItem = registry.find(r => r.id === plugin.manifest.id);
-                                                            const hasUpdate = registryItem && registryItem.version !== plugin.manifest.version;
-                                                            const isProcessing = processingId === plugin.manifest.id;
-
-                                                            return (
-                                                                <div key={plugin.manifest.id} className="group relative flex items-center justify-between p-2.5 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 transition-all hover:border-[var(--color-app-border)]">
-                                                                    {activeMenu === plugin.manifest.id && (
-                                                                        <div className="absolute inset-0 z-40 rounded-lg" onClick={() => setActiveMenu(null)} />
-                                                                    )}
-                                                                    <div className="flex items-start gap-2.5">
-                                                                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)] shrink-0 relative z-50">
-                                                                            <IconResolver name={plugin.manifest.icon} path={plugin.path} size={14} />
-                                                                        </div>
-                                                                        <div className="min-w-0">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <h4 className="text-xs font-medium text-[var(--color-app-text)] leading-none truncate max-w-[150px]">{plugin.manifest.name}</h4>
-                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] text-[var(--color-app-muted)] shrink-0">
-                                                                                    v{plugin.manifest.version}
-                                                                                </span>
-                                                                                {!plugin.enabled && (
-                                                                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
-                                                                                        Disabled
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                            <p className="text-[10px] text-[var(--color-app-muted)] mt-0.5 font-mono opacity-60 leading-none truncate">
-                                                                                {plugin.manifest.id}
-                                                                            </p>
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <div className="flex items-center gap-2">
-                                                                        {hasUpdate && (
-                                                                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                                                                        )}
-
-                                                                        <div className="relative">
-                                                                            <button
-                                                                                onClick={() => setActiveMenu(activeMenu === plugin.manifest.id ? null : plugin.manifest.id)}
-                                                                                disabled={isProcessing}
-                                                                                className={clsx(
-                                                                                    "p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-bg)] transition-colors",
-                                                                                    activeMenu === plugin.manifest.id && "bg-[var(--color-app-bg)] text-[var(--color-app-text)]",
-                                                                                    isProcessing && "opacity-50 cursor-not-allowed"
-                                                                                )}
-                                                                            >
-                                                                                {isProcessing ? <RefreshCw size={14} className="animate-spin" /> : <MoreVertical size={14} />}
-                                                                            </button>
-
-                                                                            {activeMenu === plugin.manifest.id && (
-                                                                                <>
-                                                                                    <div className="absolute right-0 top-full mt-1 w-40 bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
-                                                                                        <button
-                                                                                            onClick={() => handleTogglePlugin(plugin.manifest.id, !plugin.enabled)}
-                                                                                            className="w-full px-3 py-2 text-left text-xs text-[var(--color-app-text)] hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
-                                                                                        >
-                                                                                            {plugin.enabled ? <Pause size={12} /> : <Play size={12} />}
-                                                                                            {plugin.enabled ? 'Disable' : 'Enable'}
-                                                                                        </button>
-
-                                                                                        {hasUpdate && registryItem && (
-                                                                                            <button
-                                                                                                onClick={() => handleUpdatePlugin(registryItem)}
-                                                                                                className="w-full px-3 py-2 text-left text-xs text-blue-500 hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
-                                                                                            >
-                                                                                                <RefreshCw size={12} />
-                                                                                                Update to v{registryItem.version}
-                                                                                            </button>
-                                                                                        )}
-
-                                                                                        <div className="h-px bg-[var(--color-app-border)]/50 my-1" />
-
-                                                                                        {!plugin.path.startsWith('builtin://') && (
-                                                                                            <button
-                                                                                                onClick={() => handleUninstallPlugin(plugin.manifest.id)}
-                                                                                                className="w-full px-3 py-2 text-left text-xs text-red-500 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
-                                                                                            >
-                                                                                                <Trash2 size={12} />
-                                                                                                Uninstall
-                                                                                            </button>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })
-                                                )}
-                                                <div className="text-[10px] text-[var(--color-app-muted)] pt-2 flex items-center gap-1.5 opacity-70">
-                                                    <Info size={10} />
-                                                    Changes require an app restart.
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : isLoadingRegistry ? (
-                                        <div className="flex items-center justify-center py-12 text-[var(--color-app-muted)] gap-2">
-                                            <RefreshCw size={14} className="animate-spin" />
-                                            <span className="text-xs">Loading marketplace...</span>
-                                        </div>
-                                    ) : (
-                                        <div className="h-full">
-                                            <Marketplace onInstallSuccess={() => setNeedsRestart(true)} />
-                                        </div>
-                                    )}
+                                    {renderPluginTabContent()}
                                 </div>
                             </div>
                         )}
@@ -1744,6 +1727,314 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </div >
             <ToastContainer />
         </ZPortal>
+    );
+}
+
+interface LocalInstallAction {
+    mode: 'zip' | 'folder';
+    label: string;
+    title: string;
+    description: string;
+    hint: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+}
+
+interface IconRendererProps {
+    name?: string;
+    path?: string;
+    size?: number;
+    className?: string;
+}
+
+function PluginsInstalledTab({
+    plugins,
+    registry,
+    isLoadingPlugins,
+    processingId,
+    activeMenu,
+    setActiveMenu,
+    executeCommand,
+    onClose,
+    onTogglePlugin,
+    onUpdatePlugin,
+    onUninstallPlugin,
+    IconRenderer,
+}: {
+    plugins: any[];
+    registry: RegistryPlugin[];
+    isLoadingPlugins: boolean;
+    processingId: string | null;
+    activeMenu: string | null;
+    setActiveMenu: React.Dispatch<React.SetStateAction<string | null>>;
+    executeCommand: (commandId: string) => Promise<unknown> | unknown;
+    onClose: () => void;
+    onTogglePlugin: (id: string, enabled: boolean) => Promise<void>;
+    onUpdatePlugin: (plugin: RegistryPlugin) => Promise<void>;
+    onUninstallPlugin: (id: string) => Promise<void>;
+    IconRenderer: React.ComponentType<IconRendererProps>;
+}) {
+    const installedThemes = plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length;
+    const iconThemesCount = BUILTIN_ICON_THEME_COUNT + plugins.filter(p => p.manifest.type === 'icon-theme').length;
+    const installedNonThemePlugins = plugins.filter(
+        p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager'
+    );
+
+    return (
+        <div className="space-y-4">
+            <div className="flex flex-col gap-3">
+                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                            <Monitor size={16} />
+                        </div>
+                        <div>
+                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Color Theme</h4>
+                            <p className="text-[10px] text-[var(--color-app-muted)]">Select from {installedThemes} themes</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => executeCommand('workbench.action.selectTheme')}
+                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
+                    >
+                        Select Theme
+                    </button>
+                </div>
+
+                <div className="p-3 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                            <Package size={16} />
+                        </div>
+                        <div>
+                            <h4 className="text-xs font-medium text-[var(--color-app-text)]">Icon Theme</h4>
+                            <p className="text-[10px] text-[var(--color-app-muted)]">Select from {iconThemesCount} sets</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => {
+                            const themes = [
+                                { label: 'VSCode Icons (Default)', id: 'vscode-icons' },
+                                { label: 'Lucide Minimalist', id: 'lucide' },
+                                ...plugins
+                                    .filter(p => p.manifest.type === 'icon-theme')
+                                    .map(p => ({ label: p.manifest.name, id: p.manifest.id }))
+                            ];
+
+                            window.dispatchEvent(new CustomEvent('zync:quick-pick', {
+                                detail: {
+                                    items: themes,
+                                    options: { placeHolder: 'Select Icon Theme' },
+                                    requestId: 'icon-theme-select',
+                                    pluginId: 'system'
+                                }
+                            }));
+                            onClose();
+                        }}
+                        className="px-3 py-1 bg-[var(--color-app-accent)] hover:bg-[var(--color-app-accent)]/80 text-white rounded text-[10px] font-medium transition-colors"
+                    >
+                        Select Icon Set
+                    </button>
+                </div>
+            </div>
+
+            <div className="h-px bg-[var(--color-app-border)]/20 my-1" />
+
+            <div className="space-y-2">
+                {isLoadingPlugins ? (
+                    <div className="flex items-center justify-center py-10 text-[var(--color-app-muted)] gap-2">
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span className="text-xs">Scanning...</span>
+                    </div>
+                ) : installedNonThemePlugins.length === 0 ? (
+                    <div className="p-8 text-center text-[var(--color-app-muted)] bg-[var(--color-app-surface)]/30 rounded-lg border border-[var(--color-app-border)] border-dashed">
+                        <p className="text-xs">No plugins installed.</p>
+                    </div>
+                ) : (
+                    installedNonThemePlugins.map((plugin) => {
+                        const registryItem = registry.find(r => r.id === plugin.manifest.id);
+                        const hasUpdate = registryItem && registryItem.version !== plugin.manifest.version;
+                        const isProcessing = processingId === plugin.manifest.id;
+                        const categoryLabel = getPluginCategoryLabel(getPluginCategory(plugin.manifest));
+
+                        return (
+                            <div key={plugin.manifest.id} className="group relative flex items-center justify-between p-2.5 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 transition-all hover:border-[var(--color-app-border)]">
+                                {activeMenu === plugin.manifest.id && (
+                                    <div className="absolute inset-0 z-40 rounded-lg" onClick={() => setActiveMenu(null)} />
+                                )}
+                                <div className="flex items-start gap-2.5">
+                                    <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)] shrink-0 relative z-50">
+                                        <IconRenderer name={plugin.manifest.icon} path={plugin.path} size={14} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <h4 className="text-xs font-medium text-[var(--color-app-text)] leading-none truncate max-w-[150px]">{plugin.manifest.name}</h4>
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] text-[var(--color-app-muted)] shrink-0 uppercase tracking-wide">
+                                                {categoryLabel}
+                                            </span>
+                                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] text-[var(--color-app-muted)] shrink-0">
+                                                v{plugin.manifest.version}
+                                            </span>
+                                            {!plugin.enabled && (
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20 shrink-0">
+                                                    Disabled
+                                                </span>
+                                            )}
+                                        </div>
+                                        <p className="text-[10px] text-[var(--color-app-muted)] mt-0.5 font-mono opacity-60 leading-none truncate">
+                                            {plugin.manifest.id}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    {hasUpdate && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setActiveMenu(activeMenu === plugin.manifest.id ? null : plugin.manifest.id)}
+                                            disabled={isProcessing}
+                                            className={clsx(
+                                                "p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-bg)] transition-colors",
+                                                activeMenu === plugin.manifest.id && "bg-[var(--color-app-bg)] text-[var(--color-app-text)]",
+                                                isProcessing && "opacity-50 cursor-not-allowed"
+                                            )}
+                                        >
+                                            {isProcessing ? <RefreshCw size={14} className="animate-spin" /> : <MoreVertical size={14} />}
+                                        </button>
+
+                                        {activeMenu === plugin.manifest.id && (
+                                            <div className="absolute right-0 top-full mt-1 w-40 bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
+                                                <button
+                                                    onClick={() => onTogglePlugin(plugin.manifest.id, !plugin.enabled)}
+                                                    className="w-full px-3 py-2 text-left text-xs text-[var(--color-app-text)] hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
+                                                >
+                                                    {plugin.enabled ? <Pause size={12} /> : <Play size={12} />}
+                                                    {plugin.enabled ? 'Disable' : 'Enable'}
+                                                </button>
+
+                                                {hasUpdate && registryItem && (
+                                                    <button
+                                                        onClick={() => onUpdatePlugin(registryItem)}
+                                                        className="w-full px-3 py-2 text-left text-xs text-blue-500 hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
+                                                    >
+                                                        <RefreshCw size={12} />
+                                                        Update to v{registryItem.version}
+                                                    </button>
+                                                )}
+
+                                                <div className="h-px bg-[var(--color-app-border)]/50 my-1" />
+
+                                                {!plugin.path.startsWith('builtin://') && (
+                                                    <button
+                                                        onClick={() => onUninstallPlugin(plugin.manifest.id)}
+                                                        className="w-full px-3 py-2 text-left text-xs text-red-500 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                        Uninstall
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })
+                )}
+                <div className="text-[10px] text-[var(--color-app-muted)] pt-2 flex items-center gap-1.5 opacity-70">
+                    <Info size={10} />
+                    Changes require an app restart.
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function PluginsMarketplaceTab({
+    isLoadingRegistry,
+    onInstallSuccess,
+}: {
+    isLoadingRegistry: boolean;
+    onInstallSuccess: () => void;
+}) {
+    if (isLoadingRegistry) {
+        return (
+            <div className="flex items-center justify-center py-12 text-[var(--color-app-muted)] gap-2">
+                <RefreshCw size={14} className="animate-spin" />
+                <span className="text-xs">Loading marketplace...</span>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-full">
+            <Marketplace onInstallSuccess={onInstallSuccess} />
+        </div>
+    );
+}
+
+function PluginsDeveloperTab({
+    localInstallActions,
+    localPluginInstallMode,
+    onInstallLocalPlugin,
+}: {
+    localInstallActions: LocalInstallAction[];
+    localPluginInstallMode: 'zip' | 'folder' | null;
+    onInstallLocalPlugin: (mode: 'zip' | 'folder') => Promise<void>;
+}) {
+    return (
+        <div className="space-y-4">
+            <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-4">
+                <div className="flex items-start gap-3">
+                    <div className="rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] p-2 text-[var(--color-app-accent)] shrink-0">
+                        <Sparkles size={16} />
+                    </div>
+                    <div className="min-w-0">
+                        <h4 className="text-sm font-semibold text-[var(--color-app-text)]">Developer plugin testing</h4>
+                        <p className="mt-1 text-xs leading-5 text-[var(--color-app-muted)]">
+                            Install local plugin builds here before publishing to marketplace.
+                            Supports packaged ZIP archives and unpacked plugin folders.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+                {localInstallActions.map((action) => {
+                    const ActionIcon = action.icon;
+                    const isInstallingThis = localPluginInstallMode === action.mode;
+                    const isAnyInstallRunning = localPluginInstallMode !== null;
+
+                    return (
+                        <button
+                            key={action.mode}
+                            onClick={() => onInstallLocalPlugin(action.mode)}
+                            disabled={isAnyInstallRunning}
+                            className="group min-h-[168px] rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-4 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)] disabled:cursor-not-allowed disabled:opacity-60"
+                            type="button"
+                        >
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 text-[var(--color-app-accent)]">
+                                    {isInstallingThis ? <RefreshCw size={16} className="animate-spin" /> : <ActionIcon size={16} />}
+                                    <span className="text-[11px] font-semibold uppercase tracking-wide">{action.label}</span>
+                                </div>
+                                <span className="text-[10px] font-medium text-[var(--color-app-muted)] group-hover:text-[var(--color-app-text)]">
+                                    {isInstallingThis ? 'Installing...' : 'Choose'}
+                                </span>
+                            </div>
+                            <p className="text-sm font-medium text-[var(--color-app-text)]">{action.title}</p>
+                            <p className="mt-1 text-xs leading-5 text-[var(--color-app-muted)]">{action.description}</p>
+                            <p className="mt-3 text-[11px] leading-4 text-[var(--color-app-muted)]/90">{action.hint}</p>
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="rounded-lg border border-dashed border-[var(--color-app-border)]/60 bg-[var(--color-app-bg)]/40 p-3 text-xs leading-5 text-[var(--color-app-muted)]">
+                Installed local plugins appear in the <span className="font-medium text-[var(--color-app-text)]">Installed</span> tab after install.
+                Use this flow to test theme-follow behavior and editor-provider integration before marketplace publication.
+            </div>
+        </div>
     );
 }
 

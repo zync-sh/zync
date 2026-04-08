@@ -3,9 +3,27 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EditorManifest {
+    #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default, rename = "displayName")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default, rename = "defaultFor")]
+    pub default_for: Option<Vec<String>>,
+    #[serde(default)]
+    pub supports: Vec<String>,
+    #[serde(default, rename = "fileExtensions")]
+    pub file_extensions: Option<Vec<String>>,
+    #[serde(default, rename = "largeFileLimitMb")]
+    pub large_file_limit_mb: Option<u32>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -24,6 +42,8 @@ pub struct Manifest {
     /// Relative folder under the plugin root containing SVGs (matches `manifest.json` key `iconsPath`)
     #[serde(default, rename = "iconsPath")]
     pub icons_path: Option<String>,
+    #[serde(default)]
+    pub editor: Option<EditorManifest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +52,8 @@ pub struct Plugin {
     pub manifest: Manifest,
     pub script: Option<String>,
     pub style: Option<String>,
+    #[serde(rename = "editorHtml")]
+    pub editor_html: Option<String>,
     pub enabled: bool,
 }
 
@@ -83,6 +105,8 @@ impl PluginScanner {
         };
 
         inject(Self::builtin_theme_manager());
+        inject(Self::builtin_codemirror_editor_provider());
+        inject(Self::builtin_plain_editor_provider());
         inject(Self::builtin_dracula());
         inject(Self::builtin_monokai());
         inject(Self::builtin_midnight());
@@ -149,6 +173,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: Some(r#"
                 zync.on('ready', () => {
@@ -237,7 +262,220 @@ impl PluginScanner {
                 });
             "#.to_string()),
             style: None,
+            editor_html: None,
             enabled: true, // Default, will be overwritten by scan
+        }
+    }
+
+    fn builtin_plain_editor_provider() -> Plugin {
+        Plugin {
+            path: "builtin://plain-editor-provider".to_string(),
+            manifest: Manifest {
+                id: "com.zync.editor.plain-plugin".to_string(),
+                name: "Plugin Editor (Bridge Demo)".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: None,
+                mode: None,
+                preview_bg: None,
+                preview_accent: None,
+                icon: None,
+                manifest_type: Some("editor-provider".to_string()),
+                icons_path: None,
+                editor: Some(EditorManifest {
+                    entry: Some("editor.html".to_string()),
+                    display_name: Some("Plugin Editor (Bridge Demo)".to_string()),
+                    priority: Some(10),
+                    default_for: Some(vec!["text/*".to_string()]),
+                    supports: vec![
+                        "save".to_string(),
+                    ],
+                    file_extensions: None,
+                    large_file_limit_mb: None,
+                }),
+            },
+            script: None,
+            style: None,
+            editor_html: Some(
+                r#"
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f111a;
+      --panel: #1a1d2e;
+      --border: rgba(255,255,255,0.08);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #6366f1;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+    }
+    .meta { font-size: 12px; color: var(--muted); }
+    .actions { display: flex; gap: 8px; }
+    button {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: transparent;
+    }
+    textarea {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      outline: 0;
+      resize: none;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="meta" id="meta">Loading editor…</div>
+    <div class="actions">
+      <button id="closeBtn" type="button">Close</button>
+      <button id="saveBtn" class="primary" type="button">Save</button>
+    </div>
+  </div>
+  <textarea id="editor" spellcheck="false" aria-label="Plugin editor"></textarea>
+  <script>
+    const editor = document.getElementById('editor');
+    const meta = document.getElementById('meta');
+    const saveBtn = document.getElementById('saveBtn');
+    const closeBtn = document.getElementById('closeBtn');
+    let currentDoc = null;
+    let initialContent = '';
+
+    function updateMeta() {
+      if (!currentDoc) {
+        meta.textContent = 'Loading editor…';
+        return;
+      }
+      const dirty = editor.value !== initialContent;
+      const lineCount = editor.value.length === 0 ? 1 : editor.value.split('\n').length;
+      meta.textContent = `${currentDoc.filename} · ${lineCount} lines${dirty ? ' · Modified' : ''}`;
+      window.zyncEditor.emitDirtyChange(dirty);
+    }
+
+    editor.addEventListener('input', () => {
+      updateMeta();
+      window.zyncEditor.emitChange({ docId: currentDoc?.docId, content: editor.value });
+    });
+
+    saveBtn.addEventListener('click', () => {
+      window.zyncEditor.requestSave(editor.value);
+      initialContent = editor.value;
+      updateMeta();
+    });
+
+    closeBtn.addEventListener('click', () => {
+      window.zyncEditor.requestClose();
+    });
+
+    window.zyncEditor.onMessage((message) => {
+      const { type, payload } = message || {};
+      if (type === 'zync:editor:open-document') {
+        currentDoc = payload;
+        initialContent = payload.content || '';
+        editor.value = initialContent;
+        updateMeta();
+        setTimeout(() => editor.focus(), 0);
+      }
+
+      if (type === 'zync:editor:update-document') {
+        initialContent = payload.content || '';
+        editor.value = initialContent;
+        updateMeta();
+      }
+
+      if (type === 'zync:editor:set-theme') {
+        const colors = payload?.colors || {};
+        document.documentElement.style.setProperty('--bg', colors.background || '#0f111a');
+        document.documentElement.style.setProperty('--panel', colors.surface || '#1a1d2e');
+        document.documentElement.style.setProperty('--border', colors.border || 'rgba(255,255,255,0.08)');
+        document.documentElement.style.setProperty('--text', colors.text || '#e2e8f0');
+        document.documentElement.style.setProperty('--muted', colors.muted || '#94a3b8');
+        document.documentElement.style.setProperty('--accent', colors.primary || '#6366f1');
+      }
+
+      if (type === 'zync:editor:focus') {
+        editor.focus();
+      }
+    });
+
+    window.zyncEditor.emitReady({ supports: ['search', 'save'] });
+  </script>
+</body>
+</html>
+                "#.to_string()
+            ),
+            enabled: true,
+        }
+    }
+
+    fn builtin_codemirror_editor_provider() -> Plugin {
+        Plugin {
+            path: "builtin://codemirror-editor-provider".to_string(),
+            manifest: Manifest {
+                id: "com.zync.editor.codemirror".to_string(),
+                name: "CodeMirror Editor".to_string(),
+                version: "1.0.0".to_string(),
+                main: None,
+                style: None,
+                mode: None,
+                preview_bg: None,
+                preview_accent: None,
+                icon: None,
+                manifest_type: Some("editor-provider".to_string()),
+                icons_path: None,
+                editor: Some(EditorManifest {
+                    entry: None,
+                    display_name: Some("CodeMirror".to_string()),
+                    priority: Some(100),
+                    default_for: Some(vec!["text/*".to_string()]),
+                    supports: vec![
+                        "search".to_string(),
+                        "replace".to_string(),
+                        "goto-line".to_string(),
+                        "syntax-highlight".to_string(),
+                        "folding".to_string(),
+                        "multi-selection".to_string(),
+                    ],
+                    file_extensions: None,
+                    large_file_limit_mb: None,
+                }),
+            },
+            script: None,
+            style: None,
+            editor_html: None,
+            enabled: true,
         }
     }
 
@@ -256,6 +494,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -272,6 +511,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -291,6 +531,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -307,6 +548,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -326,6 +568,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -342,6 +585,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -361,6 +605,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -377,6 +622,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -396,6 +642,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -412,6 +659,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -431,6 +679,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -447,6 +696,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -466,6 +716,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -482,6 +733,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -501,6 +753,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -517,6 +770,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -536,6 +790,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -552,6 +807,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -571,6 +827,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -587,6 +844,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -606,6 +864,7 @@ impl PluginScanner {
                 icon: None,
                 manifest_type: None,
                 icons_path: None,
+                editor: None,
             },
             script: None,
             style: Some(
@@ -622,6 +881,7 @@ impl PluginScanner {
             "#
                 .to_string(),
             ),
+            editor_html: None,
             enabled: true,
         }
     }
@@ -645,63 +905,30 @@ impl PluginScanner {
 
         let bytes = response.bytes().await?;
         let cursor = std::io::Cursor::new(bytes);
-
-        // 2. Unzip
         let mut archive = zip::ZipArchive::new(cursor)?;
+        Self::install_from_zip_archive(app, &mut archive)
+    }
 
-        // Find manifest to get ID/Directory Name
-        let mut manifest_content = String::new();
-        {
-            let mut manifest_file = archive
-                .by_name("manifest.json")
-                .context("Plugin zip is missing manifest.json")?;
-            std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
+    pub fn install_plugin_from_local_path(app: &AppHandle, path: &str) -> Result<String> {
+        let candidate_path = PathBuf::from(path);
+        let source_path = fs::canonicalize(&candidate_path)
+            .with_context(|| format!("Failed to resolve path: {}", candidate_path.display()))?;
+
+        if source_path.is_file() {
+            let file = fs::File::open(&source_path)
+                .with_context(|| format!("Failed to open plugin archive: {}", source_path.display()))?;
+            let mut archive = zip::ZipArchive::new(file)
+                .with_context(|| format!("Invalid plugin archive: {}", source_path.display()))?;
+            return Self::install_from_zip_archive(app, &mut archive);
         }
 
-        let manifest: Manifest = serde_json::from_str(&manifest_content)
-            .context("Invalid manifest.json in plugin zip")?;
-
-        // 3. Extract to plugins dir
-        let config_dir = app
-            .path()
-            .app_config_dir()
-            .context("Failed to get config dir")?;
-        let plugins_dir = config_dir.join("plugins");
-
-        if !plugins_dir.exists() {
-            fs::create_dir_all(&plugins_dir)?;
+        if source_path.is_dir() {
+            return Self::install_from_directory(app, &source_path);
         }
 
-        // Use collision-free on-disk name (Base64 of ID)
-        let dir_name = sanitize_plugin_dir_name(&manifest.id)?;
-        let target_dir = plugins_dir.join(&dir_name);
-
-        // Legacy Migration: If old sanitized name exists, we'll keep the new one but could rename
-        // However, a better approach is to check if the new target exists.
-        
-        let temp_dir_name = format!("tmp-{}", uuid::Uuid::new_v4());
-        let temp_dir = plugins_dir.join(&temp_dir_name);
-        fs::create_dir_all(&temp_dir)?;
-
-        println!("[Plugins] Extracting to temp: {:?}", temp_dir);
-        if let Err(e) = archive.extract(&temp_dir) {
-            let _ = fs::remove_dir_all(&temp_dir);
-            return Err(e.into());
-        }
-
-        // Validate extraction
-        if !temp_dir.join("manifest.json").exists() {
-            let _ = fs::remove_dir_all(&temp_dir);
-            return Err(anyhow::anyhow!("Extracted plugin is missing manifest.json"));
-        }
-
-        // Atomic Swap
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir)?;
-        }
-        fs::rename(&temp_dir, &target_dir)?;
-
-        Ok(manifest.id)
+        Err(anyhow!(
+            "Unsupported plugin source. Expected a zip file or plugin directory."
+        ))
     }
 
     pub fn uninstall_plugin(app: &AppHandle, plugin_id: &str) -> Result<()> {
@@ -728,6 +955,114 @@ impl PluginScanner {
         }
     }
 
+    fn install_from_zip_archive<R: std::io::Read + std::io::Seek>(
+        app: &AppHandle,
+        archive: &mut zip::ZipArchive<R>,
+    ) -> Result<String> {
+        let manifest = Self::read_manifest_from_archive(archive)?;
+        let (_plugins_dir, target_dir, temp_dir) = Self::prepare_install_paths(app, &manifest.id)?;
+
+        println!("[Plugins] Extracting to temp: {:?}", temp_dir);
+        if let Err(e) = archive.extract(&temp_dir) {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(e.into());
+        }
+
+        if !temp_dir.join("manifest.json").exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(anyhow!("Extracted plugin is missing manifest.json"));
+        }
+
+        Self::finalize_install(&target_dir, &temp_dir)?;
+        Ok(manifest.id)
+    }
+
+    fn install_from_directory(app: &AppHandle, source_dir: &Path) -> Result<String> {
+        let manifest_path = source_dir.join("manifest.json");
+        let manifest_content = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("Plugin directory is missing {}", manifest_path.display()))?;
+        let manifest: Manifest =
+            serde_json::from_str(&manifest_content).context("Invalid manifest.json in plugin directory")?;
+
+        let (_plugins_dir, target_dir, temp_dir) = Self::prepare_install_paths(app, &manifest.id)?;
+        Self::copy_dir_recursive(source_dir, &temp_dir)?;
+
+        if !temp_dir.join("manifest.json").exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(anyhow!("Plugin directory copy failed: missing manifest.json"));
+        }
+
+        Self::finalize_install(&target_dir, &temp_dir)?;
+        Ok(manifest.id)
+    }
+
+    fn prepare_install_paths(
+        app: &AppHandle,
+        plugin_id: &str,
+    ) -> Result<(PathBuf, PathBuf, PathBuf)> {
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .context("Failed to get config dir")?;
+        let plugins_dir = config_dir.join("plugins");
+        if !plugins_dir.exists() {
+            fs::create_dir_all(&plugins_dir)?;
+        }
+
+        let dir_name = sanitize_plugin_dir_name(plugin_id)?;
+        let target_dir = plugins_dir.join(&dir_name);
+        let temp_dir_name = format!("tmp-{}", uuid::Uuid::new_v4());
+        let temp_dir = plugins_dir.join(&temp_dir_name);
+        fs::create_dir_all(&temp_dir)?;
+
+        Ok((plugins_dir, target_dir, temp_dir))
+    }
+
+    fn finalize_install(target_dir: &Path, temp_dir: &Path) -> Result<()> {
+        if target_dir.exists() {
+            fs::remove_dir_all(target_dir)?;
+        }
+        fs::rename(temp_dir, target_dir)?;
+        Ok(())
+    }
+
+    fn read_manifest_from_archive<R: std::io::Read + std::io::Seek>(
+        archive: &mut zip::ZipArchive<R>,
+    ) -> Result<Manifest> {
+        let mut manifest_content = String::new();
+        {
+            let mut manifest_file = archive
+                .by_name("manifest.json")
+                .context("Plugin zip is missing manifest.json")?;
+            std::io::Read::read_to_string(&mut manifest_file, &mut manifest_content)?;
+        }
+
+        let manifest: Manifest = serde_json::from_str(&manifest_content)
+            .context("Invalid manifest.json in plugin zip")?;
+        Ok(manifest)
+    }
+
+    fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+        if !destination.exists() {
+            fs::create_dir_all(destination)?;
+        }
+
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+
+            if source_path.is_dir() {
+                Self::copy_dir_recursive(&source_path, &destination_path)?;
+            } else if source_path.is_file() {
+                fs::copy(&source_path, &destination_path)
+                    .with_context(|| format!("Failed to copy {}", source_path.display()))?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn load_plugin(dir: &PathBuf) -> Result<Plugin> {
         let manifest_path = dir.join("manifest.json");
         let manifest_content = fs::read_to_string(&manifest_path)
@@ -736,21 +1071,16 @@ impl PluginScanner {
         let manifest: Manifest =
             serde_json::from_str(&manifest_content).context("Failed to parse manifest.json")?;
 
-        // Load Main Script (worker.js or specified entry)
         let canonical_root = fs::canonicalize(dir)?;
 
+        // Load Main Script (worker.js or specified entry)
         let script = if let Some(main_file) = &manifest.main {
-            let script_path = fs::canonicalize(dir.join(main_file))
-                .context("Failed to resolve manifest.main path")?;
-            
-            if !script_path.starts_with(&canonical_root) {
-                return Err(anyhow::anyhow!("Illegal manifest.main path: outside plugin root"));
-            }
-            
-            let content = fs::read_to_string(&script_path)
-                .with_context(|| format!("Failed to read main script from {}", script_path.display()))?;
-            info!("[Plugins] Loaded main script from: {}", script_path.display());
-            Some(content)
+            Some(Self::read_plugin_text_asset(
+                dir,
+                &canonical_root,
+                main_file,
+                "manifest.main",
+            )?)
         } else {
             let default_script = dir.join("worker.js");
             if default_script.exists() {
@@ -766,17 +1096,32 @@ impl PluginScanner {
 
         // Load Styles (if any)
         let style = if let Some(style_file) = &manifest.style {
-            let style_path = fs::canonicalize(dir.join(style_file))
-                .context("Failed to resolve manifest.style path")?;
-            
-            if !style_path.starts_with(&canonical_root) {
-                return Err(anyhow::anyhow!("Illegal manifest.style path: outside plugin root"));
+            Some(Self::read_plugin_text_asset(
+                dir,
+                &canonical_root,
+                style_file,
+                "manifest.style",
+            )?)
+        } else {
+            None
+        };
+
+        // Load editor panel HTML (if this plugin declares an editor-provider entry)
+        let editor_html = if manifest.manifest_type.as_deref() == Some("editor-provider") {
+            if let Some(entry_file) = manifest
+                .editor
+                .as_ref()
+                .and_then(|editor| editor.entry.as_ref())
+            {
+                Some(Self::read_plugin_text_asset(
+                    dir,
+                    &canonical_root,
+                    entry_file,
+                    "manifest.editor.entry",
+                )?)
+            } else {
+                None
             }
-            
-            let content = fs::read_to_string(&style_path)
-                .with_context(|| format!("Failed to read style file from {}", style_path.display()))?;
-            info!("[Plugins] Loaded style from: {}", style_path.display());
-            Some(content)
         } else {
             None
         };
@@ -786,8 +1131,30 @@ impl PluginScanner {
             manifest,
             script,
             style,
+            editor_html,
             enabled: true, // Default, overwritten by scan
         })
+    }
+
+    fn read_plugin_text_asset(
+        dir: &Path,
+        canonical_root: &Path,
+        relative_path: &str,
+        field_name: &str,
+    ) -> Result<String> {
+        let asset_path = fs::canonicalize(dir.join(relative_path))
+            .with_context(|| format!("Failed to resolve {field_name} path"))?;
+
+        if !asset_path.starts_with(canonical_root) {
+            return Err(anyhow!(
+                "Illegal {field_name} path: outside plugin root"
+            ));
+        }
+
+        let content = fs::read_to_string(&asset_path)
+            .with_context(|| format!("Failed to read asset file from {}", asset_path.display()))?;
+        info!("[Plugins] Loaded {field_name} from: {}", asset_path.display());
+        Ok(content)
     }
 }
 
@@ -820,3 +1187,7 @@ fn legacy_sanitize_id(id: &str) -> String {
         .collect();
     sanitized
 }
+
+
+
+
