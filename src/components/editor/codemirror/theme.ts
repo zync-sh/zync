@@ -109,7 +109,7 @@ export function createCodeMirrorTheme(theme: 'light' | 'dark') {
     },
     '.cm-tooltip-autocomplete ul li[aria-selected="true"]': {
       backgroundColor: 'color-mix(in srgb, var(--color-app-accent) 34%, transparent)',
-      color: 'white',
+      color: 'var(--color-foreground-on-accent, #ffffff)',
       fontWeight: '600',
     },
     '.cm-tooltip-autocomplete ul li .cm-completionLabel': {

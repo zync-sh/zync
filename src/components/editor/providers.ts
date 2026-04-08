@@ -1,5 +1,6 @@
 import type { Plugin } from '../../context/PluginContext';
 
+// Synthetic frontend routing ID used to render PlainFileEditor directly (not the backend plugin ID).
 export const BUILTIN_PLAIN_EDITOR_ID = 'builtin-plain';
 export const CODEMIRROR_EDITOR_ID = 'com.zync.editor.codemirror';
 

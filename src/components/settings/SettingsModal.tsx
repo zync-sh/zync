@@ -11,7 +11,7 @@ import { Select } from '../ui/Select';
 
 import { clsx } from 'clsx';
 import { Marketplace } from './Marketplace';
-import { buildEditorProviderOptions, formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel } from '../editor/providers';
+import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID, formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel } from '../editor/providers';
 
 
 interface SettingsModalProps {
@@ -156,7 +156,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const selectedPath = Array.isArray(selection) ? selection[0] : selection;
             if (!selectedPath) return;
 
-            await window.ipcRenderer.invoke('plugins_install_local', { path: selectedPath });
+            await window.ipcRenderer.invoke('plugins:install_local', { path: selectedPath });
             const reloaded = await reloadPluginsInModal();
             setNeedsRestart(true);
             if (reloaded) {
@@ -685,7 +685,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             </div>
                                             <div className="w-64 shrink-0">
                                                 <Select
-                                                    value={settings.editor?.defaultProvider ?? 'com.zync.editor.codemirror'}
+                                                    value={settings.editor?.defaultProvider ?? CODEMIRROR_EDITOR_ID}
                                                     onChange={(value) => updateSettings({
                                                         editor: {
                                                             ...(settings.editor || {}),

@@ -121,6 +121,7 @@ const ipcRenderer = {
       'config:set': 'settings_set',
       'shell:open': 'shell_open',
       'plugins:load': 'plugins_load',
+      'plugins:install_local': 'plugins_install_local',
       'app:getExeDir': 'app_get_exe_dir',
       'ai:translate': 'ai_translate',
       'ai:checkOllama': 'ai_check_ollama',

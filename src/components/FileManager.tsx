@@ -36,7 +36,7 @@ import { Modal } from './ui/Modal';
 import { useTauriFileDrop } from '../hooks/useTauriFileDrop';
 import { FileBottomToolbar } from './file-manager/FileBottomToolbar';
 import { usePlugins } from '../context/PluginContext';
-import { buildEditorProviderOptions } from './editor/providers';
+import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID } from './editor/providers';
 import { clearEditorOverlayOpen, markEditorOverlayOpen } from './editor/overlayState';
 
 export interface Conflict {
@@ -677,7 +677,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [editorProviderOptions, handleOpenFile, showToast]);
 
   const handleSetDefaultEditorProvider = useCallback(async (providerId: string) => {
-    const currentProvider = settings.editor?.defaultProvider ?? 'com.zync.editor.codemirror';
+    const currentProvider = settings.editor?.defaultProvider ?? CODEMIRROR_EDITOR_ID;
     if (providerId === currentProvider) return;
 
     await updateSettings({
@@ -1568,11 +1568,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [isVisible]);
 
   useEffect(() => {
-    if (!editingFile) {
-      clearEditorOverlayOpen();
-      return;
-    }
-
+    if (!editingFile) return;
     markEditorOverlayOpen();
     return () => {
       clearEditorOverlayOpen();

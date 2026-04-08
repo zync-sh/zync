@@ -347,8 +347,7 @@ export function CodeMirrorFileEditor({
     });
     setDocText(initialContent);
     setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
-    syncCursorState(view.state);
-  }, [filename, initialContent, syncCursorState]);
+  }, [filename, initialContent]);
 
   useEffect(() => {
     const focusEditor = () => viewRef.current?.focus();
@@ -418,15 +417,6 @@ export function CodeMirrorFileEditor({
         return;
       }
 
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        if (showGoToLine) {
-          setShowGoToLine(false);
-          setGoToLineError(null);
-          return;
-        }
-        closeSearch();
-      }
     };
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });

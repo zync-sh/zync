@@ -131,13 +131,17 @@ export function PlainFileEditor({
         return;
       }
 
+      if (ctrlOrMeta && event.key.toLowerCase() === 'w') {
+        event.preventDefault();
+        void handleClose();
+        return;
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault();
         if (showSearch) {
           setShowSearch(false);
           searchRef.current?.blur();
-        } else {
-          void handleClose();
         }
       }
     };

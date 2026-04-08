@@ -67,9 +67,9 @@ export function buildLineCommentChanges(
 
   const changes: CommentChange[] = [];
   if (allCommented) {
-        for (const line of lines) {
-          const indent = getIndent(line.lineText);
-          const offset = line.start + indent.length;
+    for (const line of lines) {
+      const indent = getIndent(line.lineText);
+      const offset = line.start + indent.length;
       if (line.lineText.slice(indent.length).startsWith(token)) {
         const withSpace = line.lineText.slice(indent.length + token.length).startsWith(' ');
         changes.push({
@@ -80,10 +80,10 @@ export function buildLineCommentChanges(
       }
     }
   } else {
-        for (const line of lines) {
-          if (line.lineText.trim().length === 0) continue;
-          const indent = getIndent(line.lineText);
-          const offset = line.start + indent.length;
+    for (const line of lines) {
+      if (line.lineText.trim().length === 0) continue;
+      const indent = getIndent(line.lineText);
+      const offset = line.start + indent.length;
       changes.push({
         from: offset,
         to: offset,

@@ -37,8 +37,8 @@ export function getCodeMirrorLanguageId(filename: string): string {
 }
 
 export function getLanguageLabel(filename: string): string {
-  const ext = filename.split('.').pop()?.toUpperCase() ?? 'TEXT';
-  return ext || 'TEXT';
+  const extRaw = filename.split('.').pop() || 'TEXT';
+  return extRaw.toUpperCase();
 }
 
 export function getLineCommentToken(filename: string): string {
@@ -63,6 +63,8 @@ export function getLineCommentToken(filename: string): string {
     case 'htm':
     case 'xml':
     case 'svg':
+    case 'md':
+    case 'markdown':
       return '';
     default:
       return '//';
