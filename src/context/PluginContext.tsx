@@ -1,8 +1,18 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ipcRenderer } from '../lib/tauri-ipc';
 import { useAppStore } from '../store/useAppStore';
 
-interface Plugin {
+export interface EditorProviderManifest {
+    entry?: string;
+    displayName?: string;
+    priority?: number;
+    defaultFor?: string[];
+    supports?: string[];
+    fileExtensions?: string[];
+    largeFileLimitMb?: number;
+}
+
+export interface Plugin {
     path: string;
     manifest: {
         id: string;
@@ -17,9 +27,11 @@ interface Plugin {
         /** Icon pack folder (camelCase from IPC JSON) */
         iconsPath?: string;
         icons_path?: string;
+        editor?: EditorProviderManifest;
     };
     script?: string;
     style?: string;
+    editorHtml?: string;
     enabled: boolean;
 }
 
@@ -38,6 +50,7 @@ interface PluginPanel {
 
 interface PluginContextType {
     plugins: Plugin[];
+    editorProviders: Plugin[];
     loaded: boolean;
     commands: PluginCommand[];
     panels: PluginPanel[];
@@ -46,6 +59,7 @@ interface PluginContextType {
 
 const PluginContext = createContext<PluginContextType>({
     plugins: [],
+    editorProviders: [],
     loaded: false,
     commands: [],
     panels: [],
@@ -189,6 +203,10 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [panels, setPanels] = useState<PluginPanel[]>([]);
     const workers = useRef<Map<string, Worker>>(new Map());
     const showToast = useAppStore(state => state.showToast);
+    const editorProviders = useMemo(
+        () => plugins.filter((plugin) => plugin.enabled && plugin.manifest.type === 'editor-provider'),
+        [plugins]
+    );
 
     useEffect(() => {
         loadPlugins();
@@ -430,7 +448,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, []);
 
     return (
-        <PluginContext.Provider value={{ plugins, loaded, commands, panels, executeCommand }}>
+        <PluginContext.Provider value={{ plugins, editorProviders, loaded, commands, panels, executeCommand }}>
             {children}
         </PluginContext.Provider>
     );

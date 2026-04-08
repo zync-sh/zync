@@ -1,1 +1,1 @@
-export { LightFileEditor as FileEditor } from './light-editor/LightFileEditor';
+export { FileEditorHost as FileEditor } from './FileEditorHost';
