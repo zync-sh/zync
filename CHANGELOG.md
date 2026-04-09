@@ -4,12 +4,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.10.1]
+
 ### Added
-- **Sidebar Connection Search**: Added a top-of-sidebar connection search input that filters active hosts and the full host tree from a single query.
+- **Sidebar Connection Search**: Added a top-of-sidebar connection search input that filters active hosts and the full host tree from a single query. ([1dfe5f3])
 
 ### Changed
-- **Connection Count in Search Placeholder**: The saved-host count now appears inline in the search placeholder (`Connections N`) to reduce header clutter.
-- **Sidebar Search Accessibility**: Added an explicit accessible label (`aria-label`) for the sidebar connection search input.
+- **Sidebar Structure Refactor**: Split the sidebar into focused subcomponents (`ConnectionItem`, `FolderItem`, `SidebarSection`, `FolderFormModal`) with shared tree/types helpers to improve maintainability without changing core workflows. ([2a16938])
+- **Shared Connection Context Menu Ownership**: Lifted connection context-menu state to `Sidebar` and render a single shared menu instance instead of per-row menu state/rendering. ([bd73a72])
+
+### Fixed
+- **Smart Context Menu Positioning**: Reworked context menu/submenu placement with measured viewport-aware clamping so menus remain visible near edges and close reliably on escape/outside interactions. ([b9e726f])
 
 ## [2.10.0]
 
@@ -496,7 +501,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.10.1...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -542,6 +547,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 [a332012]: https://github.com/zync-sh/zync/commit/a332012
 [5e86529]: https://github.com/zync-sh/zync/commit/5e86529
 [42c2b66]: https://github.com/zync-sh/zync/commit/42c2b66
+[2a16938]: https://github.com/zync-sh/zync/commit/2a16938
+[b9e726f]: https://github.com/zync-sh/zync/commit/b9e726f
+[bd73a72]: https://github.com/zync-sh/zync/commit/bd73a72
+[1dfe5f3]: https://github.com/zync-sh/zync/commit/1dfe5f3
+[2.10.1]: https://github.com/zync-sh/zync/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/zync-sh/zync/compare/v2.9.2...v2.10.0
 [2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/zync-sh/zync/compare/v2.9.0...v2.9.1
