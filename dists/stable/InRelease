@@ -4,35 +4,35 @@ Hash: SHA512
 Origin: Zync
 Label: Zync
 Codename: stable
-Date: Wed, 08 Apr 2026 18:19:37 UTC
+Date: Thu, 09 Apr 2026 17:10:14 UTC
 Architectures: amd64
 Components: main
 Description: Zync SSH Client
 MD5Sum:
- 31546dd5dc06a50ef149438e998919f9 435 main/binary-amd64/Packages
- df3d860c085e914a29d9a966b96b68d6 339 main/binary-amd64/Packages.gz
+ 1dd2a840be1acb8300fb215087558a42 435 main/binary-amd64/Packages
+ ed3d6f8027e9df6b52f18d5535b08581 340 main/binary-amd64/Packages.gz
  42e84d3d44a566643683d144a092aff4 90 main/binary-amd64/Release
 SHA1:
- 4ce4a8fc2a3f6d044d5e6aaa1af4c4f294de84ff 435 main/binary-amd64/Packages
- f584669e93da0058fe914a6d07746f274782c495 339 main/binary-amd64/Packages.gz
+ be3a781389989998c31052bee4f557ef4a13434e 435 main/binary-amd64/Packages
+ 0934bc5b4f9c0d7d9764d570231dfbecb761acbe 340 main/binary-amd64/Packages.gz
  ef45dc9e9f1e6aded3333434a5dadab76d0950a8 90 main/binary-amd64/Release
 SHA256:
- a2e6612712e358759c55e3bfa2f909c6b4bf090993dad27807394e17a2c75374 435 main/binary-amd64/Packages
- 4bd7ec109463053b7ee68e06ffb3ed87e96b0b974cc09a52e2958117223c6761 339 main/binary-amd64/Packages.gz
+ d227dc129675bdcfbf839ab8068b6b4cfeeca7bd46c140e7ce5163fc9895a581 435 main/binary-amd64/Packages
+ 0893c146d0dc15363840442b8562d990bb4f3ae4d0ea94e53654f9f36f17384a 340 main/binary-amd64/Packages.gz
  020dce7d9e6a9335e76bc76a6e888a83b6cd03fa911558ab2c59bae911b9366a 90 main/binary-amd64/Release
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEENDxd+APqBY9ZxWVCfkYtzHo055wFAmnWnDkACgkQfkYtzHo0
-55yfqBAAt2MCDwzza0OAQ4UO9k2n61ySBbN5TyciLQBB+fFqBYgW/1y1OSHNoNL+
-B7qH6CZiebORfaNsketP82w6LO4UinmmHtClZvfzYRUTKxbpXUFM2ROf8eJR7qzM
-BrPvtL70P5tAXxqee/cBzMIEBaOjHFZ32e1t8Mf96fxRuc1uI0yaltfxKhYcOrPE
-HoHLNphTHjHdJr8aIiqYLF6e5GbEzAifpaiKhPaiRwms3ugMkRTSi0OtlCAcJXM7
-jbRyccjxTUqSAJpQysVRcxg09icR1bwBC5rLEy8gN7mZH1O7ODoOOCZCvLygWpia
-d0r4dqa8mLcKlqJFS7bOILwAPtCFADwiARod+/XbTg+Gey5xV93hCTptGjH4ra/h
-2jcioDcoDnPs3rAy7w9GG5EpmKBzmbl/MZYFgl4+OgVEXvmt5rJ8cazaqsOnjAtp
-s5iy1D9UAFd2hhexhtqLmWesC0RhYPZR0ki1KLCSFJmtWEwZCd9W3KenVPvtjVyX
-Hd+T81NfZ+HkIYTyQrVk1kr7uqF2VS/9ckUDaGCvdDP+oG/tC3kPljIAh52sYbIM
-zQ7U13jiaXpjkHYaG72UGlFA2TwkZNM3/r8tXVuThAliWFTakJDR9wDQb6xH83mi
-5ed61qIRgpuRtyI+tl84QwQw70Ih9/3WItW44mybENR2n7oJLYU=
-=nKi6
+iQIzBAEBCgAdFiEENDxd+APqBY9ZxWVCfkYtzHo055wFAmnX3XYACgkQfkYtzHo0
+55zPeBAAikLIgWHMPcRXSEO++TuEMED6N1bwB9sZcpl3Pr3OJyhWgLJvpcsIDfxg
+YGnSXmUoQhfOru+iVOJRGpmlVW1MXSrqz435clD2T8TRKFUQaxZgU7y1pjL/nwVb
++tpPFPQ8QQq42oe1c46Jk9yK89Tr44aXIsy6A6pABsHmMDi2goqhJETA4h+YS/9o
+kUgICR2R753u1YRgNL8AnYFMTdoDBE54ihqlAprWVUrplwduHOVLIbp80ttO2jFl
+051VLxQ7+rp5mgEy8uxdNhZ80/1mFfeMpjpb/R3pL/0GiZkAffuKdKHmaGsItcNB
+n/q00tpbZYS6cNdeAYiMdFSVcIMa3dbuFIthZ5oNzQdmAy8P/EK3xwNRJFhjxCuI
+JEytkPwGTwhlZN3ROQpGlrGRvNhZnkWZtAfZA6Bxxrs8fEy8xAxSacIT0IEuWsPN
+svqacz4SnXT0E7nuwIp03TSKGGDe1/TXNYiJOtZQ1KrJjMSYELr/AI3fYNiUUDgG
+uD5FwmWu+VEXeHAqMQT9QI/i5zMPKMsb4WSDGZyYctUmIlYm2avvug1hCpukScHO
+0O8/XKMKu7nGTdxWOHlxMm9dvcL632DVrjQ/8XGqxx7x1hlta5I0YJLld1RLPVNk
+6dVrbYZO+FjZuovNpQEEDfQXS44Ros8AqBLqPL9Cbn3eAKJs7tU=
+=nMCC
 -----END PGP SIGNATURE-----
