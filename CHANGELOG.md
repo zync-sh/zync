@@ -4,6 +4,18 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.10.1]
+
+### Added
+- **Sidebar Connection Search**: Added a top-of-sidebar connection search input that filters active hosts and the full host tree from a single query. ([1dfe5f3])
+
+### Changed
+- **Sidebar Structure Refactor**: Split the sidebar into focused subcomponents (`ConnectionItem`, `FolderItem`, `SidebarSection`, `FolderFormModal`) with shared tree/types helpers to improve maintainability without changing core workflows. ([2a16938])
+- **Shared Connection Context Menu Ownership**: Lifted connection context-menu state to `Sidebar` and render a single shared menu instance instead of per-row menu state/rendering. ([bd73a72])
+
+### Fixed
+- **Smart Context Menu Positioning**: Reworked context menu/submenu placement with measured viewport-aware clamping so menus remain visible near edges and close reliably on escape/outside interactions. ([b9e726f])
+
 ## [2.10.0]
 
 ### Added
@@ -88,8 +100,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Platform-Aware Workspace Shortcuts**: Dashboard search now automatically handles `⌘+P` (Mac) and `Ctrl+P` (Windows/Linux) based on the user's platform. ([9aa7d67])
 - **AI Sidebar Migration**: Unified all AI interactions into a persistent, high-performance side panel. ([ad807aa])
 - **Flicker-Free Terminal Transitions**: Implemented "Width Pinning" to completely eliminate visual shimmering and text-shaking during sidebar animations and manual resizing. ([ad807aa])
-
-### Changed
 
 - **Unified AI Shortcut**: Reassigned `Mod+I` to the new sidebar and removed the legacy AI modal. ([ad807aa])
 - **Header Layout Optimization**: Reorganized `TabBar` icons to a more logical grouping: `[Left Panel] [AI Assistant] | [Settings]`. ([ad807aa])
@@ -491,7 +501,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.10.1...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -537,18 +547,16 @@ All notable changes to Zync are documented in this file. The format is based on 
 [a332012]: https://github.com/zync-sh/zync/commit/a332012
 [5e86529]: https://github.com/zync-sh/zync/commit/5e86529
 [42c2b66]: https://github.com/zync-sh/zync/commit/42c2b66
+[2a16938]: https://github.com/zync-sh/zync/commit/2a16938
+[b9e726f]: https://github.com/zync-sh/zync/commit/b9e726f
+[bd73a72]: https://github.com/zync-sh/zync/commit/bd73a72
+[1dfe5f3]: https://github.com/zync-sh/zync/commit/1dfe5f3
+[2.10.1]: https://github.com/zync-sh/zync/compare/v2.10.0...v2.10.1
+[2.10.0]: https://github.com/zync-sh/zync/compare/v2.9.2...v2.10.0
 [2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/zync-sh/zync/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/zync-sh/zync/compare/v2.8.1...v2.9.0
 [2.8.1]: https://github.com/zync-sh/zync/compare/v2.8.0...v2.8.1
-[2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
-[2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
-[2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
-[2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
-[2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
-[2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
-[2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
-[2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
 [2.8.0]: https://github.com/zync-sh/zync/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/zync-sh/zync/compare/v2.6.0...v2.7.0
 [2.6.2]: https://github.com/zync-sh/zync/compare/v2.6.1...v2.6.2
@@ -557,6 +565,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.5.5]: https://github.com/zync-sh/zync/compare/v2.5.4...v2.5.5
 [2.5.4]: https://github.com/zync-sh/zync/compare/v2.5.3...v2.5.4
 [2.5.3]: https://github.com/zync-sh/zync/compare/v2.5.2...v2.5.3
-
-[2.10.0]: https://github.com/zync-sh/zync/compare/v2.9.2...v2.10.0
+[2.5.2]: https://github.com/zync-sh/zync/compare/v2.5.1...v2.5.2
+[2.5.1]: https://github.com/zync-sh/zync/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/zync-sh/zync/compare/v2.4.1...v2.5.0
+[2.4.1]: https://github.com/zync-sh/zync/compare/v2.4.0...v2.4.1
+[2.4.0]: https://github.com/zync-sh/zync/compare/v2.3.1...v2.4.0
+[2.3.1]: https://github.com/zync-sh/zync/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
 
