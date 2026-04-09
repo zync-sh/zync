@@ -10,6 +10,5 @@ export interface TreeNode {
 
 export interface ConnectionItemProps {
     onEdit: (conn: Connection) => void;
-    onDelete: (conn: Connection) => void;
-    onViewDetails: (conn: Connection) => void;
+    onOpenContextMenu: (conn: Connection, x: number, y: number) => void;
 }

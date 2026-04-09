@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useAppStore, Connection, Folder } from '../../store/useAppStore';
-import { Network, TerminalIcon } from 'lucide-react';
+import { Code, Files, Info, LayoutDashboard, Network, Pencil, Power, TerminalIcon, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { buildTree } from './sidebar/buildTree';
 import { SidebarSection } from './sidebar/SidebarSection';
@@ -30,6 +31,8 @@ export function Sidebar({ className }: { className?: string }) {
     const deleteFolder = useAppStore(state => state.deleteFolder);
     const deleteConnection = useAppStore(state => state.deleteConnection);
     const renameFolder = useAppStore(state => state.renameFolder);
+    const connect = useAppStore(state => state.connect);
+    const disconnect = useAppStore(state => state.disconnect);
     
     // Settings Store Hooks
     const settings = useAppStore(state => state.settings);
@@ -52,6 +55,7 @@ export function Sidebar({ className }: { className?: string }) {
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
     const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
     const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
+    const [connectionContextMenu, setConnectionContextMenu] = useState<{ x: number; y: number; connectionId: string } | null>(null);
 
     // Resize Logic
     const [width, setWidth] = useState(settings.sidebarWidth || 288);
@@ -166,11 +170,81 @@ export function Sidebar({ className }: { className?: string }) {
         setIsRenameFolderModalOpen(true);
     };
 
+    const openConnectionContextMenu = useCallback((conn: Connection, x: number, y: number) => {
+        setConnectionContextMenu({ x, y, connectionId: conn.id });
+    }, []);
+
+    const contextMenuConnection = useMemo(() => {
+        if (!connectionContextMenu) return null;
+        return connections.find((c: Connection) => c.id === connectionContextMenu.connectionId) || null;
+    }, [connectionContextMenu, connections]);
+
+    useEffect(() => {
+        if (!connectionContextMenu) return;
+        if (contextMenuConnection) return;
+        setConnectionContextMenu(null);
+    }, [connectionContextMenu, contextMenuConnection]);
+
+    const connectionContextMenuItems = useMemo<ContextMenuItem[]>(() => {
+        if (!contextMenuConnection) return [];
+        return [
+            {
+                label: contextMenuConnection.status === 'connected' ? 'Disconnect' : 'Connect',
+                icon: <Power size={14} className={contextMenuConnection.status === 'connected' ? 'text-red-400' : 'text-emerald-400'} />,
+                action: () => {
+                    if (contextMenuConnection.status === 'connected') {
+                        disconnect(contextMenuConnection.id);
+                        return;
+                    }
+                    connect(contextMenuConnection.id);
+                    openTab(contextMenuConnection.id);
+                }
+            },
+            {
+                label: 'Details',
+                icon: <Info size={14} />,
+                action: () => setViewingDetailsId(contextMenuConnection.id)
+            },
+            { separator: true },
+            {
+                label: 'File Manager',
+                icon: <Files size={14} />,
+                action: () => openTab(contextMenuConnection.id, 'files')
+            },
+            {
+                label: 'Port Forwarding',
+                icon: <Network size={14} />,
+                action: () => openTab(contextMenuConnection.id, 'port-forwarding')
+            },
+            {
+                label: 'Snippets',
+                icon: <Code size={14} />,
+                action: () => openTab(contextMenuConnection.id, 'snippets')
+            },
+            {
+                label: 'Dashboard',
+                icon: <LayoutDashboard size={14} />,
+                action: () => openTab(contextMenuConnection.id, 'dashboard')
+            },
+            { separator: true },
+            {
+                label: 'Edit',
+                icon: <Pencil size={14} />,
+                action: () => openEditConnection(contextMenuConnection)
+            },
+            {
+                label: 'Delete',
+                icon: <Trash2 size={14} />,
+                variant: 'danger',
+                action: () => setDeletingConnection(contextMenuConnection)
+            }
+        ];
+    }, [connect, contextMenuConnection, disconnect, openEditConnection, openTab]);
+
     const connectionItemProps = useMemo(() => ({
         onEdit: openEditConnection,
-        onDelete: (c: Connection) => setDeletingConnection(c),
-        onViewDetails: (c: Connection) => setViewingDetailsId(c.id),
-    }), [openEditConnection]);
+        onOpenContextMenu: openConnectionContextMenu,
+    }), [openEditConnection, openConnectionContextMenu]);
 
     return (
         <div
@@ -392,6 +466,15 @@ export function Sidebar({ className }: { className?: string }) {
 
                 {isSettingsOpen && <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />}
             </Suspense>
+
+            {connectionContextMenu && contextMenuConnection && (
+                <ContextMenu
+                    x={connectionContextMenu.x}
+                    y={connectionContextMenu.y}
+                    items={connectionContextMenuItems}
+                    onClose={() => setConnectionContextMenu(null)}
+                />
+            )}
 
             <FolderFormModal
                 isOpen={isRenameFolderModalOpen}

@@ -1,20 +1,18 @@
 import { useState, memo } from 'react';
 import { useAppStore, Connection, Tab } from '../../../store/useAppStore';
 import { getCurrentDragSource } from '../../../lib/dragDrop';
-import { Pencil, Settings, Network, Trash2, Files, Code, LayoutDashboard, Power, Info } from 'lucide-react';
+import { Settings } from 'lucide-react';
 import { OSIcon } from '../../icons/OSIcon';
 import { cn } from '../../../lib/utils';
-import { ContextMenu } from '../../ui/ContextMenu';
 
 interface ConnectionItemComponentProps {
     conn: Connection;
     isCollapsed: boolean;
     onEdit: (c: Connection) => void;
-    onDelete: (c: Connection) => void;
-    onViewDetails: (c: Connection) => void;
+    onOpenContextMenu: (c: Connection, x: number, y: number) => void;
 }
 
-export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, onEdit, onDelete, onViewDetails }: ConnectionItemComponentProps) {
+export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, onEdit, onOpenContextMenu }: ConnectionItemComponentProps) {
     // Selective subscriptions — only re-render when relevant values change
     const isActive = useAppStore(state => state.activeConnectionId === conn.id);
     const hasTab = useAppStore(state => state.tabs.some((t: Tab) => t.connectionId === conn.id));
@@ -22,12 +20,9 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
 
     // Actions (stable references from zustand, don't cause re-renders)
     const openTab = useAppStore(state => state.openTab);
-    const connect = useAppStore(state => state.connect);
-    const disconnect = useAppStore(state => state.disconnect);
     const showToast = useAppStore(state => state.showToast);
     const addTransfer = useAppStore(state => state.addTransfer);
 
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; connectionId: string } | null>(null);
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
     const handleDrop = async (e: React.DragEvent) => {
@@ -111,7 +106,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                 onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    setContextMenu({ x: e.clientX, y: e.clientY, connectionId: conn.id });
+                    onOpenContextMenu(conn, e.clientX, e.clientY);
                 }}
                 onDoubleClick={() => openTab(conn.id)}
                 draggable
@@ -190,66 +185,6 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                 )}
             </div>
 
-            {/* Context Menu */}
-            {contextMenu && (
-                <ContextMenu
-                    x={contextMenu.x}
-                    y={contextMenu.y}
-                    items={[
-                        {
-                            label: conn.status === 'connected' ? "Disconnect" : "Connect",
-                            icon: <Power size={14} className={conn.status === 'connected' ? "text-red-400" : "text-emerald-400"} />,
-                            action: () => {
-                                if (conn.status === 'connected') {
-                                    disconnect(conn.id);
-                                } else {
-                                    connect(conn.id);
-                                    openTab(conn.id);
-                                }
-                            }
-                        },
-                        {
-                            label: "Details",
-                            icon: <Info size={14} />,
-                            action: () => onViewDetails(conn)
-                        },
-                        { separator: true },
-                        {
-                            label: "File Manager",
-                            icon: <Files size={14} />,
-                            action: () => openTab(conn.id, 'files')
-                        },
-                        {
-                            label: "Port Forwarding",
-                            icon: <Network size={14} />,
-                            action: () => openTab(conn.id, 'port-forwarding')
-                        },
-                        {
-                            label: "Snippets",
-                            icon: <Code size={14} />,
-                            action: () => openTab(conn.id, 'snippets')
-                        },
-                        {
-                            label: "Dashboard",
-                            icon: <LayoutDashboard size={14} />,
-                            action: () => openTab(conn.id, 'dashboard')
-                        },
-                        { separator: true },
-                        {
-                            label: "Edit",
-                            icon: <Pencil size={14} />,
-                            action: () => onEdit(conn)
-                        },
-                        {
-                            label: "Delete",
-                            icon: <Trash2 size={14} />,
-                            variant: "danger",
-                            action: () => onDelete(conn)
-                        }
-                    ]}
-                    onClose={() => setContextMenu(null)}
-                />
-            )}
         </>
     );
 });

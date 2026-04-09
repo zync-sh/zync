@@ -161,8 +161,7 @@ export const FolderItem = memo(function FolderItem({
                             conn={conn}
                             isCollapsed={isCollapsed}
                             onEdit={connectionItemProps.onEdit}
-                            onDelete={connectionItemProps.onDelete}
-                            onViewDetails={connectionItemProps.onViewDetails}
+                            onOpenContextMenu={connectionItemProps.onOpenContextMenu}
                         />
                     ))}
                 </div>
