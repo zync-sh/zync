@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useAppStore, Connection, Folder } from '../../store/useAppStore';
-import { Code, Files, Info, LayoutDashboard, Network, Pencil, Power, TerminalIcon, Trash2 } from 'lucide-react';
+import { Code, Files, Info, LayoutDashboard, Network, Pencil, Power, Search, TerminalIcon, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -19,6 +19,7 @@ const AddConnectionModal = lazy(() => import('../modals/AddConnectionModal').the
 
 export function Sidebar({ className }: { className?: string }) {
     const [viewingDetailsId, setViewingDetailsId] = useState<string | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Connection Store Hooks
     const connections = useAppStore(state => state.connections);
@@ -112,8 +113,18 @@ export function Sidebar({ className }: { className?: string }) {
 
     // Compute Active Connections
     const activeConnections = useMemo(() => {
-        return connections.filter((c: Connection) => c.status === 'connected');
-    }, [connections]);
+        const normalizedSearch = searchTerm.trim().toLowerCase();
+        return connections.filter((c: Connection) => {
+            if (c.status !== 'connected') return false;
+            if (!normalizedSearch) return true;
+            return (
+                (c.name ?? '').toLowerCase().includes(normalizedSearch) ||
+                (c.host ?? '').toLowerCase().includes(normalizedSearch) ||
+                (c.username ?? '').toLowerCase().includes(normalizedSearch) ||
+                (c.tags ?? []).some((tag) => tag.toLowerCase().includes(normalizedSearch))
+            );
+        });
+    }, [connections, searchTerm]);
 
     const hostCountLabel = useMemo(() => {
         const hostCount = connections.filter((c: Connection) => c.id !== 'local').length;
@@ -155,7 +166,7 @@ export function Sidebar({ className }: { className?: string }) {
     }, [connections]);
 
     // Build Recursive Tree
-    const treeRoot = useMemo(() => buildTree(treeConnections, folders, ''), [treeConnections, folders]);
+    const treeRoot = useMemo(() => buildTree(treeConnections, folders, searchTerm), [treeConnections, folders, searchTerm]);
 
     const toggleExpandedFolder = useAppStore(state => state.toggleExpandedFolder);
 
@@ -275,23 +286,21 @@ export function Sidebar({ className }: { className?: string }) {
                 style={{ width: width, minWidth: width }}
                 className="flex flex-col h-full pt-1.5"
             >
-                {/* Minimalist Title */}
-                <div
-                    className={cn(
-                        "flex items-center justify-between shrink-0 select-none relative z-10",
-                        compactMode ? "px-3.5 py-2" : "px-4 py-3"
-                    )}
-                >
-                    <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
-                        <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-app-muted/80">Connections</span>
-                            <span
-                                className="rounded-full border border-app-border/60 bg-app-surface/40 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-app-muted/90"
-                                title="Saved hosts"
-                            >
-                                {hostCountLabel}
-                            </span>
-                        </div>
+                <div className={cn(compactMode ? "px-3 py-2" : "px-4 py-3")}>
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            aria-label="Search connections"
+                            placeholder={`Connections ${hostCountLabel}`}
+                            className="w-full rounded-lg border border-app-border/40 bg-app-surface/40 pl-3 pr-8 py-1.5 text-xs text-app-text placeholder:text-app-muted/70 focus:outline-none focus:border-app-accent/60"
+                        />
+                        <Search
+                            size={13}
+                            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-app-muted/70"
+                            aria-hidden="true"
+                        />
                     </div>
                 </div>
 
