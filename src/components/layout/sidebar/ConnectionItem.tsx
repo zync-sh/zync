@@ -1,4 +1,4 @@
-import { useState, memo } from 'react';
+import { useRef, useState, memo } from 'react';
 import { useAppStore, Connection, Tab } from '../../../store/useAppStore';
 import { getCurrentDragSource } from '../../../lib/dragDrop';
 import { Settings } from 'lucide-react';
@@ -22,8 +22,10 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
     const openTab = useAppStore(state => state.openTab);
     const showToast = useAppStore(state => state.showToast);
     const addTransfer = useAppStore(state => state.addTransfer);
+    const failTransfer = useAppStore(state => state.failTransfer);
 
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+    const rowRef = useRef<HTMLDivElement>(null);
 
     const handleDrop = async (e: React.DragEvent) => {
         e.preventDefault();
@@ -63,6 +65,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                                 transferId
                             });
                         } catch (error: any) {
+                            failTransfer(transferId, error?.message || String(error));
                             if (error.message && !error.message.includes('destroy')) {
                                 showToast('error', `Transfer failed: ${error.message}`);
                             }
@@ -87,6 +90,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
     return (
         <>
             <div
+                ref={rowRef}
                 className={cn(
                     "group relative flex items-center transition-all cursor-pointer border select-none",
                     isCollapsed
@@ -103,10 +107,33 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                 onClick={(e) => {
                     e.preventDefault();
                 }}
+                role="button"
+                tabIndex={0}
+                aria-label={`Connection ${conn.name || conn.host}`}
                 onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     onOpenContextMenu(conn, e.clientX, e.clientY);
+                }}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openTab(conn.id);
+                        return;
+                    }
+
+                    const isContextMenuKey =
+                        (e.shiftKey && e.key === 'F10') ||
+                        e.key === 'ContextMenu' ||
+                        e.code === 'ContextMenu';
+
+                    if (isContextMenuKey) {
+                        e.preventDefault();
+                        const rect = rowRef.current?.getBoundingClientRect();
+                        const x = rect ? rect.left + rect.width / 2 : 0;
+                        const y = rect ? rect.top + rect.height / 2 : 0;
+                        onOpenContextMenu(conn, x, y);
+                    }
                 }}
                 onDoubleClick={() => openTab(conn.id)}
                 draggable
@@ -168,6 +195,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                                         e.stopPropagation();
                                         onEdit(conn);
                                     }}
+                                    aria-label="Edit connection"
                                     title="Edit Connection"
                                 >
                                     <Settings size={10} />

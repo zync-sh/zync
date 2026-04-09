@@ -33,6 +33,7 @@ export const FolderItem = memo(function FolderItem({
 }: FolderItemProps) {
     const isExpanded = expandedFolders.has(node.path);
     const [isDragOver, setIsDragOver] = useState(false);
+    const normalizePath = (path: string) => path.replace(/\/+$/, '');
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
@@ -51,11 +52,19 @@ export const FolderItem = memo(function FolderItem({
         if (connId) {
             updateConnectionFolder(connId, node.path);
         } else if (srcFolderPath) {
-            if (srcFolderPath === node.path) return;
-            if (node.path.startsWith(srcFolderPath + '/')) return;
+            const normalizedSource = normalizePath(srcFolderPath);
+            const normalizedTargetFolder = normalizePath(node.path);
 
-            const newName = `${node.path}/${srcFolderPath.split('/').pop()}`;
-            onMoveFolder(srcFolderPath, newName);
+            if (normalizedSource === normalizedTargetFolder) return;
+            if (normalizedTargetFolder.startsWith(`${normalizedSource}/`)) return;
+
+            const sourceBaseName = normalizedSource.split('/').pop();
+            if (!sourceBaseName) return;
+
+            const newName = normalizePath(`${normalizedTargetFolder}/${sourceBaseName}`);
+            if (newName === normalizedSource) return;
+
+            onMoveFolder(normalizedSource, newName);
         }
     };
 
@@ -70,6 +79,16 @@ export const FolderItem = memo(function FolderItem({
                     isDragOver && "bg-app-accent/10"
                 )}
                 onClick={() => toggleFolder(node.path)}
+                role="button"
+                tabIndex={0}
+                aria-expanded={isExpanded}
+                aria-label={`Folder ${node.name}`}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleFolder(node.path);
+                    }
+                }}
                 draggable
                 onDragStart={(e) => {
                     e.dataTransfer.setData('folder-path', node.path);
@@ -103,7 +122,7 @@ export const FolderItem = memo(function FolderItem({
                         </span>
                         <span className="ml-auto text-[10px] opacity-0 group-hover:opacity-60 mr-2">{node.connections.length}</span>
 
-                        <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                             <Button
                                 variant="ghost"
                                 size="icon"

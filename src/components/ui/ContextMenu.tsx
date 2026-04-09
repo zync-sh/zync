@@ -128,6 +128,25 @@ function getDefaultMaxHeight() {
   return window.innerHeight * MAX_HEIGHT_RATIO;
 }
 
+function getMenuItemBaseKey(item: ContextMenuItem): string {
+  if ('separator' in item) return 'separator';
+  const childrenSig = item.children?.map((child) => ('separator' in child ? 'sep' : child.label)).join('|') ?? '';
+  return `item:${item.label}:${item.variant ?? 'default'}:${childrenSig}`;
+}
+
+function renderMenuItems(items: ContextMenuItem[], onClose: () => void) {
+  const keyCounts = new Map<string, number>();
+
+  return items.map((item) => {
+    const baseKey = getMenuItemBaseKey(item);
+    const count = (keyCounts.get(baseKey) ?? 0) + 1;
+    keyCounts.set(baseKey, count);
+    const key = count === 1 ? baseKey : `${baseKey}#${count}`;
+
+    return <MenuItem key={key} item={item} onClose={onClose} />;
+  });
+}
+
 // ── ContextMenu ────────────────────────────────────────────────────
 
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
@@ -136,14 +155,21 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const [pos, setPos] = useState<MenuPosition>({ top: 0, left: 0 });
 
   useEffect(() => {
+    const isInsideAnyMenuLayer = (target: EventTarget | null) => {
+      if (!(target instanceof Node)) return false;
+      if (ref.current?.contains(target)) return true;
+      const submenuLayers = document.querySelectorAll('.context-menu-submenu-portal');
+      return Array.from(submenuLayers).some((layer) => layer.contains(target));
+    };
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      if (!isInsideAnyMenuLayer(e.target)) {
         onClose();
       }
     };
     const handleScroll = (e: Event) => {
       // Ignore scrolls inside the menu itself (when content overflows and scrolls)
-      if (ref.current && ref.current.contains(e.target as Node)) return;
+      if (isInsideAnyMenuLayer(e.target)) return;
       onClose();
     };
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -163,6 +189,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   // Measure while invisible, compute position, then reveal — all before paint
   useLayoutEffect(() => {
     if (!ref.current) return;
+    setReady(false);
     const { width, height } = ref.current.getBoundingClientRect();
     setPos(calcPosition(x, y, width, height));
     setReady(true);
@@ -180,9 +207,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       }}
       className={cn(menuPanelClass, 'context-menu-container')}
     >
-      {items.map((item, i) => (
-        <MenuItem key={i} item={item} onClose={onClose} />
-      ))}
+      {renderMenuItems(items, onClose)}
     </div>,
     document.body
   );
@@ -287,13 +312,11 @@ function MenuItem({ item, onClose }: { item: ContextMenuItem; onClose: () => voi
             opacity: submenuReady ? 1 : 0,
             pointerEvents: submenuReady ? 'auto' : 'none',
           }}
-          className={menuPanelClass}
+          className={cn(menuPanelClass, 'context-menu-submenu-portal')}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
-          {item.children!.map((child, i) => (
-            <MenuItem key={i} item={child} onClose={onClose} />
-          ))}
+          {renderMenuItems(item.children!, onClose)}
         </div>,
         document.body
       )}
