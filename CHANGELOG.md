@@ -5,17 +5,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 ## [Unreleased]
 
 ### Added
-- **Connection Domain Test Suite**: Added focused tests for connection domain, transforms, lifecycle, tab services, and tunnel auto-start behavior to lock refactor parity. ([088fdf9])
+- **Connection Domain Test Suite**: Added focused tests for connection domain, transforms, lifecycle, tab services, and tunnel auto-start behavior to lock refactor parity. ([d2a50c3])
 - **Connection Import Planning Module**: Added `importPlan` domain helpers to build deterministic import recommendations and apply decisions for create/update/skip flows. ([088fdf9])
 
 ### Changed
-- **Connection Flow Architecture**: Extracted connection logic into `src/features/connections` domain/application/infrastructure modules and routed store/modal flows through typed helpers. ([088fdf9])
+- **Connection Flow Architecture**: Extracted connection logic into `src/features/connections` domain/application/infrastructure modules and routed store/modal flows through typed helpers. ([d2a50c3])
 - **Add Connection Form UX**: Replaced multi-step manual entry with a compact single-scroll structure, mode chooser, validation-aware actions, and cleaner advanced options handling. ([088fdf9])
 - **Shared Modal/Select Primitives**: Extended modal shell slots and reworked select dropdown positioning/escape handling for bounded modal-safe behavior. ([088fdf9])
 
 ### Fixed
-- **Sidebar Host Drag-and-Drop**: Fixed root-folder drag/drop regressions so hosts can be moved reliably into folders and back to the main host area. ([088fdf9])
-- **Connection Import/Validation Edge Cases**: Hardened merge/id collision handling, normalization, field-level validation feedback, and null-safe feature pinning based on reviewed reliability findings. ([088fdf9])
+- **Sidebar Host Drag-and-Drop**: Fixed root-folder drag/drop regressions so hosts can be moved reliably into folders and back to the main host area. ([d2a50c3])
+- **Connection Import/Validation Edge Cases**: Hardened merge/id collision handling, normalization, field-level validation feedback, and null-safe feature pinning based on reviewed reliability findings. ([d2a50c3])
 
 ## [2.10.1]
 
