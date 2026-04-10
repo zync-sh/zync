@@ -8,6 +8,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Connection Domain Test Suite**: Added focused tests for connection domain, transforms, lifecycle, tab services, and tunnel auto-start behavior to lock refactor parity. ([d2a50c3])
 - **Connection Import Planning Module**: Added `importPlan` domain helpers to build deterministic import recommendations and apply decisions for create/update/skip flows. ([088fdf9])
 - **Source-Based SSH Import (Phase 1)**: Added source-driven import support for default `~/.ssh/config`, custom SSH config files, and pasted SSH config text through a unified backend source command. ([64cb56a])
+- **Connection Manual Smoke Checklist**: Added `tests/connectionManualSmokeChecklist.md` to standardize add/edit/import/cancellation release smoke validation. ([d0d56d7])
 
 ### Changed
 - **Connection Flow Architecture**: Extracted connection logic into `src/features/connections` domain/application/infrastructure modules and routed store/modal flows through typed helpers. ([d2a50c3])
@@ -15,6 +16,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Shared Modal/Select Primitives**: Extended modal shell slots and reworked select dropdown positioning/escape handling for bounded modal-safe behavior. ([088fdf9])
 - **Import SSH Modal UX**: Refined import modal density and hierarchy with header subtitle guidance, compact connection cards, sticky footer actions, and an extracted `ImportSummaryBar` for cleaner structure. ([fd1107c])
 - **Import Conflict Resolution UX**: Reworked the import list into a compact table-style layout, added conflict bulk-decision controls, and added an in-modal import completion report summary. ([5c7afc3])
+- **Import Modal State Handling**: Prevented open-session resets from store churn, removed index-based internalization fallback, and tightened stale async request handling for load/import actions. ([d0d56d7])
 
 ### Fixed
 - **Sidebar Host Drag-and-Drop**: Fixed root-folder drag/drop regressions so hosts can be moved reliably into folders and back to the main host area. ([d2a50c3])
@@ -23,6 +25,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Import Modal Reliability/Consistency**: Limited bulk conflict actions to selected conflicts, unified dropdown rendering with shared Select primitives, and aligned import payload typing in connection IPC helpers. ([5c7afc3])
 - **Import Source Reliability & IPC Wiring**: Added request-shape mapping for unified source import IPC calls, centralized SSH import text-size guardrails, improved file-source validation, and tightened parser alias/quote handling for safer import behavior. ([64cb56a])
 - **Connection Validation + Import Diagnostics**: Tightened host/username/key-path validation, added lightweight credential health hints in add/edit modal, and added source-level import diagnostics for clearer import troubleshooting feedback. ([636db7a])
+- **Connection Reliability Hardening**: Added file-source import size guardrails, fixed nested import modal close state, preserved unmatched duplicate records during merge, refined local terminal close behavior, and hardened transfer cancel cleanup/error handling. ([d0d56d7])
 
 ## [2.10.1]
 
