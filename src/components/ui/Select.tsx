@@ -27,6 +27,68 @@ interface SelectProps {
     portal?: boolean;
 }
 
+interface BoundsRect {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+}
+
+interface DropdownCoords {
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    openUpward: boolean;
+}
+
+const EDGE_MARGIN = 8;
+const DROPDOWN_GAP = 6;
+const MIN_PANEL_HEIGHT = 140;
+const MAX_PANEL_HEIGHT = 280;
+const MIN_LIST_HEIGHT = 120;
+const SEARCH_HEADER_HEIGHT = 44;
+const LIST_PADDING = 8;
+
+const createDefaultBounds = (): BoundsRect => ({
+    top: EDGE_MARGIN,
+    left: EDGE_MARGIN,
+    right: window.innerWidth - EDGE_MARGIN,
+    bottom: window.innerHeight - EDGE_MARGIN,
+    width: window.innerWidth - EDGE_MARGIN * 2,
+});
+
+const calculateDropdownCoords = (trigger: HTMLElement): DropdownCoords => {
+    const triggerRect = trigger.getBoundingClientRect();
+    const modalSurface = trigger.closest('[data-zync-modal-surface]') as HTMLElement | null;
+    const bounds: BoundsRect = modalSurface
+        ? {
+            top: modalSurface.getBoundingClientRect().top,
+            left: modalSurface.getBoundingClientRect().left,
+            right: modalSurface.getBoundingClientRect().right,
+            bottom: modalSurface.getBoundingClientRect().bottom,
+            width: modalSurface.getBoundingClientRect().width,
+        }
+        : createDefaultBounds();
+
+    const spaceBelow = Math.max(MIN_LIST_HEIGHT, bounds.bottom - triggerRect.bottom - DROPDOWN_GAP);
+    const spaceAbove = Math.max(MIN_LIST_HEIGHT, triggerRect.top - bounds.top - DROPDOWN_GAP);
+    const openUpward = spaceBelow < MIN_PANEL_HEIGHT && spaceAbove > spaceBelow;
+
+    const top = openUpward
+        ? Math.max(bounds.top + DROPDOWN_GAP, triggerRect.top - DROPDOWN_GAP - Math.min(spaceAbove, MAX_PANEL_HEIGHT))
+        : triggerRect.bottom + DROPDOWN_GAP;
+
+    return {
+        top,
+        left: Math.max(bounds.left + DROPDOWN_GAP, triggerRect.left),
+        width: Math.min(triggerRect.width, bounds.width - DROPDOWN_GAP * 2),
+        maxHeight: Math.min(openUpward ? spaceAbove : spaceBelow, MAX_PANEL_HEIGHT),
+        openUpward
+    };
+};
+
 export function Select({
     value,
     onChange,
@@ -45,22 +107,25 @@ export function Select({
     const dropdownId = `select-dropdown-${internalId}`;
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+    const [coords, setCoords] = useState<DropdownCoords>({ top: 0, left: 0, width: 0, maxHeight: MIN_LIST_HEIGHT, openUpward: false });
 
     const selectedOption = options.find(opt => opt.value === value);
 
     useLayoutEffect(() => {
-        if (isOpen && portal && containerRef.current) {
-            const rect = containerRef.current.getBoundingClientRect();
-            setCoords({
-                top: rect.bottom + 6,
-                left: rect.left,
-                width: rect.width
-            });
-        }
+        if (!(isOpen && portal && containerRef.current)) return;
+
+        setCoords(calculateDropdownCoords(containerRef.current));
     }, [isOpen, portal]);
 
     useEffect(() => {
+        const handleEscClose = (event: KeyboardEvent) => {
+            if (!isOpen) return;
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            setIsOpen(false);
+        };
+
         const handleClickOutside = (event: MouseEvent) => {
             // Check if click is inside the portal content (we can't easily ref the portal content from here without state/ref forwarding, 
             // but the containerRef only covers the trigger if portal is used)
@@ -85,40 +150,37 @@ export function Select({
         };
 
         if (isOpen) {
+            window.addEventListener('keydown', handleEscClose, { capture: true });
             document.addEventListener('mousedown', handleClickOutside);
-            // Calculate coords
+            let updateCoords: (() => void) | null = null;
             if (portal && containerRef.current) {
-                const updateCoords = () => {
-                    const rect = containerRef.current?.getBoundingClientRect();
-                    if (rect) {
-                        setCoords({
-                            top: rect.bottom + 6, // Added gap
-                            left: rect.left,
-                            width: rect.width
-                        });
-                    }
+                updateCoords = () => {
+                    if (!containerRef.current) return;
+                    setCoords(calculateDropdownCoords(containerRef.current));
                 };
                 window.addEventListener('resize', updateCoords);
                 window.addEventListener('scroll', updateCoords, true);
-
-                return () => {
+            }
+            return () => {
+                window.removeEventListener('keydown', handleEscClose, { capture: true });
+                document.removeEventListener('mousedown', handleClickOutside);
+                if (updateCoords) {
                     window.removeEventListener('resize', updateCoords);
                     window.removeEventListener('scroll', updateCoords, true);
-                };
-            }
+                }
+            };
         }
 
-        return () => {
-            document.removeEventListener('mousedown', handleClickOutside);
-        };
+        return undefined;
     }, [isOpen, portal, dropdownId]);
 
     const dropdownContent = (
         <motion.div
             id={dropdownId}
-            initial={{ opacity: 0, y: 2, scale: 0.995 }}
+            data-zync-select-open="true"
+            initial={{ opacity: 0, y: coords.openUpward ? -2 : 2, scale: 0.995 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 2, scale: 0.995 }}
+            exit={{ opacity: 0, y: coords.openUpward ? -2 : 2, scale: 0.995 }}
             transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
             style={portal ? {
                 position: 'absolute',
@@ -126,7 +188,7 @@ export function Select({
                 left: coords.left || 0,
                 width: coords.width > 0 ? coords.width : 'auto',
                 minWidth: '160px',
-                maxHeight: '400px',
+                maxHeight: `${coords.maxHeight}px`,
                 zIndex: 9999
             } : undefined}
             className={cn(
@@ -145,7 +207,10 @@ export function Select({
                         />
                     </div>
                 )}
-                <Command.List className="max-h-40 overflow-y-auto custom-scrollbar p-1 scroll-smooth">
+                <Command.List
+                    className="max-h-40 overflow-y-auto custom-scrollbar p-1 scroll-smooth"
+                    style={portal ? { maxHeight: `${Math.max(MIN_LIST_HEIGHT, coords.maxHeight - (showSearch ? SEARCH_HEADER_HEIGHT + LIST_PADDING : LIST_PADDING))}px` } : undefined}
+                >
                     <Command.Empty className="py-4 text-center text-[9px] text-app-muted/40 font-bold uppercase tracking-widest italic leading-none">
                         No hits
                     </Command.Empty>

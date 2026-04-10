@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   deleteFolderFromState,
+  findDuplicateConnectionByEndpoint,
   renameFolderInState,
   upsertConnectionInState,
   updateConnectionFolderInState,
@@ -57,6 +58,41 @@ await runTest('upsertConnectionInState persists implicit folder from edited or a
   const next = upsertConnectionInState(state, { id: '1', folder: 'team/backend', host: 'h', username: 'u', port: 22, name: 'n', status: 'disconnected' });
   assert.equal(next.connections.length, 1);
   assert.deepEqual(next.folders.map((f) => f.name), ['team/backend']);
+});
+
+await runTest('findDuplicateConnectionByEndpoint matches by normalized host, username, and port', () => {
+  const connections = [
+    { id: '1', host: 'Prod-Db', username: 'Root', port: 22, name: 'Prod DB' },
+    { id: '2', host: 'staging', username: 'ubuntu', port: 2222, name: 'Staging' },
+  ];
+
+  const duplicate = findDuplicateConnectionByEndpoint(connections, {
+    host: '  prod-db ',
+    username: ' root ',
+    port: '22',
+  });
+  assert.equal(duplicate?.id, '1');
+
+  const excluded = findDuplicateConnectionByEndpoint(connections, {
+    host: 'prod-db',
+    username: 'root',
+    port: 22,
+  }, '1');
+  assert.equal(excluded, null);
+
+  const noMatch = findDuplicateConnectionByEndpoint(connections, {
+    host: 'missing-host',
+    username: 'nobody',
+    port: 22,
+  });
+  assert.equal(noMatch, null);
+
+  const emptySetMatch = findDuplicateConnectionByEndpoint([], {
+    host: 'anything',
+    username: 'x',
+    port: 1,
+  });
+  assert.equal(emptySetMatch, null);
 });
 
 console.log('Connection service tests passed.');

@@ -12,9 +12,12 @@ export interface ConnectionDraft {
 
 export type AuthMode = 'password' | 'key';
 
+export type ConnectionDraftField = 'host' | 'username' | 'port' | 'privateKeyPath';
+
 export interface ValidationResult {
     ok: boolean;
     errors: string[];
+    fieldErrors: Partial<Record<ConnectionDraftField, string>>;
     normalizedPort: number;
     normalizedFolder: string;
 }
@@ -24,22 +27,35 @@ export const hasRequiredHostAndUsername = (draft: ConnectionDraft): boolean =>
 
 export const validateConnectionDraft = (draft: ConnectionDraft, authMode: AuthMode): ValidationResult => {
     const errors: string[] = [];
+    const fieldErrors: ValidationResult['fieldErrors'] = {};
     const normalizedPort = normalizePort(draft.port);
     const normalizedFolder = normalizeFolderPath(draft.folder);
+    const normalizedHost = normalizeText(draft.host);
+    const normalizedUsername = normalizeText(draft.username);
 
-    if (!hasRequiredHostAndUsername(draft)) {
-        if (!normalizeText(draft.host)) errors.push('Host is required.');
-        if (!normalizeText(draft.username)) errors.push('Username is required.');
+    if (!normalizedHost) {
+        const message = 'Host is required.';
+        errors.push(message);
+        fieldErrors.host = message;
+    }
+    if (!normalizedUsername) {
+        const message = 'Username is required.';
+        errors.push(message);
+        fieldErrors.username = message;
     }
     if (authMode === 'key' && !normalizeText(draft.privateKeyPath)) {
-        errors.push('Private key path is required for key auth.');
+        const message = 'Private key path is required for key auth.';
+        errors.push(message);
+        fieldErrors.privateKeyPath = message;
     }
 
     // Keep parity with current app behavior: invalid ports normalize to 22.
     // This validation only guards hard-invalid values that become NaN before normalize.
     if (draft.port !== undefined && Number.isNaN(Number(draft.port))) {
-        errors.push('Port must be a valid number.');
+        const message = 'Port must be a valid number.';
+        errors.push(message);
+        fieldErrors.port = message;
     }
 
-    return { ok: errors.length === 0, errors, normalizedPort, normalizedFolder };
+    return { ok: errors.length === 0, errors, fieldErrors, normalizedPort, normalizedFolder };
 };

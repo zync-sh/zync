@@ -12,6 +12,10 @@ import {
   mergeImportedConnectionsByName,
 } from '../.tmp-agent-tests/src/features/connections/domain/merge.js';
 import {
+  applyImportPlan,
+  buildImportPlanRows,
+} from '../.tmp-agent-tests/src/features/connections/domain/importPlan.js';
+import {
   buildConnectConfig,
 } from '../.tmp-agent-tests/src/features/connections/domain/connectionConfig.js';
 import {
@@ -93,6 +97,46 @@ runTest('import merge keeps existing ids for same names and dedups by id', () =>
   assert.equal(web?.id, 'a');
   assert.equal(web?.status, 'connected');
   assert.equal(cache?.id, 'y');
+});
+
+runTest('import plan builds recommendations and applies new/update/skip decisions', () => {
+  const existing = [
+    { id: 'a', name: 'web', host: 'prod', username: 'root', port: 22, status: 'connected' },
+  ];
+  const incoming = [
+    { id: 'x', name: 'web', host: 'prod', username: 'root', port: 22, status: 'disconnected' },
+    { id: 'y', name: 'worker', host: 'worker', username: 'ubuntu', port: 22, status: 'disconnected' },
+  ];
+
+  const rows = buildImportPlanRows(existing, incoming);
+  const webRow = rows.find((row) => row.imported.id === 'x');
+  const workerRow = rows.find((row) => row.imported.id === 'y');
+  assert.equal(webRow?.recommended, 'update');
+  assert.equal(workerRow?.recommended, 'new');
+
+  const updateApplied = applyImportPlan(existing, rows, {
+    x: 'update',
+    y: 'skip',
+  });
+  assert.equal(updateApplied.updated, 1);
+  assert.equal(updateApplied.created, 0);
+  assert.equal(updateApplied.skipped, 1);
+  assert.equal(updateApplied.toImport.length, 1);
+  assert.equal(updateApplied.toImport[0].targetId, 'a');
+  assert.equal(updateApplied.toImport[0].matchType, 'name');
+  assert.equal(updateApplied.renamed.length, 0);
+
+  const applied = applyImportPlan(existing, rows, {
+    x: 'new',
+    y: 'skip',
+  });
+
+  assert.equal(applied.created, 1);
+  assert.equal(applied.updated, 0);
+  assert.equal(applied.skipped, 1);
+  assert.equal(applied.toImport.length, 1);
+  assert.equal(applied.toImport[0].connection.name.startsWith('web (imported'), true);
+  assert.equal(applied.renamed.length, 1);
 });
 
 runTest('buildConnectConfig builds jump-host chain and rejects simple cycle', () => {

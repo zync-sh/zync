@@ -4,6 +4,19 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Connection Domain Test Suite**: Added focused tests for connection domain, transforms, lifecycle, tab services, and tunnel auto-start behavior to lock refactor parity. ([1176dcc])
+- **Connection Import Planning Module**: Added `importPlan` domain helpers to build deterministic import recommendations and apply decisions for create/update/skip flows. ([1176dcc])
+
+### Changed
+- **Connection Flow Architecture**: Extracted connection logic into `src/features/connections` domain/application/infrastructure modules and routed store/modal flows through typed helpers. ([1176dcc])
+- **Add Connection Form UX**: Replaced multi-step manual entry with a compact single-scroll structure, mode chooser, validation-aware actions, and cleaner advanced options handling. ([1176dcc])
+- **Shared Modal/Select Primitives**: Extended modal shell slots and reworked select dropdown positioning/escape handling for bounded modal-safe behavior. ([1176dcc])
+
+### Fixed
+- **Sidebar Host Drag-and-Drop**: Fixed root-folder drag/drop regressions so hosts can be moved reliably into folders and back to the main host area. ([1176dcc])
+- **Connection Import/Validation Edge Cases**: Hardened merge/id collision handling, normalization, field-level validation feedback, and null-safe feature pinning based on reviewed reliability findings. ([1176dcc])
+
 ## [2.10.1]
 
 ### Added
@@ -551,6 +564,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [b9e726f]: https://github.com/zync-sh/zync/commit/b9e726f
 [bd73a72]: https://github.com/zync-sh/zync/commit/bd73a72
 [1dfe5f3]: https://github.com/zync-sh/zync/commit/1dfe5f3
+[d2a50c3]: https://github.com/zync-sh/zync/commit/d2a50c3
 [2.10.1]: https://github.com/zync-sh/zync/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/zync-sh/zync/compare/v2.9.2...v2.10.0
 [2.9.2]: https://github.com/zync-sh/zync/compare/v2.9.1...v2.9.2

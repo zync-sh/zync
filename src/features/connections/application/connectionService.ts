@@ -4,6 +4,8 @@ import {
     isFolderOrDescendant,
     mergeImportedConnectionsByName,
     normalizeFolderPath,
+    normalizePort,
+    normalizeText,
     remapFolderPath,
     updateConnectionFolderExact,
 } from '../domain/index.js';
@@ -11,6 +13,12 @@ import {
 export interface ConnectionFolderState {
     connections: Connection[];
     folders: Folder[];
+}
+
+interface ConnectionEndpointDraft {
+    host?: string;
+    username?: string;
+    port?: number | string;
 }
 
 const ensureFolderExists = (folders: Folder[], folderName: string | undefined): Folder[] => {
@@ -24,6 +32,26 @@ export const mergeImportedConnections = (
     existingConnections: Connection[],
     importedConnections: Connection[],
 ): Connection[] => mergeImportedConnectionsByName(existingConnections, importedConnections).merged;
+
+export const findDuplicateConnectionByEndpoint = (
+    connections: Connection[],
+    draft: ConnectionEndpointDraft,
+    excludeConnectionId?: string | null,
+): Connection | null => {
+    const normalizedHost = normalizeText(draft.host).toLowerCase();
+    const normalizedUsername = normalizeText(draft.username).toLowerCase();
+    if (!normalizedHost || !normalizedUsername) return null;
+
+    const normalizedPort = normalizePort(draft.port);
+    return connections.find((connection) => {
+        if (excludeConnectionId && connection.id === excludeConnectionId) return false;
+        return (
+            normalizeText(connection.host).toLowerCase() === normalizedHost &&
+            normalizeText(connection.username).toLowerCase() === normalizedUsername &&
+            normalizePort(connection.port) === normalizedPort
+        );
+    }) || null;
+};
 
 export const addFolderToState = (
     state: ConnectionFolderState,
