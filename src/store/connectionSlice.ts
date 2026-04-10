@@ -189,8 +189,17 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         const targetIndex = nextConnections.findIndex((connection) => connection.id === item.targetId);
                         if (targetIndex >= 0) {
                             const existing = nextConnections[targetIndex];
+                            const preservedMetadata: Partial<Connection> = {
+                                isFavorite: existing.isFavorite,
+                                pinnedFeatures: existing.pinnedFeatures,
+                                icon: existing.icon,
+                                lastConnected: existing.lastConnected,
+                                homePath: existing.homePath,
+                                createdAt: existing.createdAt,
+                            };
                             nextConnections[targetIndex] = {
                                 ...normalizedConnection,
+                                ...preservedMetadata,
                                 id: existing.id,
                                 status: existing.status,
                             };

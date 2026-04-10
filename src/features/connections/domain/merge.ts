@@ -40,7 +40,15 @@ export const mergeImportedConnectionsByName = (
         const match = matches && matches.length > 0 ? matches.shift() : undefined;
         if (match) {
             updated += 1;
-            mergedImported.push({ ...incoming, id: match.id, status: match.status });
+            const preservedMetadata: Partial<Connection> = {
+                isFavorite: match.isFavorite,
+                pinnedFeatures: match.pinnedFeatures,
+                icon: match.icon,
+                lastConnected: match.lastConnected,
+                homePath: match.homePath,
+                createdAt: match.createdAt,
+            };
+            mergedImported.push({ ...incoming, ...preservedMetadata, id: match.id, status: match.status });
         } else {
             created += 1;
             const normalizedId = (incoming.id || '').trim();

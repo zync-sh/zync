@@ -1,5 +1,5 @@
 import type { Connection } from './types.js';
-import { normalizeFolderPath, normalizePort, normalizeTags } from './normalization.js';
+import { normalizeFolderPath, normalizeTags, normalizeText, parsePort } from './normalization.js';
 
 export type ConnectionAuthMode = 'password' | 'key';
 
@@ -17,6 +17,43 @@ interface ToBackendConfig {
 
 type ConfigCandidate = Connection | ConnectionFormDraft;
 
+const requireNormalizedText = (value: unknown, fieldName: string): string => {
+    const normalized = normalizeText(typeof value === 'string' ? value : String(value ?? ''));
+    if (!normalized) {
+        throw new Error(`${fieldName} is required.`);
+    }
+    return normalized;
+};
+
+const resolveAuthMethod = (
+    candidate: ConfigCandidate,
+    isForm: boolean,
+    authMode: ConnectionAuthMode,
+    password?: string,
+    keyPath?: string,
+): ToBackendConfig['auth_method'] => {
+    if (isForm) {
+        if (authMode === 'password') {
+            const normalizedPassword = normalizeText(password);
+            if (!normalizedPassword) throw new Error('Password is required for password auth.');
+            return { type: 'Password', password: normalizedPassword };
+        }
+        const normalizedKeyPath = normalizeText(keyPath);
+        if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
+        return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
+    }
+
+    if (candidate.password !== undefined) {
+        const normalizedPassword = normalizeText(candidate.password);
+        if (!normalizedPassword) throw new Error('Password is required for password auth.');
+        return { type: 'Password', password: normalizedPassword };
+    }
+
+    const normalizedKeyPath = normalizeText(candidate.privateKeyPath);
+    if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
+    return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
+};
+
 const toBackendConfig = (
     candidate: ConfigCandidate,
     formDraft: ConnectionFormDraft,
@@ -25,26 +62,21 @@ const toBackendConfig = (
     keyPath?: string,
 ): ToBackendConfig => {
     const isForm = candidate === formDraft;
+    const auth_method = resolveAuthMethod(candidate, isForm, authMode, password, keyPath);
+    const portResult = parsePort(candidate.port);
+    if (portResult.error) throw new Error(portResult.error);
 
-    let auth_method: ToBackendConfig['auth_method'];
-    if (isForm) {
-        if (authMode === 'password') {
-            auth_method = { type: 'Password', password: password || '' };
-        } else {
-            auth_method = { type: 'PrivateKey', key_path: keyPath || '', passphrase: null };
-        }
-    } else if (candidate.password !== undefined) {
-        auth_method = { type: 'Password', password: candidate.password };
-    } else {
-        auth_method = { type: 'PrivateKey', key_path: candidate.privateKeyPath || '', passphrase: null };
-    }
+    const id = requireNormalizedText(candidate.id, 'Connection id');
+    const name = requireNormalizedText(candidate.name, 'Connection name');
+    const host = requireNormalizedText(candidate.host, 'Host');
+    const username = requireNormalizedText(candidate.username, 'Username');
 
     return {
-        id: candidate.id || 'test-temp',
-        name: candidate.name || 'Test Connection',
-        host: candidate.host || '',
-        port: normalizePort(candidate.port),
-        username: candidate.username || '',
+        id,
+        name,
+        host,
+        port: portResult.normalizedPort,
+        username,
         auth_method,
         jump_host: null,
     };
@@ -77,21 +109,29 @@ export const buildConnectionSavePayload = ({
     authMethod: ConnectionAuthMode;
     editingConnectionId: string | null;
     connections: Connection[];
-}): Connection => ({
-    id: editingConnectionId || Math.random().toString(36).substr(2, 9),
-    name: formData.name || formData.host || '',
-    host: formData.host!,
-    username: formData.username!,
-    port: normalizePort(formData.port),
-    password: authMethod === 'password' ? formData.password : undefined,
-    privateKeyPath: authMethod === 'key' ? formData.privateKeyPath : undefined,
-    status: editingConnectionId ? (connections.find((c) => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
-    jumpServerId: formData.jumpServerId,
-    icon: formData.icon,
-    theme: formData.theme,
-    folder: normalizeFolderPath(formData.folder || ''),
-    tags: normalizeTags(formData.tags || []),
-});
+}): Connection => {
+    const host = requireNormalizedText(formData.host, 'Host');
+    const username = requireNormalizedText(formData.username, 'Username');
+    const name = normalizeText(formData.name) || host;
+    const portResult = parsePort(formData.port);
+    if (portResult.error) throw new Error(portResult.error);
+
+    return {
+        id: editingConnectionId || crypto.randomUUID(),
+        name,
+        host,
+        username,
+        port: portResult.normalizedPort,
+        password: authMethod === 'password' ? formData.password : undefined,
+        privateKeyPath: authMethod === 'key' ? formData.privateKeyPath : undefined,
+        status: editingConnectionId ? (connections.find((c) => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
+        jumpServerId: formData.jumpServerId,
+        icon: formData.icon,
+        theme: formData.theme,
+        folder: normalizeFolderPath(formData.folder || ''),
+        tags: normalizeTags(formData.tags || []),
+    };
+};
 
 export const buildConnectionTestPayload = ({
     formData,
@@ -102,8 +142,14 @@ export const buildConnectionTestPayload = ({
     authMethod: ConnectionAuthMode;
     connections: Connection[];
 }): ToBackendConfig => {
+    const preparedForm: ConnectionFormDraft = {
+        ...formData,
+        id: formData.id || 'test-temp',
+        name: formData.name || formData.host,
+    };
+
     return {
-        ...toBackendConfig(formData, formData, authMethod, formData.password, formData.privateKeyPath),
+        ...toBackendConfig(preparedForm, preparedForm, authMethod, formData.password, formData.privateKeyPath),
         jump_host: buildJumpChain(connections, formData.jumpServerId),
     };
 };
