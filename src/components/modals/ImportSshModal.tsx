@@ -63,6 +63,7 @@ interface ImportSourceBarProps {
     onBrowseFile: () => void;
     onTextContentChange: (value: string) => void;
     onLoad: () => void;
+    diagnostics: { severity: 'info' | 'success' | 'error'; message: string } | null;
 }
 
 const RESOLUTION_OPTIONS: Array<{ value: ImportResolution; label: string }> = [
@@ -252,6 +253,7 @@ function ImportSourceBar({
     onBrowseFile,
     onTextContentChange,
     onLoad,
+    diagnostics,
 }: ImportSourceBarProps) {
     const isLoadDisabled = loading
         || (sourceType === 'file' && !filePath.trim())
@@ -314,6 +316,21 @@ function ImportSourceBar({
                     className="w-full min-h-[90px] rounded-md border border-app-border bg-app-bg px-2 py-2 text-xs text-app-text outline-none focus:border-app-accent/60"
                 />
             )}
+
+            {diagnostics && (
+                <p
+                    className={cn(
+                        'text-[11px]',
+                        diagnostics.severity === 'error'
+                            ? 'text-red-400'
+                            : diagnostics.severity === 'success'
+                                ? 'text-emerald-300'
+                                : 'text-app-muted'
+                    )}
+                >
+                    {diagnostics.message}
+                </p>
+            )}
         </div>
     );
 }
@@ -333,6 +350,7 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
     const [isLoadingConfigs, setIsLoadingConfigs] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [sourceDiagnostics, setSourceDiagnostics] = useState<{ severity: 'info' | 'success' | 'error'; message: string } | null>(null);
     const [importReport, setImportReport] = useState<ImportReport | null>(null);
     const [bulkConflictDecision, setBulkConflictDecision] = useState<ImportResolution>('update');
 
@@ -354,6 +372,7 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
             setSearchQuery('');
             setIsSearchOpen(false);
             setError(null);
+            setSourceDiagnostics(null);
             setImportReport(null);
             setBulkConflictDecision('update');
         }
@@ -367,6 +386,7 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
     ) => {
         setIsLoadingConfigs(true);
         setError(null);
+        setSourceDiagnostics(null);
         try {
             const result: ImportedConnectionPayload[] = await importSshConfigBySourceIpc({
                 sourceType: source,
@@ -380,14 +400,26 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
                 setSelectedIds(new Set(normalizedConnections.map(c => c.id)));
                 setDecisions(createDefaultDecisionMap(baselineConnections, normalizedConnections));
                 setImportReport(null);
+                setSourceDiagnostics({
+                    severity: 'success',
+                    message: `Loaded ${normalizedConnections.length} connection(s) from ${IMPORT_SOURCE_LABELS[source]}.`,
+                });
             } else {
                 setConfigs([]);
                 setSelectedIds(new Set());
                 setDecisions({});
+                setSourceDiagnostics({
+                    severity: 'info',
+                    message: `No connections were parsed from ${IMPORT_SOURCE_LABELS[source]}.`,
+                });
             }
         } catch (err: any) {
             console.error('Failed to import SSH config', err);
             setError(err.message || 'Failed to read SSH config file');
+            setSourceDiagnostics({
+                severity: 'error',
+                message: `Import failed from ${IMPORT_SOURCE_LABELS[source]}. Check source content/path and permissions.`,
+            });
             setConfigs([]);
             setSelectedIds(new Set());
             setDecisions({});
@@ -404,6 +436,7 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
         setSourceType(nextSource);
         setError(null);
         setImportReport(null);
+        setSourceDiagnostics(null);
         setConfigs([]);
         setSelectedIds(new Set());
         setDecisions({});
@@ -596,6 +629,7 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
                     onBrowseFile={handleBrowseFile}
                     onTextContentChange={setSourceText}
                     onLoad={handleLoadConfigs}
+                    diagnostics={sourceDiagnostics}
                 />
 
                 {!isLoadingConfigs && !error && hasConfigs && (

@@ -9,7 +9,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { cn } from '../../lib/utils';
 import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, ChevronDown, ChevronRight } from 'lucide-react';
 import { testConnectionIpc, type ConnectionConfigPayload } from '../../features/connections/infrastructure/connectionIpc';
-import { buildConnectionSavePayload, buildConnectionTestPayload, validateConnectionDraft } from '../../features/connections/domain';
+import { buildConnectionSavePayload, buildConnectionTestPayload, getCredentialHealthChecks, validateConnectionDraft } from '../../features/connections/domain';
 import { findDuplicateConnectionByEndpoint } from '../../features/connections/application/connectionService';
 
 const ImportSshModal = lazy(() => import('./ImportSshModal').then(mod => ({ default: mod.ImportSshModal })));
@@ -106,6 +106,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
     const duplicateConnection = useMemo(
         () => findDuplicateConnectionByEndpoint(connections, formData, editingConnectionId),
         [connections, editingConnectionId, formData]
+    );
+    const credentialHealthChecks = useMemo(
+        () => getCredentialHealthChecks(formData, authMethod),
+        [formData, authMethod]
     );
     const canSave = validation.ok && (!duplicateConnection || allowDuplicateEndpoint);
     const selectedIcon = formData.icon || 'Server';
@@ -435,6 +439,21 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         {testMessage}
                                     </span>
                                 </div>
+
+                                {credentialHealthChecks.length > 0 && (
+                                    <div className="rounded-md border border-app-border bg-app-bg/50 px-3 py-2 text-[11px] space-y-1">
+                                        {credentialHealthChecks.map((check, index) => (
+                                            <p
+                                                key={`${check.message}-${index}`}
+                                                className={cn(
+                                                    check.severity === 'warning' ? 'text-amber-300' : 'text-app-muted'
+                                                )}
+                                            >
+                                                {check.message}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
 
                                 {duplicateConnection && (
                                     <div className={cn(
