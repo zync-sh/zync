@@ -57,10 +57,14 @@ export const addFolderToState = (
     state: ConnectionFolderState,
     name: string,
     tags?: string[],
-): ConnectionFolderState => ({
-    ...state,
-    folders: addFolderExact(state.folders, name, tags),
-});
+): ConnectionFolderState => {
+    const canonicalName = normalizeFolderPath(name);
+    if (!canonicalName) return state;
+    return {
+        ...state,
+        folders: addFolderExact(state.folders, canonicalName, tags),
+    };
+};
 
 export const deleteFolderFromState = (
     state: ConnectionFolderState,
@@ -132,13 +136,15 @@ export const upsertConnectionInState = (
     state: ConnectionFolderState,
     connection: Connection,
 ): ConnectionFolderState => {
+    const normalizedFolder = normalizeFolderPath(connection.folder || '');
+    const nextConnection: Connection = { ...connection, folder: normalizedFolder };
     const exists = state.connections.some((item) => item.id === connection.id);
     const nextConnections = exists
-        ? state.connections.map((item) => (item.id === connection.id ? connection : item))
-        : [...state.connections, connection];
+        ? state.connections.map((item) => (item.id === connection.id ? nextConnection : item))
+        : [...state.connections, nextConnection];
 
     return {
         connections: nextConnections,
-        folders: ensureFolderExists(state.folders, connection.folder),
+        folders: ensureFolderExists(state.folders, normalizedFolder),
     };
 };

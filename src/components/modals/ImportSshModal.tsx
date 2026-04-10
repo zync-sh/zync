@@ -430,6 +430,16 @@ export function ImportSshModal({ isOpen, onClose, onImport, onImportReport }: Im
                                             className="shrink-0 self-start"
                                             onClick={(event) => event.stopPropagation()}
                                             onMouseDown={(event) => event.stopPropagation()}
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Enter' || event.key === ' ') {
+                                                    event.stopPropagation();
+                                                }
+                                            }}
+                                            onKeyUp={(event) => {
+                                                if (event.key === 'Enter' || event.key === ' ') {
+                                                    event.stopPropagation();
+                                                }
+                                            }}
                                         >
                                             <Select
                                                 value={decisions[config.id] || row.recommended}
