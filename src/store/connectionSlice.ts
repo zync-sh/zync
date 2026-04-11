@@ -48,7 +48,7 @@ export interface ConnectionSlice {
     addConnection: (conn: Connection, isTemp?: boolean) => void;
     editConnection: (conn: Connection) => void;
     deleteConnection: (id: string) => void;
-    importConnections: (conns: Connection[] | ImportPlanItem[]) => void;
+    importConnections: (conns: Connection[] | ImportPlanItem[], importedFolders?: Folder[]) => void;
     clearConnections: () => void;
 
     // Connection Actions
@@ -165,7 +165,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         });
     },
 
-    importConnections: (newConns) => {
+    importConnections: (newConns, importedFolders = []) => {
         set(state => {
             console.log('[IMPORT] Raw Imported Connections:', newConns);
             const isPlanItems = Array.isArray(newConns)
@@ -222,6 +222,18 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 folder: normalizeFolderPath(connection.folder || ''),
             }));
             const folderMap = new Map(state.folders.map((folder) => [normalizeFolderPath(folder.name), folder] as const));
+            importedFolders.forEach((folder) => {
+                const normalized = normalizeFolderPath(folder.name);
+                if (!normalized) return;
+                const existing = folderMap.get(normalized);
+                if (existing) {
+                    if (folder.tags && folder.tags.length > 0) {
+                        existing.tags = folder.tags;
+                    }
+                    return;
+                }
+                folderMap.set(normalized, { ...folder, name: normalized });
+            });
             finalConns.forEach((connection) => {
                 const normalized = normalizeFolderPath(connection.folder || '');
                 if (!normalized) return;

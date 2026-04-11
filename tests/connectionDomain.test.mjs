@@ -33,7 +33,13 @@ function runTest(name, fn) {
     fn();
     console.log(`PASS ${name}`);
   } catch (error) {
-    console.error(`FAIL ${name}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`FAIL ${name}: ${message}`);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    } else {
+      console.error(error);
+    }
     throw error;
   }
 }

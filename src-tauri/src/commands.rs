@@ -16,6 +16,32 @@ use crate::tunnel::TunnelManager;
 use serde::{Deserialize, Serialize};
 
 const MAX_IMPORT_TEXT_BYTES: usize = 1_048_576; // 1 MiB
+const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionExportRequest {
+    pub path: String,
+    pub format: String, // zync | json | csv | ssh_config
+    pub connection_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionImportRequest {
+    pub path: String,
+    pub format: Option<String>, // auto | zync | json | csv
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ZyncConnectionsExport {
+    format: String,
+    version: u32,
+    exported_at_ms: u64,
+    connections: Vec<SavedConnection>,
+    folders: Vec<Folder>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct SystemInfo {
@@ -627,6 +653,430 @@ pub async fn connections_save(
     std::fs::write(file_path, json).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn csv_bool(value: Option<bool>) -> String {
+    match value {
+        Some(true) => "true".to_string(),
+        Some(false) => "false".to_string(),
+        None => "".to_string(),
+    }
+}
+
+fn csv_join(values: &Option<Vec<String>>) -> String {
+    values
+        .as_ref()
+        .map(|items| items.join(";"))
+        .unwrap_or_default()
+}
+
+fn connection_to_csv_line(connection: &SavedConnection) -> String {
+    let fields = vec![
+        csv_escape(&connection.id),
+        csv_escape(&connection.name),
+        csv_escape(&connection.host),
+        connection.port.to_string(),
+        csv_escape(&connection.username),
+        csv_escape(&connection.password.clone().unwrap_or_default()),
+        csv_escape(&connection.private_key_path.clone().unwrap_or_default()),
+        csv_escape(&connection.jump_server_id.clone().unwrap_or_default()),
+        csv_escape(&connection.folder.clone().unwrap_or_default()),
+        csv_escape(&connection.theme.clone().unwrap_or_default()),
+        csv_escape(&csv_join(&connection.tags)),
+        csv_escape(&csv_bool(connection.is_favorite)),
+        csv_escape(&csv_join(&connection.pinned_features)),
+        connection.created_at.map(|value| value.to_string()).unwrap_or_default(),
+        connection
+            .last_connected
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    ];
+    fields.join(",")
+}
+
+fn normalize_folder_path(value: &str) -> String {
+    value
+        .split('/')
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn build_host_alias(connection: &SavedConnection) -> String {
+    let mut alias = connection
+        .name
+        .trim()
+        .replace(char::is_whitespace, "-")
+        .replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.', "-")
+        .trim_matches('-')
+        .to_string();
+
+    if alias.is_empty() {
+        alias = connection
+            .host
+            .trim()
+            .replace(char::is_whitespace, "-")
+            .replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.', "-")
+            .trim_matches('-')
+            .to_string();
+    }
+
+    if alias.is_empty() {
+        alias = connection.id.clone();
+    }
+
+    alias
+}
+
+fn filter_export_folders(all_folders: &[Folder], selected_connections: &[SavedConnection]) -> Vec<Folder> {
+    let mut required = std::collections::HashSet::new();
+
+    for connection in selected_connections {
+        let normalized = connection
+            .folder
+            .as_deref()
+            .map(normalize_folder_path)
+            .unwrap_or_default();
+        if normalized.is_empty() {
+            continue;
+        }
+        let mut current = String::new();
+        for segment in normalized.split('/') {
+            if current.is_empty() {
+                current = segment.to_string();
+            } else {
+                current.push('/');
+                current.push_str(segment);
+            }
+            required.insert(current.clone());
+        }
+    }
+
+    all_folders
+        .iter()
+        .filter_map(|folder| {
+            let normalized = normalize_folder_path(&folder.name);
+            if normalized.is_empty() || !required.contains(&normalized) {
+                return None;
+            }
+            let mut next = folder.clone();
+            next.name = normalized;
+            Some(next)
+        })
+        .collect()
+}
+
+fn split_csv_row(row: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = row.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_quotes {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    current.push('"');
+                    let _ = chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                current.push(ch);
+            }
+        } else if ch == '"' {
+            in_quotes = true;
+        } else if ch == ',' {
+            fields.push(current.trim().to_string());
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+
+    fields.push(current.trim().to_string());
+    fields
+}
+
+fn parse_bool_field(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "y" => Some(true),
+        "false" | "0" | "no" | "n" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_csv_connections(content: &str) -> Result<Vec<SavedConnection>, String> {
+    let mut lines = content.lines().filter(|line| !line.trim().is_empty());
+    let Some(header_line) = lines.next() else {
+        return Ok(vec![]);
+    };
+    let headers = split_csv_row(header_line)
+        .into_iter()
+        .map(|header| header.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    let index_of = |name: &str| headers.iter().position(|header| header == name);
+    let id_idx = index_of("id");
+    let name_idx = index_of("name")
+        .or_else(|| index_of("connection_name"))
+        .ok_or_else(|| "CSV missing required 'name' column.".to_string())?;
+    let host_idx = index_of("host")
+        .or_else(|| index_of("hostname"))
+        .ok_or_else(|| "CSV missing required 'host' column.".to_string())?;
+    let username_idx = index_of("username")
+        .or_else(|| index_of("user"))
+        .ok_or_else(|| "CSV missing required 'username' column.".to_string())?;
+    let port_idx = index_of("port");
+    let password_idx = index_of("password");
+    let key_idx = index_of("privatekeypath").or_else(|| index_of("private_key_path"));
+    let jump_idx = index_of("jumpserverid").or_else(|| index_of("jump_server_id"));
+    let folder_idx = index_of("folder");
+    let theme_idx = index_of("theme");
+    let tags_idx = index_of("tags");
+    let favorite_idx = index_of("isfavorite").or_else(|| index_of("is_favorite"));
+    let pinned_idx = index_of("pinnedfeatures").or_else(|| index_of("pinned_features"));
+    let created_idx = index_of("createdat").or_else(|| index_of("created_at"));
+    let last_connected_idx = index_of("lastconnected").or_else(|| index_of("last_connected"));
+
+    let mut parsed = Vec::new();
+    for line in lines {
+        let fields = split_csv_row(line);
+        let field = |idx: Option<usize>| -> String {
+            idx.and_then(|i| fields.get(i).cloned()).unwrap_or_default()
+        };
+
+        let host = field(Some(host_idx)).trim().to_string();
+        let username = field(Some(username_idx)).trim().to_string();
+        if host.is_empty() || username.is_empty() {
+            continue;
+        }
+
+        let id = field(id_idx).trim().to_string();
+        let name = field(Some(name_idx)).trim().to_string();
+        let port = field(port_idx).parse::<u16>().unwrap_or(22);
+        let tags = field(tags_idx)
+            .split(';')
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let pinned_features = field(pinned_idx)
+            .split(';')
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+
+        parsed.push(SavedConnection {
+            id: if id.is_empty() { uuid::Uuid::new_v4().to_string() } else { id },
+            name: if name.is_empty() { host.clone() } else { name },
+            host,
+            port,
+            username,
+            password: {
+                let value = field(password_idx);
+                if value.is_empty() { None } else { Some(value) }
+            },
+            private_key_path: {
+                let value = field(key_idx);
+                if value.is_empty() { None } else { Some(value) }
+            },
+            jump_server_id: {
+                let value = field(jump_idx);
+                if value.is_empty() { None } else { Some(value) }
+            },
+            last_connected: field(last_connected_idx).parse::<u64>().ok(),
+            icon: None,
+            folder: {
+                let value = field(folder_idx);
+                if value.is_empty() { None } else { Some(value) }
+            },
+            theme: {
+                let value = field(theme_idx);
+                if value.is_empty() { None } else { Some(value) }
+            },
+            tags: if tags.is_empty() { None } else { Some(tags) },
+            created_at: field(created_idx).parse::<u64>().ok(),
+            is_favorite: parse_bool_field(&field(favorite_idx)),
+            pinned_features: if pinned_features.is_empty() { None } else { Some(pinned_features) },
+        });
+    }
+
+    Ok(parsed)
+}
+
+fn build_ssh_config_export(connections: &[SavedConnection]) -> String {
+    let alias_by_id = connections
+        .iter()
+        .map(|connection| (connection.id.clone(), build_host_alias(connection)))
+        .collect::<HashMap<_, _>>();
+
+    let mut output = String::new();
+    for connection in connections {
+        let alias = alias_by_id
+            .get(&connection.id)
+            .cloned()
+            .unwrap_or_else(|| build_host_alias(connection));
+
+        output.push_str(&format!("Host {}\n", alias));
+        output.push_str(&format!("  HostName {}\n", connection.host));
+        output.push_str(&format!("  User {}\n", connection.username));
+        output.push_str(&format!("  Port {}\n", connection.port));
+        if let Some(key_path) = &connection.private_key_path {
+            if !key_path.trim().is_empty() {
+                output.push_str(&format!("  IdentityFile {}\n", key_path));
+            }
+        }
+        if let Some(jump_id) = &connection.jump_server_id {
+            if let Some(jump_alias) = alias_by_id.get(jump_id) {
+                output.push_str(&format!("  ProxyJump {}\n", jump_alias));
+            }
+        }
+        output.push('\n');
+    }
+    output
+}
+
+#[tauri::command]
+pub async fn connections_export_to_file(
+    app: AppHandle,
+    request: ConnectionExportRequest,
+) -> Result<String, String> {
+    let path = request.path.trim();
+    if path.is_empty() {
+        return Err("Export path is required.".to_string());
+    }
+
+    let data = connections_get(app).await?;
+    let SavedData {
+        connections: all_connections,
+        folders: all_folders,
+    } = data;
+    let is_scoped_export = request.connection_ids.is_some();
+    let selected_connections = if let Some(ids) = request.connection_ids {
+        let id_set = ids.into_iter().collect::<std::collections::HashSet<_>>();
+        all_connections
+            .into_iter()
+            .filter(|connection| id_set.contains(&connection.id))
+            .collect::<Vec<_>>()
+    } else {
+        all_connections
+    };
+
+    let format = request.format.trim().to_ascii_lowercase();
+    let content = match format.as_str() {
+        "zync" => {
+            let folders = if is_scoped_export {
+                filter_export_folders(&all_folders, &selected_connections)
+            } else {
+                all_folders
+            };
+            serde_json::to_string_pretty(&ZyncConnectionsExport {
+                format: "zync-connections".to_string(),
+                version: 1,
+                exported_at_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0),
+                connections: selected_connections,
+                folders,
+            })
+            .map_err(|error| error.to_string())?
+        }
+        "json" => serde_json::to_string_pretty(&selected_connections).map_err(|error| error.to_string())?,
+        "csv" => {
+            let mut lines = vec![
+                "id,name,host,port,username,password,privateKeyPath,jumpServerId,folder,theme,tags,isFavorite,pinnedFeatures,createdAt,lastConnected".to_string(),
+            ];
+            lines.extend(selected_connections.iter().map(connection_to_csv_line));
+            lines.join("\n")
+        }
+        "ssh_config" | "config" => build_ssh_config_export(&selected_connections),
+        _ => return Err("Unsupported export format.".to_string()),
+    };
+
+    std::fs::write(path, content).map_err(|error| format!("Failed to write export file: {}", error))?;
+    Ok(path.to_string())
+}
+
+#[tauri::command]
+pub async fn connections_import_from_file(
+    request: ConnectionImportRequest,
+) -> Result<SavedData, String> {
+    let path = request.path.trim();
+    if path.is_empty() {
+        return Err("Import path is required.".to_string());
+    }
+
+    let file_path = std::path::Path::new(path);
+    if !file_path.exists() {
+        return Err("Import file not found.".to_string());
+    }
+    if !file_path.is_file() {
+        return Err("Import path is not a file.".to_string());
+    }
+    let metadata = std::fs::metadata(file_path).map_err(|error| format!("Cannot read import file metadata: {}", error))?;
+    if metadata.len() > MAX_CONNECTION_IMPORT_BYTES {
+        return Err("Import file is too large (max 5 MiB).".to_string());
+    }
+
+    let content = std::fs::read_to_string(file_path).map_err(|error| format!("Failed to read import file: {}", error))?;
+    let requested_format = request
+        .format
+        .unwrap_or_else(|| "auto".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    let extension = file_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let effective_format = if requested_format == "auto" {
+        if extension == "csv" {
+            "csv".to_string()
+        } else {
+            "json".to_string()
+        }
+    } else {
+        requested_format
+    };
+
+    match effective_format.as_str() {
+        "csv" => Ok(SavedData {
+            connections: parse_csv_connections(&content)?,
+            folders: vec![],
+        }),
+        "json" | "zync" => {
+            if let Ok(zync_data) = serde_json::from_str::<ZyncConnectionsExport>(&content) {
+                return Ok(SavedData {
+                    connections: zync_data.connections,
+                    folders: zync_data.folders,
+                });
+            }
+            if let Ok(saved_data) = serde_json::from_str::<SavedData>(&content) {
+                return Ok(saved_data);
+            }
+            if let Ok(connections) = serde_json::from_str::<Vec<SavedConnection>>(&content) {
+                return Ok(SavedData {
+                    connections,
+                    folders: vec![],
+                });
+            }
+            Err("Unsupported JSON import shape. Expected zync/json connection export.".to_string())
+        }
+        _ => Err("Unsupported import format.".to_string()),
+    }
 }
 
 #[tauri::command]

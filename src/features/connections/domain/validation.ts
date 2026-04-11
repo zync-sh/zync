@@ -35,9 +35,15 @@ const isIpv4Literal = (value: string): boolean => {
     });
 };
 
-const isIpv6Literal = (value: string): boolean => {
+/**
+ * Heuristic only (not RFC-complete IPv6 validation).
+ * Used to suppress an info-level host-format hint in form UX.
+ * TODO: keep this helper scoped to hint logic; do not reuse for strict network validation.
+ */
+const isLikelyIpv6Literal = (value: string): boolean => {
     const trimmed = value.trim();
     if (!trimmed.includes(':')) return false;
+    if (!/[0-9a-f]/i.test(trimmed)) return false;
     return /^[0-9a-f:.]+$/i.test(trimmed);
 };
 
@@ -46,7 +52,7 @@ const isIpLiteral = (value: string): boolean => {
     const normalized = value.startsWith('[') && value.endsWith(']')
         ? value.slice(1, -1)
         : value;
-    return isIpv4Literal(normalized) || isIpv6Literal(normalized);
+    return isIpv4Literal(normalized) || isLikelyIpv6Literal(normalized);
 };
 
 export const hasRequiredHostAndUsername = (draft: ConnectionDraft): boolean =>
