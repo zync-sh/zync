@@ -67,6 +67,15 @@ pub(crate) fn validate_path(path: &str) -> Result<(), String> {
             trimmed
         ));
     }
+    // Block actual parent-directory traversal components.
+    // Catches: ../../etc/passwd, /tmp/../etc/shadow, ./../../root, etc.
+    // Allows legitimate filenames like `config..bak`.
+    let has_parent_traversal = std::path::Path::new(trimmed)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir));
+    if has_parent_traversal {
+        return Err("Path traversal sequences ('..') are not allowed.".into());
+    }
     if trimmed.len() > MAX_INPUT_LEN {
         return Err(format!(
             "Path is too long ({} chars, max {}).",
@@ -175,7 +184,13 @@ mod tests {
     #[test]
     fn validates_paths() {
         assert!(validate_path("/tmp/file.txt").is_ok());
+        assert!(validate_path("/var/log/syslog").is_ok());
+        assert!(validate_path("/tmp/config..bak").is_ok());
         assert!(validate_path("/").is_err());
+        assert!(validate_path("..").is_err());
+        assert!(validate_path("../../etc/passwd").is_err());
+        assert!(validate_path("/tmp/../etc/shadow").is_err());
+        assert!(validate_path("./../../root").is_err());
     }
 
     #[test]

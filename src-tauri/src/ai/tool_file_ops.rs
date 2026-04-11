@@ -90,8 +90,9 @@ pub(crate) async fn write_file(
         Ok(_) => format!("Written: {}", path),
         Err(error) => format!("Write failed: {}", error),
     };
-    emit_output(ctx.app, ctx.run_id, tool_call_id, &message);
-    result.map(|_| message)
+    let capped = cap_output(ctx.session_dir.as_deref(), Some(tool_call_id), message);
+    emit_output(ctx.app, ctx.run_id, tool_call_id, &capped);
+    result.map(|_| capped)
 }
 
 async fn do_write_file(
