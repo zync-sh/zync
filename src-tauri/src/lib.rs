@@ -170,6 +170,8 @@ pub fn run() {
             commands::terminal_close,
             commands::connections_get,
             commands::connections_save,
+            commands::connections_export_to_file,
+            commands::connections_import_from_file,
             commands::fs_list,
             commands::fs_read_file,
             commands::fs_write_file,

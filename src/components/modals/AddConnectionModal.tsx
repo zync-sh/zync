@@ -7,10 +7,14 @@ import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Connection } from '../../store/useAppStore';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cn } from '../../lib/utils';
-import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, ChevronDown, ChevronRight } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, Files, ChevronDown, ChevronRight } from 'lucide-react';
 import { testConnectionIpc, type ConnectionConfigPayload } from '../../features/connections/infrastructure/connectionIpc';
 import { buildConnectionSavePayload, buildConnectionTestPayload, getCredentialHealthChecks, validateConnectionDraft } from '../../features/connections/domain';
 import { findDuplicateConnectionByEndpoint } from '../../features/connections/application/connectionService';
+import {
+    importConnectionsFromFileIpc,
+    type ConnectionExchangeImportFormat,
+} from '../../features/connections/infrastructure/connectionTransfer';
 
 const ImportSshModal = lazy(() => import('./ImportSshModal').then(mod => ({ default: mod.ImportSshModal })));
 
@@ -223,6 +227,43 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         }
     };
 
+    const inferImportFormatFromPath = (path: string): ConnectionExchangeImportFormat => {
+        const normalized = path.trim().toLowerCase();
+        if (normalized.endsWith('.csv')) return 'csv';
+        if (normalized.endsWith('.zync') || normalized.endsWith('.zync.json')) return 'zync';
+        if (normalized.endsWith('.json')) return 'json';
+        return 'auto';
+    };
+
+    const handleImportConnectionsFile = async () => {
+        try {
+            const selected = await open({
+                multiple: false,
+                directory: false,
+            });
+
+            if (!selected) return;
+            const path = Array.isArray(selected) ? selected[0] : selected;
+            if (!path || typeof path !== 'string') return;
+
+            const imported = await importConnectionsFromFileIpc({
+                path,
+                format: inferImportFormatFromPath(path),
+            });
+
+            const mappedConnections: Connection[] = (imported.connections || []).map((connection) => ({
+                ...connection,
+                status: 'disconnected',
+            }));
+            importConnections(mappedConnections, imported.folders || []);
+            showToast('success', `Imported ${mappedConnections.length} connection(s) from file.`);
+            onClose();
+        } catch (error: any) {
+            const message = error?.message || String(error);
+            showToast('error', `Failed to import connection file: ${message}`);
+        }
+    };
+
     return (
         <Modal
             isOpen={isOpen}
@@ -240,33 +281,53 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                         <div className="w-full max-w-lg space-y-4">
                             <h4 className="text-base font-semibold text-app-text text-center tracking-tight">Choose how to create this connection</h4>
                             <p className="text-xs text-app-muted text-center leading-relaxed">You can import existing hosts from ~/.ssh/config or add one manually.</p>
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="flex flex-col gap-2.5">
                                 <button
                                     type="button"
                                     onClick={() => setIsImportModalOpen(true)}
-                                    className="group min-h-[136px] rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-4 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)]"
+                                    className="group rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-3.5 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)]"
                                 >
-                                    <div className="flex h-full flex-col items-start">
-                                        <div className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] text-[var(--color-app-accent)]">
+                                    <div className="flex items-start gap-3">
+                                        <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] text-[var(--color-app-accent)]">
                                             <FileText className="w-4 h-4" />
                                         </div>
-                                        <span className="text-sm font-semibold text-app-text">Import Config</span>
-                                        <span className="mt-1 text-xs text-app-muted leading-relaxed">Load hosts from your SSH config file</span>
-                                        <span className="mt-auto pt-3 text-[11px] font-medium text-app-accent/90">Recommended if config already exists</span>
+                                        <div className="flex min-w-0 flex-1 flex-col">
+                                            <span className="text-sm font-semibold text-app-text">Import Config</span>
+                                            <span className="mt-0.5 text-xs text-app-muted leading-relaxed">Load hosts from your SSH config file</span>
+                                            <span className="mt-2 text-[11px] font-medium text-app-accent/90">Recommended if config already exists</span>
+                                        </div>
+                                    </div>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleImportConnectionsFile}
+                                    className="group rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-3.5 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)]"
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] text-[var(--color-app-accent)]">
+                                            <Files className="w-4 h-4" />
+                                        </div>
+                                        <div className="flex min-w-0 flex-1 flex-col">
+                                            <span className="text-sm font-semibold text-app-text">Import File</span>
+                                            <span className="mt-0.5 text-xs text-app-muted leading-relaxed">Load connections from Zync, JSON, or CSV export files</span>
+                                            <span className="mt-2 text-[11px] font-medium text-app-accent/90">Best for bulk migration</span>
+                                        </div>
                                     </div>
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEntryMode('manual')}
-                                    className="group min-h-[136px] rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-4 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)]"
+                                    className="group rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/35 p-3.5 text-left transition-all hover:border-[var(--color-app-accent)]/35 hover:bg-[var(--color-app-surface)]"
                                 >
-                                    <div className="flex h-full flex-col items-start">
-                                        <div className="mb-2 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] text-[var(--color-app-accent)]">
+                                    <div className="flex items-start gap-3">
+                                        <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)] text-[var(--color-app-accent)]">
                                             <Laptop className="w-4 h-4" />
                                         </div>
-                                        <span className="text-sm font-semibold text-app-text">Add Manually</span>
-                                        <span className="mt-1 text-xs text-app-muted leading-relaxed">Enter host, auth, and optional jump settings</span>
-                                        <span className="mt-auto pt-3 text-[11px] font-medium text-app-accent/90">Best for one-off quick entries</span>
+                                        <div className="flex min-w-0 flex-1 flex-col">
+                                            <span className="text-sm font-semibold text-app-text">Add Manually</span>
+                                            <span className="mt-0.5 text-xs text-app-muted leading-relaxed">Enter host, auth, and optional jump settings</span>
+                                            <span className="mt-2 text-[11px] font-medium text-app-accent/90">Best for one-off quick entries</span>
+                                        </div>
                                     </div>
                                 </button>
                             </div>

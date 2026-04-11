@@ -16,6 +16,7 @@ interface FolderItemProps {
     onDeleteFolder: (f: string) => void;
     onRenameFolder: (f: string) => void;
     onMoveFolder: (oldName: string, newName: string) => void;
+    onOpenContextMenu: (folderPath: string, x: number, y: number) => void;
     connectionItemProps: ConnectionItemProps;
 }
 
@@ -29,6 +30,7 @@ export const FolderItem = memo(function FolderItem({
     onDeleteFolder,
     onRenameFolder,
     onMoveFolder,
+    onOpenContextMenu,
     connectionItemProps
 }: FolderItemProps) {
     const isExpanded = expandedFolders.has(node.path);
@@ -101,6 +103,11 @@ export const FolderItem = memo(function FolderItem({
                 }}
                 onDragLeave={() => setIsDragOver(false)}
                 onDrop={handleDrop}
+                onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenContextMenu(node.path, event.clientX, event.clientY);
+                }}
             >
                 {isCollapsed ? (
                     <div className={cn(
@@ -170,6 +177,7 @@ export const FolderItem = memo(function FolderItem({
                             updateConnectionFolder={updateConnectionFolder}
                             onRenameFolder={onRenameFolder}
                             onMoveFolder={onMoveFolder}
+                            onOpenContextMenu={onOpenContextMenu}
                             connectionItemProps={connectionItemProps}
                             onDeleteFolder={onDeleteFolder}
                         />

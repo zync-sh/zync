@@ -4,7 +4,17 @@ export const markConnectionStatus = (
     connections: Connection[],
     connectionId: string,
     status: Connection['status'],
-): Connection[] => connections.map((connection) => (connection.id === connectionId ? { ...connection, status } : connection));
+): Connection[] => {
+    let updated = false;
+    const next = connections.map((connection) => {
+        if (connection.id !== connectionId) return connection;
+        if (connection.status === status) return connection;
+        updated = true;
+        return { ...connection, status };
+    });
+
+    return updated ? next : connections;
+};
 
 export const markConnectionConnected = (
     connections: Connection[],
@@ -13,11 +23,12 @@ export const markConnectionConnected = (
     detectedOs?: string | null,
 ): Connection[] => {
     const normalizedOs = detectedOs?.toLowerCase();
+    let updated = false;
 
-    return connections.map((connection) => {
+    const next = connections.map((connection) => {
         if (connection.id !== connectionId) return connection;
 
-        const next: Connection = {
+        const nextConnection: Connection = {
             ...connection,
             status: 'connected',
             lastConnected: Date.now(),
@@ -25,11 +36,21 @@ export const markConnectionConnected = (
         };
 
         if (normalizedOs && (!connection.icon || connection.icon === 'Server')) {
-            next.icon = normalizedOs;
+            nextConnection.icon = normalizedOs;
         }
 
-        return next;
+        if (
+            connection.status !== nextConnection.status ||
+            connection.homePath !== nextConnection.homePath ||
+            connection.icon !== nextConnection.icon
+        ) {
+            updated = true;
+        }
+
+        return nextConnection;
     });
+
+    return updated ? next : connections;
 };
 
 export const markConnectionErrorIfNeeded = (

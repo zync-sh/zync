@@ -10,6 +10,7 @@ interface SidebarSectionProps {
     defaultExpanded?: boolean;
     compactMode?: boolean;
     onDrop?: (e: React.DragEvent) => void;
+    onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export function SidebarSection({
@@ -18,7 +19,8 @@ export function SidebarSection({
     children,
     defaultExpanded = true,
     compactMode = false,
-    onDrop
+    onDrop,
+    onContextMenu
 }: SidebarSectionProps) {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
@@ -44,6 +46,7 @@ export function SidebarSection({
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
                 aria-expanded={isExpanded}
+                onContextMenu={onContextMenu}
                 className={cn(
                     "w-full flex items-center gap-1 group select-none mb-1",
                     compactMode ? "px-2" : "px-4"

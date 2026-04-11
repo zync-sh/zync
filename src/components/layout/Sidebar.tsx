@@ -4,17 +4,24 @@ import { Code, Files, Info, LayoutDashboard, Network, Pencil, Power, Search, Ter
 import { cn } from '../../lib/utils';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { buildTree } from './sidebar/buildTree';
 import { SidebarSection } from './sidebar/SidebarSection';
 import { ConnectionItem } from './sidebar/ConnectionItem';
 import { FolderItem } from './sidebar/FolderItem';
 import { FolderFormModal } from './sidebar/FolderFormModal';
+import { normalizeFolderPath } from '../../features/connections/domain';
+import {
+    exportConnectionsToFileIpc,
+    type ConnectionExchangeExportFormat,
+} from '../../features/connections/infrastructure/connectionTransfer';
 
 // Lazy Load Modals
 const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
 const AddTunnelModal = lazy(() => import('../modals/AddTunnelModal').then(mod => ({ default: mod.AddTunnelModal })));
 const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(mod => ({ default: mod.ConnectionDetailsModal })));
 const AddConnectionModal = lazy(() => import('../modals/AddConnectionModal').then(mod => ({ default: mod.AddConnectionModal })));
+const ExportConnectionsModal = lazy(() => import('../modals/ExportConnectionsModal').then(mod => ({ default: mod.ExportConnectionsModal })));
 
 
 export function Sidebar({ className }: { className?: string }) {
@@ -38,6 +45,7 @@ export function Sidebar({ className }: { className?: string }) {
     // Settings Store Hooks
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
+    const showToast = useAppStore(state => state.showToast);
     
     // Modal open/close actions extracted from store
     const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
@@ -57,6 +65,14 @@ export function Sidebar({ className }: { className?: string }) {
     const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
     const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
     const [connectionContextMenu, setConnectionContextMenu] = useState<{ x: number; y: number; connectionId: string } | null>(null);
+    const [allHostsContextMenu, setAllHostsContextMenu] = useState<{ x: number; y: number } | null>(null);
+    const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderPath: string } | null>(null);
+    const [exportModalState, setExportModalState] = useState<{
+        title: string;
+        scopeLabel: string;
+        defaultFileBaseName: string;
+        connections: Connection[];
+    } | null>(null);
 
     // Resize Logic
     const [width, setWidth] = useState(settings.sidebarWidth || 288);
@@ -214,6 +230,55 @@ export function Sidebar({ className }: { className?: string }) {
         return connections.find((c: Connection) => c.id === connectionContextMenu.connectionId) || null;
     }, [connectionContextMenu, connections]);
 
+    const exportConnections = useCallback(async (
+        format: ConnectionExchangeExportFormat,
+        options?: { connectionIds?: string[]; baseName?: string },
+    ) => {
+        const baseName = options?.baseName?.trim() || 'connections';
+        const extension = format === 'csv'
+            ? 'csv'
+            : format === 'json'
+                ? 'json'
+                : format === 'zync'
+                    ? 'zync.json'
+                    : 'config';
+        const filePath = await saveDialog({
+            defaultPath: `${baseName}.${extension}`,
+        });
+        if (!filePath) return;
+
+        try {
+            await exportConnectionsToFileIpc({
+                path: filePath,
+                format,
+                connectionIds: options?.connectionIds,
+            });
+            showToast('success', 'Connections exported to file.');
+        } catch (error: any) {
+            showToast('error', `Failed to export connections: ${error?.message || String(error)}`);
+        }
+    }, [showToast]);
+
+    const toFileBaseName = useCallback((value: string, fallback: string) => {
+        const normalized = value
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9._-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+        return normalized || fallback;
+    }, []);
+
+    const getExportableConnectionsForFolder = useCallback((folderPath: string) => {
+        const normalizedFolder = normalizeFolderPath(folderPath);
+        if (!normalizedFolder) return [] as Connection[];
+        return connections.filter((connection) => {
+            if (connection.id === 'local') return false;
+            const connectionFolder = normalizeFolderPath(connection.folder || '');
+            return connectionFolder === normalizedFolder || connectionFolder.startsWith(`${normalizedFolder}/`);
+        });
+    }, [connections]);
+
     useEffect(() => {
         if (!connectionContextMenu) return;
         if (contextMenuConnection) return;
@@ -222,6 +287,7 @@ export function Sidebar({ className }: { className?: string }) {
 
     const connectionContextMenuItems = useMemo<ContextMenuItem[]>(() => {
         if (!contextMenuConnection) return [];
+
         return [
             {
                 label: contextMenuConnection.status === 'connected' ? 'Disconnect' : 'Connect',
@@ -268,13 +334,80 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => openEditConnection(contextMenuConnection)
             },
             {
+                label: 'Export...',
+                icon: <Files size={14} />,
+                action: () => {
+                    setExportModalState({
+                        title: 'Export Connections',
+                        scopeLabel: `Connection: ${contextMenuConnection.name || contextMenuConnection.host}`,
+                        defaultFileBaseName: toFileBaseName(
+                            contextMenuConnection.name || contextMenuConnection.host || 'connection',
+                            'connection',
+                        ),
+                        connections: [contextMenuConnection],
+                    });
+                },
+            },
+            {
                 label: 'Delete',
                 icon: <Trash2 size={14} />,
                 variant: 'danger',
                 action: () => setDeletingConnection(contextMenuConnection)
             }
         ];
-    }, [connect, contextMenuConnection, disconnect, openEditConnection, openTab]);
+    }, [connect, contextMenuConnection, disconnect, openEditConnection, openTab, toFileBaseName]);
+
+    const folderContextMenuItems = useMemo<ContextMenuItem[]>(() => {
+        if (!folderContextMenu) return [];
+        const folderConnections = getExportableConnectionsForFolder(folderContextMenu.folderPath);
+        return [
+            {
+                label: 'Export...',
+                icon: <Files size={14} />,
+                disabled: folderConnections.length === 0,
+                action: () => {
+                    setExportModalState({
+                        title: 'Export Connections',
+                        scopeLabel: `Folder: ${folderContextMenu.folderPath}`,
+                        defaultFileBaseName: toFileBaseName(folderContextMenu.folderPath, 'folder-connections'),
+                        connections: folderConnections,
+                    });
+                },
+            },
+            { separator: true },
+            {
+                label: 'Rename',
+                icon: <Pencil size={14} />,
+                action: () => handleRenameFolder(folderContextMenu.folderPath),
+            },
+            {
+                label: 'Delete',
+                icon: <Trash2 size={14} />,
+                variant: 'danger',
+                action: () => setDeletingFolder(folderContextMenu.folderPath),
+            },
+        ];
+    }, [folderContextMenu, getExportableConnectionsForFolder, toFileBaseName]);
+
+    const allHostsContextMenuItems = useMemo<ContextMenuItem[]>(() => {
+        if (!allHostsContextMenu) return [];
+        const allHostConnections = connections.filter((connection) => connection.id !== 'local');
+        return [
+            {
+                label: 'Export...',
+                icon: <Files size={14} />,
+                disabled: allHostConnections.length === 0,
+                action: () => {
+                    setExportModalState({
+                        title: 'Export Connections',
+                        scopeLabel: 'All Hosts',
+                        defaultFileBaseName: 'all-hosts',
+                        connections: allHostConnections,
+                    });
+                },
+            },
+        ];
+    }, [allHostsContextMenu, connections]);
 
     const connectionItemProps = useMemo(() => ({
         onEdit: openEditConnection,
@@ -299,6 +432,7 @@ export function Sidebar({ className }: { className?: string }) {
                     onDeleteFolder={(f) => setDeletingFolder(f)}
                     onRenameFolder={handleRenameFolder}
                     onMoveFolder={renameFolder}
+                    onOpenContextMenu={(folderPath, x, y) => setFolderContextMenu({ folderPath, x, y })}
                     connectionItemProps={connectionItemProps}
                 />
             ))}
@@ -415,12 +549,23 @@ export function Sidebar({ className }: { className?: string }) {
                             <SidebarSection
                                 title="All Hosts"
                                 compactMode={compactMode}
+                                onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
+                                }}
                             >
                                 {allHostsContent}
                             </SidebarSection>
                         </>
                     ) : (
-                        <SidebarSection title="All Hosts" compactMode={compactMode}>
+                        <SidebarSection
+                            title="All Hosts"
+                            compactMode={compactMode}
+                            onContextMenu={(event) => {
+                                event.preventDefault();
+                                setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
+                            }}
+                        >
                             {allHostsContent}
                         </SidebarSection>
                     )}
@@ -467,6 +612,19 @@ export function Sidebar({ className }: { className?: string }) {
                 )}
 
                 {isSettingsOpen && <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />}
+                {exportModalState && (
+                    <ExportConnectionsModal
+                        isOpen={!!exportModalState}
+                        title={exportModalState.title}
+                        scopeLabel={exportModalState.scopeLabel}
+                        defaultFileBaseName={exportModalState.defaultFileBaseName}
+                        connections={exportModalState.connections}
+                        onClose={() => setExportModalState(null)}
+                        onExport={async (format, connectionIds, fileBaseName) => {
+                            await exportConnections(format, { connectionIds, baseName: fileBaseName });
+                        }}
+                    />
+                )}
             </Suspense>
 
             {connectionContextMenu && contextMenuConnection && (
@@ -475,6 +633,22 @@ export function Sidebar({ className }: { className?: string }) {
                     y={connectionContextMenu.y}
                     items={connectionContextMenuItems}
                     onClose={() => setConnectionContextMenu(null)}
+                />
+            )}
+            {folderContextMenu && (
+                <ContextMenu
+                    x={folderContextMenu.x}
+                    y={folderContextMenu.y}
+                    items={folderContextMenuItems}
+                    onClose={() => setFolderContextMenu(null)}
+                />
+            )}
+            {allHostsContextMenu && (
+                <ContextMenu
+                    x={allHostsContextMenu.x}
+                    y={allHostsContextMenu.y}
+                    items={allHostsContextMenuItems}
+                    onClose={() => setAllHostsContextMenu(null)}
                 />
             )}
 
