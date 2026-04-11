@@ -69,6 +69,7 @@ export function Sidebar({ className }: { className?: string }) {
     const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderPath: string } | null>(null);
     const [exportModalState, setExportModalState] = useState<{
         title: string;
+        scopeKey: string;
         scopeLabel: string;
         defaultFileBaseName: string;
         connections: Connection[];
@@ -232,7 +233,7 @@ export function Sidebar({ className }: { className?: string }) {
 
     const exportConnections = useCallback(async (
         format: ConnectionExchangeExportFormat,
-        options?: { connectionIds?: string[]; baseName?: string },
+        options?: { connectionIds?: string[]; baseName?: string; includeSecrets?: boolean },
     ) => {
         const baseName = options?.baseName?.trim() || 'connections';
         const extension = format === 'csv'
@@ -252,6 +253,7 @@ export function Sidebar({ className }: { className?: string }) {
                 path: filePath,
                 format,
                 connectionIds: options?.connectionIds,
+                includeSecrets: options?.includeSecrets,
             });
             showToast('success', 'Connections exported to file.');
         } catch (error: any) {
@@ -339,6 +341,7 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => {
                     setExportModalState({
                         title: 'Export Connections',
+                        scopeKey: `connection:${contextMenuConnection.id}`,
                         scopeLabel: `Connection: ${contextMenuConnection.name || contextMenuConnection.host}`,
                         defaultFileBaseName: toFileBaseName(
                             contextMenuConnection.name || contextMenuConnection.host || 'connection',
@@ -368,6 +371,7 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => {
                     setExportModalState({
                         title: 'Export Connections',
+                        scopeKey: `folder:${folderContextMenu.folderPath}`,
                         scopeLabel: `Folder: ${folderContextMenu.folderPath}`,
                         defaultFileBaseName: toFileBaseName(folderContextMenu.folderPath, 'folder-connections'),
                         connections: folderConnections,
@@ -400,6 +404,7 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => {
                     setExportModalState({
                         title: 'Export Connections',
+                        scopeKey: 'all-hosts',
                         scopeLabel: 'All Hosts',
                         defaultFileBaseName: 'all-hosts',
                         connections: allHostConnections,
@@ -616,12 +621,13 @@ export function Sidebar({ className }: { className?: string }) {
                     <ExportConnectionsModal
                         isOpen={!!exportModalState}
                         title={exportModalState.title}
+                        scopeKey={exportModalState.scopeKey}
                         scopeLabel={exportModalState.scopeLabel}
                         defaultFileBaseName={exportModalState.defaultFileBaseName}
                         connections={exportModalState.connections}
                         onClose={() => setExportModalState(null)}
-                        onExport={async (format, connectionIds, fileBaseName) => {
-                            await exportConnections(format, { connectionIds, baseName: fileBaseName });
+                        onExport={async (format, connectionIds, fileBaseName, includeSecrets) => {
+                            await exportConnections(format, { connectionIds, baseName: fileBaseName, includeSecrets });
                         }}
                     />
                 )}

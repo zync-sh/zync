@@ -42,7 +42,8 @@ export const markConnectionConnected = (
         if (
             connection.status !== nextConnection.status ||
             connection.homePath !== nextConnection.homePath ||
-            connection.icon !== nextConnection.icon
+            connection.icon !== nextConnection.icon ||
+            connection.lastConnected !== nextConnection.lastConnected
         ) {
             updated = true;
         }

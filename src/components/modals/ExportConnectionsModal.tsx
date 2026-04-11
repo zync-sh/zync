@@ -10,10 +10,16 @@ interface ExportConnectionsModalProps {
     isOpen: boolean;
     title: string;
     scopeLabel: string;
+    scopeKey: string;
     defaultFileBaseName: string;
     connections: Connection[];
     onClose: () => void;
-    onExport: (format: ConnectionExchangeExportFormat, connectionIds: string[], fileBaseName: string) => Promise<void>;
+    onExport: (
+        format: ConnectionExchangeExportFormat,
+        connectionIds: string[],
+        fileBaseName: string,
+        includeSecrets: boolean,
+    ) => Promise<void>;
 }
 
 const FORMAT_OPTIONS: Array<{ value: ConnectionExchangeExportFormat; label: string }> = [
@@ -27,6 +33,7 @@ export function ExportConnectionsModal({
     isOpen,
     title,
     scopeLabel,
+    scopeKey,
     defaultFileBaseName,
     connections,
     onClose,
@@ -37,6 +44,7 @@ export function ExportConnectionsModal({
     const [isExporting, setIsExporting] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [fileBaseName, setFileBaseName] = useState(defaultFileBaseName);
+    const [includeSecrets, setIncludeSecrets] = useState(false);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -45,7 +53,8 @@ export function ExportConnectionsModal({
         setIsExporting(false);
         setSearchTerm('');
         setFileBaseName(defaultFileBaseName);
-    }, [connections, defaultFileBaseName, isOpen]);
+        setIncludeSecrets(false);
+    }, [defaultFileBaseName, isOpen, scopeKey]);
 
     const sortedConnections = useMemo(
         () => [...connections].sort((a, b) => (a.name || a.host).localeCompare(b.name || b.host)),
@@ -89,7 +98,7 @@ export function ExportConnectionsModal({
         if (selectedCount === 0) return;
         setIsExporting(true);
         try {
-            await onExport(format, Array.from(selectedIds), fileBaseName.trim() || defaultFileBaseName);
+            await onExport(format, Array.from(selectedIds), fileBaseName.trim() || defaultFileBaseName, includeSecrets);
             onClose();
         } finally {
             setIsExporting(false);
@@ -145,6 +154,20 @@ export function ExportConnectionsModal({
                             placeholder="File name"
                             className="h-8 w-full rounded-md border border-app-border bg-app-bg px-2 text-xs text-app-text outline-none focus:border-app-accent/60"
                         />
+                    </div>
+                    <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2">
+                        <p className="text-[11px] font-medium text-amber-300">
+                            Exported files can contain credentials. Keep them secure.
+                        </p>
+                        <label className="mt-1.5 flex items-center gap-2 text-[11px] text-amber-200">
+                            <input
+                                type="checkbox"
+                                checked={includeSecrets}
+                                onChange={(event) => setIncludeSecrets(event.target.checked)}
+                                className="h-3.5 w-3.5 accent-[var(--color-app-accent)]"
+                            />
+                            Include secrets (passwords/privateKeyPath)
+                        </label>
                     </div>
                 </div>
 

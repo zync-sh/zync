@@ -24,6 +24,7 @@ pub struct ConnectionExportRequest {
     pub path: String,
     pub format: String, // zync | json | csv | ssh_config
     pub connection_ids: Option<Vec<String>>,
+    pub include_secrets: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -962,8 +963,9 @@ pub async fn connections_export_to_file(
         connections: all_connections,
         folders: all_folders,
     } = data;
+    let include_secrets = request.include_secrets.unwrap_or(false);
     let is_scoped_export = request.connection_ids.is_some();
-    let selected_connections = if let Some(ids) = request.connection_ids {
+    let mut selected_connections = if let Some(ids) = request.connection_ids {
         let id_set = ids.into_iter().collect::<std::collections::HashSet<_>>();
         all_connections
             .into_iter()
@@ -972,6 +974,12 @@ pub async fn connections_export_to_file(
     } else {
         all_connections
     };
+    if !include_secrets {
+        selected_connections.iter_mut().for_each(|connection| {
+            connection.password = None;
+            connection.private_key_path = None;
+        });
+    }
 
     let format = request.format.trim().to_ascii_lowercase();
     let content = match format.as_str() {

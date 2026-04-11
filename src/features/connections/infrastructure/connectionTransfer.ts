@@ -7,6 +7,7 @@ export interface ConnectionExportToFileRequest {
     path: string;
     format: ConnectionExchangeExportFormat;
     connectionIds?: string[];
+    includeSecrets?: boolean;
 }
 
 export interface ConnectionImportFromFileRequest {

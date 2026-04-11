@@ -86,6 +86,13 @@ export const FolderItem = memo(function FolderItem({
                 aria-expanded={isExpanded}
                 aria-label={`Folder ${node.name}`}
                 onKeyDown={(e) => {
+                    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        onOpenContextMenu(node.path, rect.left + 10, rect.top + 10);
+                        return;
+                    }
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         toggleFolder(node.path);
