@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 import { useAppStore } from '../store/useAppStore';
 import type { Plugin } from '../context/PluginContext';
+import { getZyncThemePayload } from '../lib/themePayload';
+import { isDebugThemePayloadEnabled } from '../lib/debugFlags';
 
 interface EditorPluginFrameProps {
   plugin: Plugin;
@@ -40,6 +43,9 @@ function detectLanguage(filename: string): string {
     yml: 'yaml',
     yaml: 'yaml',
     sql: 'sql',
+    sh: 'shell',
+    bash: 'shell',
+    zsh: 'shell',
   };
 
   return map[ext] ?? 'plaintext';
@@ -96,23 +102,21 @@ export function EditorPluginFrame({
     iframeRef.current?.contentWindow?.postMessage(message, '*');
   }, []);
 
-  const sendTheme = useMemo(() => () => {
-    const computed = getComputedStyle(document.documentElement);
+  // Always compute the current theme payload at send-time so we don't
+  // accidentally capture stale CSS variable values.
+  const getThemePayload = useCallback(() => getZyncThemePayload(theme), [theme]);
+
+  const sendTheme = useCallback(() => {
+    const themePayload = getThemePayload();
+    if (isDebugThemePayloadEnabled()) {
+      // eslint-disable-next-line no-console
+      console.debug('[EditorPluginFrame] theme payload', themePayload);
+    }
     postToFrame({
       type: 'zync:editor:set-theme',
-      payload: {
-        mode: theme,
-        colors: {
-          background: computed.getPropertyValue('--app-bg').trim() || '#0f111a',
-          surface: computed.getPropertyValue('--app-surface').trim() || '#1a1d2e',
-          border: computed.getPropertyValue('--app-border').trim() || 'rgba(255,255,255,0.08)',
-          text: computed.getPropertyValue('--app-text').trim() || '#e2e8f0',
-          muted: computed.getPropertyValue('--app-muted').trim() || '#94a3b8',
-          primary: computed.getPropertyValue('--app-accent').trim() || '#6366f1',
-        },
-      },
+      payload: themePayload,
     });
-  }, [postToFrame, theme]);
+  }, [getThemePayload, postToFrame]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -158,12 +162,14 @@ export function EditorPluginFrame({
           case 'zync:editor:ready':
             setIsReady(true);
             readyForDocRef.current = true;
+            const themePayload = getThemePayload();
             postToFrame({
               type: 'zync:editor:init',
               payload: {
                 pluginId: plugin.manifest.id,
                 sessionId: `editor-session:${filename}`,
                 capabilitiesRequested: plugin.manifest.editor?.supports ?? [],
+                theme: themePayload,
               },
             });
             currentDocIdRef.current = null;
@@ -234,9 +240,79 @@ export function EditorPluginFrame({
     };
   }, [postToFrame]);
 
-  const shimScript = `
+  const editorAssetUrls = useMemo(() => {
+    if (plugin.path.startsWith('builtin://')) return null;
+    // We intentionally resolve known assets directly from disk paths.
+    // This avoids relying on <base href> behavior inside about:srcdoc iframes.
+    const cssUrl = convertFileSrc(`${plugin.path}/dist/editor.css`.replace(/\\/g, '/'));
+    const jsUrl = convertFileSrc(`${plugin.path}/dist/editor.js`.replace(/\\/g, '/'));
+    return { cssUrl, jsUrl };
+  }, [plugin.path]);
+
+  const shimScript = useMemo(() => {
+    const jsUrlLiteral = JSON.stringify(editorAssetUrls?.jsUrl ?? '');
+
+    // In Tauri, convertFileSrc() can yield URLs where "directory joining" via URL('./', ...)
+    // isn't reliable (for example when the real filesystem path is encoded in query params).
+    // We inject a tiny resolver so the plugin can always derive pack URLs from the same
+    // mechanism used to load dist/editor.js.
+    const resolverScript = `
+  (function () {
+    const __editorJsUrl = ${jsUrlLiteral};
+    function __resolveViaUrlJoin(relativePath) {
+      try {
+        // If the pathname ends with editor.js, normal URL joining works.
+        const u = new URL(__editorJsUrl);
+        if (/\\/dist\\/editor\\.js$/i.test(u.pathname)) {
+          const dir = new URL('./', __editorJsUrl).toString();
+          return new URL(relativePath, dir).toString();
+        }
+      } catch { /* ignore */ }
+      return null;
+    }
+
+    function __resolveViaSearchParam(relativePath) {
+      try {
+        const u = new URL(__editorJsUrl);
+        for (const [key, value] of u.searchParams.entries()) {
+          if (!/editor\\.js$/i.test(value)) continue;
+          const baseValue = value.replace(/editor\\.js$/i, '');
+          u.searchParams.set(key, baseValue + relativePath);
+          return u.toString();
+        }
+      } catch { /* ignore */ }
+      return null;
+    }
+
+    function __resolveViaStringReplace(relativePath) {
+      if (!__editorJsUrl) return null;
+      const idx = __editorJsUrl.toLowerCase().lastIndexOf('editor.js');
+      if (idx < 0) return null;
+      return __editorJsUrl.slice(0, idx) + relativePath + __editorJsUrl.slice(idx + 'editor.js'.length);
+    }
+
+    window.__zyncResolveEditorAsset = function (relativePath) {
+      const rel = String(relativePath || '');
+      return (
+        __resolveViaUrlJoin(rel) ||
+        __resolveViaSearchParam(rel) ||
+        __resolveViaStringReplace(rel) ||
+        rel
+      );
+    };
+
+    // Back-compat: base used by older plugin builds. This should resolve to the dist/ directory.
+    // (We intentionally compute it via the resolver so it works with query-param URL forms.)
+    const base = window.__zyncResolveEditorAsset('');
+    window.__zyncEditorAssetBase = (typeof base === 'string' && base && !base.endsWith('/')) ? (base + '/') : base;
+  })();
+    `;
+
+    return `
 <script>
 (function () {
+  ${resolverScript}
+
   const listeners = new Set();
   window.zyncEditor = {
     onMessage(callback) {
@@ -273,17 +349,28 @@ export function EditorPluginFrame({
 })();
 </script>
 `;
+  }, [editorAssetUrls?.jsUrl]);
 
   const fullHtml = (plugin.editorHtml || plugin.style || plugin.script)
     ? (() => {
-        const html = plugin.editorHtml || '<html><head></head><body></body></html>';
+        let html = plugin.editorHtml || '<html><head></head><body></body></html>';
+        const headInjection = `${shimScript}`;
+
+        // Hardening: rewrite common relative asset tags into file-backed asset URLs.
+        // This avoids 404s when the iframe is loaded via srcDoc (about:srcdoc).
+        if (editorAssetUrls) {
+          html = html
+            .replace(/href=(["'])\.?\/?dist\/editor\.css\1/gi, (_match, quote: string) => `href=${quote}${editorAssetUrls.cssUrl}${quote}`)
+            .replace(/src=(["'])\.?\/?dist\/editor\.js\1/gi, (_match, quote: string) => `src=${quote}${editorAssetUrls.jsUrl}${quote}`);
+        }
+
         if (/<head\b[^>]*>/i.test(html)) {
-          return html.replace(/<head\b[^>]*>/i, (match) => `${match}${shimScript}`);
+          return html.replace(/<head\b[^>]*>/i, (match) => `${match}${headInjection}`);
         }
         if (/<\/head>/i.test(html)) {
-          return html.replace(/<\/head>/i, `${shimScript}</head>`);
+          return html.replace(/<\/head>/i, `${headInjection}</head>`);
         }
-        return `<html><head>${shimScript}</head><body>${html}</body></html>`;
+        return `<html><head>${headInjection}</head><body>${html}</body></html>`;
       })()
     : `<html><head>${shimScript}</head><body style="font-family: sans-serif; background: #111827; color: white; display:flex; align-items:center; justify-content:center; min-height:100vh;">No editor entry found.</body></html>`;
 

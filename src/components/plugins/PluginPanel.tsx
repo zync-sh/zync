@@ -1,5 +1,7 @@
-import { useRef, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
+import { getZyncThemePayload } from '../../lib/themePayload';
+import { isDebugThemePayloadEnabled } from '../../lib/debugFlags';
 
 interface PluginPanelProps {
     html: string;
@@ -16,28 +18,24 @@ export function PluginPanel({ html, panelId, pluginId, connectionId }: PluginPan
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const theme = useAppStore(s => s.settings.theme);
 
-    const sendTheme = () => {
+    const sendTheme = useCallback(() => {
         if (!iframeRef.current || !iframeRef.current.contentWindow) return;
-        const computed = getComputedStyle(document.documentElement);
-        const colors = {
-            background: computed.getPropertyValue('--app-bg').trim() || '#0f111a',
-            surface: computed.getPropertyValue('--app-surface').trim() || '#1a1d2e',
-            border: computed.getPropertyValue('--app-border').trim() || 'rgba(255,255,255,0.08)',
-            text: computed.getPropertyValue('--app-text').trim() || '#e2e8f0',
-            muted: computed.getPropertyValue('--app-muted').trim() || '#94a3b8',
-            primary: computed.getPropertyValue('--app-accent').trim() || '#6366f1',
-        };
-        console.log('[Zync PluginPanel] Sending Theme Config:', colors);
+        const payload = getZyncThemePayload(theme);
+        if (isDebugThemePayloadEnabled()) {
+            // eslint-disable-next-line no-console
+            console.debug('[Zync PluginPanel] theme payload', payload);
+        }
         iframeRef.current.contentWindow.postMessage({
             type: 'zync:theme:update',
-            payload: { theme, colors }
+            // Back-compat: include the previous `theme` string field as well.
+            payload: { theme, ...payload }
         }, '*');
-    };
+    }, [theme]);
 
     // Broadcast theme changes to the iframe natively
     useEffect(() => {
         sendTheme();
-    }, [theme]);
+    }, [sendTheme]);
 
     // Listen for messages FROM the iframe (plugin panel calling zync.*)
     useEffect(() => {
