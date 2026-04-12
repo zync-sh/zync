@@ -65,6 +65,7 @@ export function EditorPluginFrame({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const theme = useAppStore((state) => state.settings.theme);
+  const accentColor = useAppStore((state) => state.settings.accentColor);
   const showToast = useAppStore((state) => state.showToast);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
   const lastContentRef = useRef(initialContent);
@@ -104,7 +105,7 @@ export function EditorPluginFrame({
 
   // Always compute the current theme payload at send-time so we don't
   // accidentally capture stale CSS variable values.
-  const getThemePayload = useCallback(() => getZyncThemePayload(theme), [theme]);
+  const getThemePayload = useCallback(() => getZyncThemePayload(theme), [theme, accentColor]);
 
   const sendTheme = useCallback(() => {
     const themePayload = getThemePayload();
@@ -159,7 +160,7 @@ export function EditorPluginFrame({
         const { type, payload } = event.data || {};
 
         switch (type) {
-          case 'zync:editor:ready':
+          case 'zync:editor:ready': {
             setIsReady(true);
             readyForDocRef.current = true;
             const themePayload = getThemePayload();
@@ -175,6 +176,7 @@ export function EditorPluginFrame({
             currentDocIdRef.current = null;
             sendTheme();
             break;
+          }
           case 'zync:editor:change': {
             const next = typeof payload?.content === 'string'
               ? payload.content
@@ -354,7 +356,7 @@ export function EditorPluginFrame({
   const fullHtml = (plugin.editorHtml || plugin.style || plugin.script)
     ? (() => {
         let html = plugin.editorHtml || '<html><head></head><body></body></html>';
-        const headInjection = `${shimScript}`;
+        const headInjection = `${shimScript}${plugin.style ? `<style>${plugin.style}</style>` : ''}${plugin.script ? `<script>${plugin.script}</script>` : ''}`;
 
         // Hardening: rewrite common relative asset tags into file-backed asset URLs.
         // This avoids 404s when the iframe is loaded via srcDoc (about:srcdoc).
