@@ -17,6 +17,7 @@ interface PluginPanelProps {
 export function PluginPanel({ html, panelId, pluginId, connectionId }: PluginPanelProps) {
     const iframeRef = useRef<HTMLIFrameElement>(null);
     const theme = useAppStore(s => s.settings.theme);
+    const accentColor = useAppStore(s => s.settings.accentColor);
 
     const sendTheme = useCallback(() => {
         if (!iframeRef.current || !iframeRef.current.contentWindow) return;
@@ -30,7 +31,7 @@ export function PluginPanel({ html, panelId, pluginId, connectionId }: PluginPan
             // Back-compat: include the previous `theme` string field as well.
             payload: { theme, ...payload }
         }, '*');
-    }, [theme]);
+    }, [theme, accentColor]);
 
     // Broadcast theme changes to the iframe natively
     useEffect(() => {
