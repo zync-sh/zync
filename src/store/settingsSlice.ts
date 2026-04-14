@@ -31,6 +31,15 @@ export interface AppSettings {
         windowsShell: string;
         pinnedFeatures?: string[];
     };
+    ghostSuggestions: {
+        inlineEnabled: boolean;
+        popupEnabled: boolean;
+        contextMenuEnabled: boolean;
+        providers: {
+            history: boolean;
+            filesystem: boolean;
+        };
+    };
     keybindings: {
         toggleSidebar: string;
         openNewConnection: string;
@@ -119,6 +128,15 @@ const defaultSettings: AppSettings = {
     localTerm: {
         windowsShell: 'default'
     },
+    ghostSuggestions: {
+        inlineEnabled: true,
+        popupEnabled: true,
+        contextMenuEnabled: false,
+        providers: {
+            history: true,
+            filesystem: true,
+        },
+    },
     keybindings: {
         toggleSidebar: 'Mod+B',
         openNewConnection: 'Mod+N',
@@ -178,6 +196,7 @@ export interface SettingsSlice {
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
+    updateGhostSuggestionsSettings: (updates: Partial<AppSettings['ghostSuggestions']>) => Promise<void>;
     updateKeybindings: (updates: Partial<AppSettings['keybindings']>) => Promise<void>;
     toggleExpandedFolder: (folderPath: string) => Promise<void>;
 
@@ -203,6 +222,14 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 terminal: { ...defaultSettings.terminal, ...(loaded?.terminal || {}) },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
+                ghostSuggestions: {
+                    ...defaultSettings.ghostSuggestions,
+                    ...(loaded?.ghostSuggestions || {}),
+                    providers: {
+                        ...defaultSettings.ghostSuggestions.providers,
+                        ...(loaded?.ghostSuggestions?.providers || {}),
+                    },
+                },
                 keybindings: { ...defaultSettings.keybindings, ...(loaded?.keybindings || {}) },
                 ai: { ...defaultSettings.ai, ...(loaded?.ai || {}) },
                 expandedFolders: loaded?.expandedFolders || []
@@ -294,6 +321,27 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save file manager settings:', error);
+        }
+    },
+
+    updateGhostSuggestionsSettings: async (updates) => {
+        const current = get().settings.ghostSuggestions;
+        const updated = {
+            ...get().settings,
+            ghostSuggestions: {
+                ...current,
+                ...updates,
+                providers: {
+                    ...current.providers,
+                    ...(updates.providers || {}),
+                },
+            },
+        };
+        set({ settings: updated });
+        try {
+            await invoke('settings_set', { settings: updated });
+        } catch (error) {
+            console.error('Failed to save ghost suggestion settings:', error);
         }
     },
 

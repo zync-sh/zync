@@ -918,6 +918,125 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         ))}
                                     </div>
                                 </Section>
+
+                                <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+
+                                <Section title="Ghost Suggestions">
+                                    <div className="space-y-4">
+                                        <label className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/30">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-[var(--color-app-accent)]"
+                                                checked={settings.ghostSuggestions?.inlineEnabled ?? true}
+                                                onChange={(e) => updateSettings({
+                                                    ghostSuggestions: {
+                                                        ...settings.ghostSuggestions,
+                                                        inlineEnabled: e.target.checked,
+                                                    },
+                                                })}
+                                            />
+                                            <div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Inline ghost text</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                    Show faded fish-style inline completion while typing.
+                                                </div>
+                                            </div>
+                                        </label>
+
+                                        <label className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/30">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-[var(--color-app-accent)]"
+                                                checked={settings.ghostSuggestions?.popupEnabled ?? true}
+                                                onChange={(e) => updateSettings({
+                                                    ghostSuggestions: {
+                                                        ...settings.ghostSuggestions,
+                                                        popupEnabled: e.target.checked,
+                                                    },
+                                                })}
+                                            />
+                                            <div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Tab popup suggestions</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                    Use Tab to open/navigate completion list before falling back to shell completion.
+                                                </div>
+                                            </div>
+                                        </label>
+
+                                        <label className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/30">
+                                            <input
+                                                type="checkbox"
+                                                className="mt-0.5 accent-[var(--color-app-accent)]"
+                                                checked={settings.ghostSuggestions?.contextMenuEnabled ?? false}
+                                                onChange={(e) => updateSettings({
+                                                    ghostSuggestions: {
+                                                        ...settings.ghostSuggestions,
+                                                        contextMenuEnabled: e.target.checked,
+                                                    },
+                                                })}
+                                            />
+                                            <div>
+                                                <div className="text-sm font-medium text-[var(--color-app-text)]">Context-menu suggestion actions</div>
+                                                <div className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                    Show suggestion actions in terminal right-click context menu.
+                                                </div>
+                                            </div>
+                                        </label>
+
+                                        <div className="rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/25 p-3">
+                                            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-app-muted)]">
+                                                Providers
+                                            </div>
+                                            <div className="mt-2 space-y-2">
+                                                <label className="flex items-start gap-3 rounded-md border border-[var(--color-app-border)]/40 bg-[var(--color-app-bg)]/30 p-2.5">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="mt-0.5 accent-[var(--color-app-accent)]"
+                                                        checked={settings.ghostSuggestions?.providers?.history ?? true}
+                                                        onChange={(e) => updateSettings({
+                                                            ghostSuggestions: {
+                                                                ...settings.ghostSuggestions,
+                                                                providers: {
+                                                                    ...settings.ghostSuggestions?.providers,
+                                                                    history: e.target.checked,
+                                                                },
+                                                            },
+                                                        })}
+                                                    />
+                                                    <div>
+                                                        <div className="text-sm font-medium text-[var(--color-app-text)]">History</div>
+                                                        <div className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                            Suggest commands based on your past usage for this server/session scope.
+                                                        </div>
+                                                    </div>
+                                                </label>
+
+                                                <label className="flex items-start gap-3 rounded-md border border-[var(--color-app-border)]/40 bg-[var(--color-app-bg)]/30 p-2.5">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="mt-0.5 accent-[var(--color-app-accent)]"
+                                                        checked={settings.ghostSuggestions?.providers?.filesystem ?? true}
+                                                        onChange={(e) => updateSettings({
+                                                            ghostSuggestions: {
+                                                                ...settings.ghostSuggestions,
+                                                                providers: {
+                                                                    ...settings.ghostSuggestions?.providers,
+                                                                    filesystem: e.target.checked,
+                                                                },
+                                                            },
+                                                        })}
+                                                    />
+                                                    <div>
+                                                        <div className="text-sm font-medium text-[var(--color-app-text)]">Filesystem paths</div>
+                                                        <div className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                                                            Suggest local/remote path candidates for commands like <code className="font-mono">cd</code>.
+                                                        </div>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Section>
                             </div>
                         )}
 
