@@ -10,7 +10,7 @@ use std::time::UNIX_EPOCH;
 pub struct FileEntry {
     pub name: String,
     pub path: String,
-    pub r#type: String, // "d" for directory, "-" for file
+    pub r#type: String, // "d" for directory, "-" for file, "l" for symlink
     pub size: u64,
     pub last_modified: u64,
     pub permissions: String,
@@ -47,12 +47,18 @@ impl FileSystem {
 
         for entry in dir {
             let entry = entry.map_err(|e| anyhow!("Failed to read entry: {}", e))?;
-            let metadata = entry
-                .metadata()
+            let metadata = fs::symlink_metadata(entry.path())
                 .map_err(|e| anyhow!("Failed to read metadata: {}", e))?;
             let file_name = entry.file_name().to_string_lossy().to_string();
 
-            let file_type = if metadata.is_dir() { "d" } else { "-" }.to_string();
+            let file_type = if metadata.file_type().is_symlink() {
+                "l"
+            } else if metadata.is_dir() {
+                "d"
+            } else {
+                "-"
+            }
+            .to_string();
             let size = metadata.len();
             let last_modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_millis() as u64;
 
@@ -77,11 +83,13 @@ impl FileSystem {
             });
         }
 
-        // Sort directories first, then files
+        // Sort directories and symlinks first, then files
         entries.sort_by(|a, b| {
-            if a.r#type == "d" && b.r#type != "d" {
+            let a_dir = a.r#type == "d" || a.r#type == "l";
+            let b_dir = b.r#type == "d" || b.r#type == "l";
+            if a_dir && !b_dir {
                 std::cmp::Ordering::Less
-            } else if a.r#type != "d" && b.r#type == "d" {
+            } else if !a_dir && b_dir {
                 std::cmp::Ordering::Greater
             } else {
                 a.name.cmp(&b.name)
@@ -120,10 +128,14 @@ impl FileSystem {
             let mtime = attrs.mtime.unwrap_or(0) as u64 * 1000; // ms
             let perms = attrs.permissions.unwrap_or(0);
 
-            // Check for directory bit (0o040000)
-            let is_dir = (perms & 0o040000) != 0;
-
-            let type_str = if is_dir { "d" } else { "-" };
+            // Check permission bits: 0o040000 = directory, 0o120000 = symlink
+            let type_str = if (perms & 0o170000) == 0o120000 {
+                "l"
+            } else if (perms & 0o040000) != 0 {
+                "d"
+            } else {
+                "-"
+            };
 
             // Construct path manually
             let full_path = if path == "/" {
@@ -144,11 +156,13 @@ impl FileSystem {
             });
         }
 
-        // Sort
+        // Sort: directories and symlinks first, then files
         result.sort_by(|a, b| {
-            if a.r#type == "d" && b.r#type != "d" {
+            let a_dir = a.r#type == "d" || a.r#type == "l";
+            let b_dir = b.r#type == "d" || b.r#type == "l";
+            if a_dir && !b_dir {
                 std::cmp::Ordering::Less
-            } else if a.r#type != "d" && b.r#type == "d" {
+            } else if !a_dir && b_dir {
                 std::cmp::Ordering::Greater
             } else {
                 a.name.cmp(&b.name)
