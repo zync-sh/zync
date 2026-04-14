@@ -21,7 +21,7 @@ interface FsEntry {
 }
 
 const DIRECTORY_ONLY_COMMANDS = new Set(['cd', 'pushd', 'popd']);
-const FILE_AWARE_COMMANDS = new Set([
+export const FILE_AWARE_COMMANDS = new Set([
   'cat',
   'ls',
   'less',
@@ -77,6 +77,19 @@ export function getLastArg(line: string): string {
   }
 
   return line.slice(start);
+}
+
+export /**
+ * Strip a leading unmatched opening quote from a shell argument so that
+ * `"My D` becomes `My D` for prefix matching purposes.
+ * Only strips when the quote has no matching closing counterpart.
+ */
+function stripLeadingUnmatchedQuote(arg: string): string {
+  if (arg.length > 0 && (arg[0] === '"' || arg[0] === "'")) {
+    const q = arg[0];
+    if (!arg.slice(1).includes(q)) return arg.slice(1);
+  }
+  return arg;
 }
 
 export function getCommandName(line: string): string {
@@ -221,7 +234,7 @@ export async function getPathSuggestions(
   limit = 32,
   timeoutMs = FS_LIST_TIMEOUT_MS,
 ): Promise<string[]> {
-  const lastArg = getLastArg(line);
+  const lastArg = stripLeadingUnmatchedQuote(getLastArg(line));
   if (looksLikeRemoteTarget(lastArg)) return [];
   const commandName = getCommandName(line);
   const isDirectoryOnlyCommand = DIRECTORY_ONLY_COMMANDS.has(commandName);

@@ -12,6 +12,8 @@ pub struct GhostManager {
     data: Mutex<GhostData>,
     persist_path: PathBuf,
     commit_count: Mutex<u32>,
+    /// Serializes concurrent save_inner calls so tmp files never clobber each other.
+    save_lock: Mutex<()>,
 }
 
 impl GhostManager {
@@ -51,11 +53,13 @@ impl GhostManager {
             data: Mutex::new(data),
             persist_path,
             commit_count: Mutex::new(0),
+            save_lock: Mutex::new(()),
         }
     }
 
-    /// Serialize to disk atomically: write to a temp file then rename so a
-    /// crash mid-write never leaves a partial/corrupt history file.
+    /// Serialize to disk atomically: write to a unique temp file then rename so
+    /// a crash mid-write never leaves a partial/corrupt history file.
+    /// The save_lock serializes concurrent callers so tmp files never clobber each other.
     async fn save_inner(&self, data: &GhostData) {
         let json = match serde_json::to_string(data) {
             Ok(j) => j,
@@ -65,10 +69,18 @@ impl GhostManager {
             }
         };
 
-        // Temp path: same directory, unique per process to avoid collisions.
-        let tmp_path = self.persist_path.with_extension(
-            format!("tmp.{}", std::process::id()),
+        let _guard = self.save_lock.lock().await;
+
+        // Unique tmp path per save: pid + monotonic counter via timestamp.
+        let unique = format!(
+            "tmp.{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0),
         );
+        let tmp_path = self.persist_path.with_extension(unique);
 
         if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
             eprintln!("[Ghost] Failed to write tmp history: {}", e);
@@ -97,6 +109,13 @@ impl GhostManager {
         cmd.get(byte_idx..)
     }
 
+    /// Remove score entries for commands that are no longer in `history` so the
+    /// scores map stays bounded alongside the history ring buffer.
+    fn prune_evicted_scores(scope: &mut crate::ghost::types::ScopeHistory) {
+        let in_history: std::collections::HashSet<&String> = scope.history.iter().collect();
+        scope.scores.retain(|cmd, _| in_history.contains(cmd));
+    }
+
     fn normalize_scope(scope: Option<&str>) -> String {
         let s = scope.unwrap_or("local").trim();
         if s.is_empty() {
@@ -122,6 +141,7 @@ impl GhostManager {
         scope_data.history.insert(0, trimmed.clone());
         if scope_data.history.len() > MAX_HISTORY {
             scope_data.history.truncate(MAX_HISTORY);
+            Self::prune_evicted_scores(scope_data);
         }
 
         // Frecency bump.
@@ -211,6 +231,7 @@ impl GhostManager {
             scope_data.history.insert(0, trimmed);
             if scope_data.history.len() > MAX_HISTORY {
                 scope_data.history.truncate(MAX_HISTORY);
+                Self::prune_evicted_scores(scope_data);
             }
         }
 

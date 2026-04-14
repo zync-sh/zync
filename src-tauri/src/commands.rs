@@ -3808,11 +3808,11 @@ pub async fn shell_get_wsl_distros() -> Result<Vec<String>, String> {
     #[cfg(target_os = "windows")]
     {
         use tokio::process::Command;
-        let output = Command::new("wsl.exe")
-            .args(["-l", "-q"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
+        let output = match Command::new("wsl.exe").args(["-l", "-q"]).output().await {
+            Ok(o) => o,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.to_string()),
+        };
 
         if !output.status.success() {
             return Ok(Vec::new());

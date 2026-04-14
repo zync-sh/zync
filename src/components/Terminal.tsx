@@ -718,6 +718,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
             providers: ghostSettingsRef.current.providers,
           }).then((items) => {
             if (!cachedGhostTracker || cachedGhostTracker.getLineBuffer() !== line) return;
+            // Re-check live setting — user may have disabled popup while resolution was in flight.
+            if (!ghostSettingsRef.current.popupEnabled) return;
             if (items.length > 1) openGhostPopup(items, line);
             else closeGhostPopup();
           }).catch(() => {
@@ -876,6 +878,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           cached.ghostTracker?.reset();
           setGhostSuggestion('');
           closeGhostPopup();
+          ghostTabStateRef.current = resetGhostTabState();
           return; // Don't send the input that triggered restart
         }
 

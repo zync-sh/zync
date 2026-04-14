@@ -1,4 +1,4 @@
-import { getPathSuggestion, getPathSuggestions, getLastArg, getCommandName as getCommandNameFull } from './pathCompletion';
+import { getPathSuggestion, getPathSuggestions, getLastArg, getCommandName as getCommandNameFull, FILE_AWARE_COMMANDS } from './pathCompletion';
 import type {
   GhostCandidatesRequest,
   GhostCommitRequest,
@@ -197,14 +197,8 @@ function isDirectoryCommand(line: string): boolean {
   return command === 'cd' || command === 'pushd' || command === 'popd';
 }
 
-const FILESYSTEM_COMMANDS = new Set([
-  'cat', 'ls', 'less', 'more', 'head', 'tail', 'find', 'stat',
-  'chmod', 'chown', 'cp', 'mv', 'rm', 'mkdir', 'rmdir', 'touch',
-  'vim', 'nvim', 'nano',
-]);
-
 function isFilesystemCommand(line: string): boolean {
-  return isDirectoryCommand(line) || FILESYSTEM_COMMANDS.has(getCommandNameFull(line));
+  return isDirectoryCommand(line) || FILE_AWARE_COMMANDS.has(getCommandNameFull(line));
 }
 
 function shouldUseGhostForLine(line: string): boolean {
