@@ -92,19 +92,47 @@ function stripLeadingUnmatchedQuote(arg: string): string {
   return arg;
 }
 
+/**
+ * Split a shell command line into tokens, respecting single/double quotes and
+ * backslash escapes so that `GREETING="hello world"` is one token, not two.
+ */
+function shellTokenize(line: string): string[] {
+  const tokens: string[] = [];
+  let token = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (escaped) { token += ch; escaped = false; continue; }
+    if (ch === '\\' && !inSingle) { escaped = true; continue; }
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === ' ' && !inSingle && !inDouble) {
+      if (token) { tokens.push(token); token = ''; }
+      continue;
+    }
+    token += ch;
+  }
+  if (token) tokens.push(token);
+  return tokens;
+}
+
+const FLAGS_WITH_ARG = new Set(['-u', '--user', '-g', '--group', '-o', '-p',
+  '-t', '-c', '-s', '-f', '-k', '-m', '-n', '-d']);
+
 export function getCommandName(line: string): string {
   const trimmed = line.trimStart();
   if (!trimmed) return '';
   const wrappers = new Set(['sudo', 'env', 'time', 'nohup', 'command']);
-  const parts = trimmed.split(/\s+/).filter(Boolean);
+  const parts = shellTokenize(trimmed);
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i].toLowerCase();
     if (wrappers.has(part)) {
       // Skip flags and their arguments that follow the wrapper so that e.g.
       // `sudo -u root cat` and `env -u VAR cat` correctly identify `cat`.
       // Flags in this set take a value as the next token.
-      const FLAGS_WITH_ARG = new Set(['-u', '--user', '-g', '--group', '-o', '-p',
-        '-t', '-c', '-s', '-f', '-k', '-m', '-n', '-d']);
       while (i + 1 < parts.length) {
         const next = parts[i + 1];
         if (FLAGS_WITH_ARG.has(next.toLowerCase())) {
@@ -347,7 +375,7 @@ export async function getPathSuggestions(
   const suggestions: string[] = [];
   for (const m of matches.slice(0, Math.max(1, limit))) {
     const nameSuffix = m.name.slice(partial.length);
-    const trailingSep = m.type === 'directory' ? sep : '';
+    const trailingSep = (m.type === 'directory' || m.type === 'symlink') ? sep : '';
     suggestions.push(nameSuffix + trailingSep);
   }
   return suggestions;

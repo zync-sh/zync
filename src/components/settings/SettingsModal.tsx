@@ -50,7 +50,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     };
 
     const setGhostProviderField = (patch: Partial<typeof settings.ghostSuggestions.providers>) => {
-        updateGhostSuggestionsSettings({ providers: { ...settings.ghostSuggestions?.providers, ...patch } });
+        // The reducer merges patch into current.providers, so a partial patch is safe.
+        updateGhostSuggestionsSettings({ providers: patch as typeof settings.ghostSuggestions.providers });
     };
 
     const [activeTab, setActiveTab] = useState<Tab>('terminal');

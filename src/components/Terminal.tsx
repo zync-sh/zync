@@ -375,6 +375,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const ghostTabStateRef = useRef<GhostTabState>(createInitialGhostTabState());
+  const ghostTrackerRef = useRef<InputTracker | null>(null);
 
   // Search handlers
   const handleNext = useCallback(() => {
@@ -410,6 +411,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     ghostSettingsRef.current = ghostSettings;
     if (!ghostSettings.inlineEnabled) {
       setGhostSuggestion('');
+      ghostTrackerRef.current?.clearSuggestion();
     }
     if (!ghostSettings.popupEnabled) {
       closeGhostPopup();
@@ -676,6 +678,12 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     // Bind ghost suggestion handlers for this mount (prevents stale React callbacks
     // when the terminal instance survives remounts via terminalCache).
     const cachedGhostTracker = terminalCache.get(sessionId)?.ghostTracker;
+    ghostTrackerRef.current = cachedGhostTracker ?? null;
+    // If inline suggestions are already disabled at mount time, clear any stale
+    // active suffix that survived from a previous session.
+    if (!ghostSettingsRef.current.inlineEnabled) {
+      ghostTrackerRef.current?.clearSuggestion();
+    }
     const unbindGhostTracker = cachedGhostTracker
       ? bindGhostTrackerRuntime({
         tracker: cachedGhostTracker,
@@ -805,12 +813,26 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           providers: ghostSettingsRef.current.providers,
         });
 
+        // Stale-result guard: discard if the user typed more while we were awaiting.
+        if (tracker.getLineBuffer() !== line) {
+          ghostTabStateRef.current = resetGhostTabState();
+          closeGhostPopup();
+          return;
+        }
+
         if (outcome.kind === 'accept') {
           ghostTabStateRef.current = outcome.nextState;
           acceptGhostSuffix(outcome.suffix);
           return;
         }
         if (outcome.kind === 'show_list') {
+          // Re-check: user may have disabled popups while the async call was in flight.
+          if (!ghostSettingsRef.current.popupEnabled) {
+            ghostTabStateRef.current = resetGhostTabState();
+            closeGhostPopup();
+            queueTerminalInput(sessionId, '\t');
+            return;
+          }
           ghostTabStateRef.current = outcome.nextState;
           openGhostPopup(outcome.items, line);
           return;
