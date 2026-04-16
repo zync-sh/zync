@@ -47,6 +47,7 @@ const MAX_TABS_PER_SCOPE = 20;
 
 let _cwdDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let _lastSavedSnapshot = '';
+let _pendingSave: Promise<void> = Promise.resolve();
 
 /** Debounced wrapper used by setTerminalCwd — fires 1 s after the last call. */
 export function scheduleSaveSession(saveSession: () => Promise<void>): void {
@@ -68,6 +69,7 @@ export function resetSessionDebounce(): void {
         _cwdDebounceTimer = null;
     }
     _lastSavedSnapshot = '';
+    _pendingSave = Promise.resolve();
 }
 
 // ─── Slice factory ────────────────────────────────────────────────────────────
@@ -94,8 +96,11 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
 
             // Phase 3: restore terminal tabs for all scopes.
             // Local tabs get live PTYs; SSH tabs are metadata-only until reconnect.
+            const knownConnectionIds = new Set(get().connections.map(c => c.id));
             for (const [scopeId, snapshots] of Object.entries(data.terminals ?? {})) {
                 if (!snapshots?.length) continue;
+                // Skip orphaned scopes — connection was deleted since last session.
+                if (scopeId !== 'local' && !knownConnectionIds.has(scopeId)) continue;
                 get().restoreTerminalTabs(
                     scopeId,
                     snapshots.slice(0, MAX_TABS_PER_SCOPE),
@@ -151,14 +156,19 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
         // Dirty check: skip the IPC round-trip if nothing changed.
         const snapshot = JSON.stringify(data);
         if (snapshot === _lastSavedSnapshot) return;
-        _lastSavedSnapshot = snapshot;
 
-        try {
-            await invoke('session_save', { data });
-        } catch (e) {
-            console.warn('[Session] Failed to save session:', e);
-            // Reset snapshot so next call retries.
-            _lastSavedSnapshot = '';
-        }
+        // Chain through _pendingSave so concurrent calls never interleave writes.
+        // Only update _lastSavedSnapshot after a successful invoke so a failed
+        // write doesn't suppress the next retry.
+        _pendingSave = _pendingSave.then(async () => {
+            if (snapshot === _lastSavedSnapshot) return; // deduplicate if batched
+            try {
+                await invoke('session_save', { data });
+                _lastSavedSnapshot = snapshot;
+            } catch (e) {
+                console.warn('[Session] Failed to save session:', e);
+            }
+        });
+        await _pendingSave;
     },
 });
