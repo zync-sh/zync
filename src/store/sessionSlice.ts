@@ -57,6 +57,19 @@ export function scheduleSaveSession(saveSession: () => Promise<void>): void {
     }, 1000);
 }
 
+/**
+ * Clears the CWD debounce timer and resets the dirty-check snapshot.
+ * Call this in tests (afterEach) and HMR cleanup to prevent cross-instance leakage
+ * from the module-level mutable state.
+ */
+export function resetSessionDebounce(): void {
+    if (_cwdDebounceTimer !== null) {
+        clearTimeout(_cwdDebounceTimer);
+        _cwdDebounceTimer = null;
+    }
+    _lastSavedSnapshot = '';
+}
+
 // ─── Slice factory ────────────────────────────────────────────────────────────
 
 export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = (set, get) => ({

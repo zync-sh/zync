@@ -387,6 +387,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
             return createConnectionTabState(state.tabs, conn, startView);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
 
@@ -433,6 +434,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         set(state => {
             return reduceTabCloseState(state.tabs, state.activeTabId, tabId);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
 
@@ -441,6 +443,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const tab = state.tabs.find(t => t.id === tabId);
             return { activeTabId: tabId, activeConnectionId: tab?.connectionId || null };
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
 
@@ -500,6 +503,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             newTabs.splice(newIndex, 0, movedTab);
             return { tabs: newTabs };
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
 
