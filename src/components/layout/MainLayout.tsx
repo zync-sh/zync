@@ -441,6 +441,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const activeTabId = useAppStore(state => state.activeTabId);
     const activeTerminalIds = useAppStore(state => state.activeTerminalIds);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
+    const sessionLoaded = useAppStore(state => state.sessionLoaded);
     const loadSnippets = useAppStore(state => state.loadSnippets);
 
     // Pre-load snippets once on app startup so the picker/sidebar always have data
@@ -675,9 +676,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isLoading || isLoadingSettings) return;
+        if (isLoading || isLoadingSettings || !sessionLoaded) return;
         hideBootSplash();
-    }, [isLoading, isLoadingSettings, hideBootSplash]);
+    }, [isLoading, isLoadingSettings, sessionLoaded, hideBootSplash]);
 
     const checkConfig = async () => {
         try {
@@ -701,7 +702,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     };
 
-    if (isLoading || isLoadingSettings) {
+    if (isLoading || isLoadingSettings || !sessionLoaded) {
         return document.getElementById('boot-splash') ? null : <SplashScreen />;
     }
 

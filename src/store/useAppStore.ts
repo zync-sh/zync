@@ -11,6 +11,7 @@ import { UpdateSlice, createUpdateSlice } from './updateSlice';
 import { UiSlice, createUiSlice } from './uiSlice';
 import { AiSlice, createAiSlice } from './aiSlice';
 import { AiUiSlice, createAiUiSlice } from '../ai/store/agentStore';
+import { SessionSlice, createSessionSlice } from './sessionSlice';
 
 export type { Connection, Folder, Tab } from './connectionSlice';
 export type { AppSettings } from './settingsSlice';
@@ -32,7 +33,8 @@ export type AppStore =
     UpdateSlice &
     UiSlice &
     AiUiSlice &
-    AiSlice & {
+    AiSlice &
+    SessionSlice & {
         lastAction: { message: string; type: 'success' | 'date' | 'info' | 'error' } | null;
         setLastAction: (message: string, type?: 'success' | 'info' | 'error') => void;
     };
@@ -51,6 +53,7 @@ export const useAppStore = create<AppStore>()(
         ...createUiSlice(...a),
         ...createAiUiSlice(...a),
         ...createAiSlice(...a),
+        ...createSessionSlice(...a),
 
         lastAction: null,
         setLastAction: (message, type = 'info') => {

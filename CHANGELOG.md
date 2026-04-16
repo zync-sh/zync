@@ -4,6 +4,16 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.13.0]
+
+### Removed
+- **Status Bar Version Number**: Removed the app version display from the bottom status bar. ([648102c])
+
+### Added
+- **Session Persistence**: Zync now restores its full UI state across restarts. Open sidebar tabs (order, active tab, active connection), terminal tabs per connection, and last-known working directory are saved to `session.json` and restored on next launch. ([2de6066])
+- **SSH Terminal Restore**: SSH terminal tabs are restored as metadata-only on launch and show a "Reconnect to resume" prompt; the live PTY is re-established when the user reconnects the connection. ([2de6066])
+- **Passive CWD Tracking**: Working directory is captured via OSC 7 for shells that emit it natively (starship, oh-my-posh, fish, zsh with precmd) and surfaced to ghost suggestions and AI context. ([2de6066])
+
 ## [2.12.0]
 
 ### Added
@@ -547,7 +557,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.12.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.0...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -612,6 +622,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 [4e589d9]: https://github.com/zync-sh/zync/commit/4e589d9
 [f174726]: https://github.com/zync-sh/zync/commit/f174726
 [dae1856]: https://github.com/zync-sh/zync/commit/dae1856
+[648102c]: https://github.com/zync-sh/zync/commit/648102c
+[2de6066]: https://github.com/zync-sh/zync/commit/2de6066
+[2.13.0]: https://github.com/zync-sh/zync/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/zync-sh/zync/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/zync-sh/zync/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/zync-sh/zync/compare/v2.10.1...v2.11.0

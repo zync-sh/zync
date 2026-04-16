@@ -12,15 +12,24 @@ import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
 function AppContent() {
     const loadConnections = useAppStore((state) => state.loadConnections);
     const loadSettings = useAppStore((state) => state.loadSettings);
+    const loadSession = useAppStore((state) => state.loadSession);
     const fetchSystemInfo = useAppStore((state) => state.fetchSystemInfo);
 
     useTransferEvents();
 
     useEffect(() => {
-        // Initialize State
-        loadConnections();
-        loadSettings();
-        fetchSystemInfo();
+        // Initialize State — order matters: connections must load before session
+        // so that restored terminal tabs can reference valid connection IDs.
+        const init = async () => {
+            try {
+                await Promise.all([loadConnections(), loadSettings()]);
+            } finally {
+                // loadSession must always run — it sets sessionLoaded which gates the UI.
+                await loadSession();
+            }
+            fetchSystemInfo();
+        };
+        init().catch(e => console.warn('[App] Initialisation error:', e));
         // eslint-disable-next-line react-hooks/exhaustive-deps -- store actions are stable
     }, []);
 

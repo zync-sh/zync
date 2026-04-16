@@ -42,6 +42,9 @@ pub enum TerminalHandle {
     Local {
         writer: Arc<Mutex<Box<dyn Write + Send>>>,
         reader_handle: Option<tokio::task::JoinHandle<()>>,
+        /// Handle for the PowerShell prompt-injection task.
+        /// Aborted on session close so it can't write to a dead PTY.
+        inject_handle: Option<tokio::task::JoinHandle<()>>,
         master: Box<dyn MasterPty + Send>,
         #[allow(dead_code)]
         child: Box<dyn portable_pty::Child + Send>,
@@ -82,11 +85,6 @@ impl PtyManager {
         shell_override: Option<String>,
         cwd: Option<String>,
     ) -> Result<()> {
-        println!(
-            "[PTY-DEBUG] create_local_session called for {} with shell override: {:?}",
-            term_id, shell_override
-        );
-
         // Clean up any existing dead/stale session with this ID before creating a new one
         let _ = self.close(&term_id).await;
 
@@ -137,8 +135,6 @@ impl PtyManager {
                 vec![],
             )
         };
-        println!("[PTY-DEBUG] Using shell: {} with args: {:?}", shell, args);
-
         let mut cmd = CommandBuilder::new(&shell);
         for arg in &args {
             cmd.arg(arg);
@@ -177,8 +173,6 @@ impl PtyManager {
             .slave
             .spawn_command(cmd)
             .map_err(|e| anyhow!("Failed to spawn shell: {}", e))?;
-        println!("[PTY-DEBUG] Shell spawned");
-
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -188,16 +182,21 @@ impl PtyManager {
             .take_writer()
             .map_err(|e| anyhow!("Failed to take writer: {}", e))?;
 
+        // Create the writer Arc up-front so we can clone it for shell integration.
+        let writer_arc = Arc::new(Mutex::new(writer));
+
+        // No shell integration injected — CWD is tracked passively via OSC 7
+        // for shells that already emit it (starship, oh-my-posh, fish, etc.).
+        let inject_handle: Option<tokio::task::JoinHandle<()>> = None;
+
         // Spawn a task to read from PTY and emit events
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
         let reader_handle = tokio::task::spawn_blocking(move || {
-            println!("[PTY-DEBUG] Reader loop starting for {}", term_id_clone);
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => {
-                        println!("[PTY-DEBUG] EOF read for {}", term_id_clone);
                         // Notify frontend that terminal exited
                         let _ =
                             app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
@@ -222,8 +221,9 @@ impl PtyManager {
             term_id: term_id.clone(),
             connection_id,
             handle: TerminalHandle::Local {
-                writer: Arc::new(Mutex::new(writer)),
+                writer: writer_arc,
                 reader_handle: Some(reader_handle),
+                inject_handle,
                 master: pair.master,
                 child,
             },
@@ -231,7 +231,6 @@ impl PtyManager {
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(term_id.clone(), session);
-        println!("[PTY-DEBUG] Session inserted");
 
         // Notify frontend that terminal is ready for input
         let _ = app_handle.emit(&format!("terminal-ready-{}", term_id), ());
@@ -464,7 +463,10 @@ impl PtyManager {
         let mut sessions = self.sessions.lock().await;
         if let Some(mut session) = sessions.remove(term_id) {
             match &mut session.handle {
-                TerminalHandle::Local { reader_handle, .. } => {
+                TerminalHandle::Local { reader_handle, inject_handle, .. } => {
+                    if let Some(handle) = inject_handle.take() {
+                        handle.abort();
+                    }
                     if let Some(handle) = reader_handle.take() {
                         handle.abort();
                     }
@@ -498,7 +500,10 @@ impl PtyManager {
         for id in ids_to_remove {
             if let Some(mut session) = sessions.remove(&id) {
                 match &mut session.handle {
-                    TerminalHandle::Local { reader_handle, .. } => {
+                    TerminalHandle::Local { reader_handle, inject_handle, .. } => {
+                        if let Some(handle) = inject_handle.take() {
+                            handle.abort();
+                        }
                         if let Some(handle) = reader_handle.take() {
                             handle.abort();
                         }

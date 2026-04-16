@@ -11,6 +11,7 @@ pub mod plugins;
 mod ssh_parser;
 mod ai;
 mod ghost;
+mod session;
 
 use commands::AppState;
 use tauri::{Manager, Emitter};
@@ -250,6 +251,8 @@ pub fn run() {
             ghost::commands::ghost_suggest,
             ghost::commands::ghost_accept,
             ghost::commands::ghost_candidates,
+            session::session_load,
+            session::session_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

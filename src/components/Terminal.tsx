@@ -433,6 +433,11 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const connection = !isLocal ? connections.find((c: Connection) => c.id === terminalKey) : null;
   const isConnected = isLocal || connection?.status === 'connected';
 
+  // True when this tab was restored from a previous session and has never spawned a PTY yet.
+  const isPendingRestore = useAppStore(state =>
+    !isLocal && !!state.terminals[terminalKey]?.find(t => t.id === (termId || terminalKey))?.pendingRestore
+  );
+
   // Use termId if provided, otherwise fallback to terminalKey
   const sessionId = termId || terminalKey;
 
@@ -606,6 +611,29 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       term.loadAddon(fitAddon);
       term.loadAddon(webLinksAddon);
       term.loadAddon(searchAddon);
+
+      // OSC 7 CWD tracking — fired by shells that support shell integration
+      // (bash w/ PROMPT_COMMAND, zsh precmd, fish, starship, oh-my-posh, etc.)
+      term.parser.registerOscHandler(7, (data) => {
+        try {
+          // Format: "file://hostname/path"  or  "file:///path"  or just "/path"
+          let path = data;
+          if (path.startsWith('file://')) {
+            // Strip scheme + authority: file://hostname/path → /path
+            path = path.replace(/^file:\/\/[^/]*/, '');
+          }
+          // Decode percent-encoded chars regardless of whether the file:// prefix was present.
+          path = decodeURIComponent(path);
+          // Windows absolute paths arrive as /C:/Users/... — strip leading slash.
+          if (/^\/[a-zA-Z]:/.test(path)) {
+            path = path.slice(1);
+          }
+          if (path) {
+            useAppStore.getState().setTerminalCwd(terminalKey, sessionId, path);
+          }
+        } catch { /* ignore malformed OSC 7 */ }
+        return true; // consumed — do not pass to xterm default handler
+      });
 
       term.open(containerRef.current);
 
@@ -1206,7 +1234,9 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
               <p className="text-xs text-app-muted mb-4 opacity-70">
                 {hasError
                   ? 'Failed to establish connection. Please check credentials and try again.'
-                  : 'The connection to this terminal was closed.'}
+                  : isPendingRestore
+                    ? 'Terminal restored from last session. Reconnect to resume.'
+                    : 'The connection to this terminal was closed.'}
               </p>
               <Button onClick={() => activeConnectionId && connect(activeConnectionId)}>
                 {hasError ? 'Retry Connection' : 'Reconnect'}

@@ -1,6 +1,8 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
 import { destroyTerminalInstance } from '../components/Terminal';
+import type { TerminalTabSnapshot } from './sessionSlice';
+import { scheduleSaveSession } from './sessionSlice';
 
 export interface TerminalTab {
     id: string;
@@ -8,6 +10,8 @@ export interface TerminalTab {
     initialPath?: string;
     lastKnownCwd?: string;
     isSynced?: boolean;
+    /** True for SSH terminal tabs restored from session — PTY not yet spawned, waiting for reconnect. */
+    pendingRestore?: boolean;
 }
 
 export interface TerminalSlice {
@@ -65,6 +69,24 @@ export interface TerminalSlice {
      * Updates the initialPath of a terminal tab record.
      */
     setTerminalInitialPath: (connectionId: string, termId: string, path: string) => void;
+
+    /**
+     * Restore persisted terminal tabs for a connection on app start.
+     * Uses saved IDs and metadata directly without spawning new UUIDs.
+     * SSH tabs are marked pendingRestore=true until the connection reconnects.
+     * Only called by sessionSlice.loadSession() during restore.
+     */
+    restoreTerminalTabs: (
+        connectionId: string,
+        snapshots: TerminalTabSnapshot[],
+        activeTerminalId: string | null,
+    ) => void;
+
+    /**
+     * Clears the pendingRestore flag on all terminal tabs for a connection.
+     * Called after a successful SSH reconnect so tabs can spawn their PTYs.
+     */
+    clearPendingRestore: (connectionId: string) => void;
 }
 
 // @ts-ignore
@@ -80,8 +102,8 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         const newId = `term-${crypto.randomUUID()}`;
         set(state => {
             const currentTabs = state.terminals[connectionId] || [];
-            const newTab: TerminalTab = { 
-                id: newId, 
+            const newTab: TerminalTab = {
+                id: newId,
                 title: isSynced ? `Synced Terminal` : `Terminal ${currentTabs.length + 1}`,
                 initialPath,
                 isSynced
@@ -105,6 +127,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 syncedTerminalId: nextSyncedIds
             };
         });
+        get().saveSession();
         return newId;
     },
 
@@ -166,6 +189,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 aiDisplayHistory: nextDisplay,
             };
         });
+        get().saveSession();
     },
 
     /** @inheritdoc */
@@ -176,6 +200,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 [connectionId]: termId
             }
         }));
+        get().saveSession();
     },
 
     /** @inheritdoc */
@@ -220,8 +245,26 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
     setTerminalCwd: (connectionId, termId, path) => {
         set(state => {
             const currentTabs = state.terminals[connectionId] || [];
-            const newTabs = currentTabs.map(t => 
+            const newTabs = currentTabs.map(t =>
                 t.id === termId ? { ...t, lastKnownCwd: path } : t
+            );
+            return {
+                terminals: {
+                    ...state.terminals,
+                    [connectionId]: newTabs
+                }
+            };
+        });
+        // CWD changes on every `cd` — debounce to avoid flooding disk.
+        scheduleSaveSession(() => get().saveSession());
+    },
+
+    /** @inheritdoc */
+    setTerminalInitialPath: (connectionId, termId, path) => {
+        set(state => {
+            const currentTabs = state.terminals[connectionId] || [];
+            const newTabs = currentTabs.map(t =>
+                t.id === termId ? { ...t, initialPath: path } : t
             );
             return {
                 terminals: {
@@ -233,18 +276,47 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
     },
 
     /** @inheritdoc */
-    setTerminalInitialPath: (connectionId, termId, path) => {
+    restoreTerminalTabs: (connectionId, snapshots, activeTerminalId) => {
+        const isSSH = connectionId !== 'local';
+        const tabs: TerminalTab[] = snapshots.map(s => ({
+            id: s.id,
+            title: s.title,
+            initialPath: s.initialPath,
+            lastKnownCwd: s.cwd,
+            isSynced: s.isSynced ?? false,
+            pendingRestore: isSSH || undefined,
+        }));
+
+        const syncedTab = tabs.find(t => t.isSynced);
+        set(state => ({
+            terminals: {
+                ...state.terminals,
+                [connectionId]: tabs,
+            },
+            activeTerminalIds: {
+                ...state.activeTerminalIds,
+                [connectionId]: activeTerminalId ?? (tabs[0]?.id ?? null),
+            },
+            syncedTerminalId: {
+                ...state.syncedTerminalId,
+                [connectionId]: syncedTab?.id ?? null,
+            },
+        }));
+    },
+
+    /** @inheritdoc */
+    clearPendingRestore: (connectionId) => {
         set(state => {
-            const currentTabs = state.terminals[connectionId] || [];
-            const newTabs = currentTabs.map(t => 
-                t.id === termId ? { ...t, initialPath: path } : t
-            );
+            const tabs = state.terminals[connectionId];
+            if (!tabs?.some(t => t.pendingRestore)) return state;
             return {
                 terminals: {
                     ...state.terminals,
-                    [connectionId]: newTabs
-                }
+                    [connectionId]: tabs.map(t =>
+                        t.pendingRestore ? { ...t, pendingRestore: undefined } : t
+                    ),
+                },
             };
         });
-    }
+    },
 });

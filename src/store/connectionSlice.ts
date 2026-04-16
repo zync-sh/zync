@@ -31,6 +31,7 @@ import {
 import { buildConnectConfig, normalizeFolderPath, type ImportPlanItem } from '../features/connections/domain';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc } from '../features/connections/infrastructure/connectionPersistence';
+import type { TabSnapshot } from './sessionSlice';
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
 export interface ConnectionSlice {
@@ -78,6 +79,17 @@ export interface ConnectionSlice {
 
     // Tab Reordering
     reorderTabs: (oldIndex: number, newIndex: number) => void;
+
+    // Session Restore
+    /**
+     * Restore persisted sidebar tabs on app start. Only called by sessionSlice.loadSession().
+     * Filters out tabs whose connections no longer exist.
+     */
+    restoreTabState: (
+        tabs: TabSnapshot[],
+        activeTabId: string | null,
+        activeConnectionId: string | null,
+    ) => void;
 
     // Initialization
     loadConnections: () => Promise<void>;
@@ -289,6 +301,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 return { connections: newConns };
             });
 
+            // Clear pendingRestore so SSH terminal tabs can now spawn their PTYs.
+            get().clearPendingRestore(id);
+
 
             // Auto-start tunnels
             try {
@@ -372,6 +387,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
             return createConnectionTabState(state.tabs, conn, startView);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     openPortForwardingTab: () => {
@@ -383,6 +400,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 view: 'port-forwarding',
             }));
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     openReleaseNotesTab: () => {
@@ -394,12 +413,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 view: 'terminal', // placeholder, not used for this type
             }));
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     openSnippetsTab: () => {
         set(state => {
             return ensureGlobalSnippetsTab(state.tabs);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     closeTab: (tabId) => {
@@ -417,6 +440,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         set(state => {
             return reduceTabCloseState(state.tabs, state.activeTabId, tabId);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     activateTab: (tabId) => {
@@ -424,6 +449,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const tab = state.tabs.find(t => t.id === tabId);
             return { activeTabId: tabId, activeConnectionId: tab?.connectionId || null };
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     setTabView: (tabId, view) => {
@@ -481,6 +508,51 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const [movedTab] = newTabs.splice(oldIndex, 1);
             newTabs.splice(newIndex, 0, movedTab);
             return { tabs: newTabs };
+        });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
+    },
+
+    restoreTabState: (snapshots, activeTabId, activeConnectionId) => {
+        set(state => {
+            const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes']);
+            const tabs: Tab[] = snapshots
+                .filter(s => RESTORABLE_TYPES.has(s.tabType))
+                .filter(s => {
+                    // Drop connection tabs whose connection was deleted.
+                    // 'local' is always valid — it is not in the connections array.
+                    if (s.tabType === 'connection') {
+                        return s.connectionId === 'local' || state.connections.some(c => c.id === s.connectionId);
+                    }
+                    return true;
+                })
+                .map(s => {
+                    const VALID_VIEWS = new Set<Tab['view']>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard']);
+                    const view: Tab['view'] = VALID_VIEWS.has(s.view as Tab['view']) ? s.view as Tab['view'] : 'terminal';
+                    return {
+                        id: s.id,
+                        type: s.tabType as Tab['type'],
+                        title: s.title,
+                        connectionId: s.connectionId,
+                        view,
+                    };
+                });
+
+            if (tabs.length === 0) return state;
+
+            const resolvedActiveId =
+                activeTabId && tabs.some(t => t.id === activeTabId)
+                    ? activeTabId
+                    : tabs[0].id;
+            const resolvedTab = tabs.find(t => t.id === resolvedActiveId);
+            // Validate activeConnectionId against loaded connections before using as fallback.
+            const activeConnectionIdValid =
+                activeConnectionId === 'local' ||
+                state.connections.some(c => c.id === activeConnectionId);
+            const resolvedConnId =
+                resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
+
+            return { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId };
         });
     },
 
