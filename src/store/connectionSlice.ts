@@ -400,6 +400,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 view: 'port-forwarding',
             }));
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     openReleaseNotesTab: () => {
@@ -411,12 +413,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 view: 'terminal', // placeholder, not used for this type
             }));
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     openSnippetsTab: () => {
         set(state => {
             return ensureGlobalSnippetsTab(state.tabs);
         });
+        // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
     },
 
     closeTab: (tabId) => {
