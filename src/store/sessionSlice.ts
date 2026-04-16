@@ -1,33 +1,11 @@
 import { StateCreator } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AppStore } from './useAppStore';
-
-// ─── Types (mirrors Rust SessionData) ────────────────────────────────────────
-
-export interface TerminalTabSnapshot {
-    id: string;
-    title: string;
-    cwd?: string;
-    initialPath?: string;
-    isSynced?: boolean;
-}
-
-export interface TabSnapshot {
-    id: string;
-    tabType: string;
-    title: string;
-    connectionId?: string;
-    view: string;
-}
-
-interface SessionData {
-    version: number;
-    activeTabId?: string;
-    activeConnectionId?: string;
-    tabs: TabSnapshot[];
-    terminals: Record<string, TerminalTabSnapshot[]>;
-    activeTerminalIds: Record<string, string>;
-}
+import {
+    buildSessionData,
+    MAX_TABS_PER_SCOPE,
+    type SessionData,
+} from './sessionPersistence';
 
 // ─── Slice interface ──────────────────────────────────────────────────────────
 
@@ -39,9 +17,6 @@ export interface SessionSlice {
     loadSession: () => Promise<void>;
     saveSession: () => Promise<void>;
 }
-
-// Keep in sync with MAX_TABS_PER_SCOPE in session.rs
-const MAX_TABS_PER_SCOPE = 20;
 
 // ─── Module-level debounce + dirty check ────────────────────────────────────
 
@@ -119,39 +94,7 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
         // Never save mid-restore — would overwrite the snapshot we're reading.
         if (get().isRestoring) return;
 
-        const state = get();
-
-        const data: SessionData = {
-            version: 1,
-            activeTabId: state.activeTabId ?? undefined,
-            activeConnectionId: state.activeConnectionId ?? undefined,
-            // Exclude transient UI-only tabs (settings) from persistence.
-            tabs: (state.tabs ?? [])
-                .filter(t => t.type !== 'settings')
-                .map(t => ({
-                    id: t.id,
-                    tabType: t.type,
-                    title: t.title,
-                    connectionId: t.connectionId,
-                    view: t.view,
-                })),
-            terminals: Object.fromEntries(
-                Object.entries(state.terminals ?? {}).map(([connId, tabs]) => [
-                    connId,
-                    tabs.slice(0, MAX_TABS_PER_SCOPE).map(t => ({
-                        id: t.id,
-                        title: t.title,
-                        cwd: t.lastKnownCwd,
-                        initialPath: t.initialPath,
-                        isSynced: t.isSynced,
-                    })),
-                ]),
-            ),
-            activeTerminalIds: Object.fromEntries(
-                (Object.entries(state.activeTerminalIds ?? {}) as [string, string | null][])
-                    .filter((entry): entry is [string, string] => entry[1] != null),
-            ),
-        };
+        const data: SessionData = buildSessionData(get());
 
         // Dirty check: skip the IPC round-trip if nothing changed.
         const snapshot = JSON.stringify(data);

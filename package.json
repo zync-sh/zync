@@ -28,6 +28,7 @@
     "test:connection-lifecycle-service": "npm run compile:agent-tests && node tests/connectionLifecycleService.test.mjs",
     "test:tunnel-autostart-service": "npm run compile:agent-tests && node tests/tunnelAutoStartService.test.mjs",
     "test:ghost-helpers": "npm run compile:agent-tests && node tests/ghostSuggestionsHelpers.test.mjs",
+    "test:session-persistence": "npm run compile:agent-tests && node tests/sessionPersistence.test.mjs",
     "test:all-agent": "npm run compile:agent-tests && node tests/runAllAgentTests.mjs",
     "test": "npm run test:all-agent"
   },

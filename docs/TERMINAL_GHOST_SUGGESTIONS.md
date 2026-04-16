@@ -7,6 +7,13 @@ This document describes the fish-style terminal suggestion system in Zync:
 - Per-scope history ranking (local or connection-specific)
 - Filesystem path completion (local + remote via `fs_list`)
 
+## Status Snapshot (2026-04-16)
+
+- Backend-first modular ghost engine is active under `src-tauri/src/ghost/*` (parser, ranking, manager, commands, types).
+- Frontend routing has been decomposed from `Terminal.tsx` into helper modules (`client`, `runtime`, `controller`, `behavior`, `uiState`, `pathCompletion`).
+- Popup/context-menu/inline toggles are live in settings (`ghostSuggestions.*` + provider toggles).
+- Remaining work is parity tuning/polish (fish-like edge behavior, deeper smoke coverage), not baseline architecture setup.
+
 ## Naming Clarification
 
 - `ContextMenu` (`src/components/ui/ContextMenu.tsx`) is the generic right-click menu UI.
@@ -59,7 +66,7 @@ This document describes the fish-style terminal suggestion system in Zync:
 - `src/lib/ghostSuggestions/suggestionEngine.ts`
   - Provider engine scaffold for sync/debounced suggestions.
 - `src/lib/ghostSuggestions/providers/historyProvider.ts`
-  - History provider implementation utilities.
+  - Legacy helper scaffold (`CommandHistory` ring-buffer). Current runtime uses backend history via IPC (`ghost_*` commands).
 
 ### Backend Rust (history + ranking + commands)
 
@@ -127,4 +134,8 @@ This document describes the fish-style terminal suggestion system in Zync:
 - If key routing changes, update both:
   - `src/lib/ghostSuggestions/controller.ts`
   - `tests/ghostSuggestionsHelpers.test.mjs`
+- If parser/ranking behavior changes, update backend unit tests in:
+  - `src-tauri/src/ghost/parser.rs`
+  - `src-tauri/src/ghost/ranking.rs`
+  - `src-tauri/src/ghost/manager.rs`
 - Avoid adding terminal key buffering unless a reproducible xterm sequence split is proven.

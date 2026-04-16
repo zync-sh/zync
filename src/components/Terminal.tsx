@@ -35,7 +35,10 @@ interface TerminalCache {
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
   spawned: boolean;
-  detached: boolean; // listenerAttached flag renamed for clarity? No, let's use listenerAttached
+  starting: boolean;
+  suppressNextExitBanner: boolean;
+  /** Reserved cache flag for temporarily detached terminal instances during remount/cleanup flows. */
+  detached: boolean;
   listenerAttached: boolean;
   pendingInput: string;
   inputFlushTimer: ReturnType<typeof window.setTimeout> | null;
@@ -50,6 +53,13 @@ const INPUT_BATCH_MS = 4;
 const INPUT_FLUSH_THRESHOLD = 64;
 const inputByteEncoder = new TextEncoder();
 const IMMEDIATE_INPUT_PATTERN = /[\r\n\x03\x04\x1b]/;
+const THEME_PRESETS: Record<string, Record<string, string>> = {
+  red: { background: '#1a0b0b', cursor: '#ef4444', selectionBackground: 'rgba(239, 68, 68, 0.3)' },
+  blue: { background: '#0b101a', cursor: '#3b82f6', selectionBackground: 'rgba(59, 130, 246, 0.3)' },
+  green: { background: '#0b1a10', cursor: '#10b981', selectionBackground: 'rgba(16, 185, 129, 0.3)' },
+  orange: { background: '#1a120b', cursor: '#f97316', selectionBackground: 'rgba(249, 115, 22, 0.3)' },
+  purple: { background: '#160b1a', cursor: '#d946ef', selectionBackground: 'rgba(217, 70, 239, 0.3)' },
+};
 // Export recent terminal buffer lines for AI context
 export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
   if (!termId) {
@@ -427,6 +437,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const activeConnectionId = connectionId || globalActiveId;
   const terminalKey = activeConnectionId || 'local';
   const ghostScope = connectionId || terminalKey;
+  const windowsShell = settings.localTerm?.windowsShell;
 
   // Find connection status
   const isLocal = terminalKey === 'local';
@@ -686,6 +697,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         fitAddon,
         searchAddon,
         spawned: false,
+        starting: false,
+        suppressNextExitBanner: false,
         listenerAttached: false,
         detached: false,
         pendingInput: '',
@@ -791,6 +804,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     const cachedEntry = terminalCache.get(sessionId);
     if (cachedEntry && !cachedEntry.spawned) {
       cachedEntry.spawned = true;
+      cachedEntry.starting = true;
+      cachedEntry.suppressNextExitBanner = !isNewTerminal;
 
       // Get shell preference for local terminals on Windows
       const isLocalTerminal = (connectionId || 'local') === 'local';
@@ -819,6 +834,8 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         .catch((err) => {
           console.error('Failed to create terminal:', err);
           term.write(`\r\n\x1b[31mFailed to start terminal session: ${err}\x1b[0m\r\n`);
+          cachedEntry.starting = false;
+          cachedEntry.spawned = false;
         });
     }
 
@@ -895,6 +912,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           clearPendingInput(sessionId);
           cached.lastResize = null;
           cached.spawned = true;
+          cached.starting = true;
 
           // Clear terminal for fresh start
           term.clear();
@@ -915,6 +933,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           window.ipcRenderer
             .invoke('terminal:create', {
               termId: sessionId,
+              connectionId: terminalKey,
               rows: term.rows,
               cols: term.cols,
               shell: shellSetting,
@@ -923,6 +942,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
             .catch((err) => {
               console.error('Failed to restart terminal:', err);
               term.write(`\r\n\x1b[31mFailed to restart terminal session: ${err}\x1b[0m\r\n`);
+              cached.starting = false;
               cached.spawned = false;
             });
           cached.ghostTracker?.reset();
@@ -965,9 +985,25 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
 
       // Listen to Tauri event for this specific terminal
       listen<Uint8Array>(`terminal-output-${sessionId}`, (event) => {
+        const cached = terminalCache.get(sessionId);
+        if (cached?.suppressNextExitBanner) {
+          cached.suppressNextExitBanner = false;
+        }
         term.write(event.payload);
       }).then((unlistenFn) => {
         // Store the unlisten function
+        if (terminalCache.has(sessionId)) {
+          terminalCache.get(sessionId)!.unlisten!.push(unlistenFn);
+        }
+      });
+
+      listen<void>(`terminal-ready-${sessionId}`, () => {
+        const cached = terminalCache.get(sessionId);
+        if (cached) {
+          cached.starting = false;
+          cached.spawned = true;
+        }
+      }).then((unlistenFn) => {
         if (terminalCache.has(sessionId)) {
           terminalCache.get(sessionId)!.unlisten!.push(unlistenFn);
         }
@@ -978,6 +1014,18 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         console.log(`[Terminal] Session ${sessionId} exited`);
         const cached = terminalCache.get(sessionId);
         if (cached) {
+          if (cached.starting) {
+            console.log(`[Terminal] Ignoring exit for ${sessionId} while replacement spawn is in flight`);
+            return;
+          }
+          if (cached.suppressNextExitBanner) {
+            console.log(`[Terminal] Suppressing one stale exit banner for ${sessionId} after terminal recreation`);
+            cached.suppressNextExitBanner = false;
+            cached.spawned = false;
+            clearPendingInput(sessionId);
+            cached.lastResize = null;
+            return;
+          }
           // Reset spawned flag so terminal can be restarted
           cached.spawned = false;
           clearPendingInput(sessionId);
@@ -1140,11 +1188,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           cached.lastResize = null;
           
           cached.spawned = true;
+          cached.starting = true;
+          cached.suppressNextExitBanner = true;
           termRef.current?.clear();
           termRef.current?.reset();
           
           const isLocalTerminal = (connectionId || 'local') === 'local';
-          const shellSetting = isLocalTerminal ? settings.localTerm?.windowsShell : undefined;
+          const shellSetting = isLocalTerminal ? windowsShell : undefined;
+          const terminals = useAppStore.getState().terminals;
+          const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
+          const wakeCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
 
           window.ipcRenderer
             .invoke('terminal:create', {
@@ -1153,10 +1206,12 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
               rows: termRef.current?.rows || 24,
               cols: termRef.current?.cols || 80,
               shell: shellSetting,
+              cwd: wakeCwd,
             })
             .catch((err) => {
               console.error('Failed to auto-restart terminal:', err);
               termRef.current?.write(`\r\n\x1b[31mFailed to automatically restart terminal: ${err}\x1b[0m\r\n`);
+              cached.starting = false;
               cached.spawned = false;
             });
         }
@@ -1165,16 +1220,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     
     window.addEventListener('connection-wakeup', handleWakeup);
     return () => window.removeEventListener('connection-wakeup', handleWakeup);
-  }, [sessionId, connectionId, settings]);
-
-  // Define Presets
-  const THEME_PRESETS: Record<string, any> = {
-    'red': { background: '#1a0b0b', cursor: '#ef4444', selectionBackground: 'rgba(239, 68, 68, 0.3)' },
-    'blue': { background: '#0b101a', cursor: '#3b82f6', selectionBackground: 'rgba(59, 130, 246, 0.3)' },
-    'green': { background: '#0b1a10', cursor: '#10b981', selectionBackground: 'rgba(16, 185, 129, 0.3)' },
-    'orange': { background: '#1a120b', cursor: '#f97316', selectionBackground: 'rgba(249, 115, 22, 0.3)' },
-    'purple': { background: '#160b1a', cursor: '#d946ef', selectionBackground: 'rgba(217, 70, 239, 0.3)' },
-  };
+  }, [sessionId, connectionId, terminalKey, windowsShell]);
 
   useEffect(() => {
     if (!termRef.current || !activeConnectionId) return;
