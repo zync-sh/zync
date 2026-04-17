@@ -1098,9 +1098,20 @@ pub async fn terminal_create(
     rows: u16,
     shell: Option<String>,
     cwd: Option<String>,
+    generation: Option<u32>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let generation = match generation {
+        Some(value) => value,
+        None => {
+            eprintln!(
+                "[TERM] terminal_create called without generation for connection {} and term {}; defaulting to 0",
+                connection_id, term_id
+            );
+            0
+        }
+    };
     println!(
         "[TERM] Creating terminal for connection {} with ID {}, shell: {:?}",
         connection_id, term_id, shell
@@ -1112,7 +1123,7 @@ pub async fn terminal_create(
         // Use term_id (UUID) for the session, not connection_id
         state
             .pty_manager
-            .create_local_session(term_id.clone(), connection_id, cols, rows, app, shell, cwd)
+            .create_local_session(term_id.clone(), connection_id, generation, cols, rows, app, shell, cwd)
             .await
             .map_err(|e| e.to_string())?;
         Ok(term_id)
@@ -1202,7 +1213,7 @@ pub async fn terminal_create(
         println!("[TERM] SSH channel opened, requesting PTY");
         state
             .pty_manager
-            .create_remote_session(term_id.clone(), connection_id, channel, cols, rows, app, cwd)
+            .create_remote_session(term_id.clone(), connection_id, generation, channel, cols, rows, app, cwd)
             .await
             .map_err(|e| e.to_string())?;
 

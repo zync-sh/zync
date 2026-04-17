@@ -31,7 +31,7 @@ import {
 import { buildConnectConfig, normalizeFolderPath, type ImportPlanItem } from '../features/connections/domain';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc } from '../features/connections/infrastructure/connectionPersistence';
-import type { TabSnapshot } from './sessionSlice';
+import type { TabSnapshot } from './sessionPersistence';
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
 export interface ConnectionSlice {
