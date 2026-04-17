@@ -4,6 +4,16 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+
+## [2.13.1]
+
+### Fixed
+- **Terminal PTY Generation Guarding**: Added per-spawn generation tagging for terminal ready/output/exit events so stale PTY events from earlier reload/restart cycles are ignored cleanly. ([d049d01])
+- **Session Persistence Snapshot Integrity**: Hardened persisted `activeTabId` and `activeTerminalIds` so saved session state cannot point to filtered tabs or terminals dropped by snapshot truncation. ([d049d01])
+
+### Added
+- **Session Persistence Test Coverage**: Added focused regression coverage for session snapshot serialization, tab filtering, terminal truncation, and active-terminal ID persistence. ([d049d01])
+
 ## [2.13.0]
 
 ### Removed
@@ -557,7 +567,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.1...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -622,8 +632,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 [4e589d9]: https://github.com/zync-sh/zync/commit/4e589d9
 [f174726]: https://github.com/zync-sh/zync/commit/f174726
 [dae1856]: https://github.com/zync-sh/zync/commit/dae1856
+[d049d01]: https://github.com/zync-sh/zync/commit/d049d01
 [648102c]: https://github.com/zync-sh/zync/commit/648102c
 [2de6066]: https://github.com/zync-sh/zync/commit/2de6066
+[2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/zync-sh/zync/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/zync-sh/zync/compare/v2.11.1...v2.12.0
 [2.11.1]: https://github.com/zync-sh/zync/compare/v2.11.0...v2.11.1

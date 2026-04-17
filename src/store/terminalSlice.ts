@@ -1,7 +1,7 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
 import { destroyTerminalInstance } from '../components/Terminal';
-import type { TerminalTabSnapshot } from './sessionSlice';
+import type { TerminalTabSnapshot } from './sessionPersistence';
 import { scheduleSaveSession } from './sessionSlice';
 
 export interface TerminalTab {

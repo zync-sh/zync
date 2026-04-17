@@ -2,10 +2,12 @@ use anyhow::{anyhow, Result};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use russh::client::Msg;
 use russh::{Channel, ChannelMsg};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::mem;
 use std::sync::Arc;
+use std::sync::mpsc as std_mpsc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
@@ -15,12 +17,27 @@ const REMOTE_OUTPUT_BATCH_MS: u64 = 8;
 /// Flush buffered remote output immediately once it reaches this many bytes.
 const REMOTE_OUTPUT_FLUSH_THRESHOLD: usize = 4096;
 
+#[derive(Clone, Serialize)]
+struct TerminalLifecycleEvent {
+    generation: u32,
+}
+
+#[derive(Clone, Serialize)]
+struct TerminalOutputEvent {
+    generation: u32,
+    data: Vec<u8>,
+}
+
 /// Emits a terminal output chunk to the frontend without changing the existing event contract.
 ///
 /// Keeping this in a helper centralizes the `terminal-output-{term_id}` event
 /// shape so local and remote PTY paths stay consistent.
-fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, payload: &[u8]) {
-    if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id), payload) {
+fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, generation: u32, payload: &[u8]) {
+    let event = TerminalOutputEvent {
+        generation,
+        data: payload.to_vec(),
+    };
+    if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id), event) {
         eprintln!("[PTY] Failed to emit output: {}", e);
     }
 }
@@ -29,13 +46,18 @@ fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, payload: &[u8]) {
 ///
 /// The remote SSH path may receive very small chunks for echo and control
 /// sequences. This helper coalesces them without losing trailing bytes on exit.
-fn flush_pending_output(app_handle: &AppHandle, term_id: &str, pending_output: &mut Vec<u8>) {
+fn flush_pending_output(
+    app_handle: &AppHandle,
+    term_id: &str,
+    generation: u32,
+    pending_output: &mut Vec<u8>,
+) {
     if pending_output.is_empty() {
         return;
     }
 
     let output = mem::take(pending_output);
-    emit_terminal_output(app_handle, term_id, &output);
+    emit_terminal_output(app_handle, term_id, generation, &output);
 }
 // Enum to handle both local PTY and remote SSH channels
 pub enum TerminalHandle {
@@ -79,6 +101,7 @@ impl PtyManager {
         &self,
         term_id: String,
         connection_id: String,
+        generation: u32,
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
@@ -189,40 +212,12 @@ impl PtyManager {
         // for shells that already emit it (starship, oh-my-posh, fish, etc.).
         let inject_handle: Option<tokio::task::JoinHandle<()>> = None;
 
-        // Spawn a task to read from PTY and emit events
-        let term_id_clone = term_id.clone();
-        let app_handle_clone = app_handle.clone();
-        let reader_handle = tokio::task::spawn_blocking(move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => {
-                        // Notify frontend that terminal exited
-                        let _ =
-                            app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
-                        break;
-                    } // EOF
-                    Ok(n) => {
-                        // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
-                        emit_terminal_output(&app_handle_clone, &term_id_clone, &buf[..n]);
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading from PTY: {}", e);
-                        // Notify frontend that terminal exited due to error
-                        let _ =
-                            app_handle_clone.emit(&format!("terminal-exit-{}", term_id_clone), ());
-                        break;
-                    }
-                }
-            }
-        });
-
         let session = PtySession {
             term_id: term_id.clone(),
             connection_id,
             handle: TerminalHandle::Local {
                 writer: writer_arc,
-                reader_handle: Some(reader_handle),
+                reader_handle: None,
                 inject_handle,
                 master: pair.master,
                 child,
@@ -231,9 +226,59 @@ impl PtyManager {
 
         let mut sessions = self.sessions.lock().await;
         sessions.insert(term_id.clone(), session);
+        drop(sessions);
 
-        // Notify frontend that terminal is ready for input
-        let _ = app_handle.emit(&format!("terminal-ready-{}", term_id), ());
+        // Spawn a task to read from PTY, but gate its first read until after
+        // ready has been published. This keeps the session insertion atomic and
+        // avoids orphaning the reader if close() races immediately after insert.
+        let term_id_clone = term_id.clone();
+        let app_handle_clone = app_handle.clone();
+        let (reader_start_tx, reader_start_rx) = std_mpsc::channel::<()>();
+        let reader_handle = tokio::task::spawn_blocking(move || {
+            let _ = reader_start_rx.recv();
+            let mut buf = [0u8; 8192];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => {
+                        // Notify frontend that terminal exited
+                        let _ = app_handle_clone.emit(
+                            &format!("terminal-exit-{}", term_id_clone),
+                            TerminalLifecycleEvent { generation },
+                        );
+                        break;
+                    } // EOF
+                    Ok(n) => {
+                        // Emit as binary (Vec<u8>) to avoid UTF-8 corruption on chunk boundaries
+                        emit_terminal_output(&app_handle_clone, &term_id_clone, generation, &buf[..n]);
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading from PTY: {}", e);
+                        // Notify frontend that terminal exited due to error
+                        let _ = app_handle_clone.emit(
+                            &format!("terminal-exit-{}", term_id_clone),
+                            TerminalLifecycleEvent { generation },
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut sessions = self.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(&term_id) {
+            if let TerminalHandle::Local { reader_handle: session_reader_handle, .. } = &mut session.handle {
+                *session_reader_handle = Some(reader_handle);
+            }
+        }
+        drop(sessions);
+
+        // Notify frontend that terminal is ready for input only after the
+        // session has a live reader handle wired for cleanup.
+        let _ = app_handle.emit(
+            &format!("terminal-ready-{}", term_id),
+            TerminalLifecycleEvent { generation },
+        );
+        let _ = reader_start_tx.send(());
 
         Ok(())
     }
@@ -243,6 +288,7 @@ impl PtyManager {
         &self,
         term_id: String,
         connection_id: String,
+        generation: u32,
         mut channel: Channel<Msg>,
         cols: u16,
         rows: u16,
@@ -287,10 +333,31 @@ impl PtyManager {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
         let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(4);
 
+        let session = PtySession {
+            term_id: term_id.clone(),
+            connection_id,
+            handle: TerminalHandle::Remote {
+                tx,
+                resize_tx,
+                task_handle: None,
+            },
+        };
+
+        let mut sessions = self.sessions.lock().await;
+        sessions.insert(term_id.clone(), session);
+        drop(sessions);
+
+        // Notify frontend that terminal is ready for input
+        let _ = app_handle.emit(
+            &format!("terminal-ready-{}", term_id),
+            TerminalLifecycleEvent { generation },
+        );
+
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
 
-        // Spawn a single task to manage the SSH channel (Reader + Writer + Resize)
+        // Spawn the manager task only after ready has been published so same-generation
+        // output/exit events can never arrive before the frontend has seen ready.
         let task_handle = tokio::task::spawn(async move {
             let app_handle = app_handle_clone;
             println!("[PTY] Starting manager task for {}", term_id_clone);
@@ -299,38 +366,46 @@ impl PtyManager {
 
             loop {
                 tokio::select! {
-                    // 1. Handle incoming SSH data (Output from server)
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
                                 pending_output.extend_from_slice(data.as_ref());
 
                                 if pending_output.len() >= REMOTE_OUTPUT_FLUSH_THRESHOLD {
-                                    flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                                    flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                     flush_deadline = None;
                                 } else if flush_deadline.is_none() {
                                     flush_deadline = Some(Instant::now() + Duration::from_millis(REMOTE_OUTPUT_BATCH_MS));
                                 }
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
-                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
-                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
+                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+                                let _ = app_handle.emit(
+                                    &format!("terminal-exit-{}", term_id_clone),
+                                    TerminalLifecycleEvent { generation },
+                                );
                                 println!("[PTY] Remote shell exited with status: {}", exit_status);
                                 break;
                             }
                             Some(ChannelMsg::Eof) => {
-                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
-                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
+                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+                                let _ = app_handle.emit(
+                                    &format!("terminal-exit-{}", term_id_clone),
+                                    TerminalLifecycleEvent { generation },
+                                );
                                 println!("[PTY] Remote channel EOF");
                                 break;
                             }
                             None => {
-                                flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
-                                let _ = app_handle.emit(&format!("terminal-exit-{}", term_id_clone), ());
+                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+                                let _ = app_handle.emit(
+                                    &format!("terminal-exit-{}", term_id_clone),
+                                    TerminalLifecycleEvent { generation },
+                                );
                                 println!("[PTY] Channel closed");
                                 break;
                             }
-                            _ => {} // Ignore other messages for now
+                            _ => {}
                         }
                     }
 
@@ -339,11 +414,10 @@ impl PtyManager {
                             tokio::time::sleep_until(deadline).await;
                         }
                     }, if flush_deadline.is_some() => {
-                        flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
+                        flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                         flush_deadline = None;
                     }
 
-                    // 2. Handle outgoing user input (Input to server)
                     Some(input) = rx.recv() => {
                         if let Err(e) = channel.data(&input[..]).await {
                              eprintln!("[PTY] Failed to send data to channel: {}", e);
@@ -351,9 +425,7 @@ impl PtyManager {
                         }
                     }
 
-                    // 3. Handle resize events - drain channel to get only latest
                     Some((mut c, mut r)) = resize_rx.recv() => {
-                        // Drain any additional resize events to avoid stale resizes
                         while let Ok((latest_c, latest_r)) = resize_rx.try_recv() {
                             c = latest_c;
                             r = latest_r;
@@ -365,29 +437,18 @@ impl PtyManager {
                 }
             }
 
-            flush_pending_output(&app_handle, &term_id_clone, &mut pending_output);
-
-            // Cleanup on exit
+            flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
             let _ = channel.close().await;
             println!("[PTY] Remote session task ended");
         });
 
-        let session = PtySession {
-            term_id: term_id.clone(),
-            connection_id,
-            handle: TerminalHandle::Remote {
-                tx,
-                resize_tx,
-                task_handle: Some(task_handle),
-            },
-        };
-
         let mut sessions = self.sessions.lock().await;
-        sessions.insert(term_id.clone(), session);
+        if let Some(session) = sessions.get_mut(&term_id) {
+            if let TerminalHandle::Remote { task_handle: session_task_handle, .. } = &mut session.handle {
+                *session_task_handle = Some(task_handle);
+            }
+        }
         println!("[PTY] Remote session created successfully");
-
-        // Notify frontend that terminal is ready for input
-        let _ = app_handle.emit(&format!("terminal-ready-{}", term_id), ());
 
         Ok(())
     }
