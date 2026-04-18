@@ -1,19 +1,19 @@
 Origin: Zync
 Label: Zync
 Codename: stable
-Date: Fri, 17 Apr 2026 18:41:44 UTC
+Date: Sat, 18 Apr 2026 17:22:33 UTC
 Architectures: amd64
 Components: main
 Description: Zync SSH Client
 MD5Sum:
- bb6b980b8b3392b867833387cf1e5e85 435 main/binary-amd64/Packages
- 6b0362ed7813e4fa3988c7947a1f2c57 338 main/binary-amd64/Packages.gz
+ 8954b0eac5e7407bcf6d7382ec43efaa 435 main/binary-amd64/Packages
+ b4e8f69dff24d3bc8cf2e63d32a7c4f9 339 main/binary-amd64/Packages.gz
  42e84d3d44a566643683d144a092aff4 90 main/binary-amd64/Release
 SHA1:
- 92f05b5d7d4c9109a656a72e211b41f3b73277f4 435 main/binary-amd64/Packages
- f8c3a8e2d10c7717774387f8642e68052c060d88 338 main/binary-amd64/Packages.gz
+ a358fbeafa35fa860694afe6d68d1713eef24d2b 435 main/binary-amd64/Packages
+ a74258e9a7d37a8b05d2ac080288add1078f35b6 339 main/binary-amd64/Packages.gz
  ef45dc9e9f1e6aded3333434a5dadab76d0950a8 90 main/binary-amd64/Release
 SHA256:
- 12d9533029f5a6ae6f25de9246f5f91f56fa7863358e927a9e23b6f32976ee0e 435 main/binary-amd64/Packages
- d96736a2e8e830cf54727ca2c6f0e7842d85ecb51972d152328c06c9dd589586 338 main/binary-amd64/Packages.gz
+ 7246918af4704c217c8848af99689d7967cd23981a1024abd10bddb56913d17b 435 main/binary-amd64/Packages
+ a224e5362fbb966014cef2a1246e7e5a14e4769048ebf451d34d727fc85f0f45 339 main/binary-amd64/Packages.gz
  020dce7d9e6a9335e76bc76a6e888a83b6cd03fa911558ab2c59bae911b9366a 90 main/binary-amd64/Release
