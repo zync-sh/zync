@@ -29,6 +29,8 @@
         "src/components/ai/sidebarSubmit.ts",
         "src/components/ai/useAiSidebarResize.ts",
         "src/components/dashboard/welcome/quick-connect/AuthPanel.tsx",
+        "src/components/dashboard/welcome/QuickConnectBar.tsx",
+        "src/components/dashboard/welcome/quick-connect/parsing.ts",
         "src/components/dashboard/welcome/quick-connect/SuggestionsDropdown.tsx",
         "src/components/dashboard/welcome/quick-connect/TemplatesDropdown.tsx",
         "src/components/editor/codemirror/comments.ts",

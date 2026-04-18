@@ -48,13 +48,9 @@ export function CommandPalette() {
 
     const openRef = useRef(open);
     const quickPickModeRef = useRef(quickPickMode);
-    const commandModeRef = useRef(commandMode);
-    const searchRef = useRef(search);
 
     useEffect(() => { openRef.current = open; }, [open]);
     useEffect(() => { quickPickModeRef.current = quickPickMode; }, [quickPickMode]);
-    useEffect(() => { commandModeRef.current = commandMode; }, [commandMode]);
-    useEffect(() => { searchRef.current = search; }, [search]);
 
     // Optimize selectors with shallow comparison
     const { connections, setAddConnectionModalOpen, openTab, openSettings } = useAppStore(

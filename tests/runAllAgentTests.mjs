@@ -11,6 +11,7 @@ const tests = [
   'tests/connectionTabService.test.mjs',
   'tests/ghostSuggestionsHelpers.test.mjs',
   'tests/providerCatalog.test.mjs',
+  'tests/quickConnectParsing.test.mjs',
   'tests/quickConnectSubcomponents.test.mjs',
   'tests/redactContext.test.mjs',
   'tests/requestContext.test.mjs',

@@ -16,8 +16,9 @@ import { useAppStore } from '../../../store/useAppStore';
 import { AuthPanel } from './quick-connect/AuthPanel';
 import { SuggestionsDropdown } from './quick-connect/SuggestionsDropdown';
 import { TemplatesDropdown, type ConnectionTemplate } from './quick-connect/TemplatesDropdown';
+import { parseConnectionString, parsePort, parseSSHCommand } from './quick-connect/parsing';
 
-const ipc: Window['ipcRenderer'] = window.ipcRenderer;
+const ipc: Window['ipcRenderer'] | undefined = typeof window !== 'undefined' ? window.ipcRenderer : undefined;
 
 const CONNECTION_TEMPLATES: readonly ConnectionTemplate[] = [
     { id: 'aws-ec2',      name: 'AWS EC2',       username: 'ec2-user', port: 22 },
@@ -25,24 +26,6 @@ const CONNECTION_TEMPLATES: readonly ConnectionTemplate[] = [
     { id: 'ubuntu',       name: 'Ubuntu Server', username: 'ubuntu',   port: 22 },
     { id: 'raspberry-pi', name: 'Raspberry Pi',  username: 'pi',       port: 22 },
 ] as const;
-
-const FLAG_VALUE_PATTERN = /-[a-zA-Z]+\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g;
-
-/** Removes matching leading and trailing quotes from a tokenized value. */
-function stripSurroundingQuotes(value: string): string {
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
-        return value.slice(1, -1);
-    }
-    return value;
-}
-
-/** Parses and validates a TCP port from user input. */
-function parsePort(value: string): number | null {
-    const trimmed = value.trim();
-    if (!/^\d+$/.test(trimmed)) return null;
-    const port = Number.parseInt(trimmed, 10);
-    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
-}
 
 interface QuickConnectBarProps {
     connections: Connection[];
@@ -55,82 +38,6 @@ interface QuickConnectBarProps {
         save?: boolean,
     ) => void;
     onSelectExisting: (id: string) => void;
-}
-
-/** Parses shorthand connection input in the form `[user@]host[:port]`. */
-function parseConnectionString(raw: string): { username: string; host: string; port: number } | null {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-
-    let username = 'root';
-    let rest = trimmed;
-
-    const userSplitIndex = rest.indexOf('@');
-    if (userSplitIndex >= 0) {
-        username = rest.slice(0, userSplitIndex);
-        rest = rest.slice(userSplitIndex + 1);
-    }
-    username = username.trim() || 'root';
-
-    let host = rest;
-    let port = 22;
-    if (rest.includes(':')) {
-        const idx = rest.lastIndexOf(':');
-        host = rest.slice(0, idx).trim();
-        const parsedPort = parsePort(rest.slice(idx + 1));
-        if (parsedPort === null) return null;
-        port = parsedPort;
-    } else {
-        host = rest.trim();
-    }
-
-    return host ? { username, host, port } : null;
-}
-
-/** Parses a full `ssh [-i key] [-p port] [user@]host` command string. */
-function parseSSHCommand(raw: string): { username: string; host: string; port: number; privateKeyPath?: string } | null {
-    const trimmed = raw.trim();
-    if (!trimmed.startsWith('ssh ')) return null;
-
-    const rest = trimmed.slice(4);
-
-    const portMatch = rest.match(/-p\s+(".*?"|'.*?'|\S+)/);
-    const rawPort = portMatch ? stripSurroundingQuotes(portMatch[1]) : '';
-    const parsedPort = rawPort ? parsePort(rawPort) : null;
-    if (rawPort && parsedPort === null) return null;
-    let port = parsedPort ?? 22;
-
-    const keyMatch = rest.match(/-i\s+(?:"([^"]*)"|'([^']*)'|(\S+))/);
-    const rawPrivateKeyPath = keyMatch ? (keyMatch[1] ?? keyMatch[2] ?? keyMatch[3] ?? '') : '';
-    const privateKeyPath = rawPrivateKeyPath ? stripSurroundingQuotes(rawPrivateKeyPath) : undefined;
-
-    // Strip all -flag value pairs, then find the first bare token
-    const stripped = rest.replace(FLAG_VALUE_PATTERN, '').replace(/-[a-zA-Z]+/g, '').trim();
-    const hostToken = stripped.split(/\s+/).find(t => t && !t.startsWith('-'));
-    if (!hostToken) return null;
-
-    let username = 'root';
-    let host = hostToken;
-    const userSplitIndex = hostToken.indexOf('@');
-    if (userSplitIndex >= 0) {
-        username = hostToken.slice(0, userSplitIndex);
-        host = hostToken.slice(userSplitIndex + 1);
-    }
-    username = username.trim() || 'root';
-    host = host.trim();
-
-    if (!host) return null;
-
-    if (host.includes(':')) {
-        const idx = host.lastIndexOf(':');
-        const parsedInlinePort = parsePort(host.slice(idx + 1));
-        if (parsedInlinePort === null) return null;
-        host = host.slice(0, idx).trim();
-        if (!host) return null;
-        port = parsedInlinePort;
-    }
-
-    return { username, host, port, privateKeyPath };
 }
 
 /** Inline quick-connect control with suggestions, templates, and auth options. */
@@ -287,13 +194,13 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
         }
         let finalPort = result.port;
         if (portOverride.trim()) {
-            const portNum = Number(portOverride);
-            if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+            const parsedPort = parsePort(portOverride);
+            if (parsedPort === null) {
                 setError('Port must be between 1 and 65535');
                 inputRef.current?.focus();
                 return;
             }
-            finalPort = portNum;
+            finalPort = parsedPort;
         }
         onConnect(result.host, result.username, finalPort, password || undefined, privateKeyPath || undefined, saveConn);
     }
@@ -343,6 +250,7 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
         setInput(`${result.username}@${result.host}`);
         if (result.port !== 22) setPortOverride(result.port.toString());
         else setPortOverride('');
+        setPassword('');
         if (result.privateKeyPath) {
             setPrivateKeyPath(result.privateKeyPath);
             setIsAuthOpen(true);
@@ -351,6 +259,11 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
     }
 
     async function handleBrowseKey() {
+        if (!ipc) {
+            setError('File picker unavailable');
+            showToast('error', 'File picker unavailable');
+            return;
+        }
         try {
             const res = await ipc.invoke('dialog:openFile') as { canceled?: boolean; filePaths?: string[] };
             if (!res.canceled && res.filePaths && res.filePaths.length > 0) setPrivateKeyPath(res.filePaths[0]);

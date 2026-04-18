@@ -197,6 +197,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 showWelcomeScreen,
             };
         });
+        get().saveSession();
     },
 
     importConnections: (newConns, importedFolders = []) => {
