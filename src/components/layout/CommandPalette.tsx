@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import { Command } from "cmdk";
 import {
     Settings,
@@ -45,6 +45,16 @@ export function CommandPalette() {
     const [quickPickItems, setQuickPickItems] = useState<QuickPickItem[]>([]);
     const [quickPickOptions, setQuickPickOptions] = useState<{ placeHolder?: string, requestId: string, pluginId: string } | null>(null);
 
+    const openRef = useRef(open);
+    const quickPickModeRef = useRef(quickPickMode);
+    const commandModeRef = useRef(commandMode);
+    const searchRef = useRef(search);
+
+    useEffect(() => { openRef.current = open; }, [open]);
+    useEffect(() => { quickPickModeRef.current = quickPickMode; }, [quickPickMode]);
+    useEffect(() => { commandModeRef.current = commandMode; }, [commandMode]);
+    useEffect(() => { searchRef.current = search; }, [search]);
+
     // Optimize selectors with shallow comparison
     const { connections, setAddConnectionModalOpen, openTab, openSettings } = useAppStore(
         useShallow(state => ({
@@ -57,6 +67,9 @@ export function CommandPalette() {
 
     // Plugins
     const { commands: pluginCommands, executeCommand, plugins } = usePlugins();
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent;
+    const isMac = /mac/i.test(platform);
+    const modKey = isMac ? 'Cmd' : 'Ctrl';
 
     const openAddConnectionModal = () => setAddConnectionModalOpen(true);
 
@@ -66,24 +79,33 @@ export function CommandPalette() {
             if (e.key.toLowerCase() === 'p' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 setOpen(true);
+                openRef.current = true;
 
                 if (e.shiftKey) {
                     // Ctrl+Shift+P -> Command Mode
                     setCommandMode(true);
+                    commandModeRef.current = true;
                     setSearch(">"); // Start with >
+                    searchRef.current = ">";
                     setQuickPickMode(false); // Reset QP
+                    quickPickModeRef.current = false;
                 } else {
                     // Ctrl+P -> File/History Mode
                     setCommandMode(false);
+                    commandModeRef.current = false;
                     setSearch("");
+                    searchRef.current = "";
                     setQuickPickMode(false); // Reset QP
+                    quickPickModeRef.current = false;
                 }
-            } else if (e.key === 'Escape' && open) {
+            } else if (e.key === 'Escape' && openRef.current) {
                 setOpen(false);
-                if (quickPickMode) {
+                openRef.current = false;
+                if (quickPickModeRef.current) {
                     // If cancelling QP, maybe we should just close it?
                     // Or notify cancellation? For MVP, just close.
                     setQuickPickMode(false);
+                    quickPickModeRef.current = false;
                 }
             }
         };
@@ -93,30 +115,60 @@ export function CommandPalette() {
             setQuickPickItems(items);
             setQuickPickOptions({ ...options, requestId, pluginId });
             setQuickPickMode(true);
+            quickPickModeRef.current = true;
             setOpen(true);
+            openRef.current = true;
             setSearch(""); // Clear search for picking
+            searchRef.current = "";
+        };
+
+        const handleOpenCommandPalette = (e: Event) => {
+            const event = e as CustomEvent<{ commandMode?: boolean }>;
+            setOpen(true);
+            openRef.current = true;
+            if (event.detail?.commandMode) {
+                setCommandMode(true);
+                commandModeRef.current = true;
+                setSearch('>');
+                searchRef.current = '>';
+                setQuickPickMode(false);
+                quickPickModeRef.current = false;
+                return;
+            }
+            setCommandMode(false);
+            commandModeRef.current = false;
+            setSearch('');
+            searchRef.current = '';
+            setQuickPickMode(false);
+            quickPickModeRef.current = false;
         };
 
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('zync:quick-pick', handleQuickPick as EventListener);
+        window.addEventListener('zync:open-command-palette', handleOpenCommandPalette);
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('zync:quick-pick', handleQuickPick as EventListener);
+            window.removeEventListener('zync:open-command-palette', handleOpenCommandPalette);
         };
-    }, [open, quickPickMode]);
+    }, []);
 
     // Detect ">" in input
     const handleSearchChange = (value: string) => {
         setSearch(value);
+        searchRef.current = value;
         if (value.startsWith(">")) {
             setCommandMode(true);
+            commandModeRef.current = true;
         } else {
             setCommandMode(false);
+            commandModeRef.current = false;
         }
     };
 
     const runCommand = (command: () => void) => {
         setOpen(false);
+        openRef.current = false;
         // Defer execution to allow UI to close smoothly first
         requestAnimationFrame(() => {
             command();
@@ -125,7 +177,9 @@ export function CommandPalette() {
 
     const handleQuickPickSelect = (item: QuickPickItem) => {
         setOpen(false);
+        openRef.current = false;
         setQuickPickMode(false);
+        quickPickModeRef.current = false;
         if (quickPickOptions) {
             // Handle internal system Quick Picks
             if (quickPickOptions.pluginId === 'system') {
@@ -193,13 +247,13 @@ export function CommandPalette() {
                         {/* QUICK PICK MODE */}
                         {quickPickMode && (
                             <Command.Group heading={quickPickOptions?.placeHolder || "Select an option"} className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
-                                {quickPickItems.map((item: any, idx) => {
+                                {quickPickItems.map((item: QuickPickItem, idx) => {
                                     if (item.kind === 'separator') {
-                                        return <div key={idx} className="h-px bg-app-border/30 my-1.5 mx-2" />;
+                                        return <div key={item.id ?? idx} className="h-px bg-app-border/30 my-1.5 mx-2" />;
                                     }
                                     return (
                                         <Command.Item
-                                            key={idx}
+                                            key={item.id ?? idx}
                                             value={item.label}
                                             onSelect={() => handleQuickPickSelect(item)}
                                             className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
@@ -267,7 +321,7 @@ export function CommandPalette() {
                                     >
                                         <Plus className="mr-2 h-4 w-4 opacity-70" />
                                         <span>New Connection</span>
-                                        <span className="ml-auto text-[10px] opacity-50">Cmd+N</span>
+                                        <span className="ml-auto text-[10px] opacity-50">{`${modKey}+N`}</span>
                                     </Command.Item>
 
                                     <Command.Item

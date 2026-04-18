@@ -440,6 +440,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const tabs = useAppStore(state => state.tabs);
     const activeTabId = useAppStore(state => state.activeTabId);
     const activeTerminalIds = useAppStore(state => state.activeTerminalIds);
+    const showWelcomeScreen = useAppStore(state => state.showWelcomeScreen);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const sessionLoaded = useAppStore(state => state.sessionLoaded);
     const loadSnippets = useAppStore(state => state.loadSnippets);
@@ -738,7 +739,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                     {/* Main Content Area */}
                     <div className="flex-1 overflow-hidden relative flex flex-col">
-                        {tabs.length > 0 ? (
+                        {tabs.length > 0 && !showWelcomeScreen && activeTabId !== null ? (
                             tabs.map((tab: Tab) => (
                                 <TabContent
                                     key={tab.id}

@@ -51,8 +51,12 @@ export function Sidebar({ className }: { className?: string }) {
     const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
     const closeSettings = useAppStore(state => state.closeSettings);
     const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
-    const openAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(true);
-    const closeAddConnectionModal = () => useAppStore.getState().setAddConnectionModalOpen(false);
+    const editingConnectionId      = useAppStore(state => state.editingConnectionId);
+    const openConnectionModal      = useAppStore(state => state.openConnectionModal);
+    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const closeAddConnectionModal = useCallback(() => {
+        setAddConnectionModalOpen(false);
+    }, [setAddConnectionModalOpen]);
 
     const compactMode = settings.compactMode;
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
@@ -149,19 +153,9 @@ export function Sidebar({ className }: { className?: string }) {
     }, [connections]);
 
 
-    const [editingConnectionId, setEditingConnectionId] = useState<string | null>(null);
-
-    // Reset editing state when modal closes
-    useEffect(() => {
-        if (!isAddConnectionModalOpen) {
-            setEditingConnectionId(null);
-        }
-    }, [isAddConnectionModalOpen]);
-
     const openEditConnection = useCallback((conn: Connection) => {
-        setEditingConnectionId(conn.id);
-        openAddConnectionModal();
-    }, []);
+        openConnectionModal(conn.id);
+    }, [openConnectionModal]);
 
     // Listen for global events (Command Palette)
     useEffect(() => {

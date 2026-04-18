@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -109,6 +109,7 @@ export function TabBar() {
     const reorderTabs = useAppStore(state => state.reorderTabs);
 
     // Settings Slice
+    const goHome = useAppStore(state => state.goHome);
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
     const openSettings = useAppStore(state => state.openSettings);
@@ -246,6 +247,17 @@ export function TabBar() {
                                 <path d="M256 341.333H384" className="stroke-app-accent" strokeWidth="64" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                         </div>
+                    </Tooltip>
+
+                    {/* Home button */}
+                    <Tooltip content="Welcome Screen" position="bottom">
+                        <button
+                            onClick={goHome}
+                            aria-label="Go to welcome screen"
+                            className="h-7 w-7 rounded-md flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60"
+                        >
+                            <Home size={14} />
+                        </button>
                     </Tooltip>
 
                     {/* Add New Button */}

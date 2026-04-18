@@ -1,640 +1,575 @@
-import { useState, useEffect, useRef, MouseEvent } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Terminal, Plus, Network, Bookmark, Search, Command, Laptop, FolderPlus, Copy, Pencil, Trash2 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { useAppStore } from '../../store/useAppStore';
-import { Terminal, Plus, Network, Key, Lock, FileKey, Monitor, FolderOpen, Bookmark, Sparkles, Command } from 'lucide-react';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
-import { OSIcon } from '../icons/OSIcon';
-import { motion, AnimatePresence, useMotionTemplate, useMotionValue } from 'framer-motion';
-import { cn } from '../../lib/utils';
+import { DashboardClock } from './welcome/DashboardClock';
+import { QuickConnectBar } from './welcome/QuickConnectBar';
+import { ConnectionCard } from './welcome/ConnectionCard';
+import { ContextMenu } from '../ui/ContextMenu';
+import type { ContextMenuItem } from '../ui/ContextMenu';
+import type { Connection } from '../../store/connectionSlice';
 
-// Helper function to get relative time
-function getRelativeTime(timestamp: number): string {
-    if (!timestamp) return '';
-    const now = Date.now();
-    const diff = now - timestamp;
+// ── Animation ─────────────────────────────────────────────────────────────────
 
-    // Handle future dates or incorrect system time
-    if (diff < 0) return 'Just now';
+const stagger = {
+    hidden:  { opacity: 0 },
+    visible: { opacity: 1, transition: { staggerChildren: 0.05 } },
+};
 
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
+const item = {
+    hidden:  { opacity: 0, y: 6 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.2 } },
+};
 
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
+// ── Local sub-components ──────────────────────────────────────────────────────
 
-    // Use short date format strictly
-    return new Date(timestamp).toLocaleDateString(undefined, {
-        month: 'numeric',
-        day: 'numeric',
-        year: '2-digit'
-    });
+interface ActionButtonProps {
+    label: string;
+    icon: React.ReactNode;
+    iconColor: string;
+    onClick: () => void;
 }
 
-// Connection templates
-const CONNECTION_TEMPLATES = [
-    { id: 'aws-ec2', name: 'AWS EC2', username: 'ec2-user', port: 22 },
-    { id: 'digitalocean', name: 'DigitalOcean', username: 'root', port: 22 },
-    { id: 'ubuntu', name: 'Ubuntu Server', username: 'ubuntu', port: 22 },
-    { id: 'raspberry-pi', name: 'Raspberry Pi', username: 'pi', port: 22 },
-];
-
-function Card({ children, className, onClick }: { children: React.ReactNode, className?: string, onClick?: (e: any) => void }) {
-    const mouseX = useMotionValue(0);
-    const mouseY = useMotionValue(0);
-
-    function handleMouseMove({ currentTarget, clientX, clientY }: MouseEvent) {
-        const { left, top } = currentTarget.getBoundingClientRect();
-        mouseX.set(clientX - left);
-        mouseY.set(clientY - top);
-    }
-
+function ActionButton({ label, icon, iconColor, onClick }: ActionButtonProps) {
     return (
-        <div
-            className={cn(
-                "group relative border border-app-border/50 bg-app-panel/50 overflow-hidden rounded-lg transition-colors hover:border-app-accent/50",
-                className
-            )}
-            onMouseMove={handleMouseMove}
+        <button
+            type="button"
             onClick={onClick}
+            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-app-border/40 bg-app-surface/30 hover:bg-app-surface/60 hover:border-app-border/70 transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40"
         >
-            <motion.div
-                className="pointer-events-none absolute -inset-px rounded-xl opacity-0 transition duration-300 group-hover:opacity-100"
-                style={{
-                    background: useMotionTemplate`
-            radial-gradient(
-              650px circle at ${mouseX}px ${mouseY}px,
-              rgba(99, 102, 241, 0.1),
-              transparent 80%
-            )
-          `,
-                }}
-            />
-            <div className="relative h-full">{children}</div>
+            <span className={`shrink-0 ${iconColor}`}>{icon}</span>
+            <span className="text-xs font-medium text-app-text/80">{label}</span>
+        </button>
+    );
+}
+
+function SectionHeading({ id, children }: { id: string; children: React.ReactNode }) {
+    return (
+        <h2
+            id={id}
+            className="text-[10px] font-semibold uppercase tracking-widest text-app-muted/60 mb-1 px-3"
+        >
+            {children}
+        </h2>
+    );
+}
+
+
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+    return (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="w-12 h-12 bg-app-surface/40 rounded-2xl flex items-center justify-center mb-4 border border-app-border/30">
+                <Terminal size={18} className="text-app-muted/40" aria-hidden="true" />
+            </div>
+            <p className="text-sm font-medium text-app-text/60 mb-1">No connections yet</p>
+            <p className="text-xs text-app-muted/40 mb-5 max-w-xs leading-relaxed">
+                Quick-connect above or add a saved connection to get started.
+            </p>
+            <button
+                type="button"
+                onClick={onAdd}
+                className="px-4 py-2 bg-app-accent text-white rounded-xl text-xs font-medium hover:brightness-110 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/50"
+            >
+                Add Connection
+            </button>
         </div>
     );
 }
 
+// ── WelcomeScreen ─────────────────────────────────────────────────────────────
+
 export function WelcomeScreen() {
-    const connections = useAppStore(state => state.connections);
-    const openTab = useAppStore(state => state.openTab);
-    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
-    const openAddConnectionModal = () => setAddConnectionModalOpen(true);
-    const addConnection = useAppStore(state => state.addConnection);
-    const toggleFavorite = useAppStore(state => state.toggleFavorite);
-    const [greeting, setGreeting] = useState('');
-    const [time, setTime] = useState('');
+    const connections               = useAppStore(s => s.connections);
+    const openTab                   = useAppStore(s => s.openTab);
+    const setAddConnectionModalOpen = useAppStore(s => s.setAddConnectionModalOpen);
+    const addConnection             = useAppStore(s => s.addConnection);
+    const toggleFavorite            = useAppStore(s => s.toggleFavorite);
+    const deleteConnection          = useAppStore(s => s.deleteConnection);
+    const openConnectionModal       = useAppStore(s => s.openConnectionModal);
+    const openPortForwardingTab     = useAppStore(s => s.openPortForwardingTab);
+    const showToast                 = useAppStore(s => s.showToast);
+    const showConfirmDialog         = useAppStore(s => s.showConfirmDialog);
+
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
+    const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
+    const [newMenuFocusIndex, setNewMenuFocusIndex] = useState(-1);
+    const [filterTerm, setFilterTerm] = useState('');
+    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; conn: Connection } | null>(null);
+    const newMenuRef = useRef<HTMLDivElement>(null);
+    const newMenuToggleRef = useRef<HTMLButtonElement>(null);
+    const newMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-    // Detect OS for keyboard shortcut display
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const commandKey = isMac ? '⌘P' : 'Ctrl+P';
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent;
+    const isMac = /mac/i.test(platform);
+    const cmdKey = isMac ? '⌘⇧P' : 'Ctrl+⇧P';
 
-    // Quick Connect State
-    const [quickConnectInput, setQuickConnectInput] = useState('');
-    const [password, setPassword] = useState('');
-    const [port, setPort] = useState('');
-    const [privateKeyPath, setPrivateKeyPath] = useState('');
-    const [isAuthExpanded, setIsAuthExpanded] = useState(false);
-    const [saveConnection, setSaveConnection] = useState(true);
-
-    // Autocomplete state
-    const [showAutocomplete, setShowAutocomplete] = useState(false);
-    const [showTemplates, setShowTemplates] = useState(false);
-    const autocompleteRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const updateTime = () => {
-            const now = new Date();
-            const hour = now.getHours();
-
-            if (hour < 12) setGreeting('Good Morning');
-            else if (hour < 18) setGreeting('Good Afternoon');
-            else setGreeting('Good Evening');
-
-            setTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        };
-
-        updateTime();
-        const interval = setInterval(updateTime, 1000);
-        return () => clearInterval(interval);
-    }, []);
-
-    // Click outside to close autocomplete/templates
-    useEffect(() => {
-        const handleClickOutside = (e: any) => {
-            if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
-                setShowAutocomplete(false);
-                setShowTemplates(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const handleBrowseKey = async () => {
-        try {
-            const result = await window.ipcRenderer.invoke('dialog:openFile');
-            if (!result.canceled && result.filePaths.length > 0) {
-                setPrivateKeyPath(result.filePaths[0]);
-            }
-        } catch (error) {
-            console.error('Failed to open file dialog:', error);
-        }
-    };
-
-    const handleQuickConnect = (e?: React.FormEvent) => {
-        e?.preventDefault();
-        if (!quickConnectInput.trim()) return;
-
-        let username = 'root';
-        let host = '';
-        let parsedPort = 22;
-        let input = quickConnectInput.trim();
-
-        if (input.includes('@')) {
-            const parts = input.split('@');
-            username = parts[0];
-            input = parts[1];
-        }
-
-        if (input.includes(':')) {
-            const parts = input.split(':');
-            host = parts[0];
-            parsedPort = parseInt(parts[1], 10) || 22;
-        } else {
-            host = input;
-        }
-
-        if (!host) return;
-
-        const finalPort = port ? parseInt(port, 10) : parsedPort;
-        const newConnId = saveConnection ? crypto.randomUUID() : `temp-${crypto.randomUUID()}`;
-        const newConn = {
-            id: newConnId,
-            name: `${username}@${host}`,
-            host,
-            username,
-            port: finalPort,
-            password: password || undefined,
-            privateKeyPath: privateKeyPath || undefined,
-            status: 'disconnected' as const,
-            createdAt: Date.now()
-        };
-
-        addConnection(newConn, !saveConnection);
-        openTab(newConnId);
-    };
-
-    const handleSelectAutocomplete = (conn: any) => {
-        setQuickConnectInput(`${conn.username}@${conn.host}:${conn.port}`);
-        setShowAutocomplete(false);
-        openTab(conn.id);
-    };
-
-    const handleSelectTemplate = (template: typeof CONNECTION_TEMPLATES[0]) => {
-        setQuickConnectInput(template.username + '@');
-        setPort(template.port.toString());
-        setShowTemplates(false);
-    };
-
-    const handleCommandPalette = () => {
-        // Trigger command palette
-        window.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'p',
-            ctrlKey: true,
-            metaKey: true
+    function handleCommandPalette() {
+        window.dispatchEvent(new CustomEvent('zync:open-command-palette', {
+            detail: { commandMode: true },
         }));
-    };
+    }
 
-    // Filter autocomplete suggestions
-    const autocompleteSuggestions = connections.filter(c =>
-        quickConnectInput && (
-            c.name?.toLowerCase().includes(quickConnectInput.toLowerCase()) ||
-            c.host.toLowerCase().includes(quickConnectInput.toLowerCase()) ||
-            c.username.toLowerCase().includes(quickConnectInput.toLowerCase())
-        )
-    ).slice(0, 5);
-
-    // Separate favorites and recent
-    const favoriteConnections = connections
-        .filter(c => c.isFavorite)
-        .sort((a, b) => (b.lastConnected || 0) - (a.lastConnected || 0))
-        .slice(0, 5);
-
-    const recentConnections = connections
-        .filter(c => !c.isFavorite)
-        .sort((a, b) => (b.lastConnected || 0) - (a.lastConnected || 0))
-        .slice(0, 5);
-
-    const containerVariants = {
-        hidden: { opacity: 0 },
-        visible: {
-            opacity: 1,
-            transition: {
-                staggerChildren: 0.05
+    useEffect(() => {
+        if (!isNewMenuOpen) return;
+        function onPointerDown(e: PointerEvent) {
+            if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+                setIsNewMenuOpen(false);
             }
         }
+        document.addEventListener('pointerdown', onPointerDown);
+        return () => document.removeEventListener('pointerdown', onPointerDown);
+    }, [isNewMenuOpen]);
+
+    useEffect(() => {
+        if (!isNewMenuOpen) {
+            newMenuItemRefs.current = [];
+            setNewMenuFocusIndex(-1);
+            return;
+        }
+        setNewMenuFocusIndex(0);
+        requestAnimationFrame(() => newMenuItemRefs.current[0]?.focus());
+    }, [isNewMenuOpen]);
+
+    function closeNewMenu() {
+        setIsNewMenuOpen(false);
+        newMenuItemRefs.current = [];
+        setNewMenuFocusIndex(-1);
+        requestAnimationFrame(() => newMenuToggleRef.current?.focus());
+    }
+
+    function getNewMenuItemCount() {
+        return newMenuItemRefs.current.filter(Boolean).length;
+    }
+
+    function focusNewMenuItem(index: number) {
+        const count = getNewMenuItemCount();
+        if (count === 0) return;
+        const next = ((index % count) + count) % count;
+        setNewMenuFocusIndex(next);
+        newMenuItemRefs.current[next]?.focus();
+    }
+
+    function handleNewMenuToggleKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+        if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsNewMenuOpen(true);
+            setNewMenuFocusIndex(0);
+            requestAnimationFrame(() => newMenuItemRefs.current[0]?.focus());
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setIsNewMenuOpen(true);
+            requestAnimationFrame(() => {
+                const count = getNewMenuItemCount();
+                if (count === 0) return;
+                const lastIndex = count - 1;
+                setNewMenuFocusIndex(lastIndex);
+                newMenuItemRefs.current[lastIndex]?.focus();
+            });
+        }
+    }
+
+    function handleNewMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+        if (!isNewMenuOpen) return;
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeNewMenu();
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            focusNewMenuItem(newMenuFocusIndex + 1);
+            return;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            focusNewMenuItem(newMenuFocusIndex - 1);
+            return;
+        }
+        if (e.key === 'Home') {
+            e.preventDefault();
+            focusNewMenuItem(0);
+            return;
+        }
+        if (e.key === 'End') {
+            e.preventDefault();
+            const count = getNewMenuItemCount();
+            focusNewMenuItem(count - 1);
+            return;
+        }
+        if ((e.key === 'Enter' || e.key === ' ') && newMenuFocusIndex >= 0) {
+            e.preventDefault();
+            newMenuItemRefs.current[newMenuFocusIndex]?.click();
+        }
+    }
+
+    const filterFn = (c: (typeof connections)[number]) => {
+        if (!filterTerm.trim()) return true;
+        const t = filterTerm.toLowerCase();
+        return (
+            (c.name || '').toLowerCase().includes(t) ||
+            c.host.toLowerCase().includes(t) ||
+            c.username.toLowerCase().includes(t)
+        );
     };
 
-    const itemVariants = {
-        hidden: { opacity: 0, y: 5 },
-        visible: { opacity: 1, y: 0 }
-    };
+    function connSort(a: (typeof connections)[number], b: (typeof connections)[number]) {
+        const aConn = a.status === 'connected' ? 1 : 0;
+        const bConn = b.status === 'connected' ? 1 : 0;
+        if (bConn !== aConn) return bConn - aConn;
+        return (b.lastConnected ?? 0) - (a.lastConnected ?? 0);
+    }
+
+    const favorites = connections
+        .filter(c => c.isFavorite && filterFn(c))
+        .sort(connSort);
+
+    const recents = connections
+        .filter(c => !c.isFavorite && c.lastConnected && filterFn(c))
+        .sort(connSort);
+
+    const favConnectedCount    = favorites.filter(c => c.status === 'connected').length;
+    const recentConnectedCount = recents.filter(c => c.status === 'connected').length;
+
+    function handleCardContextMenu(e: React.MouseEvent, conn: Connection) {
+        e.preventDefault();
+        e.stopPropagation();
+        setCtxMenu({ x: e.clientX, y: e.clientY, conn });
+    }
+
+    function buildContextMenuItems(conn: Connection): ContextMenuItem[] {
+        return [
+            {
+                label: 'Connect',
+                icon: <Terminal size={13} />,
+                action: () => openTab(conn.id),
+            },
+            {
+                label: 'Copy host',
+                icon: <Copy size={13} />,
+                action: () => {
+                    navigator.clipboard
+                        .writeText(conn.host)
+                        .then(() => showToast('success', `Copied "${conn.host}"`))
+                        .catch((error) => {
+                            console.error('[WelcomeScreen] Failed to copy host', error);
+                            showToast('error', 'Failed to copy host to clipboard');
+                        });
+                },
+            },
+            { separator: true },
+            {
+                label: 'Edit',
+                icon: <Pencil size={13} />,
+                action: () => openConnectionModal(conn.id),
+            },
+            { separator: true },
+            {
+                label: 'Delete',
+                icon: <Trash2 size={13} />,
+                variant: 'danger',
+                action: async () => {
+                    const confirmed = await showConfirmDialog({
+                        title: 'Delete connection?',
+                        message: `This will remove "${conn.name || `${conn.username}@${conn.host}`}" from saved connections.`,
+                        confirmText: 'Delete',
+                        cancelText: 'Cancel',
+                        variant: 'danger',
+                    });
+                    if (!confirmed) return;
+                    deleteConnection(conn.id);
+                    showToast('success', 'Connection deleted');
+                },
+            },
+        ];
+    }
+
+    function handleConnect(
+        host: string,
+        username: string,
+        port: number,
+        password?: string,
+        privateKeyPath?: string,
+        save = true,
+    ) {
+        const id = save ? crypto.randomUUID() : `temp-${crypto.randomUUID()}`;
+        addConnection(
+            { id, name: `${username}@${host}`, host, username, port, password, privateKeyPath, status: 'disconnected', createdAt: Date.now() },
+            !save,
+        );
+        openTab(id);
+    }
 
     return (
-        <motion.div
+        <motion.main
+            aria-label="Zync dashboard"
             initial="hidden"
             animate="visible"
-            variants={containerVariants}
+            variants={stagger}
             className="w-full h-full flex flex-col overflow-hidden relative isolate"
         >
-            {/* Dot Grid Background */}
-            <div className="absolute inset-0 -z-10 h-full w-full bg-app-bg bg-[radial-gradient(#2a2d3d_1px,transparent_1px)] [background-size:16px_16px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-30"></div>
+            {/* Subtle radial dot grid */}
+            <div
+                aria-hidden="true"
+                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] mask-[radial-gradient(ellipse_70%_60%_at_50%_30%,black_30%,transparent_100%)] opacity-40"
+            />
 
-            {/* Scrollable Content Wrapper */}
-            <motion.div
-                className="flex-1 overflow-y-auto p-8"
+            {/* Scrollable centered column */}
+            <div
+                className="flex-1 overflow-y-auto"
                 style={{
                     maskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)',
-                    WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)'
+                    WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)',
                 }}
             >
-                {/* Compact Header - Greeting + Time */}
-                <motion.div variants={itemVariants} className="mb-6">
-                    <div className="flex items-baseline gap-3">
-                        <h1 className="text-3xl font-light text-app-text tracking-tight">
-                            {greeting}
-                        </h1>
-                        <span className="text-sm text-app-muted/60 font-mono">{time}</span>
-                    </div>
-                </motion.div>
+                <div className="max-w-2xl mx-auto px-6 py-10">
 
-                {/* Quick Connect */}
-                <motion.div variants={itemVariants} className="mb-6 max-w-2xl relative" ref={autocompleteRef}>
-                    <form onSubmit={handleQuickConnect} className="relative group flex flex-col gap-2">
-                        <div className="flex items-center bg-app-panel/80 backdrop-blur-sm border border-app-border/50 rounded-lg p-2 focus-within:border-app-accent transition-all shadow-sm">
-                            <Terminal size={16} className="text-app-muted ml-2 mr-2 shrink-0" />
-                            <input
-                                type="text"
-                                value={quickConnectInput}
-                                onChange={(e) => {
-                                    setQuickConnectInput(e.target.value);
-                                    setShowAutocomplete(e.target.value.length > 0);
-                                }}
-                                onFocus={() => quickConnectInput && setShowAutocomplete(true)}
-                                placeholder="user@host:port (e.g. root@192.168.1.5)"
-                                className="flex-1 bg-transparent border-none outline-none text-app-text placeholder:text-app-muted/40 font-mono text-sm h-8 w-full"
-                            />
+                    {/* Clock */}
+                    <motion.div variants={item} className="mb-5 relative">
+                        {/* Accent glow behind hero */}
+                        <div
+                            aria-hidden="true"
+                            className="absolute -top-6 -left-8 w-72 h-40 bg-app-accent/[0.07] rounded-full blur-3xl pointer-events-none"
+                        />
+                        <DashboardClock />
+                    </motion.div>
 
-                            <div className="flex items-center gap-1 pr-1 shrink-0">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowTemplates(!showTemplates)}
-                                    className="p-1.5 rounded transition-all text-app-muted hover:text-app-accent hover:bg-app-accent/10"
-                                    title="Templates"
+                    {/* Quick connect */}
+                    <motion.div variants={item} className="mb-3">
+                        <QuickConnectBar
+                            connections={connections}
+                            onConnect={handleConnect}
+                            onSelectExisting={openTab}
+                        />
+                    </motion.div>
+
+                    {/* Quick actions */}
+                    <motion.div
+                        variants={item}
+                        className="flex flex-wrap gap-2 mb-5"
+                        role="group"
+                        aria-label="Quick actions"
+                    >
+                        <ActionButton
+                            label="Local Terminal"
+                            icon={<Terminal size={14} />}
+                            iconColor="text-app-accent"
+                            onClick={() => openTab('local')}
+                        />
+
+                        {/* New — dropdown */}
+                        <div className="relative" ref={newMenuRef}>
+                            <button
+                                ref={newMenuToggleRef}
+                                id="welcome-new-menu-toggle"
+                                type="button"
+                                aria-label="New…"
+                                aria-expanded={isNewMenuOpen}
+                                aria-haspopup="menu"
+                                onClick={() => setIsNewMenuOpen(v => !v)}
+                                onKeyDown={handleNewMenuToggleKeyDown}
+                                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-app-border/40 bg-app-surface/30 hover:bg-app-surface/60 hover:border-app-border/70 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40"
+                            >
+                                <Plus size={14} className="text-green-500 shrink-0" />
+                                <span className="text-xs font-medium text-app-text/80">New</span>
+                            </button>
+
+                            {isNewMenuOpen && (
+                                <div
+                                    role="menu"
+                                    aria-labelledby="welcome-new-menu-toggle"
+                                    onKeyDown={handleNewMenuKeyDown}
+                                    className="absolute top-full left-0 mt-1.5 w-44 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100"
                                 >
-                                    <Sparkles size={14} />
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => setIsAuthExpanded(!isAuthExpanded)}
-                                    className={`p-1.5 rounded transition-all ${isAuthExpanded || password || privateKeyPath
-                                        ? 'bg-app-accent/10 text-app-accent'
-                                        : 'text-app-muted hover:text-app-text hover:bg-app-surface'
-                                        }`}
-                                    title="Auth"
-                                >
-                                    <Key size={14} />
-                                </button>
-
-                                <label className="flex items-center gap-1.5 text-xs text-app-muted cursor-pointer hover:text-app-text transition-colors select-none px-2 py-1 rounded hover:bg-app-surface">
-                                    <input
-                                        type="checkbox"
-                                        checked={saveConnection}
-                                        onChange={(e) => setSaveConnection(e.target.checked)}
-                                        className="accent-app-accent"
-                                    />
-                                    <span>Save</span>
-                                </label>
-                                <button
-                                    type="submit"
-                                    disabled={!quickConnectInput}
-                                    className="bg-app-accent text-white px-4 py-1.5 rounded text-sm font-medium hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
-                                >
-                                    Connect
-                                </button>
-                            </div>
+                                    <button
+                                        ref={el => { newMenuItemRefs.current[0] = el; }}
+                                        role="menuitem"
+                                        type="button"
+                                        tabIndex={newMenuFocusIndex === 0 ? 0 : -1}
+                                        onFocus={() => setNewMenuFocusIndex(0)}
+                                        onClick={() => { setAddConnectionModalOpen(true); closeNewMenu(); }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-app-surface flex items-center gap-2.5 transition-colors"
+                                    >
+                                        <Laptop size={13} className="text-app-muted shrink-0" />
+                                        New Host
+                                    </button>
+                                    <button
+                                        ref={el => { newMenuItemRefs.current[1] = el; }}
+                                        role="menuitem"
+                                        type="button"
+                                        tabIndex={newMenuFocusIndex === 1 ? 0 : -1}
+                                        onFocus={() => setNewMenuFocusIndex(1)}
+                                        onClick={() => { window.dispatchEvent(new Event('ssh-ui:open-folder-modal')); closeNewMenu(); }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-app-surface flex items-center gap-2.5 transition-colors"
+                                    >
+                                        <FolderPlus size={13} className="text-app-muted shrink-0" />
+                                        New Folder
+                                    </button>
+                                    <div className="h-px bg-app-border/40 my-1 mx-2" aria-hidden="true" />
+                                    <button
+                                        ref={el => { newMenuItemRefs.current[2] = el; }}
+                                        role="menuitem"
+                                        type="button"
+                                        tabIndex={newMenuFocusIndex === 2 ? 0 : -1}
+                                        onFocus={() => setNewMenuFocusIndex(2)}
+                                        onClick={() => { setIsAddTunnelModalOpen(true); closeNewMenu(); }}
+                                        className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-app-surface flex items-center gap-2.5 transition-colors"
+                                    >
+                                        <Network size={13} className="text-app-muted shrink-0" />
+                                        New Tunnel
+                                    </button>
+                                </div>
+                            )}
                         </div>
 
-                        {/* Templates Dropdown */}
-                        <AnimatePresence>
-                            {showTemplates && (
-                                <motion.div
-                                    initial={{ opacity: 0, y: -10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
+                        <ActionButton
+                            label="Port Forwarding"
+                            icon={<Network size={14} />}
+                            iconColor="text-blue-400"
+                            onClick={() => openPortForwardingTab()}
+                        />
+
+                        {/* Command Palette */}
+                        <button
+                            type="button"
+                            onClick={handleCommandPalette}
+                            aria-label="Open command palette"
+                            className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl border border-app-border/40 bg-app-surface/30 hover:bg-app-surface/60 hover:border-app-border/70 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40"
+                        >
+                            <Command size={14} className="text-app-muted shrink-0" />
+                            <span className="text-xs font-medium text-app-text/80">Palette</span>
+                            <kbd className="ml-1 px-1.5 py-0.5 bg-app-bg/60 border border-app-border/50 rounded text-[10px] font-mono text-app-muted/70 leading-none">
+                                {cmdKey}
+                            </kbd>
+                        </button>
+                    </motion.div>
+
+                    <AddTunnelModal
+                        isOpen={isAddTunnelModalOpen}
+                        onClose={() => setIsAddTunnelModalOpen(false)}
+                    />
+
+                    {/* Filter bar — only shown when there are connections */}
+                    {connections.length > 0 && (
+                        <motion.div variants={item} className="mb-3">
+                            <div className="relative flex items-center">
+                                <Search
+                                    size={12}
+                                    className="absolute left-1 text-app-muted/30 pointer-events-none"
+                                    aria-hidden="true"
+                                />
+                                <input
+                                    type="search"
+                                    value={filterTerm}
+                                    onChange={(e) => setFilterTerm(e.target.value)}
+                                    placeholder="Search"
+                                    aria-label="Filter connections"
+                                    className="w-full bg-transparent border-b border-app-border/50 focus:border-app-accent/60 pl-6 pr-3 py-1.5 text-xs text-app-text placeholder:text-app-muted/50 outline-none transition-colors"
+                                />
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* Connections */}
+                    {connections.length === 0 ? (
+                        <motion.div variants={item}>
+                            <EmptyState onAdd={() => setAddConnectionModalOpen(true)} />
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            variants={item}
+                            className={`flex gap-4 ${favorites.length > 0 && recents.length > 0 ? 'items-start' : ''}`}
+                        >
+                            {/* Favorites column */}
+                            {favorites.length > 0 && (
+                                <section
+                                    aria-labelledby="fav-heading"
+                                    className="flex-1 min-w-0 flex flex-col max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
                                 >
-                                    <div className="p-1.5">
-                                        {CONNECTION_TEMPLATES.map(template => (
-                                            <button
-                                                key={template.id}
-                                                onClick={() => handleSelectTemplate(template)}
-                                                className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
-                                            >
-                                                <Terminal size={12} className="text-app-accent" />
-                                                <div>
-                                                    <div className="font-medium text-xs">{template.name}</div>
-                                                    <div className="text-[10px] text-app-muted font-mono">{template.username}@host:{template.port}</div>
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-
-                        {/* Autocomplete Dropdown */}
-                        <AnimatePresence>
-                            {showAutocomplete && autocompleteSuggestions.length > 0 && !showTemplates && (
-                                <motion.div
-                                    initial={{ opacity: 0, y: -10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    className="absolute top-full mt-2 left-0 right-0 bg-app-panel/95 backdrop-blur-xl border border-app-border rounded-lg shadow-xl overflow-hidden z-50"
-                                >
-                                    <div className="p-1.5">
-                                        {autocompleteSuggestions.map(conn => (
-                                            <button
-                                                key={conn.id}
-                                                onClick={() => handleSelectAutocomplete(conn)}
-                                                className="w-full text-left px-2.5 py-2 text-sm text-app-text hover:bg-app-surface rounded transition-colors flex items-center gap-2.5"
-                                            >
-                                                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="font-medium text-xs truncate">{conn.name || conn.host}</div>
-                                                    <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}:{conn.port}</div>
-                                                </div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-
-                        {/* Expandable Auth Fields */}
-                        <AnimatePresence>
-                            {isAuthExpanded && (
-                                <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    className="bg-app-panel/30 border border-app-border rounded-lg p-3 grid grid-cols-2 gap-3"
-                                >
-                                    <div className="relative col-span-2 sm:col-span-1">
-                                        <Lock size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                        <input
-                                            type="password"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            placeholder="Password"
-                                            className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors"
-                                        />
-                                    </div>
-
-                                    <div className="relative col-span-2 sm:col-span-1">
-                                        <Monitor size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                        <input
-                                            type="number"
-                                            value={port}
-                                            onChange={(e) => setPort(e.target.value)}
-                                            placeholder="Port (22)"
-                                            className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
-                                        />
-                                    </div>
-
-                                    <div className="relative col-span-2">
-                                        <div className="relative flex gap-2">
-                                            <div className="relative flex-1">
-                                                <FileKey size={12} className="absolute left-2.5 top-2.5 text-app-muted" />
-                                                <input
-                                                    type="text"
-                                                    value={privateKeyPath}
-                                                    onChange={(e) => setPrivateKeyPath(e.target.value)}
-                                                    placeholder="Private Key Path"
-                                                    className="w-full bg-app-surface border border-app-border rounded pl-8 pr-2.5 py-2 text-sm text-app-text placeholder:text-app-muted/50 focus:border-app-accent outline-none transition-colors font-mono"
+                                    <SectionHeading id="fav-heading">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Bookmark
+                                                size={10}
+                                                className="fill-yellow-500/60 text-yellow-500/60"
+                                                aria-hidden="true"
+                                            />
+                                            Favorites
+                                            <span className="font-mono normal-case tracking-normal text-app-muted/40">
+                                                {favorites.length}
+                                                {favConnectedCount > 0 && (
+                                                    <span className="text-green-500/70"> · {favConnectedCount} live</span>
+                                                )}
+                                            </span>
+                                        </span>
+                                    </SectionHeading>
+                                    <div role="list">
+                                        {favorites.map(conn => (
+                                            <div key={conn.id} role="listitem">
+                                                <ConnectionCard
+                                                    conn={conn}
+                                                    onOpen={openTab}
+                                                    onToggleFavorite={toggleFavorite}
+                                                    onContextMenu={handleCardContextMenu}
                                                 />
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={handleBrowseKey}
-                                                className="px-2.5 py-2 bg-app-surface border border-app-border rounded text-app-text hover:border-app-accent hover:text-app-accent transition-colors"
-                                            >
-                                                <FolderOpen size={14} />
-                                            </button>
-                                        </div>
+                                        ))}
                                     </div>
-                                </motion.div>
+                                </section>
                             )}
-                        </AnimatePresence>
-                    </form>
-                </motion.div>
 
-                {/* Command Palette Button */}
-                <motion.div variants={itemVariants} className="mb-6">
-                    <button
-                        onClick={handleCommandPalette}
-                        className="flex items-center gap-2 px-4 py-2 bg-app-panel/50 border border-app-border/50 rounded-lg text-sm text-app-muted hover:text-app-text hover:border-app-accent/50 transition-all hover:bg-app-panel/80 hover:shadow-sm"
-                    >
-                        <Command size={14} />
-                        <span>Command Palette</span>
-                        <kbd className="ml-auto px-2 py-0.5 bg-app-surface border border-app-border rounded text-[10px] font-mono">{commandKey}</kbd>
-                    </button>
-                </motion.div>
+                            {/* Vertical divider between columns */}
+                            {favorites.length > 0 && recents.length > 0 && (
+                                <div aria-hidden="true" className="w-px bg-app-border/30 self-stretch shrink-0 mx-1" />
+                            )}
 
-                {/* Compact Actions */}
-                <motion.div variants={itemVariants} className="flex gap-3 mb-8">
-                    <Card
-                        onClick={() => openTab('local')}
-                        className="flex-1 cursor-pointer"
-                    >
-                        <div className="p-4 flex items-center gap-3">
-                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-app-accent shrink-0 ring-1 ring-inset ring-app-border/20">
-                                <Terminal size={16} />
-                            </div>
-                            <div>
-                                <h3 className="text-sm font-medium text-app-text">Local Terminal</h3>
-                                <p className="text-xs text-app-muted">Local machine</p>
-                            </div>
-                        </div>
-                    </Card>
-
-                    <Card
-                        onClick={() => openAddConnectionModal()}
-                        className="flex-1 cursor-pointer"
-                    >
-                        <div className="p-4 flex items-center gap-3">
-                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-green-500 shrink-0 ring-1 ring-inset ring-app-border/20">
-                                <Plus size={16} />
-                            </div>
-                            <div>
-                                <h3 className="text-sm font-medium text-app-text">New Connection</h3>
-                                <p className="text-xs text-app-muted">Add SSH server</p>
-                            </div>
-                        </div>
-                    </Card>
-
-                    <Card
-                        onClick={() => setIsAddTunnelModalOpen(true)}
-                        className="flex-1 cursor-pointer"
-                    >
-                        <div className="p-4 flex items-center gap-3">
-                            <div className="w-9 h-9 bg-app-surface/80 rounded-lg flex items-center justify-center text-blue-500 shrink-0 ring-1 ring-inset ring-app-border/20">
-                                <Network size={16} />
-                            </div>
-                            <div>
-                                <h3 className="text-sm font-medium text-app-text">Port Forwarding</h3>
-                                <p className="text-xs text-app-muted">Local & Remote</p>
-                            </div>
-                        </div>
-                    </Card>
-                </motion.div>
-
-                <AddTunnelModal
-                    isOpen={isAddTunnelModalOpen}
-                    onClose={() => setIsAddTunnelModalOpen(false)}
-                />
-
-                {/* Favorite Connections */}
-                {favoriteConnections.length > 0 && (
-                    <motion.div
-                        initial="visible"
-                        animate="visible"
-                        className="mb-6"
-                    >
-                        <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
-                            <Bookmark size={12} className="text-yellow-500 fill-yellow-500" />
-                            Favorites
-                        </h2>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                            {favoriteConnections.map(conn => (
-                                <Card
-                                    key={conn.id}
-                                    className="cursor-pointer border-yellow-500/10 hover:border-yellow-500/30"
+                            {/* Recent column */}
+                            {recents.length > 0 && (
+                                <section
+                                    aria-labelledby="recent-heading"
+                                    className="flex-1 min-w-0 flex flex-col max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
                                 >
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            toggleFavorite(conn.id);
-                                        }}
-                                        className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
-                                    >
-                                        <Bookmark size={12} className="fill-yellow-500 text-yellow-500" />
-                                    </button>
-
-                                    <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
-                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
-                                        `}>
-                                                <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
+                                    <SectionHeading id="recent-heading">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            Recent
+                                            <span className="font-mono normal-case tracking-normal text-app-muted/40">
+                                                {recents.length}
+                                                {recentConnectedCount > 0 && (
+                                                    <span className="text-green-500/70"> · {recentConnectedCount} live</span>
+                                                )}
+                                            </span>
+                                        </span>
+                                    </SectionHeading>
+                                    <div role="list">
+                                        {recents.map(conn => (
+                                            <div key={conn.id} role="listitem">
+                                                <ConnectionCard
+                                                    conn={conn}
+                                                    onOpen={openTab}
+                                                    onToggleFavorite={toggleFavorite}
+                                                    onContextMenu={handleCardContextMenu}
+                                                />
                                             </div>
-                                        </div>
-                                        <div className="mb-2">
-                                            <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
-                                            <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                            <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
-                                            {conn.lastConnected && (
-                                                <span className="text-[9px] text-app-muted font-mono truncate ml-2">
-                                                    {getRelativeTime(conn.lastConnected)}
-                                                </span>
-                                            )}
-                                        </div>
+                                        ))}
                                     </div>
-                                </Card>
-                            ))}
-                        </div>
-                    </motion.div>
-                )}
-
-                {/* Recent Connections */}
-                <motion.div
-                    initial="visible"
-                    animate="visible"
-                >
-                    <h2 className="text-xs font-semibold mb-3 flex items-center gap-2 text-app-muted uppercase tracking-wider">
-                        Recent Connections
-                    </h2>
-
-                    {connections.length === 0 ? (
-                        <div className="bg-app-panel/50 p-8 rounded-lg border border-dashed border-app-border/50 text-center">
-                            <div className="w-16 h-16 bg-app-surface/50 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Terminal size={24} className="text-app-muted" />
-                            </div>
-                            <h3 className="text-sm font-medium text-app-text mb-2">No Connections Yet</h3>
-                            <p className="text-xs text-app-muted mb-4">
-                                Get started by adding your first SSH connection.
-                            </p>
-                            <button
-                                onClick={() => openAddConnectionModal()}
-                                className="px-4 py-2 bg-app-accent text-white rounded text-sm font-medium hover:brightness-110 transition-all font-mono"
-                            >
-                                Add Connection
-                            </button>
-                        </div>
-                    ) : recentConnections.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                            {recentConnections.map(conn => (
-                                <Card
-                                    key={conn.id}
-                                    className="cursor-pointer"
-                                >
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            toggleFavorite(conn.id);
-                                        }}
-                                        className="absolute top-2 right-2 p-1 rounded hover:bg-app-surface/50 transition-colors z-20"
-                                    >
-                                        <Bookmark size={12} className="text-app-muted" />
-                                    </button>
-
-                                    <div onClick={() => openTab(conn.id)} className="p-3 relative z-10">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className={`w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all
-                                            ${conn.status === 'connected' ? 'bg-green-500/10 text-green-500' : 'bg-app-surface text-app-muted'}
-                                        `}>
-                                                <OSIcon icon={conn.icon || 'Server'} className="w-4 h-4" />
-                                            </div>
-                                        </div>
-                                        <div className="mb-2">
-                                            <div className="font-medium truncate text-app-text text-xs mb-0.5">{conn.name || conn.host}</div>
-                                            <div className="text-[10px] text-app-muted truncate font-mono">{conn.username}@{conn.host}</div>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                            <div className={`w-1.5 h-1.5 rounded-full ${conn.status === 'connected' ? 'bg-green-500' : 'bg-app-muted/30'}`} />
-                                            {conn.lastConnected && (
-                                                <span className="text-[9px] text-app-muted font-mono truncate ml-2">
-                                                    {getRelativeTime(conn.lastConnected)}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </Card>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="text-center py-6 text-sm text-app-muted">
-                            No recent connections. All connections are favorited.
-                        </div>
+                                </section>
+                            )}
+                        </motion.div>
                     )}
-                </motion.div>
-            </motion.div>{/* End scrollable content wrapper */}
-        </motion.div>
+
+                </div>
+            </div>
+
+            {/* Right-click context menu */}
+            {ctxMenu && (
+                <ContextMenu
+                    x={ctxMenu.x}
+                    y={ctxMenu.y}
+                    items={buildContextMenuItems(ctxMenu.conn)}
+                    onClose={() => setCtxMenu(null)}
+                />
+            )}
+        </motion.main>
     );
 }

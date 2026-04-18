@@ -66,6 +66,7 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
                     data.tabs,
                     data.activeTabId ?? null,
                     data.activeConnectionId ?? null,
+                    data.showWelcomeScreen ?? false,
                 );
             }
 

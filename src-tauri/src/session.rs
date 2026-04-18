@@ -34,6 +34,7 @@ pub struct TabSnapshot {
 pub struct SessionData {
     /// Incremented when the schema changes to allow forward-only migrations.
     pub version: u32,
+    pub show_welcome_screen: Option<bool>,
     pub active_tab_id: Option<String>,
     pub active_connection_id: Option<String>,
     /// Full snapshots of open sidebar tabs in order.

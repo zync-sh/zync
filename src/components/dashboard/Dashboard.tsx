@@ -301,15 +301,10 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
       clearTimeout(timeoutId);
     };
   }, [activeConnectionId, isConnected, isSaturationDetected, isVisible, fetchMetrics]); // Re-run if visibility changes so polling stops immediately when hidden
-  // Ideally, if saturationDetected changes to true inside fetchMetrics, the NEXT schedule will see it.
-  // But since scheduleNext reads state... Wait, scheduleNext uses closure?
-  // We need to be careful. If we rely on closure, we might use stale `isSaturationDetected`.
-  // Better to use `useEffect` dependencies or ref for saturation status?
-  // Or just rely on re-running effect when `isSaturationDetected` changes.
-  // Yes, adding it to dependencies works. 
-
-
   if (!activeConnectionId) {
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent;
+    const isMac = /mac/i.test(platform);
+
     return (
       <div className="h-full flex flex-col items-center justify-center -mt-20 px-6">
         <div className="w-20 h-20 rounded-3xl bg-app-surface/50 border border-app-border/40 flex items-center justify-center mb-8 shadow-sm">
@@ -320,8 +315,7 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
         <div 
           className="relative group w-full max-w-md cursor-pointer mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"
           onClick={() => {
-              const isMac = navigator.userAgent.includes('Mac');
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', metaKey: isMac, ctrlKey: !isMac }));
+              window.dispatchEvent(new CustomEvent('zync:open-command-palette'));
           }}
         >
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -330,7 +324,7 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
           <div className="w-full bg-app-surface/40 hover:bg-app-surface/80 border border-app-border/50 hover:border-app-accent/50 rounded-xl text-app-muted text-sm px-4 py-3 pl-10 shadow-sm transition-all flex items-center justify-between">
               <span>Search servers, tunnels, settings...</span>
               <div className="flex bg-app-bg/60 rounded px-1.5 py-0.5 border border-app-border/40 shadow-sm opacity-70 group-hover:bg-app-accent/10 group-hover:text-app-accent group-hover:border-app-accent/30 transition-all">
-                  <span className="text-[10px] font-mono font-medium tracking-wider">{navigator.userAgent.includes('Mac') ? '⌘' : 'Ctrl'}+P</span>
+                  <span className="text-[10px] font-mono font-medium tracking-wider">{isMac ? '⌘' : 'Ctrl'}+P</span>
               </div>
           </div>
         </div>

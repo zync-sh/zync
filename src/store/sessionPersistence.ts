@@ -18,6 +18,7 @@ export interface TabSnapshot {
 
 export interface SessionData {
     version: number;
+    showWelcomeScreen?: boolean;
     activeTabId?: string;
     activeConnectionId?: string;
     tabs: TabSnapshot[];
@@ -26,6 +27,7 @@ export interface SessionData {
 }
 
 export interface SessionStoreSnapshot {
+    showWelcomeScreen?: boolean;
     activeTabId: string | null;
     activeConnectionId: string | null;
     tabs: Tab[];
@@ -58,6 +60,7 @@ export function buildSessionData(state: SessionStoreSnapshot): SessionData {
 
     return {
         version: 1,
+        showWelcomeScreen: Boolean(state.showWelcomeScreen),
         activeTabId: filteredTabs.some(t => t.id === state.activeTabId)
             ? (state.activeTabId ?? undefined)
             : undefined,

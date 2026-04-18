@@ -17,6 +17,7 @@
     "test:ai-sidebar-resize": "npm run compile:agent-tests && node tests/aiSidebarResize.test.mjs",
     "test:codemirror-helpers": "npm run compile:agent-tests && node tests/codeMirrorHelpers.test.mjs",
     "test:provider-catalog": "npm run compile:agent-tests && node tests/providerCatalog.test.mjs",
+    "test:quick-connect-subcomponents": "npm run compile:agent-tests && node tests/quickConnectSubcomponents.test.mjs",
     "test:request-context": "npm run compile:agent-tests && node tests/requestContext.test.mjs",
     "test:sidebar-submit": "npm run compile:agent-tests && node tests/sidebarSubmit.test.mjs",
     "test:redact": "npm run compile:agent-tests && node tests/redactContext.test.mjs",

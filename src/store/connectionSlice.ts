@@ -39,11 +39,15 @@ export interface ConnectionSlice {
     tabs: Tab[];
     activeTabId: string | null;
     activeConnectionId: string | null;
+    showWelcomeScreen: boolean;
     folders: Folder[];
 
     // UI State
     isAddConnectionModalOpen: boolean;
+    editingConnectionId: string | null;
     setAddConnectionModalOpen: (open: boolean) => void;
+    /** Open the add/edit connection modal. Pass a connection id to edit, omit to add new. */
+    openConnectionModal: (id?: string | null) => void;
 
     // Actions
     addConnection: (conn: Connection, isTemp?: boolean) => void;
@@ -63,6 +67,8 @@ export interface ConnectionSlice {
     openReleaseNotesTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
+    /** Deactivate all tabs and show the welcome screen without closing anything. */
+    goHome: () => void;
     setTabView: (tabId: string, view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
 
     // Folder Actions
@@ -89,6 +95,7 @@ export interface ConnectionSlice {
         tabs: TabSnapshot[],
         activeTabId: string | null,
         activeConnectionId: string | null,
+        showWelcomeScreen?: boolean,
     ) => void;
 
     // Initialization
@@ -102,10 +109,17 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     tabs: [],
     activeTabId: null,
     activeConnectionId: null,
+    showWelcomeScreen: false,
     folders: [],
     isAddConnectionModalOpen: false,
+    editingConnectionId: null,
 
-    setAddConnectionModalOpen: (open) => set({ isAddConnectionModalOpen: open }),
+    setAddConnectionModalOpen: (open) => set(
+        open ? { isAddConnectionModalOpen: true }
+             : { isAddConnectionModalOpen: false, editingConnectionId: null }
+    ),
+
+    openConnectionModal: (id = null) => set({ isAddConnectionModalOpen: true, editingConnectionId: id }),
 
     loadConnections: async () => {
         try {
@@ -173,7 +187,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             }
 
             saveToMain(newConns, state.folders);
-            return { connections: newConns, tabs: newTabs, activeTabId: newActiveId };
+            const showWelcomeScreen = newTabs.length === 0 ? true : state.showWelcomeScreen;
+            return { connections: newConns, tabs: newTabs, activeTabId: newActiveId, showWelcomeScreen };
         });
     },
 
@@ -363,11 +378,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     openTab: (connectionId, startView = 'terminal') => {
         set(state => {
             if (connectionId === 'local') {
-                return createLocalTerminalTabState(state.tabs);
+                return { ...createLocalTerminalTabState(state.tabs), showWelcomeScreen: false };
             }
 
             const conn = state.connections.find(c => c.id === connectionId);
-            if (!conn) return state;
+            if (!conn) {
+                console.warn('[connectionSlice] openTab: missing connection', { connectionId, connectionCount: state.connections.length });
+                return { showWelcomeScreen: false };
+            }
 
             const existingTab = findConnectionTab(state.tabs, conn.id);
 
@@ -377,7 +395,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     get().connect(conn.id);
                 }
 
-                return activateExistingConnectionTab(state.tabs, existingTab, startView);
+                return { ...activateExistingConnectionTab(state.tabs, existingTab, startView), showWelcomeScreen: false };
             }
 
             // Auto connect if disconnected or error
@@ -385,7 +403,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 get().connect(conn.id);
             }
 
-            return createConnectionTabState(state.tabs, conn, startView);
+            return { ...createConnectionTabState(state.tabs, conn, startView), showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
@@ -393,12 +411,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     openPortForwardingTab: () => {
         set(state => {
-            return ensureSingleTabByType(state.tabs, 'port-forwarding', () => ({
+            return { ...ensureSingleTabByType(state.tabs, 'port-forwarding', () => ({
                 id: crypto.randomUUID(),
                 type: 'port-forwarding',
                 title: 'Port Forwarding',
                 view: 'port-forwarding',
-            }));
+            })), showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
@@ -406,12 +424,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     openReleaseNotesTab: () => {
         set(state => {
-            return ensureSingleTabByType(state.tabs, 'release-notes', () => ({
+            return { ...ensureSingleTabByType(state.tabs, 'release-notes', () => ({
                 id: crypto.randomUUID(),
                 type: 'release-notes',
                 title: "What's New",
                 view: 'terminal', // placeholder, not used for this type
-            }));
+            })), showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
@@ -419,7 +437,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     openSnippetsTab: () => {
         set(state => {
-            return ensureGlobalSnippetsTab(state.tabs);
+            return { ...ensureGlobalSnippetsTab(state.tabs), showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
@@ -438,7 +456,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
 
         set(state => {
-            return reduceTabCloseState(state.tabs, state.activeTabId, tabId);
+            const next = reduceTabCloseState(state.tabs, state.activeTabId, tabId);
+            return {
+                ...next,
+                showWelcomeScreen: next.tabs.length === 0 || next.activeTabId === null,
+            };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
@@ -447,9 +469,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     activateTab: (tabId) => {
         set(state => {
             const tab = state.tabs.find(t => t.id === tabId);
-            return { activeTabId: tabId, activeConnectionId: tab?.connectionId || null };
+            return { activeTabId: tabId, activeConnectionId: tab?.connectionId || null, showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
+    },
+
+    goHome: () => {
+        set({ activeTabId: null, activeConnectionId: null, showWelcomeScreen: true });
         get().saveSession();
     },
 
@@ -513,7 +540,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         get().saveSession();
     },
 
-    restoreTabState: (snapshots, activeTabId, activeConnectionId) => {
+    restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         set(state => {
             const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes']);
             const tabs: Tab[] = snapshots
@@ -538,7 +565,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     };
                 });
 
-            if (tabs.length === 0) return state;
+            if (tabs.length === 0) {
+                return { ...state, showWelcomeScreen };
+            }
 
             const resolvedActiveId =
                 activeTabId && tabs.some(t => t.id === activeTabId)
@@ -552,7 +581,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const resolvedConnId =
                 resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
 
-            return { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId };
+            return showWelcomeScreen
+                ? { tabs, activeTabId: null, activeConnectionId: null, showWelcomeScreen: true }
+                : { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId, showWelcomeScreen: false };
         });
     },
 
