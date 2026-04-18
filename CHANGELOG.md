@@ -5,7 +5,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 ## [Unreleased]
 
 ### Changed
-- **Welcome Screen & Quick Connect Rebuild**: Split the quick-connect area into focused auth, suggestions, and templates components, tightened keyboard/accessibility behavior, and hardened the welcome screen interactions. ([ad0aea5])
+- **Welcome Screen & Quick Connect Rebuild**: Split the quick-connect area into focused auth, suggestions, and templates components, tightened keyboard/accessibility behavior, and hardened the welcome screen interactions. ([ad0aea5], [ef6f9eb])
 
 
 ## [2.13.1]
