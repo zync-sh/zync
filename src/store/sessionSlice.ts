@@ -61,14 +61,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
             set({ isRestoring: true });
 
             // Phase 2: restore sidebar tabs (connections must already be loaded).
-            if (data.tabs?.length) {
-                get().restoreTabState(
-                    data.tabs,
-                    data.activeTabId ?? null,
-                    data.activeConnectionId ?? null,
-                    data.showWelcomeScreen ?? false,
-                );
-            }
+            get().restoreTabState(
+                data.tabs ?? [],
+                data.activeTabId ?? null,
+                data.activeConnectionId ?? null,
+                data.showWelcomeScreen ?? false,
+            );
 
             // Phase 3: restore terminal tabs for all scopes.
             // Local tabs get live PTYs; SSH tabs are metadata-only until reconnect.

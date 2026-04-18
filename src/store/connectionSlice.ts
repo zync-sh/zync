@@ -185,10 +185,17 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (state.activeTabId && !newTabs.find(t => t.id === state.activeTabId)) {
                 newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
             }
+            const newActiveConnectionId = newTabs.find(t => t.id === newActiveId)?.connectionId ?? null;
 
             saveToMain(newConns, state.folders);
             const showWelcomeScreen = newTabs.length === 0 ? true : state.showWelcomeScreen;
-            return { connections: newConns, tabs: newTabs, activeTabId: newActiveId, showWelcomeScreen };
+            return {
+                connections: newConns,
+                tabs: newTabs,
+                activeTabId: newActiveId,
+                activeConnectionId: newActiveConnectionId,
+                showWelcomeScreen,
+            };
         });
     },
 
@@ -276,8 +283,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     clearConnections: () => {
-        set({ connections: [], folders: [], tabs: [], activeTabId: null });
+        set({
+            connections: [],
+            folders: [],
+            tabs: [],
+            activeTabId: null,
+            activeConnectionId: null,
+            showWelcomeScreen: true,
+        });
         saveToMain([], []);
+        get().saveSession();
     },
 
     connect: async (id) => {
@@ -384,7 +399,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const conn = state.connections.find(c => c.id === connectionId);
             if (!conn) {
                 console.warn('[connectionSlice] openTab: missing connection', { connectionId, connectionCount: state.connections.length });
-                return { showWelcomeScreen: false };
+                return state;
             }
 
             const existingTab = findConnectionTab(state.tabs, conn.id);
@@ -467,10 +482,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     activateTab: (tabId) => {
+        let didActivate = false;
         set(state => {
             const tab = state.tabs.find(t => t.id === tabId);
-            return { activeTabId: tabId, activeConnectionId: tab?.connectionId || null, showWelcomeScreen: false };
+            if (!tab) return state;
+            didActivate = true;
+            return { activeTabId: tabId, activeConnectionId: tab.connectionId || null, showWelcomeScreen: false };
         });
+        if (!didActivate) return;
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
@@ -542,7 +561,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         set(state => {
-            const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes']);
+            const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets']);
             const tabs: Tab[] = snapshots
                 .filter(s => RESTORABLE_TYPES.has(s.tabType))
                 .filter(s => {
@@ -566,7 +585,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 });
 
             if (tabs.length === 0) {
-                return { ...state, showWelcomeScreen };
+                return {
+                    tabs: [],
+                    activeTabId: null,
+                    activeConnectionId: null,
+                    showWelcomeScreen: true,
+                };
             }
 
             const resolvedActiveId =

@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.13.2]
+
 ### Changed
 - **Welcome Screen & Quick Connect Rebuild**: Split the quick-connect area into focused auth, suggestions, and templates components, tightened keyboard/accessibility behavior, and hardened the welcome screen interactions. ([ad0aea5], [ef6f9eb])
 
@@ -570,7 +572,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.2...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -638,6 +640,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 [d049d01]: https://github.com/zync-sh/zync/commit/d049d01
 [648102c]: https://github.com/zync-sh/zync/commit/648102c
 [2de6066]: https://github.com/zync-sh/zync/commit/2de6066
+[ad0aea5]: https://github.com/zync-sh/zync/commit/ad0aea5
+[ef6f9eb]: https://github.com/zync-sh/zync/commit/ef6f9eb
+[2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/zync-sh/zync/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/zync-sh/zync/compare/v2.11.1...v2.12.0

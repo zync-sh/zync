@@ -31,6 +31,7 @@ interface ActionButtonProps {
     onClick: () => void;
 }
 
+/** Small reusable action button used in the welcome quick-actions row. */
 function ActionButton({ label, icon, iconColor, onClick }: ActionButtonProps) {
     return (
         <button
@@ -44,6 +45,7 @@ function ActionButton({ label, icon, iconColor, onClick }: ActionButtonProps) {
     );
 }
 
+/** Standardized uppercase section heading used by connection lists. */
 function SectionHeading({ id, children }: { id: string; children: React.ReactNode }) {
     return (
         <h2
@@ -56,6 +58,7 @@ function SectionHeading({ id, children }: { id: string; children: React.ReactNod
 }
 
 
+/** Empty state shown when there are no saved connections. */
 function EmptyState({ onAdd }: { onAdd: () => void }) {
     return (
         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -79,6 +82,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 
 // ── WelcomeScreen ─────────────────────────────────────────────────────────────
 
+/** Main launch/home surface for quick connect, actions, and saved connection access. */
 export function WelcomeScreen() {
     const connections               = useAppStore(s => s.connections);
     const openTab                   = useAppStore(s => s.openTab);
@@ -100,7 +104,9 @@ export function WelcomeScreen() {
     const newMenuToggleRef = useRef<HTMLButtonElement>(null);
     const newMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent;
+    const platform = typeof navigator !== 'undefined'
+        ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent)
+        : '';
     const isMac = /mac/i.test(platform);
     const cmdKey = isMac ? '⌘⇧P' : 'Ctrl+⇧P';
 
@@ -226,8 +232,10 @@ export function WelcomeScreen() {
         .filter(c => c.isFavorite && filterFn(c))
         .sort(connSort);
 
+    const isFiltering = filterTerm.trim().length > 0;
+
     const recents = connections
-        .filter(c => !c.isFavorite && c.lastConnected && filterFn(c))
+        .filter(c => !c.isFavorite && filterFn(c) && (isFiltering || Boolean(c.lastConnected)))
         .sort(connSort);
 
     const favConnectedCount    = favorites.filter(c => c.status === 'connected').length;
@@ -532,7 +540,7 @@ export function WelcomeScreen() {
                                 >
                                     <SectionHeading id="recent-heading">
                                         <span className="inline-flex items-center gap-1.5">
-                                            Recent
+                                            {isFiltering ? 'Matches' : 'Recent'}
                                             <span className="font-mono normal-case tracking-normal text-app-muted/40">
                                                 {recents.length}
                                                 {recentConnectedCount > 0 && (

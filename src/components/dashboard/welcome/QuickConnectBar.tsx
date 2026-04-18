@@ -28,11 +28,20 @@ const CONNECTION_TEMPLATES: readonly ConnectionTemplate[] = [
 
 const FLAG_VALUE_PATTERN = /-[a-zA-Z]+\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g;
 
+/** Removes matching leading and trailing quotes from a tokenized value. */
 function stripSurroundingQuotes(value: string): string {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
         return value.slice(1, -1);
     }
     return value;
+}
+
+/** Parses and validates a TCP port from user input. */
+function parsePort(value: string): number | null {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const port = Number.parseInt(trimmed, 10);
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
 }
 
 interface QuickConnectBarProps {
@@ -48,6 +57,7 @@ interface QuickConnectBarProps {
     onSelectExisting: (id: string) => void;
 }
 
+/** Parses shorthand connection input in the form `[user@]host[:port]`. */
 function parseConnectionString(raw: string): { username: string; host: string; port: number } | null {
     const trimmed = raw.trim();
     if (!trimmed) return null;
@@ -55,14 +65,23 @@ function parseConnectionString(raw: string): { username: string; host: string; p
     let username = 'root';
     let rest = trimmed;
 
-    if (rest.includes('@')) [username, rest] = rest.split('@', 2);
+    const userSplitIndex = rest.indexOf('@');
+    if (userSplitIndex >= 0) {
+        username = rest.slice(0, userSplitIndex);
+        rest = rest.slice(userSplitIndex + 1);
+    }
+    username = username.trim() || 'root';
 
     let host = rest;
     let port = 22;
     if (rest.includes(':')) {
         const idx = rest.lastIndexOf(':');
-        host = rest.slice(0, idx);
-        port = parseInt(rest.slice(idx + 1), 10) || 22;
+        host = rest.slice(0, idx).trim();
+        const parsedPort = parsePort(rest.slice(idx + 1));
+        if (parsedPort === null) return null;
+        port = parsedPort;
+    } else {
+        host = rest.trim();
     }
 
     return host ? { username, host, port } : null;
@@ -75,8 +94,11 @@ function parseSSHCommand(raw: string): { username: string; host: string; port: n
 
     const rest = trimmed.slice(4);
 
-    const portMatch = rest.match(/-p\s+(\d+)/);
-    const port = portMatch ? (parseInt(portMatch[1], 10) || 22) : 22;
+    const portMatch = rest.match(/-p\s+(".*?"|'.*?'|\S+)/);
+    const rawPort = portMatch ? stripSurroundingQuotes(portMatch[1]) : '';
+    const parsedPort = rawPort ? parsePort(rawPort) : null;
+    if (rawPort && parsedPort === null) return null;
+    let port = parsedPort ?? 22;
 
     const keyMatch = rest.match(/-i\s+(?:"([^"]*)"|'([^']*)'|(\S+))/);
     const rawPrivateKeyPath = keyMatch ? (keyMatch[1] ?? keyMatch[2] ?? keyMatch[3] ?? '') : '';
@@ -89,11 +111,29 @@ function parseSSHCommand(raw: string): { username: string; host: string; port: n
 
     let username = 'root';
     let host = hostToken;
-    if (hostToken.includes('@')) [username, host] = hostToken.split('@', 2);
+    const userSplitIndex = hostToken.indexOf('@');
+    if (userSplitIndex >= 0) {
+        username = hostToken.slice(0, userSplitIndex);
+        host = hostToken.slice(userSplitIndex + 1);
+    }
+    username = username.trim() || 'root';
+    host = host.trim();
 
-    return host ? { username, host, port, privateKeyPath } : null;
+    if (!host) return null;
+
+    if (host.includes(':')) {
+        const idx = host.lastIndexOf(':');
+        const parsedInlinePort = parsePort(host.slice(idx + 1));
+        if (parsedInlinePort === null) return null;
+        host = host.slice(0, idx).trim();
+        if (!host) return null;
+        port = parsedInlinePort;
+    }
+
+    return { username, host, port, privateKeyPath };
 }
 
+/** Inline quick-connect control with suggestions, templates, and auth options. */
 export function QuickConnectBar({ connections, onConnect, onSelectExisting }: QuickConnectBarProps) {
     const showToast = useAppStore(state => state.showToast);
     const [input,          setInput]          = useState('');
@@ -140,10 +180,16 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
     const dropItems       = showSuggestions ? suggestions : recentConnections;
 
     // Live parse preview — shown when we have a valid parse but no dropdown/error
-    const parsedPreview = input.trim() ? parseConnectionString(input) : null;
-    const previewPort   = parsedPreview
-        ? (portOverride ? parseInt(portOverride, 10) || parsedPreview.port : parsedPreview.port)
-        : null;
+    const parsedPreview = useMemo(
+        () => (input.trim() ? parseConnectionString(input) : null),
+        [input],
+    );
+    const previewPort = useMemo(
+        () => (parsedPreview
+            ? (portOverride ? (parsePort(portOverride) ?? parsedPreview.port) : parsedPreview.port)
+            : null),
+        [parsedPreview, portOverride],
+    );
     const showPreview = Boolean(parsedPreview && !error && !showDropdown);
 
     // ── Ctrl/Cmd+L focuses the input ───────────────────────────────────
@@ -296,6 +342,7 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
         e.preventDefault();
         setInput(`${result.username}@${result.host}`);
         if (result.port !== 22) setPortOverride(result.port.toString());
+        else setPortOverride('');
         if (result.privateKeyPath) {
             setPrivateKeyPath(result.privateKeyPath);
             setIsAuthOpen(true);

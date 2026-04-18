@@ -18,7 +18,7 @@ export interface TabSnapshot {
 
 export interface SessionData {
     version: number;
-    showWelcomeScreen?: boolean;
+    showWelcomeScreen: boolean;
     activeTabId?: string;
     activeConnectionId?: string;
     tabs: TabSnapshot[];
