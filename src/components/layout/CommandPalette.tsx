@@ -35,6 +35,7 @@ interface QuickPickDetail {
     pluginId: string;
 }
 
+/** Global command/search palette with command mode and plugin quick-pick support. */
 export function CommandPalette() {
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
@@ -67,7 +68,9 @@ export function CommandPalette() {
 
     // Plugins
     const { commands: pluginCommands, executeCommand, plugins } = usePlugins();
-    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent;
+    const platform = typeof navigator !== 'undefined'
+        ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent)
+        : '';
     const isMac = /mac/i.test(platform);
     const modKey = isMac ? 'Cmd' : 'Ctrl';
 
@@ -79,33 +82,24 @@ export function CommandPalette() {
             if (e.key.toLowerCase() === 'p' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 setOpen(true);
-                openRef.current = true;
 
                 if (e.shiftKey) {
                     // Ctrl+Shift+P -> Command Mode
                     setCommandMode(true);
-                    commandModeRef.current = true;
                     setSearch(">"); // Start with >
-                    searchRef.current = ">";
                     setQuickPickMode(false); // Reset QP
-                    quickPickModeRef.current = false;
                 } else {
                     // Ctrl+P -> File/History Mode
                     setCommandMode(false);
-                    commandModeRef.current = false;
                     setSearch("");
-                    searchRef.current = "";
                     setQuickPickMode(false); // Reset QP
-                    quickPickModeRef.current = false;
                 }
             } else if (e.key === 'Escape' && openRef.current) {
                 setOpen(false);
-                openRef.current = false;
                 if (quickPickModeRef.current) {
                     // If cancelling QP, maybe we should just close it?
                     // Or notify cancellation? For MVP, just close.
                     setQuickPickMode(false);
-                    quickPickModeRef.current = false;
                 }
             }
         };
@@ -115,32 +109,22 @@ export function CommandPalette() {
             setQuickPickItems(items);
             setQuickPickOptions({ ...options, requestId, pluginId });
             setQuickPickMode(true);
-            quickPickModeRef.current = true;
             setOpen(true);
-            openRef.current = true;
             setSearch(""); // Clear search for picking
-            searchRef.current = "";
         };
 
         const handleOpenCommandPalette = (e: Event) => {
             const event = e as CustomEvent<{ commandMode?: boolean }>;
             setOpen(true);
-            openRef.current = true;
             if (event.detail?.commandMode) {
                 setCommandMode(true);
-                commandModeRef.current = true;
                 setSearch('>');
-                searchRef.current = '>';
                 setQuickPickMode(false);
-                quickPickModeRef.current = false;
                 return;
             }
             setCommandMode(false);
-            commandModeRef.current = false;
             setSearch('');
-            searchRef.current = '';
             setQuickPickMode(false);
-            quickPickModeRef.current = false;
         };
 
         window.addEventListener('keydown', handleKeyDown);
@@ -156,19 +140,15 @@ export function CommandPalette() {
     // Detect ">" in input
     const handleSearchChange = (value: string) => {
         setSearch(value);
-        searchRef.current = value;
         if (value.startsWith(">")) {
             setCommandMode(true);
-            commandModeRef.current = true;
         } else {
             setCommandMode(false);
-            commandModeRef.current = false;
         }
     };
 
     const runCommand = (command: () => void) => {
         setOpen(false);
-        openRef.current = false;
         // Defer execution to allow UI to close smoothly first
         requestAnimationFrame(() => {
             command();
@@ -177,9 +157,7 @@ export function CommandPalette() {
 
     const handleQuickPickSelect = (item: QuickPickItem) => {
         setOpen(false);
-        openRef.current = false;
         setQuickPickMode(false);
-        quickPickModeRef.current = false;
         if (quickPickOptions) {
             // Handle internal system Quick Picks
             if (quickPickOptions.pluginId === 'system') {
@@ -340,7 +318,7 @@ export function CommandPalette() {
                                     >
                                         <Settings className="mr-2 h-4 w-4 opacity-70" />
                                         <span>Settings</span>
-                                        <span className="ml-auto text-[10px] opacity-50">Cmd+,</span>
+                                        <span className="ml-auto text-[10px] opacity-50">{`${modKey}+,`}</span>
                                     </Command.Item>
 
 
@@ -428,7 +406,7 @@ export function CommandPalette() {
 }
 
 
-
+/** Connection result row for file/history mode inside the command palette. */
 const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: Connection; onSelect: () => void }) {
     return (
         <Command.Item
