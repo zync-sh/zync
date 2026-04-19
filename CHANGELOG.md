@@ -4,6 +4,27 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **In-App `settings.json` Editing Surface**: Added a full in-app editor workflow for global `settings.json` including load/save/reload/restore integration in the Settings experience. ([7f9c425])
+
+### Changed
+- **Settings Persistence Flow**: Moved `config:set` patch merge responsibility to backend `settings_set` so merge + validation happen in one canonical path. ([7f9c425])
+- **Settings Editor UX**: Improved settings error/conflict handling and in-editor save/reload/restore reliability. ([7f9c425])
+
+### Fixed
+- **IPC Listener Cleanup Race**: Hardened Tauri IPC listener setup/teardown flow to avoid pending-listener unsubscribe edge cases. ([7f9c425])
+- **Editor Search Focus Stability**: Prevented unintended focus jumps in `PlainFileEditor` during match recalculation. ([7f9c425])
+- **Batch SFTP Copy Retry Guard**: Added retry caps for session-closed reconnect loops in batch copy paths to avoid unbounded retries. ([7f9c425])
+- **Batch Rename Retry Idempotency**: Added remote existence probes before retry rename operations after reconnect to avoid duplicate/unsafe replays. ([7f9c425])
+- **Settings Backup Promotion Safety**: Validate existing settings payload before promoting it to last-known-good backup. ([7f9c425])
+- **Transfer Progress Accuracy**: Final transfer progress emit now reports real transferred/total values instead of hardcoded `100/100`. ([7f9c425])
+- **Plugin Window HTML Transport**: Replaced large base64 data URL rendering with temp-file-backed `file://` webview loading for plugin HTML windows. ([7f9c425])
+- **Blocking Folder Picker Call**: Offloaded blocking folder selection dialog invocation to blocking runtime executor. ([7f9c425])
+- **Terminal Path Escaping Consistency**: Reused shared `shell_quote` helper for terminal navigation command construction. ([7f9c425])
+- **SSH Config Import Redundant Read**: Removed unnecessary duplicate file open before parse. ([7f9c425])
+- **Data Directory Resolution Cost**: Added cached data-dir resolution to avoid repeated blocking settings reads on hot paths. ([7f9c425])
+- **AI Settings Parse Diagnostics**: Expanded debug logging to include actual settings path context for AI config parse/default fallback cases. ([7f9c425])
+
 ## [2.13.2]
 
 ### Changed
@@ -642,6 +663,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2de6066]: https://github.com/zync-sh/zync/commit/2de6066
 [ad0aea5]: https://github.com/zync-sh/zync/commit/ad0aea5
 [ef6f9eb]: https://github.com/zync-sh/zync/commit/ef6f9eb
+[7f9c425]: https://github.com/zync-sh/zync/commit/7f9c425
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/zync-sh/zync/compare/v2.12.0...v2.13.0
