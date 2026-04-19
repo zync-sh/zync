@@ -6,7 +6,7 @@ use anyhow::Result;
 use russh::client::Handle;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_store::StoreExt;
@@ -20,7 +20,9 @@ const MAX_IMPORT_TEXT_BYTES: usize = 1_048_576; // 1 MiB
 const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 const SETTINGS_CHANGED_ON_DISK_ERROR_CODE: &str = "SETTINGS_CHANGED_ON_DISK";
 const MAX_SFTP_RETRIES: u8 = 3;
-static DATA_DIR_CACHE: OnceLock<std::path::PathBuf> = OnceLock::new();
+static DATA_DIR_CACHE: StdMutex<Option<std::path::PathBuf>> = StdMutex::new(None);
+static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::PathBuf>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,18 +119,43 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> Result<(), String
         }
     }
 
-    let tmp_path = path.with_extension("json.tmp");
+    let unique_suffix = uuid::Uuid::new_v4();
+    let tmp_path = path.with_extension(format!("json.tmp.{}", unique_suffix));
     std::fs::write(&tmp_path, content).map_err(|e| e.to_string())?;
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| {
-            format!(
-                "Failed to remove existing file before atomic replace: {}",
-                e
-            )
-        })?;
+    let replace_result = if path.exists() {
+        #[cfg(target_os = "windows")]
+        {
+            let backup_path = path.with_extension(format!("json.bak.{}", unique_suffix));
+            std::fs::rename(path, &backup_path).map_err(|e| {
+                format!(
+                    "Failed to move existing file to backup before atomic replace: {}",
+                    e
+                )
+            })?;
+            match std::fs::rename(&tmp_path, path) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&backup_path);
+                    Ok(())
+                }
+                Err(rename_error) => {
+                    let _ = std::fs::rename(&backup_path, path);
+                    Err(rename_error.to_string())
+                }
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())
+        }
+    } else {
+        std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())
+    };
+
+    if let Err(error) = replace_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(error);
     }
-    std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -230,7 +257,7 @@ fn settings_mtime_ms(path: &std::path::Path) -> Option<u64> {
 
 /// Read effective settings from the native path.
 /// If missing, migrate from legacy locations once; otherwise return empty object.
-fn read_effective_settings(app: &AppHandle) -> Result<Value, String> {
+pub(crate) fn read_effective_settings(app: &AppHandle) -> Result<Value, String> {
     let settings_path = get_native_settings_path(app)?;
     if settings_path.exists() {
         return read_settings_from_path(&settings_path);
@@ -287,28 +314,51 @@ fn persist_settings_json(app: &AppHandle, settings: &Value) -> Result<(), String
 }
 
 pub fn get_data_dir(app: &AppHandle) -> std::path::PathBuf {
-    DATA_DIR_CACHE
-        .get_or_init(|| {
-            let default_dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let merged_settings = read_effective_settings(app)
-                .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+    if let Ok(cache) = DATA_DIR_CACHE.lock() {
+        if let Some(cached) = cache.clone() {
+            return cached;
+        }
+    }
 
-            if let Some(data_path) = merged_settings.get("dataPath").and_then(|v| v.as_str()) {
-                if !data_path.is_empty() {
-                    let custom_dir = std::path::PathBuf::from(data_path);
-                    if !custom_dir.exists() {
-                        let _ = std::fs::create_dir_all(&custom_dir);
-                    }
-                    return custom_dir;
-                }
+    let default_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let merged_settings =
+        read_effective_settings(app).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    let resolved = if let Some(data_path) = merged_settings.get("dataPath").and_then(|v| v.as_str()) {
+        if !data_path.is_empty() {
+            let custom_dir = std::path::PathBuf::from(data_path);
+            if !custom_dir.exists() {
+                let _ = std::fs::create_dir_all(&custom_dir);
             }
-
+            custom_dir
+        } else {
             default_dir
-        })
-        .clone()
+        }
+    } else {
+        default_dir
+    };
+
+    if let Ok(mut cache) = DATA_DIR_CACHE.lock() {
+        *cache = Some(resolved.clone());
+    }
+
+    resolved
+}
+
+fn clear_data_dir_cache() {
+    if let Ok(mut cache) = DATA_DIR_CACHE.lock() {
+        *cache = None;
+    }
+}
+
+fn data_path_from_settings(settings: &Value) -> Option<String> {
+    settings
+        .get("dataPath")
+        .and_then(|v| v.as_str())
+        .map(|value| value.to_string())
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2730,8 +2780,14 @@ pub async fn fs_rename_batch(
                         .map_err(|_| "DISCONNECTED: SFTP session timeout".to_string())?
                         .map_err(|e| e.to_string())?;
 
-                        if to_exists || !from_exists {
+                        if !from_exists {
                             continue;
+                        }
+                        if to_exists && from_exists {
+                            return Err(format!(
+                                "Batch rename conflict: both source and destination exist for '{}' -> '{}'",
+                                retry_op.from, retry_op.to
+                            ));
                         }
 
                         let retry_res = tokio::time::timeout(
@@ -3494,8 +3550,13 @@ pub async fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
     let current = read_effective_settings(&app)?;
+    let current_data_path = data_path_from_settings(&current);
     let merged = ensure_object_settings(merge_json_values(current, settings))?;
+    let next_data_path = data_path_from_settings(&merged);
     persist_settings_json(&app, &merged)?;
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
+    }
     Ok(())
 }
 
@@ -3521,7 +3582,17 @@ pub async fn settings_read_raw(app: AppHandle) -> Result<SettingsFilePayload, St
     let content = if path.exists() {
         std::fs::read_to_string(&path).map_err(|e| e.to_string())?
     } else {
-        "{}\n".to_string()
+        let migrated = read_effective_settings(&app)?;
+        if path.exists() {
+            std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+        } else if migrated.is_object() && !migrated.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&migrated).map_err(|e| e.to_string())?
+            )
+        } else {
+            "{}\n".to_string()
+        }
     };
     let modified_ms = settings_mtime_ms(&path);
     Ok(SettingsFilePayload {
@@ -3540,18 +3611,14 @@ pub async fn settings_write_raw(
     expected_modified_ms: Option<u64>,
 ) -> Result<SettingsFilePayload, String> {
     let settings_path = get_native_settings_path(&app)?;
+    let current_data_path = data_path_from_settings(&read_effective_settings(&app)?);
 
-    if let Some(expected) = expected_modified_ms {
-        if settings_path.exists() {
-            if let Some(actual) = settings_mtime_ms(&settings_path) {
-                if actual != expected {
-                    return Err(settings_command_error(
-                        SETTINGS_CHANGED_ON_DISK_ERROR_CODE,
-                        "settings.json changed on disk. Reload before saving.",
-                    ));
-                }
-            }
-        }
+    let actual = settings_mtime_ms(&settings_path);
+    if actual != expected_modified_ms {
+        return Err(settings_command_error(
+            SETTINGS_CHANGED_ON_DISK_ERROR_CODE,
+            "settings.json changed on disk. Reload before saving.",
+        ));
     }
 
     let parsed =
@@ -3559,6 +3626,10 @@ pub async fn settings_write_raw(
     let object_settings = ensure_object_settings(parsed)?;
     validate_settings_schema(&object_settings)?;
     persist_settings_json(&app, &object_settings)?;
+    let next_data_path = data_path_from_settings(&object_settings);
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
+    }
 
     let saved_content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
     let modified_ms = settings_mtime_ms(&settings_path);
@@ -3575,6 +3646,7 @@ pub async fn settings_restore_last_known_good(
     app: AppHandle,
 ) -> Result<SettingsFilePayload, String> {
     let settings_path = get_native_settings_path(&app)?;
+    let current_data_path = data_path_from_settings(&read_effective_settings(&app)?);
     let backup_path = get_last_known_good_settings_path(&app)?;
     if !backup_path.exists() {
         return Err("No last-known-good settings backup found.".to_string());
@@ -3586,6 +3658,10 @@ pub async fn settings_restore_last_known_good(
     let object_settings = ensure_object_settings(parsed)?;
     validate_settings_schema(&object_settings)?;
     persist_settings_json(&app, &object_settings)?;
+    let next_data_path = data_path_from_settings(&object_settings);
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
+    }
 
     let saved_content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
     let modified_ms = settings_mtime_ms(&settings_path);
@@ -4590,18 +4666,29 @@ pub async fn plugin_window_create(
 ) -> Result<(), String> {
     use tauri::WebviewWindowBuilder;
     let label = format!("plugin-window-{}", uuid::Uuid::new_v4());
+    let mut temp_html_path: Option<std::path::PathBuf> = None;
     let mut builder = WebviewWindowBuilder::new(
         &app,
         &label,
         if let Some(u) = url {
             tauri::WebviewUrl::External(u.parse().map_err(|e: url::ParseError| e.to_string())?)
         } else if let Some(h) = html {
-            let file_path = std::env::temp_dir().join(format!(
+            let cache_dir = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| format!("Failed to resolve app cache dir: {}", e))?
+                .join("plugin-window-html");
+            if !cache_dir.exists() {
+                std::fs::create_dir_all(&cache_dir)
+                    .map_err(|e| format!("Failed to create plugin cache dir: {}", e))?;
+            }
+            let file_path = cache_dir.join(format!(
                 "zync-plugin-window-{}.html",
                 uuid::Uuid::new_v4()
             ));
             std::fs::write(&file_path, h)
                 .map_err(|e| format!("Failed to write temporary plugin HTML file: {}", e))?;
+            temp_html_path = Some(file_path.clone());
             let file_url = url::Url::from_file_path(&file_path)
                 .map_err(|_| format!("Failed to create file URL for {}", file_path.display()))?;
             tauri::WebviewUrl::External(file_url)
@@ -4618,7 +4705,29 @@ pub async fn plugin_window_create(
     }
 
     builder.build().map_err(|e| e.to_string())?;
+    if let Some(file_path) = temp_html_path {
+        if let Ok(mut files) = PLUGIN_WINDOW_TEMP_FILES.lock() {
+            files.insert(label, file_path);
+        }
+    }
     Ok(())
+}
+
+pub fn cleanup_plugin_window_temp_file(window_label: &str) {
+    let maybe_path = if let Ok(mut files) = PLUGIN_WINDOW_TEMP_FILES.lock() {
+        files.remove(window_label)
+    } else {
+        None
+    };
+    if let Some(path) = maybe_path {
+        if let Err(error) = std::fs::remove_file(&path) {
+            eprintln!(
+                "[plugin-window] Failed to remove temporary HTML file {}: {}",
+                path.display(),
+                error
+            );
+        }
+    }
 }
 
 #[tauri::command]

@@ -80,6 +80,9 @@ pub fn run() {
                     }
                     _ => {}
                 },
+                tauri::WindowEvent::Destroyed => {
+                    commands::cleanup_plugin_window_temp_file(window.label());
+                }
                 _ => {}
             }
         })

@@ -343,20 +343,47 @@ export function CodeMirrorFileEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    setSavedContent(initialContent);
     const current = view.state.doc.toString();
-    if (current === initialContent) return;
+    if (current === initialContent) {
+      setSavedContent(initialContent);
+      return;
+    }
 
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: view.state.doc.length,
-        insert: initialContent,
-      }
-    });
-    setDocText(initialContent);
-    setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
-  }, [filename, initialContent]);
+    const applyIncomingContent = () => {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: initialContent,
+        }
+      });
+      setDocText(initialContent);
+      setSavedContent(initialContent);
+      setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
+    };
+
+    if (!isDirty) {
+      applyIncomingContent();
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const confirmed = await showConfirmDialog({
+        title: 'Replace unsaved changes?',
+        message: `${filename} has unsaved edits. Reload incoming content and discard current edits?`,
+        confirmText: 'Reload',
+        cancelText: 'Keep Editing',
+        variant: 'danger',
+      });
+      if (!confirmed || cancelled) return;
+      applyIncomingContent();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filename, initialContent, isDirty, showConfirmDialog]);
 
   useEffect(() => {
     const focusEditor = () => viewRef.current?.focus();
@@ -380,6 +407,8 @@ export function CodeMirrorFileEditor({
       if (ctrlOrMeta && (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) {
         const view = viewRef.current;
         if (!view) return;
+        const target = event.target as Node | null;
+        if (target && !view.dom.contains(target)) return;
 
         event.preventDefault();
         event.stopPropagation();

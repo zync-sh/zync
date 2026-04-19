@@ -39,6 +39,7 @@ export function PlainFileEditor({
   const searchRef = useRef<HTMLInputElement>(null);
   const matchesRef = useRef<Array<{ start: number; end: number }>>([]);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
+  const showToast = useAppStore((state) => state.showToast);
 
   useEffect(() => {
     setContent(initialContent);
@@ -99,10 +100,13 @@ export function PlainFileEditor({
     try {
       await onSave(content);
       setSavedContent(content);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save file';
+      showToast('error', message);
     } finally {
       setIsSaving(false);
     }
-  }, [content, isSaving, onSave]);
+  }, [content, isSaving, onSave, showToast]);
 
   const handleClose = useCallback(async () => {
     if (!isDirty) {

@@ -579,7 +579,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         set(state => {
-            const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets']);
+        const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings']);
             const tabs: Tab[] = snapshots
                 .filter(s => RESTORABLE_TYPES.has(s.tabType))
                 .filter(s => {

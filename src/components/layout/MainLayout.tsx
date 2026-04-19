@@ -14,7 +14,6 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
-import { SettingsJsonEditorPanel } from '../settings/SettingsJsonEditorPanel';
 import { SnippetPicker } from '../snippets/SnippetPicker';
 import { SnippetSidebar } from '../snippets/SnippetSidebar';
 import { SetupWizard } from '../onboarding/SetupWizard';
@@ -49,6 +48,9 @@ const SnippetsManager = lazy(() => import('../snippets/SnippetsManager').then(mo
 const TerminalManager = lazy(() => import('../terminal/TerminalManager').then(module => ({ default: module.TerminalManager })));
 const GlobalTunnelList = lazy(() => import('../tunnel/GlobalTunnelList').then(module => ({ default: module.GlobalTunnelList })));
 const PluginPanel = lazy(() => import('../plugins/PluginPanel').then(module => ({ default: module.PluginPanel })));
+const SettingsJsonEditorPanel = lazy(() =>
+    import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
+);
 
 // Loading Component
 const TabLoading = () => (
@@ -261,7 +263,9 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 !isActive && "hidden",
                 isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
             )}>
-                <SettingsJsonEditorPanel />
+                <Suspense fallback={<TabLoading />}>
+                    <SettingsJsonEditorPanel />
+                </Suspense>
             </div>
         );
     }
