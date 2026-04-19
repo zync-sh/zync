@@ -37,7 +37,6 @@ export function PlainFileEditor({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const matchesRef = useRef<Array<{ start: number; end: number }>>([]);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
   const showToast = useAppStore((state) => state.showToast);
 
@@ -70,9 +69,10 @@ export function PlainFileEditor({
     return next;
   }, [content, searchText]);
 
-  useEffect(() => {
-    matchesRef.current = matches;
-  }, [matches]);
+  const activeMatch = useMemo(
+    () => (matchIndex >= 0 ? matches[matchIndex] : undefined),
+    [matches, matchIndex],
+  );
 
   useEffect(() => {
     setMatchIndex((previous) => {
@@ -87,12 +87,11 @@ export function PlainFileEditor({
   useEffect(() => {
     if (matchIndex >= 0) {
       const textarea = textareaRef.current;
-      const match = matchesRef.current[matchIndex];
+      const match = activeMatch;
       if (!textarea || !match) return;
-      textarea.focus();
       textarea.setSelectionRange(match.start, match.end);
     }
-  }, [matchIndex]);
+  }, [activeMatch, matchIndex]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;

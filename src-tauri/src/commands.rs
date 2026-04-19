@@ -23,6 +23,9 @@ const MAX_SFTP_RETRIES: u8 = 3;
 static DATA_DIR_CACHE: StdMutex<Option<std::path::PathBuf>> = StdMutex::new(None);
 static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::PathBuf>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
+static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static LEGACY_SETTINGS_MIGRATION_LOCK: StdMutex<()> = StdMutex::new(());
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,7 +124,17 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> Result<(), String
 
     let unique_suffix = uuid::Uuid::new_v4();
     let tmp_path = path.with_extension(format!("json.tmp.{}", unique_suffix));
-    std::fs::write(&tmp_path, content).map_err(|e| e.to_string())?;
+    let mut tmp_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp_path)
+        .map_err(|e| e.to_string())?;
+    use std::io::Write;
+    tmp_file
+        .write_all(content.as_bytes())
+        .map_err(|e| e.to_string())?;
+    tmp_file.sync_all().map_err(|e| e.to_string())?;
     let replace_result = if path.exists() {
         #[cfg(target_os = "windows")]
         {
@@ -268,6 +281,9 @@ pub(crate) fn read_effective_settings(app: &AppHandle) -> Result<Value, String> 
             continue;
         }
         let legacy_settings = read_settings_from_path(&legacy_path)?;
+        let _migration_guard = LEGACY_SETTINGS_MIGRATION_LOCK
+            .lock()
+            .map_err(|e| format!("Legacy settings migration lock poisoned: {}", e))?;
         let json = serde_json::to_string_pretty(&legacy_settings).map_err(|e| e.to_string())?;
         write_atomic_file(&settings_path, &json)?;
         return Ok(legacy_settings);
@@ -356,6 +372,14 @@ fn clear_data_dir_cache() {
 
 fn data_path_from_settings(settings: &Value) -> Option<String> {
     settings
+        .get("dataPath")
+        .and_then(|v| v.as_str())
+        .map(|value| value.to_string())
+}
+
+fn data_path_from_raw_json(raw: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<Value>(raw).ok()?;
+    parsed
         .get("dataPath")
         .and_then(|v| v.as_str())
         .map(|value| value.to_string())
@@ -2222,8 +2246,7 @@ pub async fn fs_delete(
 
         if should_optimize {
             if let Some(session) = session_opt {
-                // Simple quoting for paths
-                let cmd = format!("rm -rf '{}'", path.replace("'", "'\\''"));
+                let cmd = format!("rm -rf {}", shell_quote(&path));
                 println!("[FS] Attempting server-side delete: {}", cmd);
 
                 let timeout_duration = std::time::Duration::from_secs(10);
@@ -2375,7 +2398,7 @@ pub async fn fs_delete_batch(
 
                     let paths_str = paths
                         .iter()
-                        .map(|p| format!("'{}'", p.replace("'", "'\\''")))
+                        .map(|p| shell_quote(p))
                         .collect::<Vec<_>>()
                         .join(" ");
 
@@ -2505,11 +2528,7 @@ pub async fn fs_copy(
                 // Simple quoting for paths (Linux/Unix assumptions for now, robust enough for typical usage)
                 // We use standard "cp -r" which works on most Unix-likes.
                 // If it fails (e.g. Windows), we fall back to SFTP.
-                let cmd = format!(
-                    "cp -r '{}' '{}'",
-                    from.replace("'", "'\\''"),
-                    to.replace("'", "'\\''")
-                );
+                let cmd = format!("cp -r {} {}", shell_quote(&from), shell_quote(&to));
                 println!("[FS] Attempting server-side copy: {}", cmd);
 
                 match session.lock().await.channel_open_session().await {
@@ -2627,13 +2646,7 @@ pub async fn fs_copy_batch(
                 // Build a multi-command string: cp -r 'a' 'b' && cp -r 'c' 'd' ...
                 let cmd = operations
                     .iter()
-                    .map(|op| {
-                        format!(
-                            "cp -r '{}' '{}'",
-                            op.from.replace("'", "'\\''"),
-                            op.to.replace("'", "'\\''")
-                        )
-                    })
+                    .map(|op| format!("cp -r {} {}", shell_quote(&op.from), shell_quote(&op.to)))
                     .collect::<Vec<_>>()
                     .join(" && ");
 
@@ -3549,6 +3562,7 @@ pub async fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
     let current = read_effective_settings(&app)?;
     let current_data_path = data_path_from_settings(&current);
     let merged = ensure_object_settings(merge_json_values(current, settings))?;
@@ -3583,9 +3597,7 @@ pub async fn settings_read_raw(app: AppHandle) -> Result<SettingsFilePayload, St
         std::fs::read_to_string(&path).map_err(|e| e.to_string())?
     } else {
         let migrated = read_effective_settings(&app)?;
-        if path.exists() {
-            std::fs::read_to_string(&path).map_err(|e| e.to_string())?
-        } else if migrated.is_object() && !migrated.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        if migrated.is_object() && !migrated.as_object().map(|o| o.is_empty()).unwrap_or(true) {
             format!(
                 "{}\n",
                 serde_json::to_string_pretty(&migrated).map_err(|e| e.to_string())?
@@ -3610,8 +3622,16 @@ pub async fn settings_write_raw(
     content: String,
     expected_modified_ms: Option<u64>,
 ) -> Result<SettingsFilePayload, String> {
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
     let settings_path = get_native_settings_path(&app)?;
-    let current_data_path = data_path_from_settings(&read_effective_settings(&app)?);
+    let current_raw = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path).ok()
+    } else {
+        None
+    };
+    let current_data_path = current_raw
+        .as_deref()
+        .and_then(data_path_from_raw_json);
 
     let actual = settings_mtime_ms(&settings_path);
     if actual != expected_modified_ms {
@@ -3621,12 +3641,8 @@ pub async fn settings_write_raw(
         ));
     }
 
-    let parsed =
-        serde_json::from_str::<Value>(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
-    let object_settings = ensure_object_settings(parsed)?;
-    validate_settings_schema(&object_settings)?;
-    persist_settings_json(&app, &object_settings)?;
-    let next_data_path = data_path_from_settings(&object_settings);
+    write_atomic_file(&settings_path, &content)?;
+    let next_data_path = data_path_from_raw_json(&content);
     if current_data_path != next_data_path {
         clear_data_dir_cache();
     }
@@ -3645,20 +3661,24 @@ pub async fn settings_write_raw(
 pub async fn settings_restore_last_known_good(
     app: AppHandle,
 ) -> Result<SettingsFilePayload, String> {
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
     let settings_path = get_native_settings_path(&app)?;
-    let current_data_path = data_path_from_settings(&read_effective_settings(&app)?);
+    let current_raw = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path).ok()
+    } else {
+        None
+    };
+    let current_data_path = current_raw
+        .as_deref()
+        .and_then(data_path_from_raw_json);
     let backup_path = get_last_known_good_settings_path(&app)?;
     if !backup_path.exists() {
         return Err("No last-known-good settings backup found.".to_string());
     }
 
     let backup_content = std::fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
-    let parsed = serde_json::from_str::<Value>(&backup_content)
-        .map_err(|e| format!("Backup file is invalid JSON: {}", e))?;
-    let object_settings = ensure_object_settings(parsed)?;
-    validate_settings_schema(&object_settings)?;
-    persist_settings_json(&app, &object_settings)?;
-    let next_data_path = data_path_from_settings(&object_settings);
+    write_atomic_file(&settings_path, &backup_content)?;
+    let next_data_path = data_path_from_raw_json(&backup_content);
     if current_data_path != next_data_path {
         clear_data_dir_cache();
     }
@@ -4704,10 +4724,24 @@ pub async fn plugin_window_create(
         builder = builder.inner_size(w, height.unwrap_or(600.0));
     }
 
-    builder.build().map_err(|e| e.to_string())?;
+    if let Err(error) = builder.build() {
+        if let Some(path) = temp_html_path.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error.to_string());
+    }
     if let Some(file_path) = temp_html_path {
-        if let Ok(mut files) = PLUGIN_WINDOW_TEMP_FILES.lock() {
-            files.insert(label, file_path);
+        match PLUGIN_WINDOW_TEMP_FILES.lock() {
+            Ok(mut files) => {
+                files.insert(label, file_path);
+            }
+            Err(lock_error) => {
+                let _ = std::fs::remove_file(&file_path);
+                return Err(format!(
+                    "Failed to register plugin window temp file for cleanup: {}",
+                    lock_error
+                ));
+            }
         }
     }
     Ok(())

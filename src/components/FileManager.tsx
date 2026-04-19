@@ -66,6 +66,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const settings = useAppStore(state => state.settings);
   const { editorProviders } = usePlugins();
   const showToast = useAppStore((state) => state.showToast);
+  const connect = useAppStore((state) => state.connect);
 
   // Zustand Store Hooks
   const filesMap = useAppStore(state => state.files);
@@ -172,6 +173,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
   // Combine store loading and local processing
   const isLoading = loading || isProcessing;
+  const isReconnectPending = !isLocal && (connection as any)?.status === 'connecting';
 
   const performUpload = useCallback(async (filePaths: string[]) => {
     if (!activeConnectionId) return;
@@ -615,6 +617,17 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       }
     }
   }, [activeConnectionId, isConnected, currentPath, files.length, loadFiles, ensureTerminal]);
+
+  const handleReconnect = useCallback(async () => {
+    if (!activeConnectionId || isLocal) return;
+    await connect(activeConnectionId);
+    const reconnected = useAppStore.getState().connections.find((c) => c.id === activeConnectionId) as (Connection & { error?: string }) | undefined;
+    if (reconnected?.status === 'connected') {
+      await loadFiles(activeConnectionId, currentPath || '/');
+      return;
+    }
+    showToast('error', reconnected?.error || 'Failed to reconnect');
+  }, [activeConnectionId, connect, currentPath, isLocal, loadFiles, showToast]);
 
   useEffect(() => {
     if (activeConnectionId && isConnected) {
@@ -1634,26 +1647,39 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
       {/* biome-ignore lint/a11y/noStaticElementInteractions: interactive div */}
       <div className="flex-1 overflow-hidden relative flex flex-col" onClick={() => setContextMenu(null)}>
-        {currentError === 'DISCONNECTED' ? (
+        {isReconnectPending ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-app-text p-8 text-center animate-in fade-in zoom-in-95 duration-300">
+            <div className="bg-app-surface/50 border border-app-border rounded-xl p-8 max-w-sm shadow-xl flex flex-col items-center">
+              <div className="bg-app-accent/10 text-app-accent p-4 rounded-full mb-4">
+                <RotateCw size={48} strokeWidth={1.5} className="animate-spin" />
+              </div>
+              <h2 className="text-xl font-bold mb-2">Connecting...</h2>
+              <p className="text-sm text-app-muted">
+                Re-establishing SFTP session. Please wait.
+              </p>
+            </div>
+          </div>
+        ) : (currentError === 'DISCONNECTED' || (!isConnected && !isLocal && !isReconnectPending)) ? (
           <div className="flex-1 flex flex-col items-center justify-center text-app-text p-8 text-center animate-in fade-in zoom-in-95 duration-300">
             <div className="bg-app-surface/50 border border-app-border rounded-xl p-8 max-w-sm shadow-xl flex flex-col items-center">
               <div className="bg-red-500/10 text-red-500 p-4 rounded-full mb-4">
                 <Unplug size={48} strokeWidth={1.5} />
               </div>
-              <h2 className="text-xl font-bold mb-2">Connection Lost</h2>
+              <h2 className="text-xl font-bold mb-2">
+                {currentError === 'DISCONNECTED' ? 'Connection Lost' : 'Not Connected'}
+              </h2>
               <p className="text-sm text-app-muted mb-6">
-                Zync lost the connection to the server and could not automatically recover it. Please check your internet connection and try again.
+                {currentError === 'DISCONNECTED'
+                  ? 'Zync lost the connection to the server and could not automatically recover it. Please check your internet connection and try again.'
+                  : 'This host is currently disconnected. Reconnect to browse files over SFTP.'}
               </p>
               <Button
-                onClick={() => {
-                  if (activeConnectionId) {
-                    loadFiles(activeConnectionId, currentPath || '/');
-                  }
-                }}
+                onClick={() => { void handleReconnect(); }}
                 className="w-full gap-2"
+                disabled={isReconnectPending}
               >
                 <RotateCw size={16} />
-                Reconnect
+                {isReconnectPending ? 'Reconnecting...' : 'Reconnect'}
               </Button>
             </div>
           </div>

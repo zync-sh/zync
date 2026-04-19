@@ -111,6 +111,7 @@ export function CodeMirrorFileEditor({
   const [lineCount, setLineCount] = useState(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
   const goToLineInputRef = useRef<HTMLInputElement>(null);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
+  const showToast = useAppStore((state) => state.showToast);
   const theme = useAppStore((state) => state.settings.theme);
 
   const isDirty = docText !== savedContent;
@@ -119,6 +120,11 @@ export function CodeMirrorFileEditor({
   const languageLabel = useMemo(() => getLanguageLabel(filename), [filename]);
   const saveRef = useRef<() => Promise<void> | void>(() => {});
   const toggleCommentRef = useRef<(view: EditorView) => boolean>(() => false);
+  const isDirtyRef = useRef(isDirty);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
 
   const syncCursorState = useCallback((state: EditorState) => {
     const head = state.selection.main.head;
@@ -138,11 +144,14 @@ export function CodeMirrorFileEditor({
       const current = view.state.doc.toString();
       await onSave(current);
       setSavedContent(current);
-      requestAnimationFrame(() => view.focus());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save file';
+      showToast('error', message);
     } finally {
       setIsSaving(false);
+      requestAnimationFrame(() => view.focus());
     }
-  }, [isSaving, onSave]);
+  }, [isSaving, onSave, showToast]);
 
   const handleClose = useCallback(async () => {
     if (!isDirty) {
@@ -321,7 +330,7 @@ export function CodeMirrorFileEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, [initialContent, languageCompartment, languageExtension, openGoToLineDialog, resolvedThemeMode, syncCursorState, themeCompartment]);
+  }, [openGoToLineDialog, syncCursorState]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -362,7 +371,7 @@ export function CodeMirrorFileEditor({
       setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
     };
 
-    if (!isDirty) {
+    if (!isDirtyRef.current) {
       applyIncomingContent();
       return;
     }
@@ -383,7 +392,7 @@ export function CodeMirrorFileEditor({
     return () => {
       cancelled = true;
     };
-  }, [filename, initialContent, isDirty, showConfirmDialog]);
+  }, [filename, initialContent, showConfirmDialog]);
 
   useEffect(() => {
     const focusEditor = () => viewRef.current?.focus();
@@ -408,7 +417,7 @@ export function CodeMirrorFileEditor({
         const view = viewRef.current;
         if (!view) return;
         const target = event.target as Node | null;
-        if (target && !view.dom.contains(target)) return;
+        if (target && !view.contentDOM.contains(target)) return;
 
         event.preventDefault();
         event.stopPropagation();
