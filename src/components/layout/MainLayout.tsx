@@ -14,6 +14,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
+import { SettingsJsonEditorPanel } from '../settings/SettingsJsonEditorPanel';
 import { SnippetPicker } from '../snippets/SnippetPicker';
 import { SnippetSidebar } from '../snippets/SnippetSidebar';
 import { SetupWizard } from '../onboarding/SetupWizard';
@@ -248,6 +249,19 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
             )}>
                 <ReleaseNotesTab />
+            </div>
+        );
+    }
+
+    if (tab.type === 'settings') {
+        // Workspace-tab surface for native settings.json editing.
+        return (
+            <div className={cn(
+                "absolute inset-0 z-10 bg-app-bg",
+                !isActive && "hidden",
+                isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
+            )}>
+                <SettingsJsonEditorPanel />
             </div>
         );
     }

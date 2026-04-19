@@ -65,6 +65,7 @@ export interface ConnectionSlice {
     openPortForwardingTab: () => void;
     openSnippetsTab: () => void;
     openReleaseNotesTab: () => void;
+    openSettingsJsonTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     /** Deactivate all tabs and show the welcome screen without closing anything. */
@@ -448,6 +449,22 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             })), showWelcomeScreen: false };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
+    },
+
+    openSettingsJsonTab: () => {
+        set(state => {
+            // Reuse a single settings.json workspace tab instance.
+            return {
+                ...ensureSingleTabByType(state.tabs, 'settings', () => ({
+                    id: crypto.randomUUID(),
+                    type: 'settings',
+                    title: 'settings.json',
+                    view: 'terminal',
+                })),
+                showWelcomeScreen: false,
+            };
+        });
         get().saveSession();
     },
 

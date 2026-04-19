@@ -7,6 +7,19 @@ let currentUpdate: any = null;
 
 // Map to track active listeners for cleanup
 const eventListeners = new Map<string, Map<Function, UnlistenFn>>();
+const PENDING_UNLISTEN: UnlistenFn = () => { };
+
+/**
+ * Serialize legacy config:set operations so read-merge-write runs one at a time.
+ * This avoids dropping updates when multiple legacy callers write concurrently.
+ */
+let configSetQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueConfigSet<T>(task: () => Promise<T>): Promise<T> {
+  const run = configSetQueue.then(task, task);
+  configSetQueue = run.catch(() => undefined);
+  return run;
+}
 
 // Progress tracking state
 let downloadState = {
@@ -35,29 +48,45 @@ const ipcRenderer = {
 
   on(channel: string, listener: (event: any, ...args: any[]) => void): () => void {
     // Tauri uses events instead of IPC channels
-    const unsubscribe = async () => {
+    const channelListeners = eventListeners.get(channel) ?? new Map<Function, UnlistenFn>();
+    eventListeners.set(channel, channelListeners);
+
+    let isUnsubscribed = false;
+    channelListeners.set(listener, PENDING_UNLISTEN);
+
+    const setupListener = async () => {
       const unlisten = await listen(channel, (event) => {
         // Map Tauri event { event: string, windowLabel: string, payload: T } 
         // to Electron-like style (event wrapper, payload)
         listener({ sender: null }, event.payload);
       });
 
-      if (!eventListeners.has(channel)) {
-        eventListeners.set(channel, new Map());
+      if (isUnsubscribed) {
+        unlisten();
+        channelListeners.delete(listener);
+        return unlisten;
       }
-      eventListeners.get(channel)!.set(listener, unlisten);
+
+      channelListeners.set(listener, unlisten);
 
       return unlisten;
     };
 
-    const unlistenPromise = unsubscribe();
+    void setupListener();
 
     // Return a function that can be called to unsubscribe
     return () => {
-      unlistenPromise.then(unlisten => {
-        unlisten();
-        eventListeners.get(channel)?.delete(listener);
-      });
+      if (isUnsubscribed) return;
+      isUnsubscribed = true;
+      const registeredUnlisten = channelListeners.get(listener);
+      channelListeners.delete(listener);
+
+      if (registeredUnlisten && registeredUnlisten !== PENDING_UNLISTEN) {
+        registeredUnlisten();
+        return;
+      }
+
+      // setupListener handles pending-listen cleanup when isUnsubscribed=true.
     };
   },
 
@@ -123,6 +152,7 @@ const ipcRenderer = {
       // Dialog commands handled specially below
       'dialog:openFile': 'dialog_open_file',
       'dialog:openDirectory': 'dialog_open_directory',
+      'config:select-folder': 'config_select_folder',
       'config:set': 'settings_set',
       'shell:open': 'shell_open',
       'plugins:load': 'plugins_load',
@@ -182,6 +212,16 @@ const ipcRenderer = {
           console.error('config:get failed', e);
           return { isConfigured: false };
         }
+      }
+
+      if (channel === 'config:set') {
+        return enqueueConfigSet(async () => {
+          // Backend-side merge: send patch only and let Rust merge+validate.
+          const patch = args[0] ?? {};
+          return await invoke('settings_set', {
+            settings: patch && typeof patch === 'object' ? patch : {},
+          });
+        });
       }
 
       if (channel === 'app:getVersion') {

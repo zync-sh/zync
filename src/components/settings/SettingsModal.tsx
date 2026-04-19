@@ -5,13 +5,14 @@ import { ZPortal } from '../ui/ZPortal';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
-import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, FolderOpen, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles } from 'lucide-react';
+import { X, Type, Monitor, FileText, Keyboard, Info, Check, RefreshCw, AlertTriangle, Download, Folder, FolderOpen, Settings as SettingsIcon, Star, Gift, ChevronRight, Terminal, Package, Plug, MoreVertical, Trash2, Play, Pause, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Sparkles, Code } from 'lucide-react';
 import { ToastContainer } from '../ui/Toast';
 import { Select } from '../ui/Select';
 
 import { clsx } from 'clsx';
 import { Marketplace } from './Marketplace';
 import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID, formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel } from '../editor/providers';
+import { SettingsJsonEditorPanel } from './SettingsJsonEditorPanel';
 
 
 interface SettingsModalProps {
@@ -31,7 +32,7 @@ interface RegistryPlugin {
     type?: 'theme' | 'tool' | 'editor-provider' | 'icon-theme';
 }
 
-type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'ai' | 'about';
+type Tab = 'general' | 'terminal' | 'appearance' | 'fileManager' | 'shortcuts' | 'plugins' | 'ai' | 'settingsJson' | 'about';
 const BUILTIN_ICON_THEME_COUNT = 2; // VSCode Icons + Lucide
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
@@ -86,7 +87,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [apiKeyDraft, setApiKeyDraft] = useState('');
     const [apiKeySaved, setApiKeySaved] = useState(false);
     const [apiKeyError, setApiKeyError] = useState<string | null>(null);
-
     const saveApiKey = async (provider: string, key: string) => {
         if (provider === 'ollama') return;
         
@@ -427,7 +427,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             // Arrow keys for tab navigation
             if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                 e.preventDefault();
-                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'plugins', 'ai', 'about'];
+                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'fileManager', 'shortcuts', 'plugins', 'ai', 'settingsJson', 'about'];
                 const currentIndex = tabs.indexOf(activeTab);
                 let nextIndex: number;
 
@@ -629,6 +629,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
                     <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" />
                     <TabButton active={activeTab === 'ai'} onClick={() => handleTabChange('ai')} icon={<Sparkles size={15} />} label="AI" />
+                    <TabButton active={activeTab === 'settingsJson'} onClick={() => handleTabChange('settingsJson')} icon={<Code size={15} />} label="settings.json" />
 
                     <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
                         <TabButton
@@ -646,7 +647,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     {/* Header */}
                     <div className="h-14 flex items-center justify-between px-6 border-b border-[var(--color-app-border)]/30 shrink-0">
                         <h2 className="font-medium text-[var(--color-app-text)] text-sm tracking-tight">
-                            {activeTab === 'fileManager' ? 'File Manager' : activeTab === 'ai' ? 'AI Assistant' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+                            {activeTab === 'fileManager'
+                                ? 'File Manager'
+                                : activeTab === 'ai'
+                                    ? 'AI Assistant'
+                                    : activeTab === 'settingsJson'
+                                        ? 'settings.json Editor'
+                                        : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
                         </h2>
                         <button onClick={onClose} className="p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)] transition-colors">
                             <X size={16} />
@@ -1605,6 +1612,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     </div>
                                 </Section>
                             </div>
+                        )}
+
+                        {activeTab === 'settingsJson' && (
+                            <SettingsJsonEditorPanel onClose={() => setActiveTab('general')} />
                         )}
 
                         {activeTab === 'about' && (
