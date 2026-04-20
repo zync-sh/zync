@@ -1,13 +1,18 @@
 import { StateCreator } from 'zustand';
 
 export type UpdateStatus = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'ready' | 'error';
+export interface UpdateInfo {
+    version: string;
+    notes?: string;
+    body?: string;
+}
 
 export interface UpdateSlice {
     updateStatus: UpdateStatus;
-    updateInfo: any;
+    updateInfo: UpdateInfo | null;
     downloadProgress: number;
     setUpdateStatus: (status: UpdateStatus) => void;
-    setUpdateInfo: (info: any) => void;
+    setUpdateInfo: (info: UpdateInfo | null) => void;
     setDownloadProgress: (progress: number) => void;
 }
 

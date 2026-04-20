@@ -5,6 +5,8 @@ import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
 
 export interface AppSettings {
     theme: string;
+    globalFontFamily: string;
+    globalFontSize: number;
     iconTheme: string;
     accentColor?: string;
     editor: {
@@ -18,6 +20,7 @@ export interface AppSettings {
     terminal: {
         fontSize: number;
         fontFamily: string;
+        fontLigatures: boolean;
         cursorStyle: 'block' | 'underline' | 'bar';
         lineHeight: number;
         padding: number;
@@ -96,6 +99,8 @@ export interface AppSettings {
 
 const defaultSettings: AppSettings = {
     theme: 'dark',
+    globalFontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, Arial, sans-serif",
+    globalFontSize: 14,
     iconTheme: 'vscode-icons',
     accentColor: undefined,
     editor: {
@@ -115,7 +120,8 @@ const defaultSettings: AppSettings = {
     lastSeenVersion: '',
     terminal: {
         fontSize: 14,
-        fontFamily: "'Fira Code', monospace",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+        fontLigatures: false,
         cursorStyle: 'block',
         lineHeight: 1.2,
         padding: 12
@@ -183,6 +189,27 @@ const defaultSettings: AppSettings = {
     }
 };
 
+function normalizeTerminalFontFamily(fontFamily: string | undefined): string | undefined {
+    if (!fontFamily) return fontFamily;
+    const normalized = fontFamily
+        .trim()
+        .replace(/\s*,\s*/g, ',')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    const firstFamily = normalized.split(',')[0]?.replace(/^['"]|['"]$/g, '') ?? '';
+
+    if (firstFamily.startsWith('fira code')) {
+        return "'Fira Code', 'FiraCode Nerd Font', 'FiraCode NFM', 'Cascadia Code', Consolas, 'Courier New', monospace";
+    }
+    if (firstFamily.startsWith('jetbrains mono')) {
+        return "'JetBrains Mono', 'JetBrainsMono Nerd Font', 'JetBrainsMono NFM', 'Cascadia Mono', Consolas, 'Courier New', monospace";
+    }
+    if (firstFamily.startsWith('menlo')) {
+        return "Menlo, Monaco, Consolas, 'Courier New', monospace";
+    }
+    return fontFamily;
+}
+
 export interface SettingsSlice {
     settings: AppSettings;
     isSettingsOpen: boolean;
@@ -219,7 +246,11 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 ...defaultSettings,
                 ...loaded,
                 editor: { ...defaultSettings.editor, ...(loaded?.editor || {}) },
-                terminal: { ...defaultSettings.terminal, ...(loaded?.terminal || {}) },
+                terminal: {
+                    ...defaultSettings.terminal,
+                    ...(loaded?.terminal || {}),
+                    fontFamily: normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ?? defaultSettings.terminal.fontFamily,
+                },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                 ghostSuggestions: {
@@ -250,91 +281,98 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             actualSettings.accentColor = undefined;
         }
 
-        const updated = { ...get().settings, ...actualSettings };
+        const previous = get().settings;
+        const updated = { ...previous, ...actualSettings };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateAiSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            ai: { ...get().settings.ai, ...updates }
+            ...previous,
+            ai: { ...previous.ai, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save AI settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateEditorSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            editor: { ...get().settings.editor, ...updates }
+            ...previous,
+            editor: { ...previous.editor, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save editor settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateTerminalSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            terminal: { ...get().settings.terminal, ...updates }
+            ...previous,
+            terminal: { ...previous.terminal, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save terminal settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateLocalTermSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            localTerm: { ...get().settings.localTerm, ...updates }
+            ...previous,
+            localTerm: { ...previous.localTerm, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save local terminal settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateFileManagerSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            fileManager: { ...get().settings.fileManager, ...updates }
+            ...previous,
+            fileManager: { ...previous.fileManager, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save file manager settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateGhostSuggestionsSettings: async (updates) => {
-        // Normalize: accept both the inner fields directly or wrapped in { ghostSuggestions: {...} }
-        // so callers can pass either shape without causing double-nesting.
-        const payload = (
-            'ghostSuggestions' in updates
-                ? (updates as Record<string, unknown>)['ghostSuggestions']
-                : updates
-        ) as Partial<AppSettings['ghostSuggestions']>;
+        const payload = updates;
+        const previous = get().settings;
         const current = get().settings.ghostSuggestions;
         const updated = {
-            ...get().settings,
+            ...previous,
             ghostSuggestions: {
                 ...current,
                 ...payload,
@@ -349,19 +387,22 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save ghost suggestion settings:', error);
+            set({ settings: previous });
         }
     },
 
     updateKeybindings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            keybindings: { ...get().settings.keybindings, ...updates }
+            ...previous,
+            keybindings: { ...previous.keybindings, ...updates }
         };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save keybindings:', error);
+            set({ settings: previous });
         }
     },
 
@@ -371,12 +412,14 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             ? current.filter(f => f !== folderPath)
             : [...current, folderPath];
 
-        const updated = { ...get().settings, expandedFolders: newFolders };
+        const previous = get().settings;
+        const updated = { ...previous, expandedFolders: newFolders };
         set({ settings: updated });
         try {
             await invoke('settings_set', { settings: updated });
         } catch (error) {
             console.error('Failed to save expanded folders:', error);
+            set({ settings: previous });
         }
     },
 
