@@ -15,6 +15,7 @@ import {
   Terminal,
   Zap,
   Settings as SettingsIcon,
+  Info,
 } from 'lucide-react';
 import { ConfirmModal } from './ui/ConfirmModal';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
@@ -28,7 +29,6 @@ import { FileToolbar } from './file-manager/FileToolbar';
 import type { FileEntry } from './file-manager/types';
 import { PropertiesPanel } from './file-manager/PropertiesPanel';
 import { ConflictModal, type ConflictAction } from './file-manager/ConflictModal';
-import { Info } from 'lucide-react'; // Add Info icon import
 import { Button } from './ui/Button';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
 import { Input } from './ui/Input';
@@ -86,6 +86,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const setClipboard = useAppStore(state => state.setClipboard);
   const clearClipboard = useAppStore(state => state.clearClipboard);
   const updateSettings = useAppStore(state => state.updateSettings);
+  const updateFileManagerSettings = useAppStore(state => state.updateFileManagerSettings);
   // const downloadAction = useAppStore(state => state.downloadFiles); // Not implemented fully yet
 
   // Derived State
@@ -93,6 +94,12 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const currentPath = activeConnectionId ? (currentPathMap[activeConnectionId] || '') : '';
   const loading = activeConnectionId ? (loadingMap[activeConnectionId] || false) : false;
   const currentError = activeConnectionId ? (errorMap[activeConnectionId] || null) : null;
+  const activeHistoryIndex = useAppStore(state => (
+    activeConnectionId ? (state.historyIndex[activeConnectionId] || 0) : 0
+  ));
+  const activeHistoryLength = useAppStore(state => (
+    activeConnectionId ? (state.history[activeConnectionId]?.length || 0) : 0
+  ));
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
@@ -173,7 +180,9 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
   // Combine store loading and local processing
   const isLoading = loading || isProcessing;
-  const isReconnectPending = !isLocal && (connection as any)?.status === 'connecting';
+  const isReconnectPending = !isLocal && connection?.status === 'connecting';
+  const canGoBack = Boolean(activeConnectionId) && activeHistoryIndex > 0;
+  const canGoForward = Boolean(activeConnectionId) && activeHistoryIndex < activeHistoryLength - 1;
 
   const performUpload = useCallback(async (filePaths: string[]) => {
     if (!activeConnectionId) return;
@@ -211,7 +220,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [activeConnectionId, performUpload]));
 
   // --- Copy / Paste Logic ---
-  const handleCopy = (cut = false) => {
+  const handleCopy = useCallback((cut = false) => {
     if (!activeConnectionId || selectedFiles.length === 0) return;
 
     // Create list of file entries from selection
@@ -220,9 +229,9 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     setClipboard(selectedEntries, activeConnectionId, currentPath, cut ? 'cut' : 'copy');
 
     showToast('info', `${cut ? 'Cut' : 'Copied'} ${selectedEntries.length} item(s)`);
-  };
+  }, [activeConnectionId, currentPath, files, selectedFiles, setClipboard, showToast]);
 
-  const executeFileOperations = async (ops: {
+  const executeFileOperations = useCallback(async (ops: {
     source: string;
     target: string;
     name: string;
@@ -325,9 +334,20 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [
+    activeConnectionId,
+    addTransfer,
+    clearClipboard,
+    clipboard?.op,
+    currentPath,
+    failTransfer,
+    handleConnectionError,
+    loadFiles,
+    pasteEntries,
+    showToast,
+  ]);
 
-  const handlePaste = async () => {
+  const handlePaste = useCallback(async () => {
     if (!clipboard || !activeConnectionId) return;
     if (clipboard.files.length === 0) return;
 
@@ -340,7 +360,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     }));
 
     await executeFileOperations(ops);
-  };
+  }, [activeConnectionId, clipboard, currentPath, executeFileOperations]);
 
   const handleMoveFiles = async (moves: { source: string; target: string; sourceConnectionId?: string }[]) => {
     if (!activeConnectionId || moves.length === 0) return;
@@ -637,32 +657,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
 
 
-  const handleNavigate = (pathOrName: string) => {
-    if (!activeConnectionId) return;
-
-    if (pathOrName === '..') {
-      // Use useAppStore navUp or custom logic
-      useAppStore.getState().navigateUp(activeConnectionId);
-      return;
-    }
-
-    const isPath = pathOrName.startsWith('/');
-
-    if (!isPath) {
-      const entry = files.find((f) => f.name === pathOrName);
-      if (entry && entry.type === '-') {
-        handleOpenFile(entry);
-        return;
-      }
-    }
-
-    let newPath = pathOrName;
-    if (!isPath) {
-      newPath = currentPath === '/' ? `/${pathOrName}` : `${currentPath}/${pathOrName}`;
-    }
-    loadFiles(activeConnectionId, newPath);
-  };
-
   const handleOpenFile = useCallback(async (file: FileEntry, providerOverride?: string) => {
     if (!activeConnectionId) return;
     setIsFileLoading(true);
@@ -688,6 +682,30 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     const providerLabel = editorProviderOptions.find((option) => option.value === providerId)?.label ?? providerId;
     showToast('info', `Opening ${file.name} with ${providerLabel}`);
   }, [editorProviderOptions, handleOpenFile, showToast]);
+
+  const handleNavigate = useCallback((pathOrName: string) => {
+    if (!activeConnectionId) return;
+
+    if (pathOrName === '..') {
+      useAppStore.getState().navigateUp(activeConnectionId);
+      return;
+    }
+
+    const isPath = pathOrName.startsWith('/');
+
+    if (!isPath) {
+      const entry = files.find((f) => f.name === pathOrName);
+      if (entry && entry.type === '-') {
+        void handleOpenFile(entry);
+        return;
+      }
+    }
+
+    const newPath = isPath
+      ? pathOrName
+      : (currentPath === '/' ? `/${pathOrName}` : `${currentPath}/${pathOrName}`);
+    loadFiles(activeConnectionId, newPath);
+  }, [activeConnectionId, currentPath, files, handleOpenFile, loadFiles]);
 
   const handleSetDefaultEditorProvider = useCallback(async (providerId: string) => {
     const currentProvider = settings.editor?.defaultProvider ?? CODEMIRROR_EDITOR_ID;
@@ -844,9 +862,15 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   const handleDownload = async () => {
     if (selectedFiles.length === 0 || !activeConnectionId) return;
     try {
-      const { filePaths, canceled } = await window.ipcRenderer.invoke('dialog:openDirectory');
+      const preferredDownloadDir = settings.fileManager.defaultDownloadPath?.trim();
+      const { filePaths, canceled } = await window.ipcRenderer.invoke('dialog:openDirectory', {
+        defaultPath: preferredDownloadDir || undefined,
+      });
       if (canceled || filePaths.length === 0) return;
       const targetDir = filePaths[0];
+      if (targetDir && targetDir !== preferredDownloadDir) {
+        void updateFileManagerSettings({ defaultDownloadPath: targetDir });
+      }
 
       // We process download locally in component for now as it involves local FS dialog
       setIsProcessing(true);
@@ -894,11 +918,22 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     try {
       const date = new Date().toISOString().slice(0, 10);
       const defaultName = `zync_download_${date}.tar.gz`;
+      const preferredDownloadDir = settings.fileManager.defaultDownloadPath?.trim();
+      const defaultPath = preferredDownloadDir
+        ? (preferredDownloadDir.includes('\\')
+          ? `${preferredDownloadDir}\\${defaultName}`
+          : `${preferredDownloadDir}/${defaultName}`)
+        : defaultName;
       const { filePath, canceled } = await window.ipcRenderer.invoke('dialog:saveFile', {
-        defaultPath: defaultName,
+        defaultPath,
         filters: [{ name: 'Tar Archive', extensions: ['tar.gz', 'tgz'] }],
       });
       if (canceled || !filePath) return;
+      const slashIndex = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+      const selectedDir = slashIndex > 0 ? filePath.slice(0, slashIndex) : '';
+      if (selectedDir && selectedDir !== preferredDownloadDir) {
+        void updateFileManagerSettings({ defaultDownloadPath: selectedDir });
+      }
 
       const remotePaths = selectedFiles.map(name =>
         currentPath === '/' ? `/${name}` : `${currentPath}/${name}`
@@ -930,17 +965,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     }
   };
 
-  const handleDelete = () => {
-    if (selectedFiles.length === 0 || !activeConnectionId) return;
-
-    if (settings.fileManager.confirmDelete) {
-      setIsDeleteModalOpen(true);
-    } else {
-      executeDelete();
-    }
-  };
-
-  const executeDelete = async () => {
+  const executeDelete = useCallback(async () => {
     if (selectedFiles.length === 0 || !activeConnectionId) return;
 
     const paths = selectedFiles.map(name => currentPath === '/' ? `/${name}` : `${currentPath}/${name}`);
@@ -956,7 +981,17 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
     } finally {
       setIsDeleting(false);
     }
-  };
+  }, [activeConnectionId, currentPath, deleteEntries, handleConnectionError, selectedFiles, showToast]);
+
+  const handleDelete = useCallback(() => {
+    if (selectedFiles.length === 0 || !activeConnectionId) return;
+
+    if (settings.fileManager.confirmDelete) {
+      setIsDeleteModalOpen(true);
+    } else {
+      void executeDelete();
+    }
+  }, [activeConnectionId, executeDelete, selectedFiles, settings.fileManager.confirmDelete]);
 
   // Drag and Drop
   const handleDragOver = (e: React.DragEvent) => {
@@ -1194,7 +1229,10 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
               setContextMenu(null);
             };
-            handleSyncedTerminal();
+            void handleSyncedTerminal().catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              showToast('error', `Failed to handle terminal action: ${message}`);
+            });
           }
         },
         {
@@ -1297,7 +1335,10 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
               setContextMenu(null);
             };
-            handleSyncedTerminal();
+            void handleSyncedTerminal().catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              showToast('error', `Failed to handle terminal action: ${message}`);
+            });
           }
         },
         {
@@ -1570,7 +1611,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [
     activeConnectionId, searchTerm, isSearchOpen, files, settings, isNewFolderModalOpen, isNewFileModalOpen, isRenameModalOpen,
     editingFile, selectedFiles, focusedFile, handleNavigate, handleCopy, handlePaste,
-    handleDelete, isMatch, navigateBack, navigateForward
+    handleDelete, navigateBack, navigateForward, isVisible, isCopyModalOpen, isPropertiesOpen
   ]);
 
   // Focus management
@@ -1706,9 +1747,8 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
           onForward={() => activeConnectionId && navigateForward(activeConnectionId)}
           viewMode={viewMode}
           onToggleView={setViewMode}
-          // Simple history check
-          canGoBack={activeConnectionId ? (useAppStore.getState().historyIndex[activeConnectionId] || 0) > 0 : false}
-          canGoForward={activeConnectionId ? (useAppStore.getState().historyIndex[activeConnectionId] || 0) < (useAppStore.getState().history[activeConnectionId]?.length || 0) - 1 : false}
+          canGoBack={canGoBack}
+          canGoForward={canGoForward}
         />
       )}
 
