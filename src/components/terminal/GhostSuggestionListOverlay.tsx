@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Terminal } from 'xterm';
+import type { Terminal } from '@xterm/xterm';
 import { getCursorPixelPosition } from '../../lib/ghostSuggestions/cursorPosition';
 
 interface Props {

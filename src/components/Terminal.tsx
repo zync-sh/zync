@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Terminal as XTerm } from 'xterm';
-import { FitAddon } from 'xterm-addon-fit';
-import { SearchAddon } from 'xterm-addon-search';
-import { WebLinksAddon } from 'xterm-addon-web-links';
-import 'xterm/css/xterm.css';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import '@xterm/xterm/css/xterm.css';
 import { useAppStore, Connection } from '../store/useAppStore';
 import { Search, ArrowUp, ArrowDown, X, Copy, Clipboard as ClipboardIcon, Trash2, Scissors } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -44,8 +44,11 @@ interface TerminalCache {
   unlisten?: UnlistenFn[];
   ghostTracker?: InputTracker;
   onDataDisposable?: { dispose: () => void };
+  ligaturesAddon?: { dispose: () => void };
+  ligaturesEnabled: boolean;
 }
 const terminalCache = new Map<string, TerminalCache>();
+let ligaturesAddonImport: Promise<typeof import('@xterm/addon-ligatures')> | null = null;
 
 const INPUT_BATCH_MS = 4;
 const INPUT_FLUSH_THRESHOLD = 64;
@@ -58,6 +61,43 @@ const THEME_PRESETS: Record<string, Record<string, string>> = {
   orange: { background: '#1a120b', cursor: '#f97316', selectionBackground: 'rgba(249, 115, 22, 0.3)' },
   purple: { background: '#160b1a', cursor: '#d946ef', selectionBackground: 'rgba(217, 70, 239, 0.3)' },
 };
+
+async function setTerminalLigatures(sessionId: string, term: XTerm, enabled: boolean) {
+  const cached = terminalCache.get(sessionId);
+  if (!cached) return;
+
+  if (enabled) {
+    if (!cached.ligaturesAddon) {
+      try {
+        if (!ligaturesAddonImport) {
+          ligaturesAddonImport = import('@xterm/addon-ligatures');
+        }
+        const { LigaturesAddon } = await ligaturesAddonImport;
+        if (cached.ligaturesAddon) {
+          cached.ligaturesEnabled = true;
+          return;
+        }
+        const addon = new LigaturesAddon();
+        term.loadAddon(addon);
+        cached.ligaturesAddon = addon;
+      } catch (error) {
+        console.warn('[terminal] Failed to load ligatures addon', error);
+      }
+    }
+    cached.ligaturesEnabled = true;
+    return;
+  }
+
+  if (cached.ligaturesAddon) {
+    try {
+      cached.ligaturesAddon.dispose();
+    } catch (error) {
+      console.warn('[terminal] Failed to dispose ligatures addon', error);
+    }
+    cached.ligaturesAddon = undefined;
+  }
+  cached.ligaturesEnabled = false;
+}
 // Export recent terminal buffer lines for AI context
 export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
   if (!termId) {
@@ -86,6 +126,14 @@ export function destroyTerminalInstance(termId: string) {
   if (cached) {
     clearPendingInput(termId);
     cached.ghostTracker?.destroy();
+    if (cached.ligaturesAddon) {
+      try {
+        cached.ligaturesAddon.dispose();
+      } catch (error) {
+        console.warn('[terminal] Failed to dispose ligatures addon on destroy', error);
+      }
+      cached.ligaturesAddon = undefined;
+    }
     // Remove all Tauri event listeners if they exist
     if (cached.unlisten && cached.unlisten.length > 0) {
       cached.unlisten.forEach(fn => fn());
@@ -493,6 +541,13 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       termRef.current.options.fontFamily = settings.terminal.fontFamily;
       termRef.current.options.cursorStyle = settings.terminal.cursorStyle;
       termRef.current.options.lineHeight = settings.terminal.lineHeight;
+      void setTerminalLigatures(sessionId, termRef.current, Boolean(settings.terminal.fontLigatures));
+      try {
+        const lastRow = Math.max(0, termRef.current.rows - 1);
+        termRef.current.refresh(0, lastRow);
+      } catch {
+        // Ignore refresh failures; fit below still applies geometry.
+      }
     }
 
     if (fitAddonRef.current) {
@@ -719,7 +774,10 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         pendingInput: '',
         inputFlushTimer: null,
         lastResize: null,
+        ligaturesAddon: undefined,
+        ligaturesEnabled: false,
       });
+      void setTerminalLigatures(sessionId, term, Boolean(settings.terminal.fontLigatures));
 
       // Create tracker once per cached terminal; handlers are bound per mount below.
       const ghostTracker = new InputTracker({
@@ -1454,10 +1512,15 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       )}
 
       {/* Terminal Canvas Wrapper - Strict bottom padding - Always overflow-hidden during transition */}
-      <div className={cn(
-        "absolute inset-0 px-2 pt-2 pb-2 pointer-events-none",
-        layoutTransitioning && "overflow-hidden"
-      )}>
+      <div
+        className={cn(
+          "absolute inset-0 pointer-events-none",
+          layoutTransitioning && "overflow-hidden",
+        )}
+        style={{
+          padding: `${Math.max(0, settings.terminal.padding ?? 12)}px`,
+        }}
+      >
         {/*
           Wrap containerRef and the ghost overlay in a shared relative div so
           the overlay can be positioned as a sibling (not a child) of the xterm
