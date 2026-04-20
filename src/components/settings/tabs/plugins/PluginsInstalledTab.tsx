@@ -36,9 +36,18 @@ interface PluginsInstalledTabProps {
 }
 
 function compareSemver(a: string, b: string): number {
-    const normalize = (value: string) => value.replace(/^v/i, '').trim();
-    const [aCore, aPre = ''] = normalize(a).split('-', 2);
-    const [bCore, bPre = ''] = normalize(b).split('-', 2);
+    const normalize = (value: string) => value.replace(/^v/i, '').trim().replace(/\+.*/, '');
+    const splitCorePre = (value: string) => {
+        const normalized = normalize(value);
+        const dashIndex = normalized.indexOf('-');
+        if (dashIndex < 0) return { core: normalized, pre: '' };
+        return {
+            core: normalized.slice(0, dashIndex),
+            pre: normalized.slice(dashIndex + 1),
+        };
+    };
+    const { core: aCore, pre: aPre } = splitCorePre(a);
+    const { core: bCore, pre: bPre } = splitCorePre(b);
     const aParts = aCore.split('.').map((part) => Number.parseInt(part, 10));
     const bParts = bCore.split('.').map((part) => Number.parseInt(part, 10));
     const length = Math.max(aParts.length, bParts.length);
@@ -71,9 +80,14 @@ export function PluginsInstalledTab({
     iconThemeCount,
     iconRenderer: IconRenderer,
 }: PluginsInstalledTabProps) {
-    const installedThemes = plugins.filter(p => p.manifest.id.startsWith('com.zync.theme.')).length;
+    const isThemePlugin = (plugin: InstalledPlugin) => (
+        plugin.manifest.id !== 'com.zync.theme.manager' && getPluginCategory(plugin.manifest) === 'theme'
+    );
+    const installedThemes = plugins.filter(
+        isThemePlugin
+    ).length;
     const installedNonThemePlugins = plugins.filter(
-        p => !p.manifest.id.startsWith('com.zync.theme.') && p.manifest.id !== 'com.zync.theme.manager'
+        p => p.manifest.id !== 'com.zync.theme.manager' && !isThemePlugin(p)
     );
 
     return (
@@ -113,7 +127,7 @@ export function PluginsInstalledTab({
                                 { label: 'VSCode Icons (Default)', id: 'vscode-icons' },
                                 { label: 'Lucide Minimalist', id: 'lucide' },
                                 ...plugins
-                                    .filter(p => p.manifest.type === 'icon-theme')
+                                    .filter(p => p.manifest.type === 'icon-theme' && p.enabled !== false)
                                     .map(p => ({ label: p.manifest.name, id: p.manifest.id }))
                             ];
 
@@ -161,7 +175,10 @@ export function PluginsInstalledTab({
                         return (
                             <div key={plugin.manifest.id} className="group relative flex items-center justify-between p-2.5 bg-[var(--color-app-surface)]/50 rounded-lg border border-[var(--color-app-border)]/50 transition-all hover:border-[var(--color-app-border)]">
                                 {activeMenu === plugin.manifest.id && (
-                                    <div className="absolute inset-0 z-40 rounded-lg" onClick={() => setActiveMenu(null)} />
+                                    <div
+                                        className="absolute inset-0 z-40 rounded-lg"
+                                        onClick={() => setActiveMenu(null)}
+                                    />
                                 )}
                                 <div className="flex items-start gap-2.5">
                                     <div className="p-1.5 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)] shrink-0 relative z-50">
@@ -213,8 +230,15 @@ export function PluginsInstalledTab({
                                                 className="absolute right-0 top-full mt-1 w-40 bg-[var(--color-app-surface)] border border-[var(--color-app-border)] rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right"
                                             >
                                                 <button
-                                                    onClick={() => onTogglePlugin(plugin.manifest.id, !plugin.enabled)}
-                                                    className="w-full px-3 py-2 text-left text-xs text-[var(--color-app-text)] hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
+                                                    onClick={() => {
+                                                        if (isProcessing) return;
+                                                        void onTogglePlugin(plugin.manifest.id, !plugin.enabled);
+                                                    }}
+                                                    disabled={isProcessing}
+                                                    className={clsx(
+                                                        "w-full px-3 py-2 text-left text-xs text-[var(--color-app-text)] flex items-center gap-2 transition-colors",
+                                                        isProcessing ? "opacity-50 cursor-not-allowed" : "hover:bg-[var(--color-app-bg)]"
+                                                    )}
                                                 >
                                                     {plugin.enabled ? <Pause size={12} /> : <Play size={12} />}
                                                     {plugin.enabled ? 'Disable' : 'Enable'}
@@ -222,8 +246,15 @@ export function PluginsInstalledTab({
 
                                                 {hasUpdate && registryItem && (
                                                     <button
-                                                        onClick={() => onUpdatePlugin(registryItem)}
-                                                        className="w-full px-3 py-2 text-left text-xs text-blue-500 hover:bg-[var(--color-app-bg)] flex items-center gap-2 transition-colors"
+                                                        onClick={() => {
+                                                            if (isProcessing) return;
+                                                            void onUpdatePlugin(registryItem);
+                                                        }}
+                                                        disabled={isProcessing}
+                                                        className={clsx(
+                                                            "w-full px-3 py-2 text-left text-xs text-blue-500 flex items-center gap-2 transition-colors",
+                                                            isProcessing ? "opacity-50 cursor-not-allowed" : "hover:bg-[var(--color-app-bg)]"
+                                                        )}
                                                     >
                                                         <RefreshCw size={12} />
                                                         Update to v{registryItem.version}
@@ -234,8 +265,15 @@ export function PluginsInstalledTab({
                                                     <>
                                                         <div className="h-px bg-[var(--color-app-border)]/50 my-1" />
                                                         <button
-                                                            onClick={() => onUninstallPlugin(plugin.manifest.id)}
-                                                            className="w-full px-3 py-2 text-left text-xs text-red-500 hover:bg-red-500/10 flex items-center gap-2 transition-colors"
+                                                            onClick={() => {
+                                                                if (isProcessing) return;
+                                                                void onUninstallPlugin(plugin.manifest.id);
+                                                            }}
+                                                            disabled={isProcessing}
+                                                            className={clsx(
+                                                                "w-full px-3 py-2 text-left text-xs text-red-500 flex items-center gap-2 transition-colors",
+                                                                isProcessing ? "opacity-50 cursor-not-allowed" : "hover:bg-red-500/10"
+                                                            )}
                                                         >
                                                             <Trash2 size={12} />
                                                             Uninstall

@@ -7,20 +7,17 @@ import { open as dialogOpen, save as dialogSave } from '@tauri-apps/plugin-dialo
 let currentUpdate: any = null;
 
 // Map to track active listeners for cleanup
-const eventListeners = new Map<string, Map<Function, UnlistenFn>>();
-const PENDING_UNLISTEN: UnlistenFn = () => { };
-
-/**
- * Serialize legacy config:set operations so read-merge-write runs one at a time.
- * This avoids dropping updates when multiple legacy callers write concurrently.
- */
-let configSetQueue: Promise<unknown> = Promise.resolve();
-
-function enqueueConfigSet<T>(task: () => Promise<T>): Promise<T> {
-  const run = configSetQueue.then(task, task);
-  configSetQueue = run.catch(() => undefined);
-  return run;
+interface ListenerRegistration {
+  unlisten: UnlistenFn;
+  unsubscribed: boolean;
 }
+const eventListeners = new Map<string, Map<Function, ListenerRegistration>>();
+const PENDING_UNLISTEN: UnlistenFn = () => { };
+const isPlainObject = (value: unknown): value is Record<string, unknown> => (
+  value !== null
+  && typeof value === 'object'
+  && !Array.isArray(value)
+);
 
 // Progress tracking state
 let downloadState = {
@@ -49,54 +46,85 @@ const ipcRenderer = {
 
   on(channel: string, listener: (event: any, ...args: any[]) => void): () => void {
     // Tauri uses events instead of IPC channels
-    const channelListeners = eventListeners.get(channel) ?? new Map<Function, UnlistenFn>();
+    const channelListeners = eventListeners.get(channel) ?? new Map<Function, ListenerRegistration>();
     eventListeners.set(channel, channelListeners);
+    const previousRegistration = channelListeners.get(listener);
+    if (previousRegistration) {
+      previousRegistration.unsubscribed = true;
+      if (previousRegistration.unlisten !== PENDING_UNLISTEN) {
+        previousRegistration.unlisten();
+      }
+      channelListeners.delete(listener);
+    }
 
-    let isUnsubscribed = false;
-    channelListeners.set(listener, PENDING_UNLISTEN);
+    const registration: ListenerRegistration = { unlisten: PENDING_UNLISTEN, unsubscribed: false };
+    const localRegistration = registration;
+    channelListeners.set(listener, localRegistration);
 
     const setupListener = async () => {
-      const unlisten = await listen(channel, (event) => {
-        // Map Tauri event { event: string, windowLabel: string, payload: T } 
-        // to Electron-like style (event wrapper, payload)
-        listener({ sender: null }, event.payload);
-      });
+      try {
+        const unlisten = await listen(channel, (event) => {
+          // Map Tauri event { event: string, windowLabel: string, payload: T }
+          // to Electron-like style (event wrapper, payload)
+          listener({ sender: null }, event.payload);
+        });
 
-      if (isUnsubscribed) {
-        unlisten();
-        channelListeners.delete(listener);
+        if (localRegistration.unsubscribed) {
+          unlisten();
+          if (channelListeners.get(listener) === localRegistration) {
+            channelListeners.delete(listener);
+          }
+          return unlisten;
+        }
+
+        localRegistration.unlisten = unlisten;
+        if (channelListeners.get(listener) !== localRegistration) {
+          unlisten();
+          return unlisten;
+        }
+
         return unlisten;
+      } catch (error) {
+        localRegistration.unsubscribed = true;
+        if (channelListeners.get(listener) === localRegistration) {
+          channelListeners.delete(listener);
+        }
+        console.error(`Failed to set up listener for ${channel}:`, error);
+        return undefined;
       }
-
-      channelListeners.set(listener, unlisten);
-
-      return unlisten;
     };
 
     void setupListener();
 
     // Return a function that can be called to unsubscribe
     return () => {
-      if (isUnsubscribed) return;
-      isUnsubscribed = true;
-      const registeredUnlisten = channelListeners.get(listener);
-      channelListeners.delete(listener);
+      const current = channelListeners.get(listener);
+      if (!current || current !== localRegistration || current.unsubscribed) return;
+      current.unsubscribed = true;
 
-      if (registeredUnlisten && registeredUnlisten !== PENDING_UNLISTEN) {
-        registeredUnlisten();
+      if (current.unlisten !== PENDING_UNLISTEN) {
+        current.unlisten();
+        if (channelListeners.get(listener) === localRegistration) {
+          channelListeners.delete(listener);
+        }
         return;
       }
 
-      // setupListener handles pending-listen cleanup when isUnsubscribed=true.
+      // setupListener handles pending-listen cleanup when unsubscribed=true.
     };
   },
 
   off(channel: string, listener: (event: any, ...args: any[]) => void): void {
     const channelListeners = eventListeners.get(channel);
     if (channelListeners && channelListeners.has(listener)) {
-      const unlisten = channelListeners.get(listener);
-      if (unlisten) {
-        unlisten();
+      const registration = channelListeners.get(listener);
+      if (!registration) return;
+      if (registration.unlisten === PENDING_UNLISTEN) {
+        registration.unsubscribed = true;
+        return;
+      }
+      if (registration.unlisten) {
+        registration.unlisten();
         channelListeners.delete(listener);
       }
     }
@@ -154,8 +182,8 @@ const ipcRenderer = {
       'dialog:openFile': 'dialog_open_file',
       'dialog:openDirectory': 'dialog_open_directory',
       'config:select-folder': 'config_select_folder',
-      'config:set': 'settings_set',
       'shell:open': 'shell_open',
+      'shell:getWslDistros': 'shell_get_wsl_distros',
       'plugins:load': 'plugins_load',
       'plugins:install_local': 'plugins_install_local',
       'app:getExeDir': 'app_get_exe_dir',
@@ -215,12 +243,16 @@ const ipcRenderer = {
       }
 
       if (channel === 'config:set') {
-        return enqueueConfigSet(async () => {
-          // Backend-side merge: send patch only and let Rust merge+validate.
-          const patch = args[0] ?? {};
-          return await invoke('settings_set', {
-            settings: patch && typeof patch === 'object' ? patch : {},
-          });
+        // Backend-side merge: send patch only and let Rust merge+validate.
+        const patch = args[0];
+        if (!isPlainObject(patch)) {
+          const receivedType = patch === null ? 'null' : Array.isArray(patch) ? 'array' : typeof patch;
+          const message = `config:set expects a plain object patch, received ${receivedType}`;
+          console.error(message, patch);
+          throw new Error(message);
+        }
+        return await invoke('settings_set', {
+          settings: patch,
         });
       }
 

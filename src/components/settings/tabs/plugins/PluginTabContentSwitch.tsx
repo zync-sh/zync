@@ -25,7 +25,8 @@ export function PluginTabContentSwitch({
         default:
             {
                 const exhaustiveCheck: never = pluginTab;
-                return exhaustiveCheck;
+                void exhaustiveCheck;
+                return null;
             }
     }
 }

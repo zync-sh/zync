@@ -1,6 +1,6 @@
 import { Play, RefreshCw } from 'lucide-react';
 import { clsx } from 'clsx';
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 
 export type PluginTab = 'installed' | 'marketplace' | 'developer';
 
@@ -25,6 +25,37 @@ export function PluginsTab({
     onRestartNow,
     content
 }: PluginsTabProps) {
+    const moveTab = (nextIndex: number) => {
+        const nextTab = PLUGIN_TABS[nextIndex];
+        if (!nextTab) return;
+        setPluginTab(nextTab.key);
+        requestAnimationFrame(() => {
+            document.getElementById(`plugins-tab-${nextTab.key}`)?.focus();
+        });
+    };
+
+    const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+        if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            moveTab((currentIndex + 1) % PLUGIN_TABS.length);
+            return;
+        }
+        if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            moveTab((currentIndex - 1 + PLUGIN_TABS.length) % PLUGIN_TABS.length);
+            return;
+        }
+        if (event.key === 'Home') {
+            event.preventDefault();
+            moveTab(0);
+            return;
+        }
+        if (event.key === 'End') {
+            event.preventDefault();
+            moveTab(PLUGIN_TABS.length - 1);
+        }
+    };
+
     return (
         <div className="h-full flex flex-col space-y-4 animate-in fade-in duration-300 overflow-hidden">
             <div className="mx-0 shrink-0">
@@ -33,14 +64,16 @@ export function PluginsTab({
                     role="tablist"
                     aria-label="Plugin sections"
                 >
-                    {PLUGIN_TABS.map((tab) => (
+                    {PLUGIN_TABS.map((tab, index) => (
                         <button
                             key={tab.key}
                             id={`plugins-tab-${tab.key}`}
                             role="tab"
                             aria-selected={pluginTab === tab.key}
                             aria-controls={`plugins-panel-${tab.key}`}
+                            tabIndex={pluginTab === tab.key ? 0 : -1}
                             onClick={() => setPluginTab(tab.key)}
+                            onKeyDown={(event) => handleTabKeyDown(event, index)}
                             className={clsx(
                                 "flex-1 py-1.5 text-xs font-medium rounded-md transition-all",
                                 pluginTab === tab.key
@@ -56,7 +89,7 @@ export function PluginsTab({
             </div>
 
             {needsRestart && (
-                <div className="mx-6 p-2.5 rounded-lg bg-[var(--color-app-accent)]/10 border border-[var(--color-app-accent)]/20 flex items-center justify-between animate-in slide-in-from-top-2">
+                <div className="mx-0 p-2.5 rounded-lg bg-[var(--color-app-accent)]/10 border border-[var(--color-app-accent)]/20 flex items-center justify-between animate-in slide-in-from-top-2">
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-[var(--color-app-accent)]/20 flex items-center justify-center text-[var(--color-app-accent)]">
                             <RefreshCw size={14} className="animate-spin-slow" />
@@ -67,6 +100,7 @@ export function PluginsTab({
                         </div>
                     </div>
                     <button
+                        type="button"
                         onClick={onRestartNow}
                         className="px-3 py-1.5 rounded-md bg-[var(--color-app-accent)] text-white text-[10px] font-medium hover:opacity-90 transition-all flex items-center gap-1.5 shadow-sm"
                     >

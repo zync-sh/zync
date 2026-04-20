@@ -90,6 +90,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
 
     const [apiKeyDraft, setApiKeyDraft] = useState('');
+    const [apiKeyPersistedValue, setApiKeyPersistedValue] = useState('');
     const [apiKeySaved, setApiKeySaved] = useState(false);
     const [apiKeyError, setApiKeyError] = useState<string | null>(null);
     const [terminalFontDraft, setTerminalFontDraft] = useState('');
@@ -100,6 +101,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         try {
             setApiKeyError(null);
             await invoke('save_secret', { key: provider, value: key });
+            setApiKeyPersistedValue(key.trim());
             setApiKeySaved(true);
             setTimeout(() => setApiKeySaved(false), 2000);
         } catch (err: unknown) {
@@ -205,13 +207,16 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         if (activeTab !== 'ai') return;
         if (currentProvider === 'ollama') {
             setApiKeyDraft('');
+            setApiKeyPersistedValue('');
             setApiKeySaved(false);
             return;
         }
 
         invoke<string | null>('get_secret', { key: currentProvider })
             .then(key => {
-                setApiKeyDraft(key || '');
+                const loadedKey = key || '';
+                setApiKeyDraft(loadedKey);
+                setApiKeyPersistedValue(loadedKey.trim());
                 setApiKeySaved(false);
             })
             .catch(err => console.error('Failed to load secret:', err));
@@ -337,6 +342,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             showToast('info', 'Connections cleared.');
         }
     };
+    const getTabIndex = (tab: Tab) => (activeTab === tab ? 0 : -1);
 
     if (!isOpen) return null;
 
@@ -345,18 +351,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <div className="relative w-[860px] h-[620px] max-w-[95vw] max-h-[90vh] bg-[var(--color-app-bg)] rounded-xl border border-[var(--color-app-border)] shadow-2xl flex overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/5">
 
                 {/* Sidebar */}
-                <div className="w-[180px] flex flex-col border-r border-[var(--color-app-border)]/40 bg-[var(--color-app-surface)]/20 p-2 space-y-0.5">
+                <div className="w-[180px] flex flex-col border-r border-[var(--color-app-border)]/40 bg-[var(--color-app-surface)]/20 p-2 space-y-0.5" role="tablist" aria-label="Settings sections">
                     <div className="px-3 py-4 mb-1">
                         <span className="text-xs font-bold text-[var(--color-app-muted)] uppercase tracking-wider opacity-70">Settings</span>
                     </div>
 
-                    <TabButton active={activeTab === 'general'} onClick={() => handleTabChange('general')} icon={<SettingsIcon size={15} />} label="General" />
-                    <TabButton active={activeTab === 'terminal'} onClick={() => handleTabChange('terminal')} icon={<Type size={15} />} label="Terminal" />
-                    <TabButton active={activeTab === 'appearance'} onClick={() => handleTabChange('appearance')} icon={<Monitor size={15} />} label="Appearance" />
-                    <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" />
-                    <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" />
-                    <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" />
-                    <TabButton active={activeTab === 'ai'} onClick={() => handleTabChange('ai')} icon={<Sparkles size={15} />} label="AI" />
+                    <TabButton active={activeTab === 'general'} onClick={() => handleTabChange('general')} icon={<SettingsIcon size={15} />} label="General" tabIndex={getTabIndex('general')} />
+                    <TabButton active={activeTab === 'terminal'} onClick={() => handleTabChange('terminal')} icon={<Type size={15} />} label="Terminal" tabIndex={getTabIndex('terminal')} />
+                    <TabButton active={activeTab === 'appearance'} onClick={() => handleTabChange('appearance')} icon={<Monitor size={15} />} label="Appearance" tabIndex={getTabIndex('appearance')} />
+                    <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" tabIndex={getTabIndex('fileManager')} />
+                    <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" tabIndex={getTabIndex('shortcuts')} />
+                    <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" tabIndex={getTabIndex('plugins')} />
+                    <TabButton active={activeTab === 'ai'} onClick={() => handleTabChange('ai')} icon={<Sparkles size={15} />} label="AI" tabIndex={getTabIndex('ai')} />
                     <TabButton
                         active={false}
                         onClick={() => {
@@ -373,7 +379,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             onClick={() => handleTabChange('about')}
                             icon={<Info size={15} />}
                             label="About"
+                            tabIndex={getTabIndex('about')}
                             badge={updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready'}
+                            badgeLabel={
+                                updateStatus === 'available'
+                                    ? 'Update available'
+                                    : updateStatus === 'downloading'
+                                        ? 'Update downloading'
+                                        : updateStatus === 'ready'
+                                            ? 'Update ready to install'
+                                            : 'New notifications'
+                            }
                         />
                     </div>
                 </div>
@@ -483,6 +499,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             <AiTab
                                 settings={settings}
                                 apiKeyDraft={apiKeyDraft}
+                                apiKeyPersistedValue={apiKeyPersistedValue}
                                 apiKeySaved={apiKeySaved}
                                 apiKeyError={apiKeyError}
                                 setApiKeyDraft={setApiKeyDraft}

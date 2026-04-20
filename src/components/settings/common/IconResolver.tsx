@@ -21,6 +21,20 @@ const iconAliases: Record<string, string> = {
     file: 'FileText',
 };
 
+const normalizeIconKey = (value: string): string => value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
+    .replace(/icon$/, '');
+
+const normalizedIcons = Object.entries(icons).reduce<Record<string, ComponentType<{ size?: number; className?: string }>>>((acc, [key, component]) => {
+    const normalized = normalizeIconKey(key);
+    if (!acc[normalized]) {
+        acc[normalized] = component;
+    }
+    return acc;
+}, {});
+
 export function IconResolver({ name, path, size = 16, className = "" }: IconResolverProps) {
     const [imgError, setImgError] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
@@ -39,7 +53,14 @@ export function IconResolver({ name, path, size = 16, className = "" }: IconReso
     );
 
     if (isImage && path && name && !imgError) {
-        const cleanPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        const unsafeName = name.includes('..') || name.includes('/') || name.includes('\\') || name.includes('\0');
+        const normalizedPath = path.replace(/\\/g, '/');
+        const pathSegments = normalizedPath.split('/').filter(Boolean);
+        const unsafePath = pathSegments.some((segment) => segment === '..') || normalizedPath.includes('\0');
+        if (unsafeName || unsafePath) {
+            return <Plug size={size} className={className} />;
+        }
+        const cleanPath = normalizedPath.endsWith('/') ? normalizedPath.slice(0, -1) : normalizedPath;
         const cleanName = name.startsWith('/') ? name.slice(1) : name;
         const fullPath = `${cleanPath}/${cleanName}`;
         const assetUrl = convertFileSrc(fullPath);
@@ -53,7 +74,7 @@ export function IconResolver({ name, path, size = 16, className = "" }: IconReso
                     className={clsx("w-full h-full object-contain transition-opacity duration-200", isLoading ? "opacity-0" : "opacity-100")}
                     onLoad={() => setIsLoading(false)}
                     onError={() => {
-                        console.error(`[PluginIcon] Load Error: ${assetUrl}`);
+                        console.error('[PluginIcon] Load Error', { iconName: name });
                         setImgError(true);
                         setIsLoading(false);
                     }}
@@ -64,6 +85,12 @@ export function IconResolver({ name, path, size = 16, className = "" }: IconReso
 
     const resolvedName = (name || '').trim();
     const canonical = resolvedName.replace(/\s+/g, '');
+    const separatorPascal = resolvedName
+        .split(/[-_\s]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+    const separatorCanonical = separatorPascal.replace(/\s+/g, '');
     const capitalized = canonical ? canonical.charAt(0).toUpperCase() + canonical.slice(1) : '';
     const normalized = canonical.toLowerCase();
     const aliasTarget = iconAliases[normalized];
@@ -73,10 +100,15 @@ export function IconResolver({ name, path, size = 16, className = "" }: IconReso
         `${canonical}Icon`,
         capitalized,
         `${capitalized}Icon`,
+        separatorPascal,
+        `${separatorPascal}Icon`,
+        separatorCanonical,
+        `${separatorCanonical}Icon`,
+        separatorPascal.toLowerCase(),
         aliasTarget,
     ].filter((value): value is string => Boolean(value));
     const Icon = candidateKeys
-        .map((key) => icons[key])
+        .map((key) => normalizedIcons[normalizeIconKey(key)])
         .find(Boolean)
         || Plug;
     return <Icon size={size} className={className} />;

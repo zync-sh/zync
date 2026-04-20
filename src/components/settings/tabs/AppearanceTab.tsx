@@ -94,10 +94,45 @@ export function AppearanceTab({
         void applyUpdate({ globalFontFamily: next });
     };
 
-    const lightPlugins = plugins.filter((p) => p.manifest.mode === 'light');
+    const lightPlugins = plugins.filter((p) => (p.manifest.mode ?? 'light') === 'light');
     const darkPlugins = plugins.filter((p) => p.manifest.mode === 'dark');
+    const baseFontOptions = [
+        {
+            value: DEFAULT_GLOBAL_FONT_STACK,
+            label: "System UI (Recommended)",
+            description: "Best cross-platform default using built-in system fonts",
+        },
+        {
+            value: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
+            label: "Inter",
+            description: "Inter first, then system fallback",
+        },
+        {
+            value: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+            label: "Segoe UI",
+            description: "Windows-native UI style",
+        },
+        {
+            value: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif",
+            label: "SF Pro / Apple",
+            description: "Apple-style UI fallback stack",
+        },
+    ];
+    const hasMatchingFontOption = baseFontOptions.some((option) => option.value === settings.globalFontFamily);
+    const fontOptions = hasMatchingFontOption
+        ? baseFontOptions
+        : [
+            {
+                value: settings.globalFontFamily,
+                label: "Custom",
+                description: settings.globalFontFamily,
+            },
+            ...baseFontOptions,
+        ];
     const activeThemePlugin = plugins.find((p) => p.manifest.id === `${THEME_PREFIX}${settings.theme}`);
     const themeAccent = getThemeAccent(activeThemePlugin, settings.theme);
+    const clampedOpacity = Math.min(1, Math.max(0.3, settings.windowOpacity ?? 1));
+    const clampedPercent = Math.round(clampedOpacity * 100);
 
     return (
         <div className="space-y-6">
@@ -169,28 +204,7 @@ export function AppearanceTab({
                         label="Global UI Font"
                         value={settings.globalFontFamily}
                         onChange={(val) => { void applyUpdate({ globalFontFamily: val }); }}
-                        options={[
-                            {
-                                value: DEFAULT_GLOBAL_FONT_STACK,
-                                label: "System UI (Recommended)",
-                                description: "Best cross-platform default using built-in system fonts",
-                            },
-                            {
-                                value: "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif",
-                                label: "Inter",
-                                description: "Inter first, then system fallback",
-                            },
-                            {
-                                value: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                label: "Segoe UI",
-                                description: "Windows-native UI style",
-                            },
-                            {
-                                value: "'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif",
-                                label: "SF Pro / Apple",
-                                description: "Apple-style UI fallback stack",
-                            },
-                        ]}
+                        options={fontOptions}
                         triggerClassName="bg-app-bg/50"
                     />
 
@@ -316,13 +330,17 @@ export function AppearanceTab({
                     <div className="space-y-3 pt-4 border-t border-[var(--color-app-border)]/50">
                         <div className="flex justify-between">
                             <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Terminal Opacity</label>
-                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{Math.round((settings.windowOpacity ?? 1) * 100)}%</span>
+                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{clampedPercent}%</span>
                         </div>
                         <input
-                            type="range" min="0" max="100" step="1"
+                            type="range" min="30" max="100" step="1"
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
-                            value={(settings.windowOpacity ?? 1) * 100}
-                            onChange={(e) => { void applyUpdate({ windowOpacity: parseInt(e.target.value, 10) / 100 }); }}
+                            value={clampedPercent}
+                            onChange={(e) => {
+                                const parsed = Number.parseInt(e.target.value, 10);
+                                const clamped = Math.max(30, Math.min(100, Number.isFinite(parsed) ? parsed : 100));
+                                void applyUpdate({ windowOpacity: clamped / 100 });
+                            }}
                         />
                         <div className="text-xs text-[var(--color-app-muted)]">
                             100% keeps the terminal solid. Lower values let the desktop show through the terminal viewport only.

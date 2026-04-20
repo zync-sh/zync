@@ -63,7 +63,12 @@ export default defineConfig({
           if (hasNodeModulePackage(id, "@xterm") || hasNodeModulePackage(id, "xterm")) {
             return "xterm";
           }
-          if (hasNodeModulePackage(id, "react") || hasNodeModulePackage(id, "scheduler")) {
+          if (
+            hasNodeModulePackage(id, "react")
+            || hasNodeModulePackage(id, "react-dom")
+            || hasNodeModulePackage(id, "react-is")
+            || hasNodeModulePackage(id, "scheduler")
+          ) {
             return "react-vendor";
           }
           return "vendor";

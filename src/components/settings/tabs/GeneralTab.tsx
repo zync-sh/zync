@@ -1,4 +1,5 @@
 import { FileText, Folder, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
 import type { AppSettings } from '../../../store/settingsSlice';
 import type { SelectOption } from '../../ui/Select';
 import { Select } from '../../ui/Select';
@@ -53,6 +54,18 @@ export function GeneralTab({
     onResetLogLocation,
     onClearConnections,
 }: GeneralTabProps) {
+    const [isUpdatingAutoCheck, setIsUpdatingAutoCheck] = useState(false);
+
+    const handleAutoUpdateToggle = async () => {
+        if (isUpdatingAutoCheck) return;
+        setIsUpdatingAutoCheck(true);
+        try {
+            await onToggleAutoUpdate();
+        } finally {
+            setIsUpdatingAutoCheck(false);
+        }
+    };
+
     return (
         <div className="space-y-6 animate-in fade-in duration-300">
             <Section title="Application">
@@ -70,12 +83,14 @@ export function GeneralTab({
                             </div>
                         </div>
                         <button
-                            onClick={onToggleAutoUpdate}
+                            onClick={() => { void handleAutoUpdateToggle(); }}
                             role="switch"
                             aria-checked={autoUpdateCheck}
+                            aria-disabled={isUpdatingAutoCheck}
                             aria-label="Auto-update check"
+                            disabled={isUpdatingAutoCheck}
                             className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${autoUpdateCheck ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
-                                }`}
+                                } ${isUpdatingAutoCheck ? 'opacity-60 cursor-not-allowed' : ''}`}
                         >
                             <span
                                 className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${autoUpdateCheck ? 'translate-x-5' : 'translate-x-0'
@@ -128,7 +143,7 @@ export function GeneralTab({
                             <div className="flex-1 min-w-0">
                                 <h4 className="text-sm font-medium text-[var(--color-app-text)]">Storage Location</h4>
                                 <p className="text-xs text-[var(--color-app-muted)] mt-1 mb-3">
-                                    Where Zync stores your connections, snippets, port forwards, and settings.
+                                    Where Zync stores your connections, snippets, and port forwards.
                                 </p>
                                 <div className="flex items-center gap-2 mb-3">
                                     <code className="px-2 py-1 bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded text-xs font-mono text-[var(--color-app-text)] truncate max-w-full block">

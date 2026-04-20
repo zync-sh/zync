@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UpdateInfo, UpdateStatus } from '../../../store/updateSlice';
 
 interface UpdateCheckResult {
@@ -24,17 +24,24 @@ export function useSettingsUpdateFlow({
     setUpdateInfo,
     showToast,
 }: UseSettingsUpdateFlowOptions) {
+    const isCheckingRef = useRef(false);
+    const isMountedRef = useRef(false);
     const [appVersion, setAppVersion] = useState('');
     const [isAppImage, setIsAppImage] = useState(false);
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
     useEffect(() => {
-        if (!isOpen) return;
-        let mounted = true;
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
 
+    useEffect(() => {
+        if (!isOpen) return;
         window.ipcRenderer.invoke('app:getVersion')
             .then((ver: string) => {
-                if (mounted) setAppVersion(ver);
+                if (isMountedRef.current) setAppVersion(ver);
             })
             .catch((error: unknown) => {
                 console.error('Failed to resolve app version', error);
@@ -42,85 +49,89 @@ export function useSettingsUpdateFlow({
 
         window.ipcRenderer.invoke('app:isAppImage')
             .then((is: boolean) => {
-                if (mounted) setIsAppImage(is);
+                if (isMountedRef.current) setIsAppImage(is);
             })
             .catch((error: unknown) => {
                 console.error('Failed to resolve app image mode', error);
             });
-
-        return () => {
-            mounted = false;
-        };
     }, [isOpen]);
 
-    const isNewer = useCallback((v1: string) => {
-        if (!appVersion || !v1) return false;
-        try {
-            const v1Parts = v1.replace('v', '').split('.').map(Number);
-            const appParts = appVersion.replace('v', '').split('.').map(Number);
-            for (let i = 0; i < Math.max(v1Parts.length, appParts.length); i++) {
-                const a = v1Parts[i] || 0;
-                const b = appParts[i] || 0;
-                if (a > b) return true;
-                if (a < b) return false;
-            }
-        } catch {
-            return false;
-        }
-        return false;
-    }, [appVersion]);
-
     const checkForUpdates = async () => {
+        if (isCheckingRef.current || updateStatus === 'checking') return;
+        isCheckingRef.current = true;
         setUpdateStatus('checking');
+        let nextInfo: UpdateInfo | null = null;
+        let nextStatus: UpdateStatus = 'not-available';
         try {
             const result = await window.ipcRenderer.invoke('update:check') as UpdateCheckResult | null;
-            const nextInfo = result?.updateInfo ?? null;
-            if (nextInfo?.version && isNewer(nextInfo.version)) {
-                setUpdateStatus('available');
-                setUpdateInfo(nextInfo);
-                showToast('info', `Update v${nextInfo.version} available!`);
+            nextInfo = result?.updateInfo ?? null;
+            if (nextInfo) {
+                nextStatus = 'available';
+                if (isMountedRef.current) {
+                    showToast('info', nextInfo.version ? `Update v${nextInfo.version} available!` : 'An update is available!');
+                }
             } else {
-                setUpdateStatus('not-available');
-                setUpdateInfo(nextInfo);
+                nextStatus = 'not-available';
             }
         } catch (error) {
-            setUpdateStatus('error');
+            nextStatus = 'error';
             console.error('Update check failed', error);
+            const message = error instanceof Error ? error.message : String(error);
+            if (isMountedRef.current) {
+                showToast('error', `Failed to check for updates: ${message}`);
+            }
+        } finally {
+            setUpdateStatus(nextStatus);
+            setUpdateInfo(nextInfo);
+            isCheckingRef.current = false;
         }
     };
 
     const platform = window.electronUtils?.platform;
-    const isMac = platform === 'darwin' || window.navigator.userAgent.toLowerCase().includes('mac');
-    const resolvedPlatform = platform || (isMac ? 'darwin' : (isWindows ? 'win32' : 'linux'));
-    const platformLabel = isAppImage ? 'AppImage' : isMac ? 'macOS' : isWindows ? 'Windows' : 'Linux';
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const userAgentIndicatesMac = userAgent.includes('mac');
+    const isMac = platform ? platform === 'darwin' : (!isWindows && userAgentIndicatesMac);
+    const resolvedPlatform = platform || (isWindows ? 'win32' : (userAgentIndicatesMac ? 'darwin' : 'linux'));
+    const platformLabel = isAppImage ? 'AppImage' : isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux';
     const canAutoUpdate = resolvedPlatform !== 'darwin';
 
-    const handleUpdateAction = () => {
-        if (updateStatus === 'downloading') return;
+    const handleUpdateAction = async () => {
+        if (updateStatus === 'checking' || updateStatus === 'downloading') return;
         if (updateStatus === 'available') {
             if (canAutoUpdate) {
                 setUpdateStatus('downloading');
-                window.ipcRenderer.invoke('update:download')
-                    .catch((error: unknown) => {
-                        console.error('Update download failed', error);
-                        setUpdateStatus('available');
+                try {
+                    await window.ipcRenderer.invoke('update:download');
+                } catch (error: unknown) {
+                    console.error('Update download failed', error);
+                    setUpdateStatus('available');
+                    if (isMountedRef.current) {
                         showToast('error', 'Update download failed. Please try again.');
-                    });
+                    }
+                }
             } else {
-                window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/releases/latest');
+                try {
+                    await window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/releases/latest');
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    console.error('Failed to open release page', error);
+                    showToast('error', `Failed to open release page: ${message}`);
+                }
             }
         } else if (updateStatus === 'ready') {
             setShowRestartConfirm(true);
         } else {
-            void checkForUpdates();
+            await checkForUpdates();
         }
     };
 
     const handleConfirmRestart = async () => {
         try {
             await window.ipcRenderer.invoke('update:install');
+            if (!isMountedRef.current) return;
             setShowRestartConfirm(false);
         } catch (error) {
+            if (!isMountedRef.current) return;
             const message = error instanceof Error ? error.message : String(error);
             console.error('Failed to install update', error);
             showToast('error', `Failed to install update: ${message}`);

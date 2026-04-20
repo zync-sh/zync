@@ -640,13 +640,18 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
   const handleReconnect = useCallback(async () => {
     if (!activeConnectionId || isLocal) return;
-    await connect(activeConnectionId);
-    const reconnected = useAppStore.getState().connections.find((c) => c.id === activeConnectionId) as (Connection & { error?: string }) | undefined;
-    if (reconnected?.status === 'connected') {
-      await loadFiles(activeConnectionId, currentPath || '/');
-      return;
+    try {
+      await connect(activeConnectionId);
+      const reconnected = useAppStore.getState().connections.find((c) => c.id === activeConnectionId) as (Connection & { error?: string }) | undefined;
+      if (reconnected?.status === 'connected') {
+        await loadFiles(activeConnectionId, currentPath || '/');
+        return;
+      }
+      showToast('error', reconnected?.error || 'Failed to reconnect');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast('error', `Failed to reconnect: ${message}`);
     }
-    showToast('error', reconnected?.error || 'Failed to reconnect');
   }, [activeConnectionId, connect, currentPath, isLocal, loadFiles, showToast]);
 
   useEffect(() => {
@@ -869,7 +874,13 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       if (canceled || filePaths.length === 0) return;
       const targetDir = filePaths[0];
       if (targetDir && targetDir !== preferredDownloadDir) {
-        void updateFileManagerSettings({ defaultDownloadPath: targetDir });
+        try {
+          await updateFileManagerSettings({ defaultDownloadPath: targetDir });
+        } catch (error: unknown) {
+          console.error('Failed to persist download directory', error);
+          const message = error instanceof Error ? error.message : String(error);
+          showToast('warning', `Download path was used, but could not be saved: ${message}`);
+        }
       }
 
       // We process download locally in component for now as it involves local FS dialog
@@ -930,9 +941,17 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
       });
       if (canceled || !filePath) return;
       const slashIndex = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-      const selectedDir = slashIndex > 0 ? filePath.slice(0, slashIndex) : '';
+      const selectedDir = slashIndex >= 0
+        ? (filePath.slice(0, slashIndex) || (slashIndex === 0 ? '/' : ''))
+        : '';
       if (selectedDir && selectedDir !== preferredDownloadDir) {
-        void updateFileManagerSettings({ defaultDownloadPath: selectedDir });
+        try {
+          await updateFileManagerSettings({ defaultDownloadPath: selectedDir });
+        } catch (error: unknown) {
+          console.error('Failed to persist archive download directory', error);
+          const message = error instanceof Error ? error.message : String(error);
+          showToast('warning', `Archive path was used, but could not be saved: ${message}`);
+        }
       }
 
       const remotePaths = selectedFiles.map(name =>
@@ -1611,7 +1630,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   }, [
     activeConnectionId, searchTerm, isSearchOpen, files, settings, isNewFolderModalOpen, isNewFileModalOpen, isRenameModalOpen,
     editingFile, selectedFiles, focusedFile, handleNavigate, handleCopy, handlePaste,
-    handleDelete, navigateBack, navigateForward, isVisible, isCopyModalOpen, isPropertiesOpen
+    handleDelete, navigateBack, navigateForward, isVisible, isCopyModalOpen, isPropertiesOpen, viewMode
   ]);
 
   // Focus management
@@ -1700,7 +1719,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               </p>
             </div>
           </div>
-        ) : (currentError === 'DISCONNECTED' || (!isConnected && !isLocal && !isReconnectPending)) ? (
+        ) : (currentError === 'DISCONNECTED' || (!isConnected && !isLocal)) ? (
           <div className="flex-1 flex flex-col items-center justify-center text-app-text p-8 text-center animate-in fade-in zoom-in-95 duration-300">
             <div className="bg-app-surface/50 border border-app-border rounded-xl p-8 max-w-sm shadow-xl flex flex-col items-center">
               <div className="bg-red-500/10 text-red-500 p-4 rounded-full mb-4">
@@ -1717,10 +1736,9 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
               <Button
                 onClick={() => { void handleReconnect(); }}
                 className="w-full gap-2"
-                disabled={isReconnectPending}
               >
                 <RotateCw size={16} />
-                {isReconnectPending ? 'Reconnecting...' : 'Reconnect'}
+                Reconnect
               </Button>
             </div>
           </div>

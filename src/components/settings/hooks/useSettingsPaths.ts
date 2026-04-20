@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useAppStore } from '../../../store/useAppStore';
 
 interface UseSettingsPathsOptions {
     isOpen: boolean;
@@ -11,18 +12,21 @@ interface AppConfig {
 }
 
 export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
+    const showToast = useAppStore((state) => state.showToast);
     const [currentDataPath, setCurrentDataPath] = useState('');
     const [isDefaultDataPath, setIsDefaultDataPath] = useState(true);
     const [currentLogPath, setCurrentLogPath] = useState('');
     const [isDefaultLogPath, setIsDefaultLogPath] = useState(true);
-    const [autoUpdateCheck, setAutoUpdateCheck] = useState(false);
+    const [autoUpdateCheck, setAutoUpdateCheck] = useState(true);
 
     useEffect(() => {
         if (!isOpen) return;
+        let cancelled = false;
 
         const loadConfig = async () => {
             try {
                 const config = await window.ipcRenderer.invoke('config:get') as AppConfig | null;
+                if (cancelled) return;
                 const dataPath = config?.dataPath || '';
                 const logPath = config?.logPath || '';
 
@@ -32,6 +36,7 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
                 setIsDefaultLogPath(!logPath);
                 setAutoUpdateCheck(config?.autoUpdateCheck !== false);
             } catch (error) {
+                if (cancelled) return;
                 console.error('Failed to load config paths', error);
                 setCurrentDataPath('');
                 setIsDefaultDataPath(true);
@@ -42,6 +47,9 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
         };
 
         void loadConfig();
+        return () => {
+            cancelled = true;
+        };
     }, [isOpen]);
 
     const handleChangeLocation = async () => {
@@ -53,6 +61,8 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
             setIsDefaultDataPath(false);
         } catch (error) {
             console.error('Failed to change data location', error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to change data location: ${message}`);
         }
     };
 
@@ -63,6 +73,8 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
             setIsDefaultDataPath(true);
         } catch (error) {
             console.error('Failed to reset data location', error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to reset data location: ${message}`);
         }
     };
 
@@ -75,6 +87,8 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
             setIsDefaultLogPath(false);
         } catch (error) {
             console.error('Failed to change log location', error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to change log location: ${message}`);
         }
     };
 
@@ -85,6 +99,8 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
             setIsDefaultLogPath(true);
         } catch (error) {
             console.error('Failed to reset log location', error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to reset log location: ${message}`);
         }
     };
 
@@ -96,6 +112,8 @@ export function useSettingsPaths({ isOpen }: UseSettingsPathsOptions) {
         } catch (error) {
             setAutoUpdateCheck(!newValue);
             console.error('Failed to update auto update preference', error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to update auto-check preference: ${message}`);
         }
     };
 

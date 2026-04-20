@@ -25,7 +25,6 @@ static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::Pa
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
-static LEGACY_SETTINGS_MIGRATION_LOCK: StdMutex<()> = StdMutex::new(());
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,30 +138,30 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> Result<(), String
         #[cfg(target_os = "windows")]
         {
             let backup_path = path.with_extension(format!("json.bak.{}", unique_suffix));
-            std::fs::rename(path, &backup_path).map_err(|e| {
-                format!(
-                    "Failed to move existing file to backup before atomic replace: {}",
-                    e
-                )
-            })?;
-            match std::fs::rename(&tmp_path, path) {
-                Ok(()) => {
-                    let _ = std::fs::remove_file(&backup_path);
-                    Ok(())
-                }
-                Err(rename_error) => {
-                    if let Err(restore_error) = std::fs::rename(&backup_path, path) {
-                        eprintln!(
-                            "[settings] Failed to restore backup after rename error. backup_path={}, tmp_path={}, target_path={}, rename_error={}, restore_error={}",
-                            backup_path.display(),
-                            tmp_path.display(),
-                            path.display(),
-                            rename_error,
-                            restore_error
-                        );
+            match std::fs::rename(path, &backup_path) {
+                Ok(()) => match std::fs::rename(&tmp_path, path) {
+                    Ok(()) => {
+                        let _ = std::fs::remove_file(&backup_path);
+                        Ok(())
                     }
-                    Err(rename_error.to_string())
-                }
+                    Err(rename_error) => {
+                        if let Err(restore_error) = std::fs::rename(&backup_path, path) {
+                            eprintln!(
+                                "[settings] Failed to restore backup after rename error. backup_path={}, tmp_path={}, target_path={}, rename_error={}, restore_error={}",
+                                backup_path.display(),
+                                tmp_path.display(),
+                                path.display(),
+                                rename_error,
+                                restore_error
+                            );
+                        }
+                        Err(rename_error.to_string())
+                    }
+                },
+                Err(error) => Err(format!(
+                    "Failed to move existing file to backup before atomic replace: {}",
+                    error
+                )),
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -290,11 +289,13 @@ pub(crate) fn read_effective_settings(app: &AppHandle) -> Result<Value, String> 
             continue;
         }
         let legacy_settings = read_settings_from_path(&legacy_path)?;
-        let _migration_guard = LEGACY_SETTINGS_MIGRATION_LOCK
-            .lock()
-            .map_err(|e| format!("Legacy settings migration lock poisoned: {}", e))?;
-        let json = serde_json::to_string_pretty(&legacy_settings).map_err(|e| e.to_string())?;
-        write_atomic_file(&settings_path, &json)?;
+        if let Ok(_mutation_guard) = SETTINGS_MUTATION_LOCK.try_lock() {
+            if !settings_path.exists() {
+                let json =
+                    serde_json::to_string_pretty(&legacy_settings).map_err(|e| e.to_string())?;
+                write_atomic_file(&settings_path, &json)?;
+            }
+        }
         return Ok(legacy_settings);
     }
 
@@ -926,7 +927,7 @@ pub async fn terminal_navigate(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let cd_cmd = format!("cd {}\r", shell_quote(&path));
+    let cd_cmd = format!("cd {}\r", universal_double_quote_path(&path));
     state
         .pty_manager
         .write(&term_id, &cd_cmd)
@@ -3650,6 +3651,11 @@ pub async fn settings_write_raw(
         ));
     }
 
+    let parsed: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in settings.json: {}", e))?;
+    let validated = ensure_object_settings(parsed)?;
+    validate_settings_schema(&validated)?;
+
     write_atomic_file(&settings_path, &content)?;
     let next_data_path = data_path_from_raw_json(&content);
     if current_data_path != next_data_path {
@@ -3686,6 +3692,10 @@ pub async fn settings_restore_last_known_good(
     }
 
     let backup_content = std::fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
+    let parsed_backup = serde_json::from_str::<Value>(&backup_content)
+        .map_err(|e| format!("Invalid JSON in last-known-good backup: {}", e))?;
+    let validated_backup = ensure_object_settings(parsed_backup)?;
+    validate_settings_schema(&validated_backup)?;
     write_atomic_file(&settings_path, &backup_content)?;
     let next_data_path = data_path_from_raw_json(&backup_content);
     if current_data_path != next_data_path {
@@ -4882,6 +4892,11 @@ pub async fn ssh_parse_command(command: String) -> Result<crate::ssh_parser::Par
 /// Shell-quote a path so it can be safely embedded in a remote command string.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn universal_double_quote_path(path: &str) -> String {
+    let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 /// Download selected remote files/directories as a .tar.gz archive.

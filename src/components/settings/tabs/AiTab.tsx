@@ -1,6 +1,8 @@
 import { Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import type { AppSettings } from '../../../store/settingsSlice';
+import { useAppStore } from '../../../store/useAppStore';
 import { Select } from '../../ui/Select';
 import { Section } from '../common/Section';
 import { Toggle } from '../common/Toggle';
@@ -8,6 +10,7 @@ import { Toggle } from '../common/Toggle';
 interface AiTabProps {
     settings: AppSettings;
     apiKeyDraft: string;
+    apiKeyPersistedValue: string;
     apiKeySaved: boolean;
     apiKeyError: string | null;
     setApiKeyDraft: (value: string) => void;
@@ -21,6 +24,7 @@ type AiProvider = AppSettings['ai']['provider'];
 export function AiTab({
     settings,
     apiKeyDraft,
+    apiKeyPersistedValue,
     apiKeySaved,
     apiKeyError,
     setApiKeyDraft,
@@ -28,13 +32,61 @@ export function AiTab({
     updateAiSettings,
     saveApiKey
 }: AiTabProps) {
+    const showToast = useAppStore((state) => state.showToast);
+    const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+    const [ollamaUrlDraft, setOllamaUrlDraft] = useState(settings.ai?.ollamaUrl ?? 'http://localhost:11434');
+    const lastSyncedOllamaUrlRef = useRef(settings.ai?.ollamaUrl ?? 'http://localhost:11434');
+    const previousProviderRef = useRef(settings.ai?.provider ?? 'ollama');
+    const saveButtonRef = useRef<HTMLButtonElement | null>(null);
     const currentProvider = settings.ai?.provider;
     const canUseApiKey = Boolean(currentProvider && currentProvider !== 'ollama');
     const normalizedApiKeyDraft = apiKeyDraft.trim();
     const canSubmitApiKey = canUseApiKey && normalizedApiKeyDraft.length > 0;
-    const handleSaveApiKey = () => {
-        if (!currentProvider || !canSubmitApiKey) return;
-        void saveApiKey(currentProvider, normalizedApiKeyDraft);
+    useEffect(() => {
+        const nextProvider = settings.ai?.provider ?? 'ollama';
+        const persistedOllamaUrl = settings.ai?.ollamaUrl ?? 'http://localhost:11434';
+        const providerChanged = previousProviderRef.current !== nextProvider;
+        const draftIsDirty = ollamaUrlDraft !== lastSyncedOllamaUrlRef.current;
+        if (providerChanged || !draftIsDirty) {
+            setOllamaUrlDraft(persistedOllamaUrl);
+            lastSyncedOllamaUrlRef.current = persistedOllamaUrl;
+        }
+        previousProviderRef.current = nextProvider;
+    }, [settings.ai?.provider, settings.ai?.ollamaUrl, ollamaUrlDraft]);
+
+    const safeUpdateAiSettings = (updates: Partial<AppSettings['ai']>) => {
+        updateAiSettings(updates).catch((error: unknown) => {
+            console.error('Failed to update AI settings', error);
+            const message = error instanceof Error ? error.message : 'Failed to update AI settings';
+            showToast('error', message);
+        });
+    };
+
+    const handleSaveApiKey = async () => {
+        if (!currentProvider || !canSubmitApiKey || isSavingApiKey || normalizedApiKeyDraft === apiKeyPersistedValue.trim()) return;
+        setIsSavingApiKey(true);
+        try {
+            await saveApiKey(currentProvider, normalizedApiKeyDraft);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : 'Failed to save API key';
+            setApiKeyError(message);
+        } finally {
+            setIsSavingApiKey(false);
+        }
+    };
+
+    const handleApiKeyBlur = (event: FocusEvent<HTMLInputElement>) => {
+        if (!canSubmitApiKey) return;
+        if (saveButtonRef.current && event.relatedTarget === saveButtonRef.current) {
+            return;
+        }
+        void handleSaveApiKey();
+    };
+
+    const handleOllamaUrlBlur = () => {
+        const persistedValue = settings.ai?.ollamaUrl ?? 'http://localhost:11434';
+        if (ollamaUrlDraft === persistedValue) return;
+        safeUpdateAiSettings({ ollamaUrl: ollamaUrlDraft });
     };
 
     return (
@@ -45,7 +97,7 @@ export function AiTab({
                         label="Enable AI Features"
                         description="Allow AI translation and processing"
                         checked={settings.ai?.enabled ?? true}
-                        onChange={(v) => updateAiSettings({ enabled: v })}
+                        onChange={(v) => safeUpdateAiSettings({ enabled: v })}
                     />
                 </div>
             </Section>
@@ -60,7 +112,7 @@ export function AiTab({
                         <div className="w-52">
                             <Select
                                 value={settings.ai?.provider || 'ollama'}
-                                onChange={(v) => updateAiSettings({ provider: v as AiProvider, model: undefined })}
+                                onChange={(v) => safeUpdateAiSettings({ provider: v as AiProvider, model: undefined })}
                                 options={[
                                     { value: 'ollama', label: 'Ollama (Local / Free)' },
                                     { value: 'gemini', label: 'Gemini (Free BYOK)' },
@@ -75,11 +127,13 @@ export function AiTab({
 
                     {(settings.ai?.provider === 'ollama' || !settings.ai?.provider) && (
                         <div>
-                            <div className="text-sm font-medium text-[var(--color-app-text)] mb-1">Ollama URL</div>
+                            <label htmlFor="ollama-url-input" className="text-sm font-medium text-[var(--color-app-text)] mb-1 block">Ollama URL</label>
                             <input
+                                id="ollama-url-input"
                                 type="text"
-                                value={settings.ai?.ollamaUrl ?? 'http://localhost:11434'}
-                                onChange={(e) => updateAiSettings({ ollamaUrl: e.target.value })}
+                                value={ollamaUrlDraft}
+                                onChange={(e) => setOllamaUrlDraft(e.target.value)}
+                                onBlur={handleOllamaUrlBlur}
                                 className="w-full bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none focus:border-[var(--color-app-accent)]"
                             />
                             <p className="text-xs text-[var(--color-app-muted)] mt-1">
@@ -93,22 +147,21 @@ export function AiTab({
                     {canUseApiKey && (
                         <div>
                             <div className="flex items-center justify-between mb-1">
-                                <div className="text-sm font-medium text-[var(--color-app-text)]">API Key</div>
+                                <label htmlFor="provider-api-key-input" className="text-sm font-medium text-[var(--color-app-text)]">API Key</label>
                                 {apiKeySaved && (
                                     <span className="text-xs text-emerald-400 flex items-center gap-1 animate-in fade-in duration-150"> Saved </span>
                                 )}
                             </div>
                             <div className="flex gap-2">
                                 <input
+                                    id="provider-api-key-input"
                                     type="password"
                                     value={apiKeyDraft}
                                     onChange={(e) => {
                                         setApiKeyDraft(e.target.value);
                                         if (apiKeyError) setApiKeyError(null);
                                     }}
-                                    onBlur={() => {
-                                        if (canSubmitApiKey) handleSaveApiKey();
-                                    }}
+                                    onBlur={handleApiKeyBlur}
                                     placeholder={`Paste your ${settings.ai?.provider} API key...`}
                                     className={clsx(
                                         "flex-1 bg-[var(--color-app-bg)] border rounded-lg px-3 py-1.5 text-sm text-[var(--color-app-text)] focus:outline-none transition-colors",
@@ -116,11 +169,12 @@ export function AiTab({
                                     )}
                                 />
                                 <button
-                                    onClick={handleSaveApiKey}
-                                    disabled={!canSubmitApiKey}
+                                    ref={saveButtonRef}
+                                    onClick={() => { void handleSaveApiKey(); }}
+                                    disabled={!canSubmitApiKey || isSavingApiKey || normalizedApiKeyDraft === apiKeyPersistedValue.trim()}
                                     className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--color-app-accent)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity shrink-0"
                                 >
-                                    Save
+                                    {isSavingApiKey ? 'Saving…' : 'Save'}
                                 </button>
                             </div>
                             {apiKeyError && (

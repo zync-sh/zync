@@ -5,7 +5,8 @@
 export function matchShortcut(e: KeyboardEvent, shortcut: string): boolean {
     if (!shortcut) return false;
     const parts = shortcut.toLowerCase().split('+');
-    const key = parts[parts.length - 1];
+    let key = parts[parts.length - 1];
+    if (key === 'plus') key = '+';
 
     // Check modifiers
     const hasCtrl = parts.includes('ctrl') || parts.includes('control');

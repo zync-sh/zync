@@ -46,6 +46,8 @@ interface TerminalCache {
   onDataDisposable?: { dispose: () => void };
   ligaturesAddon?: { dispose: () => void };
   ligaturesEnabled: boolean;
+  ligaturesDesiredEnabled?: boolean;
+  ligaturesLoadPromise?: Promise<void> | null;
 }
 const terminalCache = new Map<string, TerminalCache>();
 let ligaturesAddonImport: Promise<typeof import('@xterm/addon-ligatures')> | null = null;
@@ -65,25 +67,34 @@ const THEME_PRESETS: Record<string, Record<string, string>> = {
 async function setTerminalLigatures(sessionId: string, term: XTerm, enabled: boolean) {
   const cached = terminalCache.get(sessionId);
   if (!cached) return;
+  cached.ligaturesDesiredEnabled = enabled;
 
   if (enabled) {
-    if (!cached.ligaturesAddon) {
-      try {
-        if (!ligaturesAddonImport) {
-          ligaturesAddonImport = import('@xterm/addon-ligatures');
-        }
-        const { LigaturesAddon } = await ligaturesAddonImport;
-        if (cached.ligaturesAddon) {
-          cached.ligaturesEnabled = true;
-          return;
-        }
-        const addon = new LigaturesAddon();
-        term.loadAddon(addon);
-        cached.ligaturesAddon = addon;
-      } catch (error) {
-        console.warn('[terminal] Failed to load ligatures addon', error);
-      }
+    if (cached.ligaturesAddon) {
+      cached.ligaturesEnabled = true;
+      return;
     }
+    if (!cached.ligaturesLoadPromise) {
+      cached.ligaturesLoadPromise = (async () => {
+        try {
+          if (!ligaturesAddonImport) {
+            ligaturesAddonImport = import('@xterm/addon-ligatures');
+          }
+          const { LigaturesAddon } = await ligaturesAddonImport;
+          const latest = terminalCache.get(sessionId);
+          if (!latest || latest.ligaturesDesiredEnabled !== true || latest.ligaturesAddon) return;
+          const addon = new LigaturesAddon();
+          term.loadAddon(addon);
+          latest.ligaturesAddon = addon;
+        } catch (error) {
+          console.warn('[terminal] Failed to load ligatures addon', error);
+        } finally {
+          const latest = terminalCache.get(sessionId);
+          if (latest) latest.ligaturesLoadPromise = null;
+        }
+      })();
+    }
+    await cached.ligaturesLoadPromise;
     cached.ligaturesEnabled = true;
     return;
   }
@@ -537,17 +548,20 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   // Apply Settings Effect
   useEffect(() => {
     if (termRef.current) {
-      termRef.current.options.fontSize = settings.terminal.fontSize;
-      termRef.current.options.fontFamily = settings.terminal.fontFamily;
-      termRef.current.options.cursorStyle = settings.terminal.cursorStyle;
-      termRef.current.options.lineHeight = settings.terminal.lineHeight;
-      void setTerminalLigatures(sessionId, termRef.current, Boolean(settings.terminal.fontLigatures));
-      try {
-        const lastRow = Math.max(0, termRef.current.rows - 1);
-        termRef.current.refresh(0, lastRow);
-      } catch {
-        // Ignore refresh failures; fit below still applies geometry.
-      }
+      const term = termRef.current;
+      term.options.fontSize = settings.terminal.fontSize;
+      term.options.fontFamily = settings.terminal.fontFamily;
+      term.options.cursorStyle = settings.terminal.cursorStyle;
+      term.options.lineHeight = settings.terminal.lineHeight;
+      void (async () => {
+        await setTerminalLigatures(sessionId, term, Boolean(settings.terminal.fontLigatures));
+        try {
+          const lastRow = Math.max(0, term.rows - 1);
+          term.refresh(0, lastRow);
+        } catch {
+          // Ignore refresh failures; fit below still applies geometry.
+        }
+      })();
     }
 
     if (fitAddonRef.current) {
@@ -557,7 +571,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
         // ignore
       }
     }
-  }, [settings.terminal]);
+  }, [sessionId, settings.terminal]);
 
   // Force fit and focus when visibility changes (e.g. switching tabs) or connection becomes active
   useEffect(() => {
@@ -646,10 +660,17 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       fitAddon = cached.fitAddon;
       searchAddon = cached.searchAddon;
 
-      // Re-open in new container (reattaches to DOM)
-      if (containerRef.current && term.element && !containerRef.current.contains(term.element)) {
-        term.open(containerRef.current);
-        // Focus immediately if this session is the active one
+      // Reattach cached xterm DOM when remounting after route/view changes.
+      // xterm.open() is a one-time operation; for already-opened terminals we
+      // must move the existing element instead of calling open() again.
+      if (containerRef.current) {
+        if (term.element) {
+          if (!containerRef.current.contains(term.element)) {
+            containerRef.current.appendChild(term.element);
+          }
+        } else {
+          term.open(containerRef.current);
+        }
         if (isVisible) {
           setTimeout(() => term.focus(), 50);
         }

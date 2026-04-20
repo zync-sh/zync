@@ -16,6 +16,14 @@ export interface QuickConnectConnectionDraft {
     createdAt: number;
 }
 
+function parsePortStrict(token: string): number | null {
+    const trimmed = token.trim();
+    if (!/^\d+$/.test(trimmed)) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
+    return parsed;
+}
+
 export function parseQuickConnectInput(rawInput: string): QuickConnectParseResult | null {
     const trimmed = rawInput.trim();
     if (!trimmed) return null;
@@ -41,33 +49,27 @@ export function parseQuickConnectInput(rawInput: string): QuickConnectParseResul
 
         host = hostPort.slice(1, bracketCloseIndex).trim();
         const trailing = hostPort.slice(bracketCloseIndex + 1).trim();
-        if (trailing.startsWith(':')) {
-            const possiblePort = parseInt(trailing.slice(1).trim(), 10);
-            if (Number.isInteger(possiblePort) && possiblePort > 0 && possiblePort <= 65535) {
-                parsedPort = possiblePort;
-            }
+        if (trailing === '') {
+            // no-op
+        } else if (trailing.startsWith(':')) {
+            const possiblePort = parsePortStrict(trailing.slice(1));
+            if (possiblePort === null) return null;
+            parsedPort = possiblePort;
+        } else {
+            return null;
         }
     } else {
         const colonCount = (hostPort.match(/:/g) || []).length;
         if (colonCount <= 1) {
             const colonIndex = hostPort.lastIndexOf(':');
             if (colonIndex > -1 && colonIndex === hostPort.length - 1) {
-                const possibleHost = hostPort.slice(0, colonIndex).trim();
-                if (possibleHost) {
-                    host = possibleHost;
-                }
+                return null;
             } else if (colonIndex > -1 && colonIndex < hostPort.length - 1) {
                 const possibleHost = hostPort.slice(0, colonIndex).trim();
-                const possiblePort = parseInt(hostPort.slice(colonIndex + 1).trim(), 10);
-                if (
-                    possibleHost
-                    && Number.isInteger(possiblePort)
-                    && possiblePort > 0
-                    && possiblePort <= 65535
-                ) {
-                    host = possibleHost;
-                    parsedPort = possiblePort;
-                }
+                const possiblePort = parsePortStrict(hostPort.slice(colonIndex + 1));
+                if (!possibleHost || possiblePort === null) return null;
+                host = possibleHost;
+                parsedPort = possiblePort;
             }
         }
     }
@@ -89,23 +91,25 @@ export function buildQuickConnectDraft(params: {
     const parsed = parseQuickConnectInput(params.input);
     if (!parsed) return null;
 
-    const overridePort = params.portOverride?.trim()
-        ? parseInt(params.portOverride.trim(), 10)
-        : undefined;
-    const finalPort = overridePort !== undefined
-        && Number.isInteger(overridePort)
-        && overridePort > 0
-        && overridePort <= 65535
-        ? overridePort
-        : parsed.parsedPort;
+    let finalPort = parsed.parsedPort;
+    if (params.portOverride?.trim()) {
+        const overridePort = parsePortStrict(params.portOverride);
+        if (overridePort === null) return null;
+        finalPort = overridePort;
+    }
 
     return {
         id: params.id,
-        name: `${parsed.username}@${parsed.host}`,
+        name: (() => {
+            const hostForName = parsed.host.includes(':') && !parsed.host.startsWith('[')
+                ? `[${parsed.host}]`
+                : parsed.host;
+            return `${parsed.username}@${hostForName}${finalPort !== 22 ? `:${finalPort}` : ''}`;
+        })(),
         host: parsed.host,
         username: parsed.username,
         port: finalPort,
-        password: params.password?.trim() || undefined,
+        password: params.password === '' ? undefined : params.password,
         privateKeyPath: params.privateKeyPath?.trim() || undefined,
         status: 'disconnected',
         createdAt: params.createdAt ?? Date.now(),

@@ -45,6 +45,7 @@ export function isMatch(e: KeyboardEvent, binding: string): boolean {
         'esc': 'escape',
         'return': 'enter',
         'space': ' ',
+        'plus': '+',
     };
 
     const normalizedTarget = aliases[targetKey] || targetKey;

@@ -53,10 +53,13 @@ pub fn run() {
                     // Cancel all active agent runs so backend tasks don't outlive the window.
                     if window.label() == "main" {
                         if let Some(state) = window.try_state::<AppState>() {
-                            let runs = state.agent_runs.blocking_lock();
-                            for cancel in runs.values() {
-                                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                            }
+                            let agent_runs = state.agent_runs.clone();
+                            tauri::async_runtime::block_on(async move {
+                                let runs = agent_runs.lock().await;
+                                for cancel in runs.values() {
+                                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                            });
                         }
                         api.prevent_close();
                         let _ = window.emit("app:request-close", ());
