@@ -7,7 +7,7 @@ use russh::client::Handle;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
@@ -151,7 +151,16 @@ fn write_atomic_file(path: &std::path::Path, content: &str) -> Result<(), String
                     Ok(())
                 }
                 Err(rename_error) => {
-                    let _ = std::fs::rename(&backup_path, path);
+                    if let Err(restore_error) = std::fs::rename(&backup_path, path) {
+                        eprintln!(
+                            "[settings] Failed to restore backup after rename error. backup_path={}, tmp_path={}, target_path={}, rename_error={}, restore_error={}",
+                            backup_path.display(),
+                            tmp_path.display(),
+                            path.display(),
+                            rename_error,
+                            restore_error
+                        );
+                    }
                     Err(rename_error.to_string())
                 }
             }
@@ -4736,11 +4745,10 @@ pub async fn plugin_window_create(
                 files.insert(label, file_path);
             }
             Err(lock_error) => {
-                let _ = std::fs::remove_file(&file_path);
-                return Err(format!(
+                eprintln!(
                     "Failed to register plugin window temp file for cleanup: {}",
                     lock_error
-                ));
+                );
             }
         }
     }
@@ -4760,6 +4768,62 @@ pub fn cleanup_plugin_window_temp_file(window_label: &str) {
                 path.display(),
                 error
             );
+        }
+    }
+}
+
+pub fn cleanup_stale_plugin_window_temp_files(app: &AppHandle) {
+    let cache_dir = match app.path().app_cache_dir() {
+        Ok(dir) => dir.join("plugin-window-html"),
+        Err(error) => {
+            eprintln!("[plugin-window] Failed to resolve cache dir: {}", error);
+            return;
+        }
+    };
+
+    if !cache_dir.exists() {
+        return;
+    }
+
+    let stale_after = Duration::from_secs(60 * 60 * 24);
+    let now = SystemTime::now();
+    let entries = match std::fs::read_dir(&cache_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "[plugin-window] Failed to scan temp cache dir {}: {}",
+                cache_dir.display(),
+                error
+            );
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("html") {
+            continue;
+        }
+
+        let should_remove = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age > stale_after)
+            .unwrap_or(true);
+
+        if should_remove {
+            if let Err(error) = std::fs::remove_file(&path) {
+                eprintln!(
+                    "[plugin-window] Failed to remove stale HTML file {}: {}",
+                    path.display(),
+                    error
+                );
+            }
         }
     }
 }
@@ -5038,10 +5102,7 @@ pub async fn ai_translate(
     context: crate::ai::TerminalContext,
     request_id: String,
 ) -> Result<crate::ai::AiTranslateResponse, String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
     crate::ai::translate(&app, query, context, request_id, config).await
 }
 
@@ -5053,10 +5114,7 @@ pub async fn ai_translate_stream(
     request_id: String,
     history: Vec<crate::ai::ChatMessage>,
 ) -> Result<(), String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
     tauri::async_runtime::spawn(crate::ai::translate_stream(
         app, query, context, request_id, config, history,
     ));
@@ -5065,7 +5123,7 @@ pub async fn ai_translate_stream(
 
 #[tauri::command]
 pub async fn ai_check_ollama(app: AppHandle) -> Result<bool, String> {
-    let config = crate::ai::read_ai_config(&app);
+    let config = require_enabled_ai(&app)?;
     let url = config
         .ollama_url
         .as_deref()
@@ -5075,11 +5133,13 @@ pub async fn ai_check_ollama(app: AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn ai_get_ollama_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let _ = require_enabled_ai(&app)?;
     crate::ai::get_ollama_models(&app).await
 }
 
 #[tauri::command]
 pub async fn ai_get_provider_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let _ = require_enabled_ai(&app)?;
     crate::ai::get_provider_models(&app).await
 }
 
@@ -5094,10 +5154,7 @@ pub async fn ai_agent_run(
     state: State<'_, AppState>,
     request: crate::ai::AgentRunRequest,
 ) -> Result<(), String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
 
     let cancel = Arc::new(AtomicBool::new(false));
     let run_id = request.run_id.clone();
@@ -5120,6 +5177,14 @@ pub async fn ai_agent_run(
     });
 
     Ok(())
+}
+
+fn require_enabled_ai(app: &AppHandle) -> Result<crate::ai::AiConfig, String> {
+    let config = crate::ai::read_ai_config(app);
+    if !config.enabled {
+        return Err("AI is disabled in Settings -> AI.".to_string());
+    }
+    Ok(config)
 }
 
 /// Cancel a running agent loop by its run_id.

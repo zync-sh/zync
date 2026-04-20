@@ -33,9 +33,11 @@ pub fn run() {
                 app.set_menu(menu)?;
             }
 
-            let data_dir = commands::get_data_dir(app.handle());
+            let app_handle = app.handle().clone();
+            let data_dir = commands::get_data_dir(&app_handle);
             let app_state = AppState::new(data_dir);
             app.manage(app_state);
+            commands::cleanup_stale_plugin_window_temp_files(&app_handle);
             Ok(())
         })
         .on_page_load(|webview, payload| {
