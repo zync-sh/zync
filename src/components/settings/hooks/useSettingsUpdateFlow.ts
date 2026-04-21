@@ -26,6 +26,7 @@ export function useSettingsUpdateFlow({
 }: UseSettingsUpdateFlowOptions) {
     const isCheckingRef = useRef(false);
     const isMountedRef = useRef(false);
+    const isOpenRef = useRef(isOpen);
     const [appVersion, setAppVersion] = useState('');
     const [isAppImage, setIsAppImage] = useState(false);
     const [showRestartConfirm, setShowRestartConfirm] = useState(false);
@@ -36,6 +37,10 @@ export function useSettingsUpdateFlow({
             isMountedRef.current = false;
         };
     }, []);
+
+    useEffect(() => {
+        isOpenRef.current = isOpen;
+    }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -67,7 +72,7 @@ export function useSettingsUpdateFlow({
             nextInfo = result?.updateInfo ?? null;
             if (nextInfo) {
                 nextStatus = 'available';
-                if (isMountedRef.current) {
+                if (isMountedRef.current && isOpenRef.current) {
                     showToast('info', nextInfo.version ? `Update v${nextInfo.version} available!` : 'An update is available!');
                 }
             } else {
@@ -77,7 +82,7 @@ export function useSettingsUpdateFlow({
             nextStatus = 'error';
             console.error('Update check failed', error);
             const message = error instanceof Error ? error.message : String(error);
-            if (isMountedRef.current) {
+            if (isMountedRef.current && isOpenRef.current) {
                 showToast('error', `Failed to check for updates: ${message}`);
             }
         } finally {
@@ -90,9 +95,14 @@ export function useSettingsUpdateFlow({
     const platform = window.electronUtils?.platform;
     const userAgent = window.navigator.userAgent.toLowerCase();
     const userAgentIndicatesMac = userAgent.includes('mac');
-    const isMac = platform ? platform === 'darwin' : (!isWindows && userAgentIndicatesMac);
     const resolvedPlatform = platform || (isWindows ? 'win32' : (userAgentIndicatesMac ? 'darwin' : 'linux'));
-    const platformLabel = isAppImage ? 'AppImage' : isWindows ? 'Windows' : isMac ? 'macOS' : 'Linux';
+    const platformLabel = isAppImage
+        ? 'AppImage'
+        : resolvedPlatform === 'darwin'
+            ? 'macOS'
+            : resolvedPlatform === 'win32'
+                ? 'Windows'
+                : 'Linux';
     const canAutoUpdate = resolvedPlatform !== 'darwin';
 
     const handleUpdateAction = async () => {
@@ -105,7 +115,7 @@ export function useSettingsUpdateFlow({
                 } catch (error: unknown) {
                     console.error('Update download failed', error);
                     setUpdateStatus('available');
-                    if (isMountedRef.current) {
+                    if (isMountedRef.current && isOpenRef.current) {
                         showToast('error', 'Update download failed. Please try again.');
                     }
                 }
@@ -115,7 +125,9 @@ export function useSettingsUpdateFlow({
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     console.error('Failed to open release page', error);
-                    showToast('error', `Failed to open release page: ${message}`);
+                    if (isMountedRef.current && isOpenRef.current) {
+                        showToast('error', `Failed to open release page: ${message}`);
+                    }
                 }
             }
         } else if (updateStatus === 'ready') {
@@ -134,7 +146,9 @@ export function useSettingsUpdateFlow({
             if (!isMountedRef.current) return;
             const message = error instanceof Error ? error.message : String(error);
             console.error('Failed to install update', error);
-            showToast('error', `Failed to install update: ${message}`);
+            if (isOpenRef.current) {
+                showToast('error', `Failed to install update: ${message}`);
+            }
         }
     };
 

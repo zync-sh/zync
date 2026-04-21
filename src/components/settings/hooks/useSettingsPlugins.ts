@@ -50,6 +50,7 @@ export function useSettingsPlugins({
     showConfirmDialog,
 }: UseSettingsPluginsOptions) {
     const isMountedRef = useRef(false);
+    const processingRef = useRef<string | null>(null);
     const showToastRef = useRef(showToast);
     const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
     const [isLoadingPlugins, setIsLoadingPlugins] = useState(false);
@@ -199,7 +200,8 @@ export function useSettingsPlugins({
     };
 
     const handleTogglePlugin = async (id: string, enabled: boolean) => {
-        if (processingId) return;
+        if (processingRef.current) return;
+        processingRef.current = id;
         if (isMountedRef.current) {
             setProcessingId(id);
             setActiveMenu(null);
@@ -218,6 +220,7 @@ export function useSettingsPlugins({
                 setPlugins(prev => prev.map(p => p.manifest.id === id ? { ...p, enabled: !enabled } : p));
             }
         } finally {
+            processingRef.current = null;
             if (isMountedRef.current) {
                 setProcessingId(null);
             }
@@ -225,7 +228,7 @@ export function useSettingsPlugins({
     };
 
     const handleUninstallPlugin = async (id: string) => {
-        if (processingId) return;
+        if (processingRef.current) return;
         const confirmed = await showConfirmDialog({
             title: "Uninstall Plugin",
             message: "Are you sure you want to uninstall this plugin? This action cannot be undone.",
@@ -234,6 +237,7 @@ export function useSettingsPlugins({
         });
         if (!confirmed) return;
 
+        processingRef.current = id;
         if (isMountedRef.current) {
             setProcessingId(id);
             setActiveMenu(null);
@@ -252,6 +256,7 @@ export function useSettingsPlugins({
                 showToastRef.current('error', `Failed to uninstall: ${message}`);
             }
         } finally {
+            processingRef.current = null;
             if (isMountedRef.current) {
                 setProcessingId(null);
             }
@@ -259,7 +264,8 @@ export function useSettingsPlugins({
     };
 
     const handleUpdatePlugin = async (plugin: RegistryPlugin) => {
-        if (processingId) return;
+        if (processingRef.current) return;
+        processingRef.current = plugin.id;
         if (isMountedRef.current) {
             setProcessingId(plugin.id);
             setActiveMenu(null);
@@ -278,6 +284,7 @@ export function useSettingsPlugins({
                 showToastRef.current('error', `Failed to update: ${message}`);
             }
         } finally {
+            processingRef.current = null;
             if (isMountedRef.current) {
                 setProcessingId(null);
             }

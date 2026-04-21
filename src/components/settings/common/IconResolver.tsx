@@ -61,8 +61,7 @@ export function IconResolver({ name, path, size = 16, className = "" }: IconReso
             return <Plug size={size} className={className} />;
         }
         const cleanPath = normalizedPath.endsWith('/') ? normalizedPath.slice(0, -1) : normalizedPath;
-        const cleanName = name.startsWith('/') ? name.slice(1) : name;
-        const fullPath = `${cleanPath}/${cleanName}`;
+        const fullPath = `${cleanPath}/${name}`;
         const assetUrl = convertFileSrc(fullPath);
 
         return (

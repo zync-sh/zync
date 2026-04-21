@@ -95,7 +95,8 @@ async function setTerminalLigatures(sessionId: string, term: XTerm, enabled: boo
       })();
     }
     await cached.ligaturesLoadPromise;
-    cached.ligaturesEnabled = true;
+    const latest = terminalCache.get(sessionId);
+    cached.ligaturesEnabled = Boolean(latest && latest.ligaturesAddon);
     return;
   }
 
