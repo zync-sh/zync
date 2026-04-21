@@ -15,6 +15,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Settings Architecture Refactor**: Split Settings into modular tabs/hooks/common components and restored non-working settings + font control flows. ([da93f23], [bb42e1c])
 - **Terminal Dependency Alignment**: Migrated terminal runtime packages to a consistent scoped `@xterm/*` stack. ([9958c44])
 - **Shell/UI Loading Cleanup**: Stabilized modal loading paths and shell-level UI wiring across layout/sidebar/modal bridge points. ([e1d6109])
+- **Settings Patch Persistence Safety**: Sub-slice settings writes now persist patch payloads with safer merge semantics, and accent reset semantics were normalized for clearer default-color behavior. ([8dfe727])
+- **Settings/Update UX Robustness**: Improved settings runtime guards for plugin/update flows, UI-side effect gating, and terminal ligature state bookkeeping consistency. ([e70f7a0])
+- **Connectivity & Copy Fallback Hardening**: Tightened quick-connect parsing/limits, improved Windows path normalization in file workflows, and hardened server-side copy fallback behavior. ([e7f4f02])
 
 ### Fixed
 - **IPC Listener Cleanup Race**: Hardened Tauri IPC listener setup/teardown flow to avoid pending-listener unsubscribe edge cases. ([7f9c425])
@@ -671,6 +674,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 [ad0aea5]: https://github.com/zync-sh/zync/commit/ad0aea5
 [ef6f9eb]: https://github.com/zync-sh/zync/commit/ef6f9eb
 [7f9c425]: https://github.com/zync-sh/zync/commit/7f9c425
+[8dfe727]: https://github.com/zync-sh/zync/commit/8dfe727
+[e70f7a0]: https://github.com/zync-sh/zync/commit/e70f7a0
+[e7f4f02]: https://github.com/zync-sh/zync/commit/e7f4f02
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
