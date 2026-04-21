@@ -13,6 +13,11 @@ interface FileEditorHostProps {
   onSave: (content: string) => Promise<void>;
   onClose: () => void;
   preferredProviderId?: string;
+  /**
+   * When true, hides provider toolbar/header chrome.
+   * Used by embedded/editor-with-parent-toolbar surfaces.
+   */
+  hideToolbar?: boolean;
 }
 
 /**

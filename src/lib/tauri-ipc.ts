@@ -2,11 +2,24 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { check } from '@tauri-apps/plugin-updater';
 import { getVersion } from '@tauri-apps/api/app';
+import { open as dialogOpen, save as dialogSave } from '@tauri-apps/plugin-dialog';
 
 let currentUpdate: any = null;
 
 // Map to track active listeners for cleanup
-const eventListeners = new Map<string, Map<Function, UnlistenFn>>();
+interface ListenerRegistration {
+  unlisten: UnlistenFn;
+  unsubscribed: boolean;
+}
+const eventListeners = new Map<string, Map<Function, ListenerRegistration>>();
+const PENDING_UNLISTEN: UnlistenFn = () => { };
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
 // Progress tracking state
 let downloadState = {
@@ -35,38 +48,85 @@ const ipcRenderer = {
 
   on(channel: string, listener: (event: any, ...args: any[]) => void): () => void {
     // Tauri uses events instead of IPC channels
-    const unsubscribe = async () => {
-      const unlisten = await listen(channel, (event) => {
-        // Map Tauri event { event: string, windowLabel: string, payload: T } 
-        // to Electron-like style (event wrapper, payload)
-        listener({ sender: null }, event.payload);
-      });
-
-      if (!eventListeners.has(channel)) {
-        eventListeners.set(channel, new Map());
+    const channelListeners = eventListeners.get(channel) ?? new Map<Function, ListenerRegistration>();
+    eventListeners.set(channel, channelListeners);
+    const previousRegistration = channelListeners.get(listener);
+    if (previousRegistration) {
+      previousRegistration.unsubscribed = true;
+      if (previousRegistration.unlisten !== PENDING_UNLISTEN) {
+        previousRegistration.unlisten();
       }
-      eventListeners.get(channel)!.set(listener, unlisten);
+      channelListeners.delete(listener);
+    }
 
-      return unlisten;
+    const registration: ListenerRegistration = { unlisten: PENDING_UNLISTEN, unsubscribed: false };
+    const localRegistration = registration;
+    channelListeners.set(listener, localRegistration);
+
+    const setupListener = async () => {
+      try {
+        const unlisten = await listen(channel, (event) => {
+          // Map Tauri event { event: string, windowLabel: string, payload: T }
+          // to Electron-like style (event wrapper, payload)
+          listener({ sender: null }, event.payload);
+        });
+
+        if (localRegistration.unsubscribed) {
+          unlisten();
+          if (channelListeners.get(listener) === localRegistration) {
+            channelListeners.delete(listener);
+          }
+          return unlisten;
+        }
+
+        localRegistration.unlisten = unlisten;
+        if (channelListeners.get(listener) !== localRegistration) {
+          unlisten();
+          return unlisten;
+        }
+
+        return unlisten;
+      } catch (error) {
+        localRegistration.unsubscribed = true;
+        if (channelListeners.get(listener) === localRegistration) {
+          channelListeners.delete(listener);
+        }
+        console.error(`Failed to set up listener for ${channel}:`, error);
+        return undefined;
+      }
     };
 
-    const unlistenPromise = unsubscribe();
+    void setupListener();
 
     // Return a function that can be called to unsubscribe
     return () => {
-      unlistenPromise.then(unlisten => {
-        unlisten();
-        eventListeners.get(channel)?.delete(listener);
-      });
+      const current = channelListeners.get(listener);
+      if (!current || current !== localRegistration || current.unsubscribed) return;
+      current.unsubscribed = true;
+
+      if (current.unlisten !== PENDING_UNLISTEN) {
+        current.unlisten();
+        if (channelListeners.get(listener) === localRegistration) {
+          channelListeners.delete(listener);
+        }
+        return;
+      }
+
+      // setupListener handles pending-listen cleanup when unsubscribed=true.
     };
   },
 
   off(channel: string, listener: (event: any, ...args: any[]) => void): void {
     const channelListeners = eventListeners.get(channel);
     if (channelListeners && channelListeners.has(listener)) {
-      const unlisten = channelListeners.get(listener);
-      if (unlisten) {
-        unlisten();
+      const registration = channelListeners.get(listener);
+      if (!registration) return;
+      if (registration.unlisten === PENDING_UNLISTEN) {
+        registration.unsubscribed = true;
+        return;
+      }
+      if (registration.unlisten) {
+        registration.unlisten();
         channelListeners.delete(listener);
       }
     }
@@ -123,8 +183,9 @@ const ipcRenderer = {
       // Dialog commands handled specially below
       'dialog:openFile': 'dialog_open_file',
       'dialog:openDirectory': 'dialog_open_directory',
-      'config:set': 'settings_set',
+      'config:select-folder': 'config_select_folder',
       'shell:open': 'shell_open',
+      'shell:getWslDistros': 'shell_get_wsl_distros',
       'plugins:load': 'plugins_load',
       'plugins:install_local': 'plugins_install_local',
       'app:getExeDir': 'app_get_exe_dir',
@@ -137,8 +198,7 @@ const ipcRenderer = {
     try {
       // Handle Dialog commands locally via plugin
       if (channel === 'dialog:openFile') {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const result = await open({
+        const result = await dialogOpen({
           multiple: true,
           directory: false,
         });
@@ -149,10 +209,11 @@ const ipcRenderer = {
       }
 
       if (channel === 'dialog:openDirectory') {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const result = await open({
+        const payload = args.length === 1 && args[0] && typeof args[0] === 'object' ? args[0] : {};
+        const result = await dialogOpen({
           multiple: false,
           directory: true,
+          defaultPath: payload.defaultPath,
         });
         if (result === null) return { filePaths: [], canceled: true };
         const paths = Array.isArray(result) ? result : [result];
@@ -161,9 +222,8 @@ const ipcRenderer = {
       }
 
       if (channel === 'dialog:saveFile') {
-        const { save } = await import('@tauri-apps/plugin-dialog');
         const payload = args.length === 1 ? args[0] : {};
-        const result = await save({
+        const result = await dialogSave({
           defaultPath: payload.defaultPath,
           filters: payload.filters,
         });
@@ -182,6 +242,20 @@ const ipcRenderer = {
           console.error('config:get failed', e);
           return { isConfigured: false };
         }
+      }
+
+      if (channel === 'config:set') {
+        // Backend-side merge: send patch only and let Rust merge+validate.
+        const patch = args[0];
+        if (!isPlainObject(patch)) {
+          const receivedType = patch === null ? 'null' : Array.isArray(patch) ? 'array' : typeof patch;
+          const message = `config:set expects a plain object patch, received ${receivedType}`;
+          console.error(message, { receivedType });
+          throw new Error(message);
+        }
+        return await invoke('settings_set', {
+          settings: patch,
+        });
       }
 
       if (channel === 'app:getVersion') {
@@ -246,6 +320,7 @@ const ipcRenderer = {
               }
             } catch (err) {
               console.error('Error in download callback:', err);
+              window.dispatchEvent(new CustomEvent('zync:update-progress', { detail: { percent: 0, status: 'error' } }));
             }
           });
         }

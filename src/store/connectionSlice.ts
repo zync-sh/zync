@@ -65,6 +65,7 @@ export interface ConnectionSlice {
     openPortForwardingTab: () => void;
     openSnippetsTab: () => void;
     openReleaseNotesTab: () => void;
+    openSettingsJsonTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     /** Deactivate all tabs and show the welcome screen without closing anything. */
@@ -451,6 +452,22 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         get().saveSession();
     },
 
+    openSettingsJsonTab: () => {
+        set(state => {
+            // Reuse a single settings.json workspace tab instance.
+            return {
+                ...ensureSingleTabByType(state.tabs, 'settings', () => ({
+                    id: crypto.randomUUID(),
+                    type: 'settings',
+                    title: 'settings.json',
+                    view: 'terminal',
+                })),
+                showWelcomeScreen: false,
+            };
+        });
+        get().saveSession();
+    },
+
     openSnippetsTab: () => {
         set(state => {
             return { ...ensureGlobalSnippetsTab(state.tabs), showWelcomeScreen: false };
@@ -562,7 +579,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         set(state => {
-            const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets']);
+        const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings']);
             const tabs: Tab[] = snapshots
                 .filter(s => RESTORABLE_TYPES.has(s.tabType))
                 .filter(s => {

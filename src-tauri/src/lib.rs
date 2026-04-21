@@ -1,20 +1,20 @@
-mod utils;
+mod ai;
 mod commands;
-mod types;
-mod pty;
 mod fs;
+mod ghost;
+pub mod plugins;
+mod pty;
+mod session;
+mod snippets;
 mod ssh;
 mod ssh_config;
-pub mod tunnel;
-mod snippets;
-pub mod plugins;
 mod ssh_parser;
-mod ai;
-mod ghost;
-mod session;
+pub mod tunnel;
+mod types;
+mod utils;
 
 use commands::AppState;
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -33,90 +33,17 @@ pub fn run() {
                 app.set_menu(menu)?;
             }
 
-            let default_dir = app.path().app_data_dir().unwrap();
-            let settings_path = default_dir.join("settings.json");
-            
-            // On Windows, auto-configure using installation directory
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(exe_dir) = exe_path.parent() {
-                        let exe_dir_str = exe_dir.to_string_lossy().to_string();
-                        
-                        // Read existing settings to preserve user preferences
-                        let mut settings: serde_json::Value = if settings_path.exists() {
-                            std::fs::read_to_string(&settings_path)
-                                .ok()
-                                .and_then(|data| serde_json::from_str(&data).ok())
-                                .unwrap_or_else(|| serde_json::json!({}))
-                        } else {
-                            serde_json::json!({})
-                        };
-                        
-                        // Always set dataPath to exe directory on Windows
-                        if let Some(obj) = settings.as_object_mut() {
-                            obj.insert("dataPath".to_string(), serde_json::json!(exe_dir_str));
-                            obj.insert("logPath".to_string(), serde_json::json!(format!("{}\\logs", exe_dir_str)));
-                            obj.insert("isConfigured".to_string(), serde_json::json!(true));
-                            if !obj.contains_key("theme") {
-                                obj.insert("theme".to_string(), serde_json::json!("dark"));
-                            }
-                        }
-                        
-                        // Write to bootstrap location
-                        if !default_dir.exists() {
-                            if let Err(e) = std::fs::create_dir_all(&default_dir) {
-                                eprintln!("Failed to create default app_data_dir at {:?}: {}", default_dir, e);
-                            }
-                        }
-                        let json = serde_json::to_string_pretty(&settings).unwrap_or_default();
-                        if let Err(e) = std::fs::write(&settings_path, &json) {
-                            eprintln!("Failed to write settings at {:?}: {}", settings_path, e);
-                        }
-                        
-                        // Also write to exe directory
-                        if !exe_dir.exists() {
-                            if let Err(e) = std::fs::create_dir_all(exe_dir) {
-                                eprintln!("Failed to create exe_dir at {:?}: {}", exe_dir, e);
-                            }
-                        }
-                        let exe_settings_path = exe_dir.join("settings.json");
-                        if let Err(e) = std::fs::write(&exe_settings_path, &json) {
-                            eprintln!("Failed to write settings at {:?}: {}", exe_settings_path, e);
-                        }
-                    }
-                }
-            }
-            
-            // Now read the final data directory (will pick up the configured dataPath)
-            let data_dir = (|| -> Option<std::path::PathBuf> {
-                if !settings_path.exists() {
-                    return Some(default_dir.clone());
-                }
-
-                let data = std::fs::read_to_string(&settings_path).ok()?;
-                let settings = serde_json::from_str::<serde_json::Value>(&data).ok()?;
-                let data_path = settings.get("dataPath")?.as_str()?;
-
-                if data_path.is_empty() {
-                    return None;
-                }
-
-                let custom_dir = std::path::PathBuf::from(data_path);
-                if !custom_dir.exists() {
-                    if let Err(e) = std::fs::create_dir_all(&custom_dir) {
-                        eprintln!("Failed to create custom data directory at {:?}: {}", custom_dir, e);
-                    }
-                }
-                Some(custom_dir)
-            })().unwrap_or(default_dir);
-            
+            let app_handle = app.handle().clone();
+            let data_dir = commands::get_data_dir(&app_handle);
             let app_state = AppState::new(data_dir);
             app.manage(app_state);
+            commands::cleanup_stale_plugin_window_temp_files(&app_handle);
             Ok(())
         })
         .on_page_load(|webview, payload| {
-            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
                 let _ = webview.window().show();
             }
         })
@@ -126,35 +53,40 @@ pub fn run() {
                     // Cancel all active agent runs so backend tasks don't outlive the window.
                     if window.label() == "main" {
                         if let Some(state) = window.try_state::<AppState>() {
-                            if let Ok(runs) = state.agent_runs.try_lock() {
+                            let agent_runs = state.agent_runs.clone();
+                            tauri::async_runtime::block_on(async move {
+                                let runs = agent_runs.lock().await;
                                 for cancel in runs.values() {
                                     cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                                 }
-                            }
+                            });
                         }
                         api.prevent_close();
                         let _ = window.emit("app:request-close", ());
                     }
                 }
-                tauri::WindowEvent::DragDrop(drag_event) => {
-                    match drag_event {
-                        tauri::DragDropEvent::Enter { paths, .. } => {
-                            let path_strings: Vec<String> = paths.iter()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .collect();
-                            let _ = window.emit("zync://drag-enter", path_strings);
-                        }
-                        tauri::DragDropEvent::Drop { paths, .. } => {
-                            let path_strings: Vec<String> = paths.iter()
-                                .map(|p| p.to_string_lossy().to_string())
-                                .collect();
-                            let _ = window.emit("zync://file-drop", path_strings);
-                        }
-                        tauri::DragDropEvent::Leave => {
-                            let _ = window.emit("zync://drag-leave", ());
-                        }
-                        _ => {}
+                tauri::WindowEvent::DragDrop(drag_event) => match drag_event {
+                    tauri::DragDropEvent::Enter { paths, .. } => {
+                        let path_strings: Vec<String> = paths
+                            .iter()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        let _ = window.emit("zync://drag-enter", path_strings);
                     }
+                    tauri::DragDropEvent::Drop { paths, .. } => {
+                        let path_strings: Vec<String> = paths
+                            .iter()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        let _ = window.emit("zync://file-drop", path_strings);
+                    }
+                    tauri::DragDropEvent::Leave => {
+                        let _ = window.emit("zync://drag-leave", ());
+                    }
+                    _ => {}
+                },
+                tauri::WindowEvent::Destroyed => {
+                    commands::cleanup_plugin_window_temp_file(window.label());
                 }
                 _ => {}
             }
@@ -214,6 +146,10 @@ pub fn run() {
             commands::get_system_info,
             commands::settings_get,
             commands::settings_set,
+            commands::settings_get_path,
+            commands::settings_read_raw,
+            commands::settings_write_raw,
+            commands::settings_restore_last_known_good,
             commands::sftp_put,
             commands::sftp_get,
             commands::sftp_copy_to_server,
@@ -257,4 +193,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

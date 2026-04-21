@@ -5,8 +5,10 @@ import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
 
 export interface AppSettings {
     theme: string;
+    globalFontFamily: string;
+    globalFontSize: number;
     iconTheme: string;
-    accentColor?: string;
+    accentColor?: string | null;
     editor: {
         defaultProvider: string;
     };
@@ -18,6 +20,7 @@ export interface AppSettings {
     terminal: {
         fontSize: number;
         fontFamily: string;
+        fontLigatures: boolean;
         cursorStyle: 'block' | 'underline' | 'bar';
         lineHeight: number;
         padding: number;
@@ -94,10 +97,12 @@ export interface AppSettings {
     lastSeenVersion: string;
 }
 
-const defaultSettings: AppSettings = {
+export const defaultSettings: AppSettings = {
     theme: 'dark',
+    globalFontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, Arial, sans-serif",
+    globalFontSize: 14,
     iconTheme: 'vscode-icons',
-    accentColor: undefined,
+    accentColor: null,
     editor: {
         defaultProvider: CODEMIRROR_EDITOR_ID
     },
@@ -115,7 +120,8 @@ const defaultSettings: AppSettings = {
     lastSeenVersion: '',
     terminal: {
         fontSize: 14,
-        fontFamily: "'Fira Code', monospace",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+        fontLigatures: false,
         cursorStyle: 'block',
         lineHeight: 1.2,
         padding: 12
@@ -183,6 +189,32 @@ const defaultSettings: AppSettings = {
     }
 };
 
+function normalizeTerminalFontFamily(fontFamily: string | undefined): string | undefined {
+    if (typeof fontFamily !== 'string' || !fontFamily.trim()) return undefined;
+    const normalized = fontFamily
+        .trim()
+        .replace(/\s*,\s*/g, ',')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    const firstFamily = normalized.split(',')[0]?.replace(/^['"]|['"]$/g, '') ?? '';
+    const compactFirstFamily = firstFamily.replace(/[-_\s]+/g, '');
+
+    if (firstFamily.includes('fira code') || compactFirstFamily.includes('firacode')) {
+        return "'Fira Code', 'FiraCode Nerd Font', 'FiraCode NFM', 'Cascadia Code', Consolas, 'Courier New', monospace";
+    }
+    if (firstFamily.includes('jetbrains mono') || compactFirstFamily.includes('jetbrainsmono')) {
+        return "'JetBrains Mono', 'JetBrainsMono Nerd Font', 'JetBrainsMono NFM', 'Cascadia Mono', Consolas, 'Courier New', monospace";
+    }
+    if (firstFamily.includes('menlo') || compactFirstFamily.includes('menlo')) {
+        return "Menlo, Monaco, Consolas, 'Courier New', monospace";
+    }
+    return fontFamily;
+}
+
+async function persistSettings(settings: Record<string, unknown>): Promise<void> {
+    await invoke('settings_set', { settings });
+}
+
 export interface SettingsSlice {
     settings: AppSettings;
     isSettingsOpen: boolean;
@@ -219,7 +251,11 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 ...defaultSettings,
                 ...loaded,
                 editor: { ...defaultSettings.editor, ...(loaded?.editor || {}) },
-                terminal: { ...defaultSettings.terminal, ...(loaded?.terminal || {}) },
+                terminal: {
+                    ...defaultSettings.terminal,
+                    ...(loaded?.terminal || {}),
+                    fontFamily: normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ?? defaultSettings.terminal.fontFamily,
+                },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                 ghostSuggestions: {
@@ -245,123 +281,196 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
         let actualSettings = { ...newSettings };
 
         // If theme is changed but accentColor is not explicitly provided in the update,
-        // reset accentColor to undefined to allow the theme's default to take over.
+        // reset accentColor to null to allow the theme's default to take over.
         if ('theme' in newSettings && !('accentColor' in newSettings)) {
-            actualSettings.accentColor = undefined;
+            actualSettings.accentColor = null;
         }
 
-        const updated = { ...get().settings, ...actualSettings };
+        const previous = get().settings;
+        const updated = { ...previous, ...actualSettings };
         set({ settings: updated });
+        const changedKeys = Object.keys(actualSettings) as Array<keyof AppSettings>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings(actualSettings);
         } catch (error) {
             console.error('Failed to save settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous[key]])
+            ) as Partial<AppSettings>;
+            set({ settings: { ...current, ...rollbackPatch } });
+            throw error;
         }
     },
 
     updateAiSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            ai: { ...get().settings.ai, ...updates }
+            ...previous,
+            ai: { ...previous.ai, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['ai']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ ai: updates });
         } catch (error) {
             console.error('Failed to save AI settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.ai[key]])
+            ) as Partial<AppSettings['ai']>;
+            set({ settings: { ...current, ai: { ...current.ai, ...rollbackPatch } } });
+            throw error;
         }
     },
 
     updateEditorSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            editor: { ...get().settings.editor, ...updates }
+            ...previous,
+            editor: { ...previous.editor, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['editor']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ editor: updates });
         } catch (error) {
             console.error('Failed to save editor settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.editor[key]])
+            ) as Partial<AppSettings['editor']>;
+            set({ settings: { ...current, editor: { ...current.editor, ...rollbackPatch } } });
+            throw error;
         }
     },
 
     updateTerminalSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            terminal: { ...get().settings.terminal, ...updates }
+            ...previous,
+            terminal: { ...previous.terminal, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['terminal']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ terminal: updates });
         } catch (error) {
             console.error('Failed to save terminal settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.terminal[key]])
+            ) as Partial<AppSettings['terminal']>;
+            set({ settings: { ...current, terminal: { ...current.terminal, ...rollbackPatch } } });
+            throw error;
         }
     },
 
     updateLocalTermSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            localTerm: { ...get().settings.localTerm, ...updates }
+            ...previous,
+            localTerm: { ...previous.localTerm, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['localTerm']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ localTerm: updates });
         } catch (error) {
             console.error('Failed to save local terminal settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.localTerm[key]])
+            ) as Partial<AppSettings['localTerm']>;
+            set({ settings: { ...current, localTerm: { ...current.localTerm, ...rollbackPatch } } });
+            throw error;
         }
     },
 
     updateFileManagerSettings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            fileManager: { ...get().settings.fileManager, ...updates }
+            ...previous,
+            fileManager: { ...previous.fileManager, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['fileManager']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ fileManager: updates });
         } catch (error) {
             console.error('Failed to save file manager settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.fileManager[key]])
+            ) as Partial<AppSettings['fileManager']>;
+            set({ settings: { ...current, fileManager: { ...current.fileManager, ...rollbackPatch } } });
+            throw error;
         }
     },
 
     updateGhostSuggestionsSettings: async (updates) => {
-        // Normalize: accept both the inner fields directly or wrapped in { ghostSuggestions: {...} }
-        // so callers can pass either shape without causing double-nesting.
-        const payload = (
-            'ghostSuggestions' in updates
-                ? (updates as Record<string, unknown>)['ghostSuggestions']
-                : updates
-        ) as Partial<AppSettings['ghostSuggestions']>;
-        const current = get().settings.ghostSuggestions;
+        const prevSettings = get().settings;
+        const currentGhost = prevSettings.ghostSuggestions;
         const updated = {
-            ...get().settings,
+            ...prevSettings,
             ghostSuggestions: {
-                ...current,
-                ...payload,
+                ...currentGhost,
+                ...updates,
                 providers: {
-                    ...current.providers,
-                    ...(payload.providers || {}),
+                    ...currentGhost.providers,
+                    ...(updates.providers || {}),
                 },
             },
         };
         set({ settings: updated });
+        const changedGhostKeys = Object.keys(updates).filter((key) => key !== 'providers') as Array<Exclude<keyof AppSettings['ghostSuggestions'], 'providers'>>;
+        const changedProviderKeys = Object.keys(updates.providers || {}) as Array<keyof AppSettings['ghostSuggestions']['providers']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ ghostSuggestions: updates });
         } catch (error) {
             console.error('Failed to save ghost suggestion settings:', error);
+            const latestSettings = get().settings;
+            const rollbackGhostPatch = Object.fromEntries(
+                changedGhostKeys.map((key) => [key, currentGhost[key]])
+            ) as Partial<Omit<AppSettings['ghostSuggestions'], 'providers'>>;
+            const rollbackProviderPatch = Object.fromEntries(
+                changedProviderKeys.map((key) => [key, currentGhost.providers[key]])
+            ) as Partial<AppSettings['ghostSuggestions']['providers']>;
+            set({
+                settings: {
+                    ...latestSettings,
+                    ghostSuggestions: {
+                        ...latestSettings.ghostSuggestions,
+                        ...rollbackGhostPatch,
+                        providers: {
+                            ...latestSettings.ghostSuggestions.providers,
+                            ...rollbackProviderPatch,
+                        },
+                    },
+                },
+            });
+            throw error;
         }
     },
 
     updateKeybindings: async (updates) => {
+        const previous = get().settings;
         const updated = {
-            ...get().settings,
-            keybindings: { ...get().settings.keybindings, ...updates }
+            ...previous,
+            keybindings: { ...previous.keybindings, ...updates }
         };
         set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['keybindings']>;
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ keybindings: updates });
         } catch (error) {
             console.error('Failed to save keybindings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys.map((key) => [key, previous.keybindings[key]])
+            ) as Partial<AppSettings['keybindings']>;
+            set({ settings: { ...current, keybindings: { ...current.keybindings, ...rollbackPatch } } });
+            throw error;
         }
     },
 
@@ -371,12 +480,16 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             ? current.filter(f => f !== folderPath)
             : [...current, folderPath];
 
-        const updated = { ...get().settings, expandedFolders: newFolders };
+        const previous = get().settings;
+        const updated = { ...previous, expandedFolders: newFolders };
         set({ settings: updated });
         try {
-            await invoke('settings_set', { settings: updated });
+            await persistSettings({ expandedFolders: newFolders });
         } catch (error) {
             console.error('Failed to save expanded folders:', error);
+            const current = get().settings;
+            set({ settings: { ...current, expandedFolders: previous.expandedFolders } });
+            throw error;
         }
     },
 

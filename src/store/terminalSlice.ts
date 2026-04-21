@@ -139,10 +139,18 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             return get().createTerminal(connectionId, initialPath);
         }
         const activeId = state.activeTerminalIds[connectionId];
-        if (activeId) {
+        if (activeId && currentTabs.some((tab) => tab.id === activeId)) {
             return activeId;
         }
-        return currentTabs[0].id;
+        const fallbackId = currentTabs[0].id;
+        set(prev => ({
+            activeTerminalIds: {
+                ...prev.activeTerminalIds,
+                [connectionId]: fallbackId,
+            },
+        }));
+        get().saveSession();
+        return fallbackId;
     },
 
     /** @inheritdoc */

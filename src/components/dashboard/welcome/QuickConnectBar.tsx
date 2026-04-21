@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../../lib/utils';
 import type { Connection } from '../../../store/connectionSlice';
 import { useAppStore } from '../../../store/useAppStore';
+import { filterConnectionSuggestions } from './welcomeQuickConnectHelpers';
 import { AuthPanel } from './quick-connect/AuthPanel';
 import { SuggestionsDropdown } from './quick-connect/SuggestionsDropdown';
 import { TemplatesDropdown, type ConnectionTemplate } from './quick-connect/TemplatesDropdown';
@@ -60,17 +61,10 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
     const templateItemRefs = useRef<Array<HTMLLIElement | null>>([]);
     const listboxId    = useId();
 
-    const suggestions = useMemo(() => (
-        input.trim()
-            ? connections
-                .filter(c =>
-                    c.name?.toLowerCase().includes(input.toLowerCase()) ||
-                    c.host.toLowerCase().includes(input.toLowerCase()) ||
-                    c.username.toLowerCase().includes(input.toLowerCase())
-                )
-                .slice(0, 6)
-            : []
-    ), [input, connections]);
+    const suggestions = useMemo(
+        () => filterConnectionSuggestions(input, connections, 6),
+        [input, connections],
+    );
 
     const recentConnections = useMemo(() => (
         !input.trim()

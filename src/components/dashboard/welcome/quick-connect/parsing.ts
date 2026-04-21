@@ -104,6 +104,9 @@ export function parseConnectionString(raw: string): { username: string; host: st
     let rest = trimmed;
 
     const userSplitIndex = rest.indexOf('@');
+    if (userSplitIndex >= 0 && userSplitIndex !== rest.lastIndexOf('@')) {
+        return null;
+    }
     if (userSplitIndex >= 0) {
         username = rest.slice(0, userSplitIndex);
         rest = rest.slice(userSplitIndex + 1);
@@ -163,6 +166,9 @@ export function parseSSHCommand(raw: string): { username: string; host: string; 
     let username = 'root';
     let host = hostToken;
     const userSplitIndex = hostToken.indexOf('@');
+    if (userSplitIndex >= 0 && userSplitIndex !== hostToken.lastIndexOf('@')) {
+        return null;
+    }
     if (userSplitIndex >= 0) {
         username = hostToken.slice(0, userSplitIndex);
         host = hostToken.slice(userSplitIndex + 1);

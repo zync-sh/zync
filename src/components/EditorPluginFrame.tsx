@@ -12,6 +12,7 @@ interface EditorPluginFrameProps {
   initialContent: string;
   onSave: (content: string) => Promise<void>;
   onClose: () => void;
+  hideToolbar?: boolean;
   onFatalError?: (reason: string) => void;
 }
 
@@ -57,6 +58,7 @@ export function EditorPluginFrame({
   initialContent,
   onSave,
   onClose,
+  hideToolbar = false,
   onFatalError,
 }: EditorPluginFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -378,23 +380,25 @@ export function EditorPluginFrame({
 
   return (
       <div className="absolute inset-0 z-[70] flex min-h-0 flex-col bg-app-panel">
-        <div className="flex h-10 items-center justify-between border-b border-app-border px-3">
-          <h3 className="truncate text-base font-semibold text-app-text">
-            {filename} · {plugin.manifest.editor?.displayName || plugin.manifest.name}
-          </h3>
-          <div className="flex items-center gap-3 text-xs text-app-muted">
-            <span>{isReady ? 'Connected' : 'Connecting…'}</span>
-            <span>{dirty ? 'Modified' : 'Saved'}</span>
-            <button
-              type="button"
-              onClick={() => { void requestClose(); }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
-              aria-label="Close editor"
-            >
-              ×
-            </button>
+        {!hideToolbar && (
+          <div className="flex h-10 items-center justify-between border-b border-app-border px-3">
+            <h3 className="truncate text-base font-semibold text-app-text">
+              {filename} · {plugin.manifest.editor?.displayName || plugin.manifest.name}
+            </h3>
+            <div className="flex items-center gap-3 text-xs text-app-muted">
+              <span>{isReady ? 'Connected' : 'Connecting…'}</span>
+              <span>{dirty ? 'Modified' : 'Saved'}</span>
+              <button
+                type="button"
+                onClick={() => { void requestClose(); }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
+                aria-label="Close editor"
+              >
+                ×
+              </button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
         {saveError && (
           <div className="border-b border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">

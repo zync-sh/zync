@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -15,8 +15,10 @@ import {
     importConnectionsFromFileIpc,
     type ConnectionExchangeImportFormat,
 } from '../../features/connections/infrastructure/connectionTransfer';
-
-const ImportSshModal = lazy(() => import('./ImportSshModal').then(mod => ({ default: mod.ImportSshModal })));
+const ImportSshModal = lazy(async () => {
+    const module = await import('./ImportSshModal');
+    return { default: module.ImportSshModal };
+});
 
 interface AddConnectionModalProps {
     isOpen: boolean;
@@ -190,9 +192,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
 
             setTestStatus('success');
             setTestMessage('Connection successful!');
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
             setTestStatus('error');
-            setTestMessage(error.toString().replace('Error: ', ''));
+            setTestMessage(message.replace('Error: ', ''));
         }
     };
 
@@ -222,8 +225,11 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                 setTouched((prev) => ({ ...prev, keyPath: true }));
                 setFormData((prev) => ({ ...prev, privateKeyPath: path }));
             }
-        } catch (e) {
-            console.error('Failed to select key', e);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            setTouched((prev) => ({ ...prev, keyPath: true }));
+            setFormData((prev) => ({ ...prev, privateKeyPath: '' }));
+            showToast('error', `Failed to select key: ${message}`);
         }
     };
 
@@ -258,8 +264,8 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             importConnections(mappedConnections, imported.folders || []);
             showToast('success', `Imported ${mappedConnections.length} connection(s) from file.`);
             onClose();
-        } catch (error: any) {
-            const message = error?.message || String(error);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
             showToast('error', `Failed to import connection file: ${message}`);
         }
     };
@@ -473,10 +479,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                             <Input
                                                 className="flex-1"
                                                 readOnly
-                                            placeholder="No key selected"
-                                            value={formData.privateKeyPath ? formData.privateKeyPath.split(/[/\\]/).pop() : ''}
-                                            error={visibleKeyPathError}
-                                        />
+                                                placeholder="No key selected"
+                                                value={formData.privateKeyPath ? formData.privateKeyPath.split(/[/\\]/).pop() : ''}
+                                                error={visibleKeyPathError}
+                                            />
                                             <Button variant="secondary" onClick={handleBrowseKey}>Browse</Button>
                                         </div>
                                         <p className="text-[10px] text-app-muted/70">Selected key will be securely used for this connection.</p>
@@ -620,8 +626,8 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                 )}
             </div>
 
-            <Suspense fallback={null}>
-                {isImportModalOpen && (
+            {isImportModalOpen && (
+                <Suspense fallback={null}>
                     <ImportSshModal
                         isOpen={isImportModalOpen}
                         onClose={() => setIsImportModalOpen(false)}
@@ -643,9 +649,9 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                             onClose();
                         }}
                     />
-                )}
-            </Suspense>
-        </Modal >
+                </Suspense>
+            )}
+    </Modal>
     );
 }
 

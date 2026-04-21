@@ -237,19 +237,19 @@ export function CombinedTabBar({
                     </button>
 
                     {isDropdownOpen && (
-                        <div className={cn("absolute top-full mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col", dropdownAlign === 'right' ? 'right-0' : 'left-0')}>
+                        <div className={cn("absolute top-full mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden px-1 py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col", dropdownAlign === 'right' ? 'right-0' : 'left-0')}>
                             <button
                                 onClick={() => {
                                     onNewTerminal();
                                     setIsDropdownOpen(false);
                                 }}
-                                className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors text-app-text hover:bg-app-surface mx-1 rounded-md w-[calc(100%-8px)]"
+                                className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors text-app-text hover:bg-app-surface rounded-md box-border"
                             >
                                 <TerminalIcon size={14} className="opacity-80" />
                                 <span>Terminal</span>
                             </button>
 
-                            <div className="h-[1px] bg-app-border/50 my-1 mx-2" />
+                            <div className="h-[1px] bg-app-border/50 my-1 mx-1" />
 
                             <div className="px-3 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider">Features</div>
 
@@ -266,7 +266,7 @@ export function CombinedTabBar({
                                         }}
                                         disabled={isActive}
                                         className={cn(
-                                            "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors mx-1 rounded-md w-[calc(100%-8px)]",
+                                            "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors rounded-md box-border",
                                             isActive ? "bg-app-accent/10 text-app-accent cursor-default" : "text-app-text hover:bg-app-surface"
                                         )}
                                     >
@@ -285,7 +285,7 @@ export function CombinedTabBar({
 
                             {pluginPanels.length > 0 && (
                                 <>
-                                    <div className="h-[1px] bg-app-border/50 my-1 mx-2" />
+                                    <div className="h-[1px] bg-app-border/50 my-1 mx-1" />
                                     <div className="px-3 py-1 text-[10px] font-bold text-app-muted uppercase tracking-wider flex items-center gap-1.5">
                                         <Plug size={10} />
                                         Plugin Panels
@@ -302,7 +302,7 @@ export function CombinedTabBar({
                                                 }}
                                                 disabled={isActive}
                                                 className={cn(
-                                                    "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors mx-1 rounded-md w-[calc(100%-8px)]",
+                                                    "w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors rounded-md box-border",
                                                     isActive ? "bg-app-accent/10 text-app-accent cursor-default" : "text-app-text hover:bg-app-surface"
                                                 )}
                                             >

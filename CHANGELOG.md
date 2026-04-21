@@ -4,13 +4,45 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
-## [2.13.2]
+## [2.14.0] - 2026-04-21
+
+### Added
+- **In-App `settings.json` Editing Surface**: Added a full in-app editor workflow for global `settings.json` including load/save/reload/restore integration in the Settings experience. ([7f9c425])
+
+### Changed
+- **Settings Persistence Flow**: Moved `config:set` patch merge responsibility to backend `settings_set` so merge + validation happen in one canonical path. ([7f9c425])
+- **Settings Editor UX**: Improved settings error/conflict handling and in-editor save/reload/restore reliability. ([7f9c425])
+- **Settings Architecture Refactor**: Split Settings into modular tabs/hooks/common components and restored non-working settings + font control flows. ([da93f23], [bb42e1c])
+- **Terminal Dependency Alignment**: Migrated terminal runtime packages to a consistent scoped `@xterm/*` stack. ([9958c44])
+- **Shell/UI Loading Cleanup**: Stabilized modal loading paths and shell-level UI wiring across layout/sidebar/modal bridge points. ([e1d6109])
+- **Settings Patch Persistence Safety**: Sub-slice settings writes now persist patch payloads with safer merge semantics, and accent reset semantics were normalized for clearer default-color behavior. ([8dfe727])
+- **Settings/Update UX Robustness**: Improved settings runtime guards for plugin/update flows, UI-side effect gating, and terminal ligature state bookkeeping consistency. ([e70f7a0])
+- **Connectivity & Copy Fallback Hardening**: Tightened quick-connect parsing/limits, improved Windows path normalization in file workflows, and hardened server-side copy fallback behavior. ([e7f4f02])
+
+### Fixed
+- **IPC Listener Cleanup Race**: Hardened Tauri IPC listener setup/teardown flow to avoid pending-listener unsubscribe edge cases. ([7f9c425])
+- **Editor Search Focus Stability**: Prevented unintended focus jumps in `PlainFileEditor` during match recalculation. ([7f9c425])
+- **Batch SFTP Copy Retry Guard**: Added retry caps for session-closed reconnect loops in batch copy paths to avoid unbounded retries. ([7f9c425])
+- **Batch Rename Retry Idempotency**: Added remote existence probes before retry rename operations after reconnect to avoid duplicate/unsafe replays. ([7f9c425])
+- **Settings Backup Promotion Safety**: Validate existing settings payload before promoting it to last-known-good backup. ([7f9c425])
+- **Transfer Progress Accuracy**: Final transfer progress emit now reports real transferred/total values instead of hardcoded `100/100`. ([7f9c425])
+- **Plugin Window HTML Transport**: Replaced large base64 data URL rendering with temp-file-backed `file://` webview loading for plugin HTML windows. ([7f9c425])
+- **Blocking Folder Picker Call**: Offloaded blocking folder selection dialog invocation to blocking runtime executor. ([7f9c425])
+- **Terminal Path Escaping Consistency**: Reused shared `shell_quote` helper for terminal navigation command construction. ([7f9c425])
+- **SSH Config Import Redundant Read**: Removed unnecessary duplicate file open before parse. ([7f9c425])
+- **Data Directory Resolution Cost**: Added cached data-dir resolution to avoid repeated blocking settings reads on hot paths. ([7f9c425])
+- **AI Settings Parse Diagnostics**: Expanded debug logging to include actual settings path context for AI config parse/default fallback cases. ([7f9c425])
+- **Settings Action Re-entry + Parser/Picker Consistency**: Added in-flight guards for update actions, switched welcome quick-connect helper parsing to shared canonical logic, and aligned theme color picker fallback with theme default accent when valid. ([c9e8345])
+- **File Manager Interaction Stability**: Improved callback/effect stability, keyboard behavior, and quick-connect parsing edge-case handling. ([9f41e0f])
+- **Plugin Temp HTML Lifecycle**: Hardened plugin temp-file registration and stale cache cleanup behavior. ([2ef1c90])
+
+## [2.13.2] - 2026-04-18
 
 ### Changed
 - **Welcome Screen & Quick Connect Rebuild**: Split the quick-connect area into focused auth, suggestions, and templates components, tightened keyboard/accessibility behavior, and hardened the welcome screen interactions. ([ad0aea5], [ef6f9eb])
 
 
-## [2.13.1]
+## [2.13.1] - 2026-04-17
 
 ### Fixed
 - **Terminal PTY Generation Guarding**: Added per-spawn generation tagging for terminal ready/output/exit events so stale PTY events from earlier reload/restart cycles are ignored cleanly. ([d049d01])
@@ -19,7 +51,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Added
 - **Session Persistence Test Coverage**: Added focused regression coverage for session snapshot serialization, tab filtering, terminal truncation, and active-terminal ID persistence. ([d049d01])
 
-## [2.13.0]
+## [2.13.0] - 2026-04-16
 
 ### Removed
 - **Status Bar Version Number**: Removed the app version display from the bottom status bar. ([648102c])
@@ -29,7 +61,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **SSH Terminal Restore**: SSH terminal tabs are restored as metadata-only on launch and show a "Reconnect to resume" prompt; the live PTY is re-established when the user reconnects the connection. ([2de6066])
 - **Passive CWD Tracking**: Working directory is captured via OSC 7 for shells that emit it natively (starship, oh-my-posh, fish, zsh with precmd) and surfaced to ghost suggestions and AI context. ([2de6066])
 
-## [2.12.0]
+## [2.12.0] - 2026-04-15
 
 ### Added
 - **Ghost Suggestion System (Inline + Popup)**: Introduced fish-style inline ghost text completions and a Tab-triggered popup list for all terminal sessions. Completions are driven by frecency-scored command history (scoped per connection) and live filesystem path listing via SFTP/local. ([b4e8078])
@@ -37,7 +69,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Frecency History Backend (Rust)**: Added a Rust `ghost` module with `GhostManager` for frecency-scored command history, scoped per SSH connection or local session. Includes `ghost_commit`, `ghost_accept`, `ghost_suggest`, and `ghost_candidates` Tauri commands. ([a20af8c])
 - **Ghost Suggestion Test Suite**: Added `tests/ghostSuggestionsHelpers.test.mjs` covering tab behavior, popup state, input tracker, path completion, and runtime routing. ([f174726])
 
-## [2.11.1]
+## [2.11.1] - 2026-04-12
 
 ### Fixed
 - **Plugin Theme Payload Reliability**: Versioned the host → plugin theme payload, improved CSS variable resolution (body + root fallback), expanded rgb parsing, and fixed memoization so editor/panel plugins receive accurate theme updates. ([c87e3d7])
@@ -46,7 +78,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **AI Tool Path Validation Hardening**: Updated backend AI file-tool path validation to block real traversal components (`..`) while allowing valid filenames containing double dots (for example, `config..bak`). ([5d4f87f])
 - **AI Write Tool Output Capping**: Routed `write_file` tool status output through shared `cap_output()` so all AI tool outputs consistently respect truncation limits and artifact fallback behavior. ([5d4f87f])
 
-## [2.11.0]
+## [2.11.0] - 2026-04-10
 
 ### Added
 - **Connection Domain Test Suite**: Added focused tests for connection domain, transforms, lifecycle, tab services, and tunnel auto-start behavior to lock refactor parity. ([d2a50c3])
@@ -75,7 +107,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Connection Reliability Hardening**: Added file-source import size guardrails, fixed nested import modal close state, preserved unmatched duplicate records during merge, refined local terminal close behavior, and hardened transfer cancel cleanup/error handling. ([d0d56d7])
 - **Scoped Zync Export Integrity**: Filtered exported folder metadata to the selected connection scope and aligned SSH `ProxyJump` aliases with sanitized `Host` aliases in generated configs. ([a2dffb7])
 
-## [2.10.1]
+## [2.10.1] - 2026-04-09
 
 ### Added
 - **Sidebar Connection Search**: Added a top-of-sidebar connection search input that filters active hosts and the full host tree from a single query. ([1dfe5f3])
@@ -87,7 +119,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Fixed
 - **Smart Context Menu Positioning**: Reworked context menu/submenu placement with measured viewport-aware clamping so menus remain visible near edges and close reliably on escape/outside interactions. ([b9e726f])
 
-## [2.10.0]
+## [2.10.0] - 2026-04-08
 
 ### Added
 - **Plugin-Hosted Editor Runtime**: Introduced `FileEditorHost` with provider-aware rendering, built-in plain fallback, and CodeMirror default provider surfaces. ([a9afb01])
@@ -114,7 +146,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Runtime Blocking During Local Install**: Moved local plugin installation filesystem work into `spawn_blocking` to avoid blocking async runtime threads. ([5e86529])
 - **Conflicting Local-Install Toasts**: Success toast is now gated by plugin-list reload success to avoid warning + success toast conflicts on refresh failure. ([42c2b66])
 
-## [2.9.2]
+## [2.9.2] - 2026-04-06
 
 ### Added
 - **Large Output Artifacts**: Tool outputs exceeding 8 KB are now automatically saved as text files within the session folder, preventing IPC bottlenecks and keeping the chat history lightweight. ([ece9793])
@@ -136,7 +168,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Done Bubble Alignment**: Fixed status icon positioning in completion bubbles to prevent it from floating in the middle of long summaries. ([ece9793])
 
 
-## [2.9.1]
+## [2.9.1] - 2026-04-05
 
 ### Fixed
 
@@ -150,7 +182,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Shared Slug Utility**: Extracted `slugify` from `brain.rs` into a reusable `ai::util` module. ([88bb61a])
 - **Agent Store Modularity**: Added `getSessionPaths(scope)` helper to `agentRunStore` to cleanly extract brain session paths from conversation messages. ([88bb61a])
 
-## [2.9.0]
+## [2.9.0] - 2026-03-31
 
 ### Added
 
@@ -572,7 +604,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.13.2...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.14.0...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -642,6 +674,18 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2de6066]: https://github.com/zync-sh/zync/commit/2de6066
 [ad0aea5]: https://github.com/zync-sh/zync/commit/ad0aea5
 [ef6f9eb]: https://github.com/zync-sh/zync/commit/ef6f9eb
+[7f9c425]: https://github.com/zync-sh/zync/commit/7f9c425
+[8dfe727]: https://github.com/zync-sh/zync/commit/8dfe727
+[e70f7a0]: https://github.com/zync-sh/zync/commit/e70f7a0
+[e7f4f02]: https://github.com/zync-sh/zync/commit/e7f4f02
+[c9e8345]: https://github.com/zync-sh/zync/commit/c9e8345
+[da93f23]: https://github.com/zync-sh/zync/commit/da93f23
+[bb42e1c]: https://github.com/zync-sh/zync/commit/bb42e1c
+[9958c44]: https://github.com/zync-sh/zync/commit/9958c44
+[e1d6109]: https://github.com/zync-sh/zync/commit/e1d6109
+[9f41e0f]: https://github.com/zync-sh/zync/commit/9f41e0f
+[2ef1c90]: https://github.com/zync-sh/zync/commit/2ef1c90
+[2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
 [2.13.0]: https://github.com/zync-sh/zync/compare/v2.12.0...v2.13.0

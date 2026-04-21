@@ -3,7 +3,7 @@ import { Keyboard, Search } from 'lucide-react';
 import { minimalSetup } from 'codemirror';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
 import { searchKeymap, openSearchPanel, closeSearchPanel } from '@codemirror/search';
 import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
@@ -33,6 +33,7 @@ interface CodeMirrorFileEditorProps {
   initialContent: string;
   onSave: (content: string) => Promise<void>;
   onClose: () => void;
+  hideToolbar?: boolean;
 }
 
 function parseGoToLineInput(input: string, maxLine: number) {
@@ -91,6 +92,7 @@ export function CodeMirrorFileEditor({
   initialContent,
   onSave,
   onClose,
+  hideToolbar = false,
 }: CodeMirrorFileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -103,17 +105,26 @@ export function CodeMirrorFileEditor({
   const [goToLineValue, setGoToLineValue] = useState('');
   const [goToLineError, setGoToLineError] = useState<string | null>(null);
   const [docText, setDocText] = useState(initialContent);
+  // Saved baseline is intentionally decoupled from incoming props.
+  // This preserves undo/redo history across save operations.
+  const [savedContent, setSavedContent] = useState(initialContent);
   const [lineCount, setLineCount] = useState(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
   const goToLineInputRef = useRef<HTMLInputElement>(null);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
+  const showToast = useAppStore((state) => state.showToast);
   const theme = useAppStore((state) => state.settings.theme);
 
-  const isDirty = docText !== initialContent;
+  const isDirty = docText !== savedContent;
   const languageExtension = useMemo(() => getLanguageExtension(filename), [filename]);
   const lineCommentToken = useMemo(() => getLineCommentToken(filename), [filename]);
   const languageLabel = useMemo(() => getLanguageLabel(filename), [filename]);
   const saveRef = useRef<() => Promise<void> | void>(() => {});
   const toggleCommentRef = useRef<(view: EditorView) => boolean>(() => false);
+  const isDirtyRef = useRef(isDirty);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
 
   const syncCursorState = useCallback((state: EditorState) => {
     const head = state.selection.main.head;
@@ -130,12 +141,17 @@ export function CodeMirrorFileEditor({
     if (!view || isSaving) return;
     setIsSaving(true);
     try {
-      await onSave(view.state.doc.toString());
-      requestAnimationFrame(() => view.focus());
+      const current = view.state.doc.toString();
+      await onSave(current);
+      setSavedContent(current);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save file';
+      showToast('error', message);
     } finally {
       setIsSaving(false);
+      requestAnimationFrame(() => view.focus());
     }
-  }, [isSaving, onSave]);
+  }, [isSaving, onSave, showToast]);
 
   const handleClose = useCallback(async () => {
     if (!isDirty) {
@@ -305,6 +321,7 @@ export function CodeMirrorFileEditor({
 
     viewRef.current = view;
     setDocText(initialContent);
+    setSavedContent(initialContent);
     setLineCount(view.state.doc.lines);
     syncCursorState(view.state);
     requestAnimationFrame(() => view.focus());
@@ -313,7 +330,7 @@ export function CodeMirrorFileEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, [initialContent, languageCompartment, languageExtension, openGoToLineDialog, resolvedThemeMode, syncCursorState, themeCompartment]);
+  }, [openGoToLineDialog, syncCursorState]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -336,18 +353,46 @@ export function CodeMirrorFileEditor({
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
-    if (current === initialContent) return;
+    if (current === initialContent) {
+      setSavedContent(initialContent);
+      return;
+    }
 
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: view.state.doc.length,
-        insert: initialContent,
-      }
-    });
-    setDocText(initialContent);
-    setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
-  }, [filename, initialContent]);
+    const applyIncomingContent = () => {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: initialContent,
+        }
+      });
+      setDocText(initialContent);
+      setSavedContent(initialContent);
+      setLineCount(initialContent.length === 0 ? 1 : initialContent.split('\n').length);
+    };
+
+    if (!isDirtyRef.current) {
+      applyIncomingContent();
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const confirmed = await showConfirmDialog({
+        title: 'Replace unsaved changes?',
+        message: `${filename} has unsaved edits. Reload incoming content and discard current edits?`,
+        confirmText: 'Reload',
+        cancelText: 'Keep Editing',
+        variant: 'danger',
+      });
+      if (!confirmed || cancelled) return;
+      applyIncomingContent();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filename, initialContent, showConfirmDialog]);
 
   useEffect(() => {
     const focusEditor = () => viewRef.current?.focus();
@@ -365,6 +410,26 @@ export function CodeMirrorFileEditor({
         event.stopPropagation();
         event.stopImmediatePropagation();
         void handleClose();
+        return;
+      }
+
+      if (ctrlOrMeta && (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) {
+        const view = viewRef.current;
+        if (!view) return;
+        const target = event.target as Node | null;
+        if (target && !view.contentDOM.contains(target)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+
+        // Ensure undo/redo still works even if focus shifted after save.
+        view.focus();
+        if (event.key.toLowerCase() === 'y' || event.shiftKey) {
+          redo(view);
+        } else {
+          undo(view);
+        }
         return;
       }
 
@@ -436,33 +501,35 @@ export function CodeMirrorFileEditor({
 
   return (
       <div className="absolute inset-0 z-[70] flex min-h-0 flex-col bg-app-panel">
-        <div className="flex h-9 items-center justify-between border-b border-app-border px-3">
-          <div className="min-w-0 truncate text-sm font-semibold text-app-text">{filename}</div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const view = viewRef.current;
-                if (!view) return;
-                view.focus();
-              }}
-              className="inline-flex h-7 items-center gap-1 rounded border border-app-border bg-app-surface/40 px-2 text-[10px] font-medium text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
-              title="Editor shortcuts: Ctrl/Cmd+S, Ctrl/Cmd+F, Ctrl/Cmd+G, Ctrl/Cmd+W · Esc closes Find/Go-to-line"
-            >
-              <Keyboard size={11} />
-              {CODEMIRROR_SHORTCUT_HINTS.map((hint, index) => (
-                <span key={hint} className="contents">
-                  {index > 0 && <span className="opacity-50">·</span>}
-                  <span>{hint}</span>
-                </span>
-              ))}
-            </button>
-            <Button variant="ghost" size="sm" onClick={openSearch}>
-              <Search className="mr-1 h-3.5 w-3.5" />
-              Find / Replace
-            </Button>
+        {!hideToolbar && (
+          <div className="flex h-9 items-center justify-between border-b border-app-border px-3">
+            <div className="min-w-0 truncate text-sm font-semibold text-app-text">{filename}</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const view = viewRef.current;
+                  if (!view) return;
+                  view.focus();
+                }}
+                className="inline-flex h-7 items-center gap-1 rounded border border-app-border bg-app-surface/40 px-2 text-[10px] font-medium text-app-muted transition-colors hover:bg-app-surface hover:text-app-text"
+                title="Editor shortcuts: Ctrl/Cmd+S, Ctrl/Cmd+F, Ctrl/Cmd+G, Ctrl/Cmd+W · Esc closes Find/Go-to-line"
+              >
+                <Keyboard size={11} />
+                {CODEMIRROR_SHORTCUT_HINTS.map((hint, index) => (
+                  <span key={hint} className="contents">
+                    {index > 0 && <span className="opacity-50">·</span>}
+                    <span>{hint}</span>
+                  </span>
+                ))}
+              </button>
+              <Button variant="ghost" size="sm" onClick={openSearch}>
+                <Search className="mr-1 h-3.5 w-3.5" />
+                Find / Replace
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
         {showGoToLine && (
           <div className="flex items-center gap-2 border-b border-app-border bg-app-surface/30 px-3 py-1.5">

@@ -7,7 +7,7 @@
  * xterm major version bump that renames internal APIs).
  */
 
-import type { Terminal } from 'xterm';
+import type { Terminal } from '@xterm/xterm';
 
 export interface CursorPixelPosition {
   left: number;

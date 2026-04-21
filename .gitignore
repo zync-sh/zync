@@ -26,3 +26,4 @@ dist-ssr
 .omx
 release/
 .tmp-agent-tests/
+.npm-cache/

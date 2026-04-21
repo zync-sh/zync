@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback, memo } from 'react';
 import {
     Sparkles, X, Trash2,
-    Terminal, FileCode, Send, Square, CreditCard,
+    Terminal, FileCode, Send, Square,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../../lib/utils';
@@ -118,13 +118,13 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
     const streamingText       = useAppStore(s => s.aiStreamingText);
     const submitAiQuery       = useAppStore(s => s.submitAiQuery);
     const clearDisplayHistory = useAppStore(s => s.clearDisplayHistory);
+    const addToDisplayHistory = useAppStore(s => s.addToDisplayHistory);
     const pushAiHistory       = useAppStore(s => s.pushAiHistory);
     const aiSettings          = useAppStore(s => s.settings.ai);
     const updateAiSettings    = useAppStore(s => s.updateAiSettings);
     const checkOllama         = useAppStore(s => s.checkOllama);
     const getOllamaModels     = useAppStore(s => s.getOllamaModels);
     const fetchProviderModels = useAppStore(s => s.getProviderModels);
-    const openSettings        = useAppStore(s => s.openSettings);
     const attachedContext     = useAppStore(s => s.aiAttachedContext);
     const setAttachedContext  = useAppStore(s => s.setAiAttachedContext);
     const showToast           = useAppStore(s => s.showToast);
@@ -177,6 +177,41 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
         getOllamaModels,
         fetchProviderModels,
     });
+
+    /**
+     * Auto-heal Ollama model selection:
+     * - if provider is Ollama,
+     * - Ollama is reachable,
+     * - model list exists,
+     * - current configured model is empty or no longer present,
+     * then select the first available model so the user isn't stuck in a
+     * permanent "No model selected" state.
+     */
+    useEffect(() => {
+        if (!isOpen || activeProviderValue !== 'ollama' || !ollamaAvailable) return;
+        if (currentModels.length === 0) return;
+
+        const configuredModel = (aiSettings?.model ?? '').trim();
+        const isConfiguredModelValid = configuredModel.length > 0
+            && currentModels.some((model) => model.value === configuredModel);
+
+        if (isConfiguredModelValid) return;
+
+        const fallbackModel = currentModels[0]?.value;
+        if (!fallbackModel) return;
+        void updateAiSettings({ model: fallbackModel }).catch((error: unknown) => {
+            console.error('Failed to auto-select fallback model', error);
+            showToast('warning', 'Could not auto-select the fallback model. Please choose one manually.');
+        });
+    }, [
+        isOpen,
+        activeProviderValue,
+        ollamaAvailable,
+        currentModels,
+        aiSettings?.model,
+        updateAiSettings,
+        showToast,
+    ]);
 
     useEffect(() => {
         const h = (e: Event) => {
@@ -266,6 +301,30 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
         if (!trimmed || isLoading || agentRunning) return;
         pushAiHistory(trimmed);
 
+        if (providerNeedsSetup) {
+            const setupMessage = activeProviderValue === 'ollama'
+                ? (!ollamaAvailable
+                    ? 'Ollama is not running. Start Ollama or switch to another provider.'
+                    : 'No Ollama model found. Pull a model (for example: ollama pull llama3.2) or switch provider.')
+                : 'No model selected for the current provider. Please select a model and try again.';
+
+            if (isAgentMode) {
+                agentAct().addError(agentScope, setupMessage);
+            } else if (connectionId) {
+                addToDisplayHistory(connectionId, {
+                    id: crypto.randomUUID(),
+                    query: trimmed,
+                    result: null,
+                    error: setupMessage,
+                    contextSnapshot: attachedContext?.content ?? null,
+                    timestamp: Date.now(),
+                });
+            } else {
+                showToast('warning', setupMessage);
+            }
+            return;
+        }
+
         if (isAgentMode) {
             if (shouldTreatAgentInputAsAsk(trimmed)) {
                 setAiMode('ask');
@@ -276,7 +335,24 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
         } else {
             await handleSubmitAsk(trimmed);
         }
-    }, [query, isLoading, agentRunning, isAgentMode, pushAiHistory, handleSubmitAgent, handleSubmitAsk, setAiMode]);
+    }, [
+        query,
+        isLoading,
+        agentRunning,
+        isAgentMode,
+        pushAiHistory,
+        providerNeedsSetup,
+        activeProviderValue,
+        ollamaAvailable,
+        agentScope,
+        connectionId,
+        attachedContext,
+        addToDisplayHistory,
+        showToast,
+        handleSubmitAgent,
+        handleSubmitAsk,
+        setAiMode,
+    ]);
 
     const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
@@ -424,7 +500,7 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
                                     </button>
                                 ) : (
                                     <button
-                                        onClick={isLoading ? undefined : handleSubmit}
+                                        onClick={handleSubmit}
                                         disabled={isLoading || !query.trim()}
                                         className={cn(
                                             'shrink-0 flex items-center justify-center w-8 h-8 rounded-lg transition-all outline-none',
@@ -478,34 +554,22 @@ export function AiSidebar({ connectionId, activeTermId, onRunCommand }: AiSideba
                                 <div className="flex-1" />
 
                                 {/* Provider / Model */}
-                                {providerNeedsSetup ? (
-                                    <button
-                                        onClick={openSettings}
-                                        className="flex items-center gap-1 text-[10px] text-app-warning hover:text-app-warning/80 transition-colors"
-                                    >
-                                        <CreditCard size={9} />
-                                        {activeProviderValue === 'ollama'
-                                            ? (!ollamaAvailable ? 'Ollama not running' : 'No model selected →')
-                                            : 'Select model →'}
-                                    </button>
-                                ) : (
-                                    <AiProviderModelPicker
-                                        activeProvider={activeProvider}
-                                        activeProviderValue={activeProviderValue}
-                                        activeModel={activeModel}
-                                        modelShort={modelShort}
-                                        currentModels={currentModels}
-                                        onSelectProvider={(provider) => {
-                                            updateAiSettings({
-                                                provider,
-                                                model: DEFAULT_MODEL[provider] ?? '',
-                                            });
-                                        }}
-                                        onSelectModel={(model) => {
-                                            updateAiSettings({ model });
-                                        }}
-                                    />
-                                )}
+                                <AiProviderModelPicker
+                                    activeProvider={activeProvider}
+                                    activeProviderValue={activeProviderValue}
+                                    activeModel={activeModel}
+                                    modelShort={modelShort}
+                                    currentModels={currentModels}
+                                    onSelectProvider={(provider) => {
+                                        updateAiSettings({
+                                            provider,
+                                            model: DEFAULT_MODEL[provider] ?? '',
+                                        });
+                                    }}
+                                    onSelectModel={(model) => {
+                                        updateAiSettings({ model });
+                                    }}
+                                />
                             </div>
                         </div>
                     </div>

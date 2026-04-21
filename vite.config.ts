@@ -3,6 +3,11 @@ import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const normalizePath = (value: string) => value.replace(/\\/g, "/");
+const hasNodeModulePackage = (id: string, pkg: string) => {
+  const normalized = normalizePath(id);
+  return normalized.includes(`/node_modules/${pkg}/`) || normalized.endsWith(`/node_modules/${pkg}`);
+};
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -40,9 +45,33 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // Split Monaco into its own chunk to avoid bloating the main bundle
-        manualChunks: {
-          monaco: ["@monaco-editor/react", "monaco-editor"],
+        // Keep large editor/runtime dependencies in dedicated chunks.
+        // This reduces hot chunk warnings and improves incremental cache reuse.
+        manualChunks(id) {
+          if (!normalizePath(id).includes("/node_modules/")) return;
+
+          if (hasNodeModulePackage(id, "monaco-editor") || hasNodeModulePackage(id, "@monaco-editor/react")) {
+            return "monaco";
+          }
+          if (
+            hasNodeModulePackage(id, "@codemirror")
+            || hasNodeModulePackage(id, "@lezer")
+            || hasNodeModulePackage(id, "codemirror")
+          ) {
+            return "codemirror";
+          }
+          if (hasNodeModulePackage(id, "@xterm") || hasNodeModulePackage(id, "xterm")) {
+            return "xterm";
+          }
+          if (
+            hasNodeModulePackage(id, "react")
+            || hasNodeModulePackage(id, "react-dom")
+            || hasNodeModulePackage(id, "react-is")
+            || hasNodeModulePackage(id, "scheduler")
+          ) {
+            return "react-vendor";
+          }
+          return "vendor";
         },
       },
     },

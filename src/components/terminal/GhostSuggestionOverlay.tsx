@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Terminal } from 'xterm';
+import type { Terminal } from '@xterm/xterm';
 import { getCursorPixelPosition } from '../../lib/ghostSuggestions/cursorPosition';
 
 interface Props {

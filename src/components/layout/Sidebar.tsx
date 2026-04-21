@@ -10,6 +10,8 @@ import { SidebarSection } from './sidebar/SidebarSection';
 import { ConnectionItem } from './sidebar/ConnectionItem';
 import { FolderItem } from './sidebar/FolderItem';
 import { FolderFormModal } from './sidebar/FolderFormModal';
+import { AddConnectionModal } from '../modals/AddConnectionModal';
+import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { normalizeFolderPath } from '../../features/connections/domain';
 import {
     exportConnectionsToFileIpc,
@@ -18,9 +20,7 @@ import {
 
 // Lazy Load Modals
 const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
-const AddTunnelModal = lazy(() => import('../modals/AddTunnelModal').then(mod => ({ default: mod.AddTunnelModal })));
 const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(mod => ({ default: mod.ConnectionDetailsModal })));
-const AddConnectionModal = lazy(() => import('../modals/AddConnectionModal').then(mod => ({ default: mod.AddConnectionModal })));
 const ExportConnectionsModal = lazy(() => import('../modals/ExportConnectionsModal').then(mod => ({ default: mod.ExportConnectionsModal })));
 
 
@@ -250,8 +250,9 @@ export function Sidebar({ className }: { className?: string }) {
                 includeSecrets: options?.includeSecrets,
             });
             showToast('success', 'Connections exported to file.');
-        } catch (error: any) {
-            showToast('error', `Failed to export connections: ${error?.message || String(error)}`);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to export connections: ${message}`);
         }
     }, [showToast]);
 
@@ -572,36 +573,36 @@ export function Sidebar({ className }: { className?: string }) {
             </div>
 
             {/* Modals */}
-            <Suspense fallback={null}>
-                {isAddConnectionModalOpen && (
-                    <AddConnectionModal
-                        isOpen={isAddConnectionModalOpen}
-                        onClose={closeAddConnectionModal}
-                        editingConnectionId={editingConnectionId}
-                    />
-                )}
-            </Suspense>
+            {isAddConnectionModalOpen && (
+                <AddConnectionModal
+                    isOpen={isAddConnectionModalOpen}
+                    onClose={closeAddConnectionModal}
+                    editingConnectionId={editingConnectionId}
+                />
+            )}
 
             {/* Create Folder Modal */}
-            <FolderFormModal
-                isOpen={isFolderModalOpen}
-                onClose={() => setIsFolderModalOpen(false)}
-                onSubmit={(name, tags) => {
-                    addFolder(name, tags);
-                    setIsFolderModalOpen(false);
-                }}
-            />
+            {isFolderModalOpen && (
+                <FolderFormModal
+                    isOpen={isFolderModalOpen}
+                    onClose={() => setIsFolderModalOpen(false)}
+                    onSubmit={(name, tags) => {
+                        addFolder(name, tags);
+                        setIsFolderModalOpen(false);
+                    }}
+                />
+            )}
 
             {/* Modals */}
-            <Suspense fallback={null}>
-                {isAddTunnelModalOpen && (
-                    <AddTunnelModal
-                        isOpen={isAddTunnelModalOpen}
-                        onClose={() => setIsAddTunnelModalOpen(false)}
-                        initialConnectionId={activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding' ? activeConnectionId : undefined}
-                    />
-                )}
+            {isAddTunnelModalOpen && (
+                <AddTunnelModal
+                    isOpen={isAddTunnelModalOpen}
+                    onClose={() => setIsAddTunnelModalOpen(false)}
+                    initialConnectionId={activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding' ? activeConnectionId : undefined}
+                />
+            )}
 
+            <Suspense fallback={null}>
                 {viewingDetailsId && (
                     <ConnectionDetailsModal
                         isOpen={!!viewingDetailsId}

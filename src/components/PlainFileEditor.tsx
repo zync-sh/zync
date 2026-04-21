@@ -10,6 +10,14 @@ interface PlainFileEditorProps {
   initialContent: string;
   onSave: (content: string) => Promise<void>;
   onClose: () => void;
+  /**
+   * Hides the built-in header toolbar (Save, Close, Find toggle and shortcut chips).
+   *
+   * When true, editing actions remain available via keyboard shortcuts only
+   * (Ctrl/Cmd+S save, Ctrl/Cmd+W close, Ctrl/Cmd+F find), so parent containers
+   * should provide equivalent visible controls for discoverability/accessibility.
+   */
+  hideToolbar?: boolean;
 }
 
 export function PlainFileEditor({
@@ -17,8 +25,11 @@ export function PlainFileEditor({
   initialContent,
   onSave,
   onClose,
+  hideToolbar = false,
 }: PlainFileEditorProps) {
   const [content, setContent] = useState(initialContent);
+  // Track saved baseline separately so save does not reset edit history semantics.
+  const [savedContent, setSavedContent] = useState(initialContent);
   const [searchText, setSearchText] = useState('');
   const [matchIndex, setMatchIndex] = useState(-1);
   const [isSaving, setIsSaving] = useState(false);
@@ -27,15 +38,17 @@ export function PlainFileEditor({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const showConfirmDialog = useAppStore((state) => state.showConfirmDialog);
+  const showToast = useAppStore((state) => state.showToast);
 
   useEffect(() => {
     setContent(initialContent);
+    setSavedContent(initialContent);
     setSearchText('');
     setMatchIndex(-1);
     setShowSearch(false);
   }, [filename, initialContent]);
 
-  const isDirty = content !== initialContent;
+  const isDirty = content !== savedContent;
   const languageLabel = useMemo(() => {
     const ext = filename.split('.').pop()?.toUpperCase() ?? 'TEXT';
     return ext || 'TEXT';
@@ -56,33 +69,43 @@ export function PlainFileEditor({
     return next;
   }, [content, searchText]);
 
-  const focusMatch = useCallback((index: number) => {
-    const textarea = textareaRef.current;
-    const match = matches[index];
-    if (!textarea || !match) return;
-    textarea.focus();
-    textarea.setSelectionRange(match.start, match.end);
+  const activeMatch = useMemo(
+    () => (matchIndex >= 0 ? matches[matchIndex] : undefined),
+    [matches, matchIndex],
+  );
+
+  useEffect(() => {
+    setMatchIndex((previous) => {
+      if (!matches.length) {
+        return previous === -1 ? previous : -1;
+      }
+      const safeIndex = previous >= 0 && previous < matches.length ? previous : 0;
+      return safeIndex === previous ? previous : safeIndex;
+    });
   }, [matches]);
 
   useEffect(() => {
-    if (!matches.length) {
-      setMatchIndex(-1);
-      return;
+    if (matchIndex >= 0) {
+      const textarea = textareaRef.current;
+      const match = activeMatch;
+      if (!textarea || !match) return;
+      textarea.setSelectionRange(match.start, match.end);
     }
-    const safeIndex = matchIndex >= 0 && matchIndex < matches.length ? matchIndex : 0;
-    setMatchIndex(safeIndex);
-    focusMatch(safeIndex);
-  }, [focusMatch, matchIndex, matches]);
+  }, [activeMatch, matchIndex]);
 
   const handleSave = useCallback(async () => {
     if (isSaving) return;
     setIsSaving(true);
     try {
       await onSave(content);
+      setSavedContent(content);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save file';
+      showToast('error', message);
     } finally {
       setIsSaving(false);
     }
-  }, [content, isSaving, onSave]);
+  }, [content, isSaving, onSave, showToast]);
 
   const handleClose = useCallback(async () => {
     if (!isDirty) {
@@ -163,30 +186,32 @@ export function PlainFileEditor({
 
   return (
       <div className="absolute inset-0 z-[70] flex min-h-0 flex-col bg-app-panel">
-        <div className="flex h-9 items-center justify-between border-b border-app-border px-3">
-          <div className="min-w-0 truncate text-sm font-semibold text-app-text">{filename}</div>
-          <div className="flex items-center gap-2">
-            <span className="rounded border border-app-border bg-app-surface/40 px-2 py-0.5 text-[10px] font-medium text-app-muted">Ctrl/Cmd+S</span>
-            <span className="rounded border border-app-border bg-app-surface/40 px-2 py-0.5 text-[10px] font-medium text-app-muted">Ctrl/Cmd+F</span>
-            <Button variant="ghost" size="sm" onClick={() => {
-              setShowSearch((current) => {
-                const next = !current;
-                if (next) requestAnimationFrame(() => searchRef.current?.focus());
-                return next;
-              });
-            }}>
-              <Search className="mr-1 h-3.5 w-3.5" />
-              Find
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => { void handleClose(); }}>
-              Close
-            </Button>
-            <Button variant="primary" size="sm" isLoading={isSaving} onClick={() => { void handleSave(); }}>
-              <Save className="mr-1 h-3.5 w-3.5" />
-              Save
-            </Button>
+        {!hideToolbar && (
+          <div className="flex h-9 items-center justify-between border-b border-app-border px-3">
+            <div className="min-w-0 truncate text-sm font-semibold text-app-text">{filename}</div>
+            <div className="flex items-center gap-2">
+              <span className="rounded border border-app-border bg-app-surface/40 px-2 py-0.5 text-[10px] font-medium text-app-muted">Ctrl/Cmd+S</span>
+              <span className="rounded border border-app-border bg-app-surface/40 px-2 py-0.5 text-[10px] font-medium text-app-muted">Ctrl/Cmd+F</span>
+              <Button variant="ghost" size="sm" onClick={() => {
+                setShowSearch((current) => {
+                  const next = !current;
+                  if (next) requestAnimationFrame(() => searchRef.current?.focus());
+                  return next;
+                });
+              }}>
+                <Search className="mr-1 h-3.5 w-3.5" />
+                Find
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => { void handleClose(); }}>
+                Close
+              </Button>
+              <Button variant="primary" size="sm" isLoading={isSaving} onClick={() => { void handleSave(); }}>
+                <Save className="mr-1 h-3.5 w-3.5" />
+                Save
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
 
         {showSearch && (

@@ -6,17 +6,25 @@ use anyhow::Result;
 use russh::client::Handle;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::Mutex;
-use std::time::Duration;
 use tauri_plugin_store::StoreExt;
+use tokio::sync::Mutex;
 
 use crate::tunnel::TunnelManager;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const MAX_IMPORT_TEXT_BYTES: usize = 1_048_576; // 1 MiB
 const MAX_CONNECTION_IMPORT_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
+const SETTINGS_CHANGED_ON_DISK_ERROR_CODE: &str = "SETTINGS_CHANGED_ON_DISK";
+const MAX_SFTP_RETRIES: u8 = 3;
+static DATA_DIR_CACHE: StdMutex<Option<std::path::PathBuf>> = StdMutex::new(None);
+static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::PathBuf>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,31 +62,337 @@ pub struct SystemInfo {
 /// Reads the configured `dataPath` from settings.json if available,
 /// otherwise falls back to the default app_data_dir.
 /// This ensures user-selected paths from the setup wizard are respected on all platforms.
-pub fn get_data_dir(app: &AppHandle) -> std::path::PathBuf {
-    let default_dir = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let settings_path = default_dir.join("settings.json");
+fn merge_json_values(base: Value, overlay: Value) -> Value {
+    match (base, overlay) {
+        (Value::Object(mut base_obj), Value::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                let merged = if let Some(base_value) = base_obj.remove(&key) {
+                    merge_json_values(base_value, overlay_value)
+                } else {
+                    overlay_value
+                };
+                base_obj.insert(key, merged);
+            }
+            Value::Object(base_obj)
+        }
+        (_, overlay_other) => overlay_other,
+    }
+}
 
-    if settings_path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&settings_path) {
-            if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&data) {
-                if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
-                    if !data_path.is_empty() {
-                        let custom_dir = std::path::PathBuf::from(data_path);
-                        // Ensure the directory exists
-                        if !custom_dir.exists() {
-                            let _ = std::fs::create_dir_all(&custom_dir);
-                        }
-                        return custom_dir;
+/// Resolve the native, user-scoped settings directory (OS config convention).
+/// Example: `%APPDATA%/Zync/User` on Windows, `~/.config/Zync/User` on Linux.
+fn get_native_settings_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let config_root = app.path().config_dir().map_err(|e| e.to_string())?;
+    let dir = config_root.join("Zync").join("User");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(dir)
+}
+
+/// Canonical settings file path used by Zync as the primary source of truth.
+fn get_native_settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(get_native_settings_dir(app)?.join("settings.json"))
+}
+
+/// Backup path for the last successfully written settings payload.
+fn get_last_known_good_settings_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(get_native_settings_dir(app)?.join("settings.last-known-good.json"))
+}
+
+/// Legacy settings locations that we still read once for migration compatibility.
+fn get_legacy_settings_candidates(app: &AppHandle) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        candidates.push(app_data_dir.join("settings.json"));
+    }
+    if let Ok(home_dir) = app.path().home_dir() {
+        candidates.push(home_dir.join(".zync").join("settings.json"));
+    }
+    candidates
+}
+
+/// Write file content atomically via temporary file + rename.
+/// Prevents partial/corrupt settings writes on crashes/interruption.
+fn write_atomic_file(path: &std::path::Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let unique_suffix = uuid::Uuid::new_v4();
+    let tmp_path = path.with_extension(format!("json.tmp.{}", unique_suffix));
+    let mut tmp_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&tmp_path)
+        .map_err(|e| e.to_string())?;
+    use std::io::Write;
+    tmp_file
+        .write_all(content.as_bytes())
+        .map_err(|e| e.to_string())?;
+    tmp_file.sync_all().map_err(|e| e.to_string())?;
+    let replace_result = if path.exists() {
+        #[cfg(target_os = "windows")]
+        {
+            let backup_path = path.with_extension(format!("json.bak.{}", unique_suffix));
+            match std::fs::rename(path, &backup_path) {
+                Ok(()) => match std::fs::rename(&tmp_path, path) {
+                    Ok(()) => {
+                        let _ = std::fs::remove_file(&backup_path);
+                        Ok(())
                     }
+                    Err(rename_error) => {
+                        if let Err(restore_error) = std::fs::rename(&backup_path, path) {
+                            eprintln!(
+                                "[settings] Failed to restore backup after rename error. backup_path={}, tmp_path={}, target_path={}, rename_error={}, restore_error={}",
+                                backup_path.display(),
+                                tmp_path.display(),
+                                path.display(),
+                                rename_error,
+                                restore_error
+                            );
+                        }
+                        Err(rename_error.to_string())
+                    }
+                },
+                Err(error) => Err(format!(
+                    "Failed to move existing file to backup before atomic replace: {}",
+                    error
+                )),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())
+        }
+    } else {
+        std::fs::rename(&tmp_path, path).map_err(|e| e.to_string())
+    };
+
+    if let Err(error) = replace_result {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+/// Encode settings command errors in a stable, machine-readable shape.
+fn settings_command_error(code: &str, message: &str) -> String {
+    serde_json::json!({
+        "code": code,
+        "message": message
+    })
+    .to_string()
+}
+
+/// Guard that settings payload is a top-level JSON object.
+fn ensure_object_settings(value: Value) -> Result<Value, String> {
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err("settings.json must be a JSON object at the top level.".to_string())
+    }
+}
+
+/// Lightweight schema validation for known settings keys.
+/// Keeps external/manual edits safe without requiring a full schema engine.
+fn validate_settings_schema(settings: &Value) -> Result<(), String> {
+    let obj = settings
+        .as_object()
+        .ok_or_else(|| "settings.json must be an object.".to_string())?;
+
+    if let Some(theme) = obj.get("theme") {
+        if !theme.is_string() {
+            return Err("Invalid \"theme\": expected string.".to_string());
+        }
+    }
+    if let Some(window_opacity) = obj.get("windowOpacity") {
+        let opacity = window_opacity
+            .as_f64()
+            .ok_or_else(|| "Invalid \"windowOpacity\": expected number 0..1.".to_string())?;
+        if !(0.0..=1.0).contains(&opacity) {
+            return Err("Invalid \"windowOpacity\": expected number between 0 and 1.".to_string());
+        }
+    }
+    if let Some(enable_vibrancy) = obj.get("enableVibrancy") {
+        if !enable_vibrancy.is_boolean() {
+            return Err("Invalid \"enableVibrancy\": expected boolean.".to_string());
+        }
+    }
+    if let Some(sidebar_width) = obj.get("sidebarWidth") {
+        let width = sidebar_width
+            .as_i64()
+            .ok_or_else(|| "Invalid \"sidebarWidth\": expected integer.".to_string())?;
+        if !(160..=640).contains(&width) {
+            return Err(
+                "Invalid \"sidebarWidth\": expected integer between 160 and 640.".to_string(),
+            );
+        }
+    }
+    if let Some(data_path) = obj.get("dataPath") {
+        if !(data_path.is_null() || data_path.is_string()) {
+            return Err("Invalid \"dataPath\": expected string or null.".to_string());
+        }
+    }
+    if let Some(log_path) = obj.get("logPath") {
+        if !(log_path.is_null() || log_path.is_string()) {
+            return Err("Invalid \"logPath\": expected string or null.".to_string());
+        }
+    }
+    if let Some(ai) = obj.get("ai") {
+        if !ai.is_object() {
+            return Err("Invalid \"ai\": expected object.".to_string());
+        }
+    }
+    if let Some(editor) = obj.get("editor") {
+        if !editor.is_object() {
+            return Err("Invalid \"editor\": expected object.".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Read + parse + validate a settings file from disk.
+fn read_settings_from_path(path: &std::path::Path) -> Result<Value, String> {
+    if !path.exists() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+    let data = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read settings.json: {}", e))?;
+    let parsed = serde_json::from_str::<Value>(&data)
+        .map_err(|e| format!("Invalid JSON in settings.json: {}", e))?;
+    let object_settings = ensure_object_settings(parsed)?;
+    validate_settings_schema(&object_settings)?;
+    Ok(object_settings)
+}
+
+/// Last-modified timestamp in milliseconds, used for optimistic concurrency checks.
+fn settings_mtime_ms(path: &std::path::Path) -> Option<u64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(modified.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64)
+}
+
+/// Read effective settings from the native path.
+/// If missing, migrate from legacy locations once; otherwise return empty object.
+pub(crate) fn read_effective_settings(app: &AppHandle) -> Result<Value, String> {
+    let settings_path = get_native_settings_path(app)?;
+    if settings_path.exists() {
+        return read_settings_from_path(&settings_path);
+    }
+
+    for legacy_path in get_legacy_settings_candidates(app) {
+        if !legacy_path.exists() {
+            continue;
+        }
+        let legacy_settings = read_settings_from_path(&legacy_path)?;
+        if let Ok(_mutation_guard) = SETTINGS_MUTATION_LOCK.try_lock() {
+            if !settings_path.exists() {
+                let json =
+                    serde_json::to_string_pretty(&legacy_settings).map_err(|e| e.to_string())?;
+                write_atomic_file(&settings_path, &json)?;
+            }
+        }
+        return Ok(legacy_settings);
+    }
+
+    Ok(Value::Object(serde_json::Map::new()))
+}
+
+/// Persist validated settings to native path and update last-known-good backup.
+fn persist_settings_json(app: &AppHandle, settings: &Value) -> Result<(), String> {
+    ensure_object_settings(settings.clone())?;
+    validate_settings_schema(settings)?;
+
+    let settings_path = get_native_settings_path(app)?;
+    let backup_path = get_last_known_good_settings_path(app)?;
+    if settings_path.exists() {
+        let existing = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
+        match serde_json::from_str::<Value>(&existing) {
+            Ok(parsed) => match ensure_object_settings(parsed) {
+                Ok(valid_existing) => {
+                    validate_settings_schema(&valid_existing)?;
+                    write_atomic_file(&backup_path, &existing)?;
                 }
+                Err(error) => {
+                    eprintln!(
+                        "[settings] Skipping last-known-good backup due to invalid existing settings at {}: {}",
+                        settings_path.display(),
+                        error
+                    );
+                }
+            },
+            Err(error) => {
+                eprintln!(
+                    "[settings] Skipping last-known-good backup due to invalid JSON at {}: {}",
+                    settings_path.display(),
+                    error
+                );
             }
         }
     }
 
-    default_dir
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    write_atomic_file(&settings_path, &json)
+}
+
+pub fn get_data_dir(app: &AppHandle) -> std::path::PathBuf {
+    if let Ok(cache) = DATA_DIR_CACHE.lock() {
+        if let Some(cached) = cache.clone() {
+            return cached;
+        }
+    }
+
+    let default_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let merged_settings =
+        read_effective_settings(app).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+    let resolved = if let Some(data_path) = merged_settings.get("dataPath").and_then(|v| v.as_str()) {
+        if !data_path.is_empty() {
+            let custom_dir = std::path::PathBuf::from(data_path);
+            if !custom_dir.exists() {
+                let _ = std::fs::create_dir_all(&custom_dir);
+            }
+            custom_dir
+        } else {
+            default_dir
+        }
+    } else {
+        default_dir
+    };
+
+    if let Ok(mut cache) = DATA_DIR_CACHE.lock() {
+        *cache = Some(resolved.clone());
+    }
+
+    resolved
+}
+
+fn clear_data_dir_cache() {
+    if let Ok(mut cache) = DATA_DIR_CACHE.lock() {
+        *cache = None;
+    }
+}
+
+fn data_path_from_settings(settings: &Value) -> Option<String> {
+    settings
+        .get("dataPath")
+        .and_then(|v| v.as_str())
+        .map(|value| value.to_string())
+}
+
+fn data_path_from_raw_json(raw: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<Value>(raw).ok()?;
+    parsed
+        .get("dataPath")
+        .and_then(|v| v.as_str())
+        .map(|value| value.to_string())
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -247,7 +561,10 @@ async fn reconnect_connection(
         }
     }
 
-    println!("[SSH] (Re)connected. Detected OS: {:?}, shell: {:?}", detected_os, detected_shell);
+    println!(
+        "[SSH] (Re)connected. Detected OS: {:?}, shell: {:?}",
+        detected_os, detected_shell
+    );
 
     Ok(ConnectionHandle {
         config: config.clone(),
@@ -300,7 +617,7 @@ pub async fn ssh_test_connection(
 
     match state
         .ssh_manager
-        .connect(config.clone(), state.tunnel_manager.clone())
+        .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
         .await
     {
         Ok(session) => {
@@ -337,7 +654,7 @@ pub async fn ssh_test_connection(
 #[tauri::command]
 pub async fn get_system_info(app: AppHandle) -> Result<SystemInfo, String> {
     let data_dir = get_data_dir(&app);
-    
+
     // Use Tauri's path resolver to find assets correctly in both Dev and Prod
     let app_root = (|| {
         if cfg!(debug_assertions) {
@@ -357,7 +674,8 @@ pub async fn get_system_info(app: AppHandle) -> Result<SystemInfo, String> {
             // In Prod, use the official resource directory
             app.path().resource_dir().ok()
         }
-    })().unwrap_or_else(|| std::path::PathBuf::from("."));
+    })()
+    .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     Ok(SystemInfo {
         data_dir: data_dir.to_string_lossy().to_string(),
@@ -376,7 +694,9 @@ pub async fn save_secret(app: tauri::AppHandle, key: String, value: String) -> R
 #[tauri::command]
 pub async fn get_secret(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     let store = app.store("secrets.json").map_err(|e| e.to_string())?;
-    Ok(store.get(key).and_then(|v| v.as_str().map(|s| s.to_string())))
+    Ok(store
+        .get(key)
+        .and_then(|v| v.as_str().map(|s| s.to_string())))
 }
 
 #[tauri::command]
@@ -607,9 +927,7 @@ pub async fn terminal_navigate(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Escape single quotes for shell safety to prevent command injection
-    let escaped_path = path.replace("'", "'\\''");
-    let cd_cmd = format!("cd '{}'\r", escaped_path);
+    let cd_cmd = format!("cd {}\r", universal_double_quote_path(&path));
     state
         .pty_manager
         .write(&term_id, &cd_cmd)
@@ -697,7 +1015,10 @@ fn connection_to_csv_line(connection: &SavedConnection) -> String {
         csv_escape(&csv_join(&connection.tags)),
         csv_escape(&csv_bool(connection.is_favorite)),
         csv_escape(&csv_join(&connection.pinned_features)),
-        connection.created_at.map(|value| value.to_string()).unwrap_or_default(),
+        connection
+            .created_at
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
         connection
             .last_connected
             .map(|value| value.to_string())
@@ -720,7 +1041,10 @@ fn build_host_alias(connection: &SavedConnection) -> String {
         .name
         .trim()
         .replace(char::is_whitespace, "-")
-        .replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.', "-")
+        .replace(
+            |ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.',
+            "-",
+        )
         .trim_matches('-')
         .to_string();
 
@@ -729,7 +1053,10 @@ fn build_host_alias(connection: &SavedConnection) -> String {
             .host
             .trim()
             .replace(char::is_whitespace, "-")
-            .replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.', "-")
+            .replace(
+                |ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.',
+                "-",
+            )
             .trim_matches('-')
             .to_string();
     }
@@ -741,7 +1068,10 @@ fn build_host_alias(connection: &SavedConnection) -> String {
     alias
 }
 
-fn filter_export_folders(all_folders: &[Folder], selected_connections: &[SavedConnection]) -> Vec<Folder> {
+fn filter_export_folders(
+    all_folders: &[Folder],
+    selected_connections: &[SavedConnection],
+) -> Vec<Folder> {
     let mut required = std::collections::HashSet::new();
 
     for connection in selected_connections {
@@ -882,37 +1212,65 @@ fn parse_csv_connections(content: &str) -> Result<Vec<SavedConnection>, String> 
             .collect::<Vec<_>>();
 
         parsed.push(SavedConnection {
-            id: if id.is_empty() { uuid::Uuid::new_v4().to_string() } else { id },
+            id: if id.is_empty() {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                id
+            },
             name: if name.is_empty() { host.clone() } else { name },
             host,
             port,
             username,
             password: {
                 let value = field(password_idx);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             private_key_path: {
                 let value = field(key_idx);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             jump_server_id: {
                 let value = field(jump_idx);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             last_connected: field(last_connected_idx).parse::<u64>().ok(),
             icon: None,
             folder: {
                 let value = field(folder_idx);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             theme: {
                 let value = field(theme_idx);
-                if value.is_empty() { None } else { Some(value) }
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value)
+                }
             },
             tags: if tags.is_empty() { None } else { Some(tags) },
             created_at: field(created_idx).parse::<u64>().ok(),
             is_favorite: parse_bool_field(&field(favorite_idx)),
-            pinned_features: if pinned_features.is_empty() { None } else { Some(pinned_features) },
+            pinned_features: if pinned_features.is_empty() {
+                None
+            } else {
+                Some(pinned_features)
+            },
         });
     }
 
@@ -1004,7 +1362,8 @@ pub async fn connections_export_to_file(
             })
             .map_err(|error| error.to_string())?
         }
-        "json" => serde_json::to_string_pretty(&selected_connections).map_err(|error| error.to_string())?,
+        "json" => serde_json::to_string_pretty(&selected_connections)
+            .map_err(|error| error.to_string())?,
         "csv" => {
             let mut lines = vec![
                 "id,name,host,port,username,password,privateKeyPath,jumpServerId,folder,theme,tags,isFavorite,pinnedFeatures,createdAt,lastConnected".to_string(),
@@ -1016,7 +1375,8 @@ pub async fn connections_export_to_file(
         _ => return Err("Unsupported export format.".to_string()),
     };
 
-    std::fs::write(path, content).map_err(|error| format!("Failed to write export file: {}", error))?;
+    std::fs::write(path, content)
+        .map_err(|error| format!("Failed to write export file: {}", error))?;
     Ok(path.to_string())
 }
 
@@ -1036,12 +1396,14 @@ pub async fn connections_import_from_file(
     if !file_path.is_file() {
         return Err("Import path is not a file.".to_string());
     }
-    let metadata = std::fs::metadata(file_path).map_err(|error| format!("Cannot read import file metadata: {}", error))?;
+    let metadata = std::fs::metadata(file_path)
+        .map_err(|error| format!("Cannot read import file metadata: {}", error))?;
     if metadata.len() > MAX_CONNECTION_IMPORT_BYTES {
         return Err("Import file is too large (max 5 MiB).".to_string());
     }
 
-    let content = std::fs::read_to_string(file_path).map_err(|error| format!("Failed to read import file: {}", error))?;
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|error| format!("Failed to read import file: {}", error))?;
     let requested_format = request
         .format
         .unwrap_or_else(|| "auto".to_string())
@@ -1123,7 +1485,16 @@ pub async fn terminal_create(
         // Use term_id (UUID) for the session, not connection_id
         state
             .pty_manager
-            .create_local_session(term_id.clone(), connection_id, generation, cols, rows, app, shell, cwd)
+            .create_local_session(
+                term_id.clone(),
+                connection_id,
+                generation,
+                cols,
+                rows,
+                app,
+                shell,
+                cwd,
+            )
             .await
             .map_err(|e| e.to_string())?;
         Ok(term_id)
@@ -1152,18 +1523,18 @@ pub async fn terminal_create(
                     .map(|c| c.config.clone())
                     .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
             };
-            let mut new_handle = reconnect_connection(
-                &config,
-                &state.ssh_manager,
-                &state.tunnel_manager,
-            )
-            .await?;
+            let mut new_handle =
+                reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await?;
             let new_session = new_handle
                 .session
                 .take()
                 .ok_or("Reconnection did not produce a session")?;
             new_handle.session = Some(new_session.clone());
-            state.connections.lock().await.insert(connection_id.to_string(), new_handle);
+            state
+                .connections
+                .lock()
+                .await
+                .insert(connection_id.to_string(), new_handle);
             Ok(new_session)
         }
 
@@ -1186,21 +1557,24 @@ pub async fn terminal_create(
                         connections
                             .get(&connection_id)
                             .map(|c| c.config.clone())
-                            .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
+                            .ok_or_else(|| {
+                                format!("Connection config for {} not found", connection_id)
+                            })?
                     };
-                    let mut new_handle = reconnect_connection(
-                        &config,
-                        &state.ssh_manager,
-                        &state.tunnel_manager,
-                    )
-                    .await
-                    .map_err(|e| format!("Auto-reconnect failed: {}", e))?;
+                    let mut new_handle =
+                        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager)
+                            .await
+                            .map_err(|e| format!("Auto-reconnect failed: {}", e))?;
                     let new_session = new_handle
                         .session
                         .take()
                         .ok_or("Reconnection did not produce a session")?;
                     new_handle.session = Some(new_session.clone());
-                    state.connections.lock().await.insert(connection_id.clone(), new_handle);
+                    state
+                        .connections
+                        .lock()
+                        .await
+                        .insert(connection_id.clone(), new_handle);
                     let guard = new_session.lock().await;
                     guard
                         .channel_open_session()
@@ -1213,14 +1587,22 @@ pub async fn terminal_create(
         println!("[TERM] SSH channel opened, requesting PTY");
         state
             .pty_manager
-            .create_remote_session(term_id.clone(), connection_id, generation, channel, cols, rows, app, cwd)
+            .create_remote_session(
+                term_id.clone(),
+                connection_id,
+                generation,
+                channel,
+                cols,
+                rows,
+                app,
+                cwd,
+            )
             .await
             .map_err(|e| e.to_string())?;
 
         Ok(term_id)
     }
 }
-
 
 #[tauri::command]
 pub async fn terminal_close(term_id: String, state: State<'_, AppState>) -> Result<(), String> {
@@ -1240,9 +1622,10 @@ async fn get_sftp_or_reconnect(
     // 1. Try to get existing SFTP session
     let config = {
         let connections = state.connections.lock().await;
-        let conn = connections.get(id)
+        let conn = connections
+            .get(id)
             .ok_or_else(|| format!("Connection {} not found, cannot reconnect for SFTP", id))?;
-            
+
         if let Some(sftp) = &conn.sftp_session {
             return Ok(sftp.clone());
         }
@@ -1250,13 +1633,26 @@ async fn get_sftp_or_reconnect(
     };
 
     // 2. Session dropped — attempt full reconnect
-    println!("[SFTP] Session not found for '{}', attempting reconnect...", id);
+    println!(
+        "[SFTP] Session not found for '{}', attempting reconnect...",
+        id
+    );
 
     let timeout_duration = std::time::Duration::from_secs(12);
-    let new_handle = match tokio::time::timeout(timeout_duration, reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager)).await {
+    let new_handle = match tokio::time::timeout(
+        timeout_duration,
+        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager),
+    )
+    .await
+    {
         Ok(Ok(h)) => h,
         Ok(Err(e)) => return Err(format!("DISCONNECTED: Auto-reconnect failed: {}", e)),
-        Err(_) => return Err(format!("DISCONNECTED: Auto-reconnect timed out after {}s (Is the network down?)", timeout_duration.as_secs())),
+        Err(_) => {
+            return Err(format!(
+                "DISCONNECTED: Auto-reconnect timed out after {}s (Is the network down?)",
+                timeout_duration.as_secs()
+            ))
+        }
     };
     let sftp = new_handle
         .sftp_session
@@ -1284,9 +1680,14 @@ pub async fn fs_list(
     } else {
         println!("[FS] Listing remote dir: {} on {}", path, connection_id);
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-        
+
         let timeout_duration = std::time::Duration::from_secs(10);
-        match tokio::time::timeout(timeout_duration, state.file_system.list_remote(&sftp, &path)).await {
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.list_remote(&sftp, &path),
+        )
+        .await
+        {
             Ok(Ok(res)) => Ok(res),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during list, retrying...");
@@ -1297,10 +1698,18 @@ pub async fn fs_list(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.list_remote(&sftp, &path)).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state.file_system.list_remote(&sftp, &path),
+                )
+                .await
+                {
                     Ok(Ok(res)) => Ok(res),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP listing timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP listing timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1311,7 +1720,10 @@ pub async fn fs_list(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP listing timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP listing timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1332,8 +1744,13 @@ pub async fn fs_read_file(
     } else {
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
-        match tokio::time::timeout(timeout_duration, state.file_system.read_remote(&sftp, &path)).await {
+
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.read_remote(&sftp, &path),
+        )
+        .await
+        {
             Ok(Ok(res)) => Ok(res),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during read, retrying...");
@@ -1344,10 +1761,18 @@ pub async fn fs_read_file(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.read_remote(&sftp, &path)).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state.file_system.read_remote(&sftp, &path),
+                )
+                .await
+                {
                     Ok(Ok(res)) => Ok(res),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP read timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP read timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1358,7 +1783,10 @@ pub async fn fs_read_file(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP read timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP read timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1380,8 +1808,15 @@ pub async fn fs_write_file(
     } else {
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
-        match tokio::time::timeout(timeout_duration, state.file_system.write_remote(&sftp, &path, content.as_bytes())).await {
+
+        match tokio::time::timeout(
+            timeout_duration,
+            state
+                .file_system
+                .write_remote(&sftp, &path, content.as_bytes()),
+        )
+        .await
+        {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during write, retrying...");
@@ -1392,10 +1827,20 @@ pub async fn fs_write_file(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.write_remote(&sftp, &path, content.as_bytes())).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state
+                        .file_system
+                        .write_remote(&sftp, &path, content.as_bytes()),
+                )
+                .await
+                {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP write timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP write timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1406,7 +1851,10 @@ pub async fn fs_write_file(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP write timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP write timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1423,7 +1871,7 @@ pub async fn fs_cwd(connection_id: String, state: State<'_, AppState>) -> Result
         println!("[FS] Getting remote CWD for {}", connection_id);
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
+
         match tokio::time::timeout(timeout_duration, sftp.canonicalize(".")).await {
             Ok(Ok(path)) => Ok(path),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
@@ -1438,7 +1886,10 @@ pub async fn fs_cwd(connection_id: String, state: State<'_, AppState>) -> Result
                 match tokio::time::timeout(timeout_duration, sftp.canonicalize(".")).await {
                     Ok(Ok(path)) => Ok(path),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP cwd timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP cwd timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1449,7 +1900,10 @@ pub async fn fs_cwd(connection_id: String, state: State<'_, AppState>) -> Result
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP cwd timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP cwd timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1463,7 +1917,13 @@ pub async fn fs_touch(
 ) -> Result<(), String> {
     if connection_id == "local" {
         if let Ok(true) = state.file_system.exists(&connection_id, &path).await {
-            return Err(format!("An item with the name '{}' already exists in this directory.", std::path::Path::new(&path).file_name().unwrap_or_default().to_string_lossy()));
+            return Err(format!(
+                "An item with the name '{}' already exists in this directory.",
+                std::path::Path::new(&path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ));
         }
         state
             .file_system
@@ -1476,9 +1936,19 @@ pub async fn fs_touch(
 
         let touch_fut = async {
             if let Ok(true) = state.file_system.exists_remote(&sftp, &path).await {
-                 return Err(format!("An item with the name '{}' already exists in this directory.", std::path::Path::new(&path).file_name().unwrap_or_default().to_string_lossy()));
+                return Err(format!(
+                    "An item with the name '{}' already exists in this directory.",
+                    std::path::Path::new(&path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                ));
             }
-            state.file_system.create_file_remote(&sftp, &path).await.map_err(|e| e.to_string())
+            state
+                .file_system
+                .create_file_remote(&sftp, &path)
+                .await
+                .map_err(|e| e.to_string())
         };
 
         match tokio::time::timeout(timeout_duration, touch_fut).await {
@@ -1492,13 +1962,17 @@ pub async fn fs_touch(
                     }
                 }
                 sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                
+
                 let retry_fut = async {
                     if let Ok(true) = state.file_system.exists_remote(&sftp, &path).await {
                         // After reconnect, if it exists, it likely means our original request succeeded before the disconnect
                         return Ok(());
                     }
-                    state.file_system.create_file_remote(&sftp, &path).await.map_err(|e| e.to_string())
+                    state
+                        .file_system
+                        .create_file_remote(&sftp, &path)
+                        .await
+                        .map_err(|e| e.to_string())
                 };
 
                 match tokio::time::timeout(timeout_duration, retry_fut).await {
@@ -1511,8 +1985,11 @@ pub async fn fs_touch(
                                 c.sftp_session = None;
                             }
                         }
-                        Err(format!("DISCONNECTED: SFTP touch timed out after {}s", timeout_duration.as_secs()))
-                    },
+                        Err(format!(
+                            "DISCONNECTED: SFTP touch timed out after {}s",
+                            timeout_duration.as_secs()
+                        ))
+                    }
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1523,7 +2000,10 @@ pub async fn fs_touch(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP touch timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP touch timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1537,7 +2017,13 @@ pub async fn fs_mkdir(
 ) -> Result<(), String> {
     if connection_id == "local" {
         if let Ok(true) = state.file_system.exists(&connection_id, &path).await {
-             return Err(format!("An item with the name '{}' already exists in this directory.", std::path::Path::new(&path).file_name().unwrap_or_default().to_string_lossy()));
+            return Err(format!(
+                "An item with the name '{}' already exists in this directory.",
+                std::path::Path::new(&path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ));
         }
         state
             .file_system
@@ -1550,9 +2036,19 @@ pub async fn fs_mkdir(
 
         let mkdir_fut = async {
             if let Ok(true) = state.file_system.exists_remote(&sftp, &path).await {
-                 return Err(format!("An item with the name '{}' already exists in this directory.", std::path::Path::new(&path).file_name().unwrap_or_default().to_string_lossy()));
+                return Err(format!(
+                    "An item with the name '{}' already exists in this directory.",
+                    std::path::Path::new(&path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                ));
             }
-            state.file_system.create_dir_remote(&sftp, &path).await.map_err(|e| e.to_string())
+            state
+                .file_system
+                .create_dir_remote(&sftp, &path)
+                .await
+                .map_err(|e| e.to_string())
         };
 
         match tokio::time::timeout(timeout_duration, mkdir_fut).await {
@@ -1566,13 +2062,17 @@ pub async fn fs_mkdir(
                     }
                 }
                 sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                
+
                 let retry_fut = async {
                     if let Ok(true) = state.file_system.exists_remote(&sftp, &path).await {
                         // After reconnect, if it exists, it likely means our original request succeeded before the disconnect
                         return Ok(());
                     }
-                    state.file_system.create_dir_remote(&sftp, &path).await.map_err(|e| e.to_string())
+                    state
+                        .file_system
+                        .create_dir_remote(&sftp, &path)
+                        .await
+                        .map_err(|e| e.to_string())
                 };
 
                 match tokio::time::timeout(timeout_duration, retry_fut).await {
@@ -1585,8 +2085,11 @@ pub async fn fs_mkdir(
                                 c.sftp_session = None;
                             }
                         }
-                        Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs()))
-                    },
+                        Err(format!(
+                            "DISCONNECTED: SFTP mkdir timed out after {}s",
+                            timeout_duration.as_secs()
+                        ))
+                    }
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1597,7 +2100,10 @@ pub async fn fs_mkdir(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP mkdir timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP mkdir timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1613,31 +2119,33 @@ pub async fn fs_rename(
 ) -> Result<(), String> {
     if connection_id == "local" {
         if auto_rename.unwrap_or(false) && std::path::Path::new(&new_path).exists() {
-             let path_buf = std::path::PathBuf::from(&new_path);
-             let parent = path_buf.parent().unwrap_or_else(|| std::path::Path::new(""));
-             let file_stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-             let extension = path_buf.extension().and_then(|s| s.to_str()).unwrap_or("");
-             let mut counter = 1;
+            let path_buf = std::path::PathBuf::from(&new_path);
+            let parent = path_buf
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
+            let file_stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let extension = path_buf.extension().and_then(|s| s.to_str()).unwrap_or("");
+            let mut counter = 1;
 
-             let mut found_unique = false;
-             while counter <= 100 {
-                 let new_name = if extension.is_empty() {
-                     format!("{} ({})", file_stem, counter)
-                 } else {
-                     format!("{} ({}).{}", file_stem, counter, extension)
-                 };
-                 let candidate = parent.join(new_name).to_string_lossy().to_string();
-                 if !std::path::Path::new(&candidate).exists() {
-                     new_path = candidate;
-                     found_unique = true;
-                     break;
-                 }
-                 counter += 1;
-             }
-             
-             if !found_unique {
-                 return Err("Too many existing files, cannot auto-rename".to_string());
-             }
+            let mut found_unique = false;
+            while counter <= 100 {
+                let new_name = if extension.is_empty() {
+                    format!("{} ({})", file_stem, counter)
+                } else {
+                    format!("{} ({}).{}", file_stem, counter, extension)
+                };
+                let candidate = parent.join(new_name).to_string_lossy().to_string();
+                if !std::path::Path::new(&candidate).exists() {
+                    new_path = candidate;
+                    found_unique = true;
+                    break;
+                }
+                counter += 1;
+            }
+
+            if !found_unique {
+                return Err("Too many existing files, cannot auto-rename".to_string());
+            }
         }
 
         state
@@ -1648,27 +2156,40 @@ pub async fn fs_rename(
     } else {
         let mut sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
+
         if auto_rename.unwrap_or(false) {
             // Wrap the unique path check in the same timeout/reconnect pattern as the rename itself
-            match tokio::time::timeout(timeout_duration, state.file_system.get_unique_path_remote(&sftp, &new_path)).await {
+            match tokio::time::timeout(
+                timeout_duration,
+                state.file_system.get_unique_path_remote(&sftp, &new_path),
+            )
+            .await
+            {
                 Ok(Ok(unique_path)) => {
                     new_path = unique_path;
                 }
                 Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                     println!("[FS] SFTP session closed during name check, retrying...");
                     sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                    new_path = tokio::time::timeout(timeout_duration, state.file_system.get_unique_path_remote(&sftp, &new_path))
-                        .await
-                        .map_err(|e| format!("Timeout generating unique path: {}", e))?
-                        .map_err(|e| e.to_string())?;
+                    new_path = tokio::time::timeout(
+                        timeout_duration,
+                        state.file_system.get_unique_path_remote(&sftp, &new_path),
+                    )
+                    .await
+                    .map_err(|e| format!("Timeout generating unique path: {}", e))?
+                    .map_err(|e| e.to_string())?;
                 }
                 Ok(Err(e)) => return Err(e.to_string()),
                 Err(_) => return Err("Timeout generating unique path".to_string()),
             }
         }
-        
-        match tokio::time::timeout(timeout_duration, state.file_system.rename_remote(&sftp, &old_path, &new_path)).await {
+
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.rename_remote(&sftp, &old_path, &new_path),
+        )
+        .await
+        {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during rename, retrying...");
@@ -1679,10 +2200,18 @@ pub async fn fs_rename(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.rename_remote(&sftp, &old_path, &new_path)).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state.file_system.rename_remote(&sftp, &old_path, &new_path),
+                )
+                .await
+                {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP rename timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP rename timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1693,7 +2222,10 @@ pub async fn fs_rename(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP rename timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP rename timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1724,30 +2256,37 @@ pub async fn fs_delete(
 
         if should_optimize {
             if let Some(session) = session_opt {
-                // Simple quoting for paths
-                let cmd = format!("rm -rf '{}'", path.replace("'", "'\\''"));
+                let cmd = format!("rm -rf {}", shell_quote(&path));
                 println!("[FS] Attempting server-side delete: {}", cmd);
 
                 let timeout_duration = std::time::Duration::from_secs(10);
                 let optimize_fut = async {
                     match session.lock().await.channel_open_session().await {
                         Ok(mut channel) => {
-                            if let Ok(_) = channel.exec(true, cmd).await {
+                            if channel.exec(true, cmd).await.is_ok() {
                                 let mut success = false;
                                 let mut output_log = String::new();
                                 while let Some(msg) = channel.wait().await {
                                     match msg {
-                                        russh::ChannelMsg::Data { data } => output_log.push_str(&String::from_utf8_lossy(&data)),
-                                        russh::ChannelMsg::ExtendedData { data, .. } => output_log.push_str(&String::from_utf8_lossy(&data)),
+                                        russh::ChannelMsg::Data { data } => {
+                                            output_log.push_str(&String::from_utf8_lossy(&data))
+                                        }
+                                        russh::ChannelMsg::ExtendedData { data, .. } => {
+                                            output_log.push_str(&String::from_utf8_lossy(&data))
+                                        }
                                         russh::ChannelMsg::ExitStatus { exit_status } => {
-                                            if exit_status == 0 { success = true; }
+                                            if exit_status == 0 {
+                                                success = true;
+                                            }
                                             break;
                                         }
                                         _ => {}
                                     }
                                 }
                                 success
-                            } else { false }
+                            } else {
+                                false
+                            }
                         }
                         Err(_) => false,
                     }
@@ -1758,7 +2297,9 @@ pub async fn fs_delete(
                         println!("[FS] Server-side delete successful.");
                         return Ok(());
                     }
-                    _ => println!("[FS] Server-side delete failed or timed out. Checking SFTP fallback..."),
+                    _ => println!(
+                        "[FS] Server-side delete failed or timed out. Checking SFTP fallback..."
+                    ),
                 }
             }
         }
@@ -1767,8 +2308,13 @@ pub async fn fs_delete(
         println!("[FS] Falling back to SFTP delete...");
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
-        match tokio::time::timeout(timeout_duration, state.file_system.delete_remote(&sftp, &path)).await {
+
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.delete_remote(&sftp, &path),
+        )
+        .await
+        {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during delete, retrying...");
@@ -1779,10 +2325,18 @@ pub async fn fs_delete(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.delete_remote(&sftp, &path)).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state.file_system.delete_remote(&sftp, &path),
+                )
+                .await
+                {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP delete timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP delete timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -1793,7 +2347,10 @@ pub async fn fs_delete(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP delete timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP delete timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -1840,7 +2397,7 @@ pub async fn fs_delete_batch(
         if should_optimize {
             if let Some(session) = session_opt {
                 let timeout_duration = std::time::Duration::from_secs(15);
-                
+
                 let ssh_optimize_fut = async {
                     let mut channel = session
                         .lock()
@@ -1851,19 +2408,24 @@ pub async fn fs_delete_batch(
 
                     let paths_str = paths
                         .iter()
-                        .map(|p| format!("'{}'", p.replace("'", "'\\''")))
+                        .map(|p| shell_quote(p))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    
+
                     let cmd = format!("rm -rf {}", paths_str);
                     println!("[FS] Attempting batch server-side delete: {}", cmd);
-                    
-                    channel.exec(true, cmd).await.map_err(|e| format!("Exec failed: {}", e))?;
+
+                    channel
+                        .exec(true, cmd)
+                        .await
+                        .map_err(|e| format!("Exec failed: {}", e))?;
 
                     let mut success = false;
                     while let Some(msg) = channel.wait().await {
                         if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
-                            if exit_status == 0 { success = true; }
+                            if exit_status == 0 {
+                                success = true;
+                            }
                             break;
                         }
                     }
@@ -1875,8 +2437,14 @@ pub async fn fs_delete_batch(
                         println!("[FS] Batch server-side delete successful.");
                         return Ok(());
                     }
-                    Ok(Err(e)) => println!("[FS] Batch SSH delete error: {}. Falling back to SFTP...", e),
-                    Err(_) => println!("[FS] Batch SSH delete timed out after {}s. Falling back to SFTP...", timeout_duration.as_secs()),
+                    Ok(Err(e)) => println!(
+                        "[FS] Batch SSH delete error: {}. Falling back to SFTP...",
+                        e
+                    ),
+                    Err(_) => println!(
+                        "[FS] Batch SSH delete timed out after {}s. Falling back to SFTP...",
+                        timeout_duration.as_secs()
+                    ),
                     _ => println!("[FS] Batch SSH delete failed, falling back to SFTP..."),
                 }
             }
@@ -1886,7 +2454,7 @@ pub async fn fs_delete_batch(
         async fn perform_sftp_batch_delete(
             sftp: &Arc<russh_sftp::client::SftpSession>,
             paths: &[String],
-            fs: &Arc<FileSystem>
+            fs: &Arc<FileSystem>,
         ) -> Vec<String> {
             let mut failed = Vec::new();
             for path in paths {
@@ -1900,14 +2468,22 @@ pub async fn fs_delete_batch(
 
         let sftp = match get_sftp_or_reconnect(&state, &connection_id).await {
             Ok(s) => s,
-            Err(e) => return Err(BatchDeleteError { message: e, failed_paths: paths }),
+            Err(e) => {
+                return Err(BatchDeleteError {
+                    message: e,
+                    failed_paths: paths,
+                })
+            }
         };
 
         let mut failed_paths = perform_sftp_batch_delete(&sftp, &paths, &state.file_system).await;
-        
+
         // If some failed, maybe it was a session disconnect? Try reconnecting ONCE for the failures
         if !failed_paths.is_empty() {
-            println!("[FS] Some batch deletes failed, attempting one-time reconnect for {} items...", failed_paths.len());
+            println!(
+                "[FS] Some batch deletes failed, attempting one-time reconnect for {} items...",
+                failed_paths.len()
+            );
             {
                 let mut connections = state.connections.lock().await;
                 if let Some(c) = connections.get_mut(&connection_id) {
@@ -1916,7 +2492,8 @@ pub async fn fs_delete_batch(
             }
             if let Ok(retry_sftp) = get_sftp_or_reconnect(&state, &connection_id).await {
                 // Only retry the previously failed paths
-                let still_failed = perform_sftp_batch_delete(&retry_sftp, &failed_paths, &state.file_system).await;
+                let still_failed =
+                    perform_sftp_batch_delete(&retry_sftp, &failed_paths, &state.file_system).await;
                 failed_paths = still_failed;
             }
         }
@@ -1927,7 +2504,7 @@ pub async fn fs_delete_batch(
                 failed_paths,
             });
         }
-        
+
         Ok(())
     }
 }
@@ -1961,35 +2538,49 @@ pub async fn fs_copy(
                 // Simple quoting for paths (Linux/Unix assumptions for now, robust enough for typical usage)
                 // We use standard "cp -r" which works on most Unix-likes.
                 // If it fails (e.g. Windows), we fall back to SFTP.
-                let cmd = format!(
-                    "cp -r '{}' '{}'",
-                    from.replace("'", "'\\''"),
-                    to.replace("'", "'\\''")
-                );
+                let cmd = format!("cp -r {} {}", shell_quote(&from), shell_quote(&to));
                 println!("[FS] Attempting server-side copy: {}", cmd);
-
-                match session.lock().await.channel_open_session().await {
-                    Ok(mut channel) => {
-                        if let Ok(_) = channel.exec(true, cmd).await {
-                            // Wait for exit status
-                            let mut success = false;
-                            while let Some(msg) = channel.wait().await {
-                                if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
-                                    if exit_status == 0 {
-                                        success = true;
+                let timeout_duration = std::time::Duration::from_secs(10);
+                let optimize_fut = async {
+                    match session.lock().await.channel_open_session().await {
+                        Ok(mut channel) => {
+                            if channel.exec(true, cmd).await.is_ok() {
+                                // Wait for exit status
+                                let mut success = false;
+                                while let Some(msg) = channel.wait().await {
+                                    if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
+                                        if exit_status == 0 {
+                                            success = true;
+                                        }
+                                        break;
                                     }
-                                    break;
                                 }
-                            }
-                            if success {
-                                println!("[FS] Server-side copy successful");
-                                return Ok(());
+                                Ok::<bool, String>(success)
                             } else {
-                                println!("[FS] Server-side copy failed (non-zero exit), checking SFTP fallback...");
+                                Ok::<bool, String>(false)
                             }
                         }
+                        Err(e) => {
+                            println!("[FS] Failed to open channel for copy optimization: {}", e);
+                            Ok::<bool, String>(false)
+                        }
                     }
-                    Err(e) => println!("[FS] Failed to open channel for copy optimization: {}", e),
+                };
+
+                match tokio::time::timeout(timeout_duration, optimize_fut).await {
+                    Ok(Ok(true)) => {
+                        println!("[FS] Server-side copy successful");
+                        return Ok(());
+                    }
+                    Ok(Ok(false)) => {
+                        println!("[FS] Server-side copy failed (non-zero exit), checking SFTP fallback...");
+                    }
+                    Ok(Err(e)) => {
+                        println!("[FS] Server-side copy failed (error), checking SFTP fallback: {}", e);
+                    }
+                    Err(_) => {
+                        println!("[FS] Server-side copy optimization timed out, checking SFTP fallback...");
+                    }
                 }
             }
         }
@@ -1997,8 +2588,13 @@ pub async fn fs_copy(
         // Fallback to SFTP
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
-        match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&sftp, &from, &to)).await {
+
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.copy_remote(&sftp, &from, &to),
+        )
+        .await
+        {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
                 println!("[FS] SFTP session closed during copy, retrying...");
@@ -2009,10 +2605,18 @@ pub async fn fs_copy(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&sftp, &from, &to)).await {
+                match tokio::time::timeout(
+                    timeout_duration,
+                    state.file_system.copy_remote(&sftp, &from, &to),
+                )
+                .await
+                {
                     Ok(Ok(_)) => Ok(()),
                     Ok(Err(e)) => Err(e.to_string()),
-                    Err(_) => Err(format!("DISCONNECTED: SFTP copy timed out after {}s", timeout_duration.as_secs())),
+                    Err(_) => Err(format!(
+                        "DISCONNECTED: SFTP copy timed out after {}s",
+                        timeout_duration.as_secs()
+                    )),
                 }
             }
             Ok(Err(e)) => Err(e.to_string()),
@@ -2023,7 +2627,10 @@ pub async fn fs_copy(
                         c.sftp_session = None;
                     }
                 }
-                Err(format!("DISCONNECTED: SFTP copy timed out after {}s", timeout_duration.as_secs()))
+                Err(format!(
+                    "DISCONNECTED: SFTP copy timed out after {}s",
+                    timeout_duration.as_secs()
+                ))
             }
         }
     }
@@ -2057,45 +2664,51 @@ pub async fn fs_copy_batch(
 
         if should_optimize && session_opt.is_some() {
             if let Some(session) = session_opt {
-                let mut channel = session
-                    .lock()
-                    .await
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| format!("Failed to open channel: {}", e))?;
-
                 // Build a multi-command string: cp -r 'a' 'b' && cp -r 'c' 'd' ...
                 let cmd = operations
                     .iter()
-                    .map(|op| {
-                        format!(
-                            "cp -r '{}' '{}'",
-                            op.from.replace("'", "'\\''"),
-                            op.to.replace("'", "'\\''")
-                        )
-                    })
+                    .map(|op| format!("cp -r {} {}", shell_quote(&op.from), shell_quote(&op.to)))
                     .collect::<Vec<_>>()
                     .join(" && ");
 
                 println!("[FS] Attempting batch server-side copy: {}", cmd);
-                channel
-                    .exec(true, cmd)
-                    .await
-                    .map_err(|e| format!("Exec failed: {}", e))?;
+                let timeout_duration = std::time::Duration::from_secs(10);
+                let optimize_fut = async {
+                    let mut channel = session
+                        .lock()
+                        .await
+                        .channel_open_session()
+                        .await
+                        .map_err(|e| format!("Failed to open channel: {}", e))?;
+                    channel
+                        .exec(true, cmd)
+                        .await
+                        .map_err(|e| format!("Exec failed: {}", e))?;
 
-                let mut exit_code = None;
-                while let Some(msg) = channel.wait().await {
-                    if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
-                        exit_code = Some(exit_status);
-                        break;
+                    let mut exit_code = None;
+                    while let Some(msg) = channel.wait().await {
+                        if let russh::ChannelMsg::ExitStatus { exit_status } = msg {
+                            exit_code = Some(exit_status);
+                            break;
+                        }
                     }
-                }
+                    Ok::<Option<u32>, String>(exit_code)
+                };
 
-                if let Some(0) = exit_code {
-                    println!("[FS] Batch server-side copy successful");
-                    return Ok(());
-                } else {
-                    println!("[FS] Batch server-side copy failed with exit code {:?}, falling back to SFTP...", exit_code);
+                match tokio::time::timeout(timeout_duration, optimize_fut).await {
+                    Ok(Ok(Some(0))) => {
+                        println!("[FS] Batch server-side copy successful");
+                        return Ok(());
+                    }
+                    Ok(Ok(exit_code)) => {
+                        println!("[FS] Batch server-side copy failed with exit code {:?}, falling back to SFTP...", exit_code);
+                    }
+                    Ok(Err(e)) => {
+                        println!("[FS] Batch server-side copy optimization failed: {}. Falling back to SFTP...", e);
+                    }
+                    Err(_) => {
+                        println!("[FS] Batch server-side copy optimization timed out. Falling back to SFTP...");
+                    }
                 }
             }
         }
@@ -2103,16 +2716,29 @@ pub async fn fs_copy_batch(
         // Final fallback: Sequential SFTP if no session or optimization fails
         let mut current_sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        
+
         let mut idx = 0;
+        let mut sftp_retry = 0u8;
         while idx < operations.len() {
             let op = &operations[idx];
-            match tokio::time::timeout(timeout_duration, state.file_system.copy_remote(&current_sftp, &op.from, &op.to)).await {
+            match tokio::time::timeout(
+                timeout_duration,
+                state
+                    .file_system
+                    .copy_remote(&current_sftp, &op.from, &op.to),
+            )
+            .await
+            {
                 Ok(Ok(_)) => {
+                    sftp_retry = 0;
                     idx += 1;
                 }
                 Ok(Err(e)) if e.to_string().to_lowercase().contains("session closed") => {
-                    println!("[FS] SFTP session closed during batch item {}, retrying...", idx);
+                    sftp_retry = sftp_retry.saturating_add(1);
+                    println!(
+                        "[FS] SFTP session closed during batch item {}, retrying...",
+                        idx
+                    );
                     {
                         let mut connections = state.connections.lock().await;
                         if let Some(c) = connections.get_mut(&connection_id) {
@@ -2120,6 +2746,12 @@ pub async fn fs_copy_batch(
                         }
                     }
                     current_sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+                    if sftp_retry > MAX_SFTP_RETRIES {
+                        return Err(format!(
+                            "DISCONNECTED: SFTP batch copy failed at item {} after {} reconnect retries",
+                            idx, MAX_SFTP_RETRIES
+                        ));
+                    }
                     // Don't increment idx, retry the same operation with new SFTP
                 }
                 Ok(Err(e)) => return Err(e.to_string()),
@@ -2130,7 +2762,11 @@ pub async fn fs_copy_batch(
                             c.sftp_session = None;
                         }
                     }
-                    return Err(format!("DISCONNECTED: SFTP batch copy timed out at item {} after {}s", idx, timeout_duration.as_secs()));
+                    return Err(format!(
+                        "DISCONNECTED: SFTP batch copy timed out at item {} after {}s",
+                        idx,
+                        timeout_duration.as_secs()
+                    ));
                 }
             }
         }
@@ -2158,8 +2794,9 @@ pub async fn fs_rename_batch(
         for op in &operations {
             let res = tokio::time::timeout(
                 Duration::from_secs(10),
-                state.file_system.rename_remote(&sftp, &op.from, &op.to)
-            ).await;
+                state.file_system.rename_remote(&sftp, &op.from, &op.to),
+            )
+            .await;
 
             let final_res = match res {
                 Ok(inner) => inner.map_err(|e| e.to_string()),
@@ -2168,7 +2805,9 @@ pub async fn fs_rename_batch(
 
             if let Err(e) = final_res {
                 if e.to_lowercase().contains("session closed") || e.contains("DISCONNECTED:") {
-                    println!("[FS] SFTP session closed or timed out during batch rename, retrying...");
+                    println!(
+                        "[FS] SFTP session closed or timed out during batch rename, retrying..."
+                    );
                     {
                         let mut connections = state.connections.lock().await;
                         if let Some(c) = connections.get_mut(&connection_id) {
@@ -2178,10 +2817,41 @@ pub async fn fs_rename_batch(
                     let sftp_fresh = get_sftp_or_reconnect(&state, &connection_id).await?;
                     // Resume from current op
                     for retry_op in operations.iter().skip_while(|oo| oo.from != op.from) {
+                        let to_exists = tokio::time::timeout(
+                            Duration::from_secs(10),
+                            state.file_system.exists_remote(&sftp_fresh, &retry_op.to),
+                        )
+                        .await
+                        .map_err(|_| "DISCONNECTED: SFTP session timeout".to_string())?
+                        .map_err(|e| e.to_string())?;
+
+                        let from_exists = tokio::time::timeout(
+                            Duration::from_secs(10),
+                            state.file_system.exists_remote(&sftp_fresh, &retry_op.from),
+                        )
+                        .await
+                        .map_err(|_| "DISCONNECTED: SFTP session timeout".to_string())?
+                        .map_err(|e| e.to_string())?;
+
+                        if !from_exists {
+                            continue;
+                        }
+                        if to_exists && from_exists {
+                            return Err(format!(
+                                "Batch rename conflict: both source and destination exist for '{}' -> '{}'",
+                                retry_op.from, retry_op.to
+                            ));
+                        }
+
                         let retry_res = tokio::time::timeout(
                             Duration::from_secs(10),
-                            state.file_system.rename_remote(&sftp_fresh, &retry_op.from, &retry_op.to)
-                        ).await;
+                            state.file_system.rename_remote(
+                                &sftp_fresh,
+                                &retry_op.from,
+                                &retry_op.to,
+                            ),
+                        )
+                        .await;
 
                         match retry_res {
                             Ok(inner) => inner.map_err(|e| e.to_string())?,
@@ -2211,11 +2881,12 @@ pub async fn fs_exists(
             .map_err(|e| e.to_string())
     } else {
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-        
+
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            state.file_system.exists_remote(&sftp, &path)
-        ).await;
+            state.file_system.exists_remote(&sftp, &path),
+        )
+        .await;
 
         let final_res = match res {
             Ok(inner) => inner.map_err(|e| e.to_string()),
@@ -2224,7 +2895,9 @@ pub async fn fs_exists(
 
         match final_res {
             Ok(res) => Ok(res),
-            Err(e) if e.to_lowercase().contains("session closed") || e.contains("DISCONNECTED:") => {
+            Err(e)
+                if e.to_lowercase().contains("session closed") || e.contains("DISCONNECTED:") =>
+            {
                 println!("[FS] SFTP session closed or timed out during exists check, retrying...");
                 {
                     let mut connections = state.connections.lock().await;
@@ -2233,11 +2906,12 @@ pub async fn fs_exists(
                     }
                 }
                 let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
-                
+
                 let retry_res = tokio::time::timeout(
                     Duration::from_secs(10),
-                    state.file_system.exists_remote(&sftp, &path)
-                ).await;
+                    state.file_system.exists_remote(&sftp, &path),
+                )
+                .await;
 
                 match retry_res {
                     Ok(inner) => inner.map_err(|e| e.to_string()),
@@ -2384,7 +3058,9 @@ pub async fn window_is_maximized(app: AppHandle) -> bool {
 
 #[tauri::command]
 pub async fn window_maximize(app: AppHandle) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     if window.is_maximized().map_err(|e| e.to_string())? {
         window.unmaximize().map_err(|e| e.to_string())?;
     } else {
@@ -2395,13 +3071,17 @@ pub async fn window_maximize(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn window_minimize(app: AppHandle) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     window.minimize().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn window_close(app: AppHandle) -> Result<(), String> {
-    let window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
     window.close().map_err(|e| e.to_string())
 }
 
@@ -2755,9 +3435,6 @@ pub async fn ssh_import_config_from_file(
     if metadata.len() > MAX_IMPORT_TEXT_BYTES as u64 {
         return Err("SSH config file too large (max 1 MiB).".to_string());
     }
-    std::fs::File::open(config_path)
-        .map_err(|e| format!("Cannot read SSH config file: {}", e))?;
-
     crate::ssh_config::parse_config(config_path).map_err(|e| e.to_string())
 }
 
@@ -2784,23 +3461,14 @@ pub async fn ssh_import_config_by_source(
     match request.source_type.as_str() {
         "default_ssh" => ssh_import_config(app).await,
         "file" => {
-            let path = request
-                .path
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let path = request.path.as_deref().unwrap_or("").trim().to_string();
             if path.is_empty() {
                 return Err("Select an SSH config file path first.".to_string());
             }
             ssh_import_config_from_file(path).await
         }
         "text" => {
-            let content = request
-                .content
-                .as_deref()
-                .unwrap_or("")
-                .to_string();
+            let content = request.content.as_deref().unwrap_or("").to_string();
             if content.trim().is_empty() {
                 return Err("Paste SSH config text first.".to_string());
             }
@@ -2929,49 +3597,148 @@ pub async fn snippets_delete(id: String, state: State<'_, AppState>) -> Result<(
 
 #[tauri::command]
 pub async fn settings_get(app: AppHandle) -> Result<serde_json::Value, String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let file_path = data_dir.join("settings.json");
-
-    if !file_path.exists() {
-        return Ok(serde_json::json!({}));
-    }
-
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let settings: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-
-    Ok(settings)
+    read_effective_settings(&app)
 }
 
 #[tauri::command]
 pub async fn settings_set(app: AppHandle, settings: serde_json::Value) -> Result<(), String> {
-    // Always write to the default app_data_dir for bootstrap purposes
-    let default_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    if !default_dir.exists() {
-        std::fs::create_dir_all(&default_dir).map_err(|e| e.to_string())?;
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
+    let current = read_effective_settings(&app)?;
+    let current_data_path = data_path_from_settings(&current);
+    let merged = ensure_object_settings(merge_json_values(current, settings))?;
+    let next_data_path = data_path_from_settings(&merged);
+    persist_settings_json(&app, &merged)?;
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
     }
-
-    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-
-    // Write to bootstrap location (app_data_dir)
-    let bootstrap_path = default_dir.join("settings.json");
-    std::fs::write(&bootstrap_path, &json).map_err(|e| e.to_string())?;
-
-    // Also write to the configured dataPath if it's set
-    if let Some(data_path) = settings.get("dataPath").and_then(|v| v.as_str()) {
-        if !data_path.is_empty() {
-            let custom_dir = std::path::PathBuf::from(data_path);
-            if !custom_dir.exists() {
-                std::fs::create_dir_all(&custom_dir).map_err(|e| e.to_string())?;
-            }
-            let custom_settings_path = custom_dir.join("settings.json");
-            std::fs::write(custom_settings_path, &json).map_err(|e| e.to_string())?;
-        }
-    }
-
-
-
-
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct SettingsFilePayload {
+    pub path: String,
+    pub content: String,
+    #[serde(rename = "modifiedMs")]
+    pub modified_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn settings_get_path(app: AppHandle) -> Result<String, String> {
+    Ok(get_native_settings_path(&app)?
+        .to_string_lossy()
+        .to_string())
+}
+
+/// Read raw settings.json content for in-app editing surfaces.
+#[tauri::command]
+pub async fn settings_read_raw(app: AppHandle) -> Result<SettingsFilePayload, String> {
+    let path = get_native_settings_path(&app)?;
+    let content = if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+    } else {
+        let migrated = read_effective_settings(&app)?;
+        if migrated.is_object() && !migrated.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&migrated).map_err(|e| e.to_string())?
+            )
+        } else {
+            "{}\n".to_string()
+        }
+    };
+    let modified_ms = settings_mtime_ms(&path);
+    Ok(SettingsFilePayload {
+        path: path.to_string_lossy().to_string(),
+        content,
+        modified_ms,
+    })
+}
+
+/// Save raw settings.json content from in-app editor with optimistic concurrency.
+/// Fails if file changed externally since last read (`expected_modified_ms` mismatch).
+#[tauri::command]
+pub async fn settings_write_raw(
+    app: AppHandle,
+    content: String,
+    expected_modified_ms: Option<u64>,
+) -> Result<SettingsFilePayload, String> {
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
+    let settings_path = get_native_settings_path(&app)?;
+    let current_raw = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path).ok()
+    } else {
+        None
+    };
+    let current_data_path = current_raw
+        .as_deref()
+        .and_then(data_path_from_raw_json);
+
+    let actual = settings_mtime_ms(&settings_path);
+    if actual != expected_modified_ms {
+        return Err(settings_command_error(
+            SETTINGS_CHANGED_ON_DISK_ERROR_CODE,
+            "settings.json changed on disk. Reload before saving.",
+        ));
+    }
+
+    let parsed: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid JSON in settings.json: {}", e))?;
+    let validated = ensure_object_settings(parsed)?;
+    validate_settings_schema(&validated)?;
+
+    write_atomic_file(&settings_path, &content)?;
+    let next_data_path = data_path_from_raw_json(&content);
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
+    }
+
+    let saved_content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
+    let modified_ms = settings_mtime_ms(&settings_path);
+    Ok(SettingsFilePayload {
+        path: settings_path.to_string_lossy().to_string(),
+        content: saved_content,
+        modified_ms,
+    })
+}
+
+/// Restore settings.json from the last-known-good backup.
+#[tauri::command]
+pub async fn settings_restore_last_known_good(
+    app: AppHandle,
+) -> Result<SettingsFilePayload, String> {
+    let _mutation_guard = SETTINGS_MUTATION_LOCK.lock().await;
+    let settings_path = get_native_settings_path(&app)?;
+    let current_raw = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path).ok()
+    } else {
+        None
+    };
+    let current_data_path = current_raw
+        .as_deref()
+        .and_then(data_path_from_raw_json);
+    let backup_path = get_last_known_good_settings_path(&app)?;
+    if !backup_path.exists() {
+        return Err("No last-known-good settings backup found.".to_string());
+    }
+
+    let backup_content = std::fs::read_to_string(&backup_path).map_err(|e| e.to_string())?;
+    let parsed_backup = serde_json::from_str::<Value>(&backup_content)
+        .map_err(|e| format!("Invalid JSON in last-known-good backup: {}", e))?;
+    let validated_backup = ensure_object_settings(parsed_backup)?;
+    validate_settings_schema(&validated_backup)?;
+    write_atomic_file(&settings_path, &backup_content)?;
+    let next_data_path = data_path_from_raw_json(&backup_content);
+    if current_data_path != next_data_path {
+        clear_data_dir_cache();
+    }
+
+    let saved_content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
+    let modified_ms = settings_mtime_ms(&settings_path);
+    Ok(SettingsFilePayload {
+        path: settings_path.to_string_lossy().to_string(),
+        content: saved_content,
+        modified_ms,
+    })
 }
 
 use tauri::Emitter;
@@ -3282,7 +4049,7 @@ pub async fn sftp_copy_to_server(
             transfers.insert(tid.clone(), cancel_token.clone());
         }
 
-        let result = async {
+        let result: Result<(u64, u64), String> = async {
             // Shared SFTP session for size calculation
             let src_sftp = get_sftp_or_reconnect(&state, &src_id).await?;
             // Calculate size upfront for accurate progress
@@ -3322,7 +4089,7 @@ pub async fn sftp_copy_to_server(
             )
             .await?;
 
-            Ok(())
+            Ok((transferred, total_size))
         }
         .await;
 
@@ -3333,13 +4100,13 @@ pub async fn sftp_copy_to_server(
         }
 
         match result {
-            Ok(_) => {
+            Ok((transferred, total)) => {
                 let _ = app_handle.emit(
                     "transfer-progress",
                     TransferProgress {
                         id: tid.clone(),
-                        transferred: 100, // Make sure it finishes
-                        total: 100,
+                        transferred,
+                        total,
                     },
                 );
 
@@ -3966,25 +4733,34 @@ pub async fn plugin_window_create(
     width: Option<f64>,
     height: Option<f64>,
 ) -> Result<(), String> {
-    use base64::Engine;
     use tauri::WebviewWindowBuilder;
     let label = format!("plugin-window-{}", uuid::Uuid::new_v4());
+    let mut temp_html_path: Option<std::path::PathBuf> = None;
     let mut builder = WebviewWindowBuilder::new(
         &app,
         &label,
         if let Some(u) = url {
             tauri::WebviewUrl::External(u.parse().map_err(|e: url::ParseError| e.to_string())?)
         } else if let Some(h) = html {
-            // For HTML content, we use a data URL for simplicity in MVP
-            let data_url = format!(
-                "data:text/html;base64,{}",
-                base64::engine::general_purpose::STANDARD.encode(h)
-            );
-            tauri::WebviewUrl::External(
-                data_url
-                    .parse()
-                    .map_err(|e: url::ParseError| e.to_string())?,
-            )
+            let cache_dir = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| format!("Failed to resolve app cache dir: {}", e))?
+                .join("plugin-window-html");
+            if !cache_dir.exists() {
+                std::fs::create_dir_all(&cache_dir)
+                    .map_err(|e| format!("Failed to create plugin cache dir: {}", e))?;
+            }
+            let file_path = cache_dir.join(format!(
+                "zync-plugin-window-{}.html",
+                uuid::Uuid::new_v4()
+            ));
+            std::fs::write(&file_path, h)
+                .map_err(|e| format!("Failed to write temporary plugin HTML file: {}", e))?;
+            temp_html_path = Some(file_path.clone());
+            let file_url = url::Url::from_file_path(&file_path)
+                .map_err(|_| format!("Failed to create file URL for {}", file_path.display()))?;
+            tauri::WebviewUrl::External(file_url)
         } else {
             return Err("Must provide url or html".into());
         },
@@ -3997,14 +4773,110 @@ pub async fn plugin_window_create(
         builder = builder.inner_size(w, height.unwrap_or(600.0));
     }
 
-    builder.build().map_err(|e| e.to_string())?;
+    if let Err(error) = builder.build() {
+        if let Some(path) = temp_html_path.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error.to_string());
+    }
+    if let Some(file_path) = temp_html_path {
+        match PLUGIN_WINDOW_TEMP_FILES.lock() {
+            Ok(mut files) => {
+                files.insert(label, file_path);
+            }
+            Err(lock_error) => {
+                eprintln!(
+                    "Failed to register plugin window temp file for cleanup: {}",
+                    lock_error
+                );
+            }
+        }
+    }
     Ok(())
+}
+
+pub fn cleanup_plugin_window_temp_file(window_label: &str) {
+    let maybe_path = if let Ok(mut files) = PLUGIN_WINDOW_TEMP_FILES.lock() {
+        files.remove(window_label)
+    } else {
+        None
+    };
+    if let Some(path) = maybe_path {
+        if let Err(error) = std::fs::remove_file(&path) {
+            eprintln!(
+                "[plugin-window] Failed to remove temporary HTML file {}: {}",
+                path.display(),
+                error
+            );
+        }
+    }
+}
+
+pub fn cleanup_stale_plugin_window_temp_files(app: &AppHandle) {
+    let cache_dir = match app.path().app_cache_dir() {
+        Ok(dir) => dir.join("plugin-window-html"),
+        Err(error) => {
+            eprintln!("[plugin-window] Failed to resolve cache dir: {}", error);
+            return;
+        }
+    };
+
+    if !cache_dir.exists() {
+        return;
+    }
+
+    let stale_after = Duration::from_secs(60 * 60 * 24);
+    let now = SystemTime::now();
+    let entries = match std::fs::read_dir(&cache_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "[plugin-window] Failed to scan temp cache dir {}: {}",
+                cache_dir.display(),
+                error
+            );
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("html") {
+            continue;
+        }
+
+        let should_remove = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age > stale_after)
+            .unwrap_or(true);
+
+        if should_remove {
+            if let Err(error) = std::fs::remove_file(&path) {
+                eprintln!(
+                    "[plugin-window] Failed to remove stale HTML file {}: {}",
+                    path.display(),
+                    error
+                );
+            }
+        }
+    }
 }
 
 #[tauri::command]
 pub async fn config_select_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let path = app.dialog().file().blocking_pick_folder();
+    let app_for_picker = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        app_for_picker.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| format!("Folder picker task failed: {}", e))?;
     Ok(path.map(|p| p.to_string()))
 }
 
@@ -4050,6 +4922,11 @@ pub async fn ssh_parse_command(command: String) -> Result<crate::ssh_parser::Par
 /// Shell-quote a path so it can be safely embedded in a remote command string.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn universal_double_quote_path(path: &str) -> String {
+    let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 /// Download selected remote files/directories as a .tar.gz archive.
@@ -4162,7 +5039,8 @@ pub async fn sftp_download_as_zip(
                 }
             }
 
-            let mut out_file = std::fs::File::create(&local_path)
+            let mut out_file = tokio::fs::File::create(&local_path)
+                .await
                 .map_err(|e| format!("Cannot create output file: {}", e))?;
 
             let _ = app_handle.emit(
@@ -4186,9 +5064,10 @@ pub async fn sftp_download_as_zip(
                 }
                 match msg {
                     russh::ChannelMsg::Data { ref data } => {
-                        use std::io::Write;
+                        use tokio::io::AsyncWriteExt;
                         out_file
                             .write_all(data)
+                            .await
                             .map_err(|e| format!("Write failed: {}", e))?;
                         bytes_written += data.len() as u64;
                         if last_emit.elapsed().as_millis() >= 150 {
@@ -4268,10 +5147,7 @@ pub async fn ai_translate(
     context: crate::ai::TerminalContext,
     request_id: String,
 ) -> Result<crate::ai::AiTranslateResponse, String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
     crate::ai::translate(&app, query, context, request_id, config).await
 }
 
@@ -4283,10 +5159,7 @@ pub async fn ai_translate_stream(
     request_id: String,
     history: Vec<crate::ai::ChatMessage>,
 ) -> Result<(), String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
     tauri::async_runtime::spawn(crate::ai::translate_stream(
         app, query, context, request_id, config, history,
     ));
@@ -4295,7 +5168,7 @@ pub async fn ai_translate_stream(
 
 #[tauri::command]
 pub async fn ai_check_ollama(app: AppHandle) -> Result<bool, String> {
-    let config = crate::ai::read_ai_config(&app);
+    let config = require_enabled_ai(&app)?;
     let url = config
         .ollama_url
         .as_deref()
@@ -4305,11 +5178,13 @@ pub async fn ai_check_ollama(app: AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn ai_get_ollama_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let _ = require_enabled_ai(&app)?;
     crate::ai::get_ollama_models(&app).await
 }
 
 #[tauri::command]
 pub async fn ai_get_provider_models(app: AppHandle) -> Result<Vec<String>, String> {
+    let _ = require_enabled_ai(&app)?;
     crate::ai::get_provider_models(&app).await
 }
 
@@ -4324,10 +5199,7 @@ pub async fn ai_agent_run(
     state: State<'_, AppState>,
     request: crate::ai::AgentRunRequest,
 ) -> Result<(), String> {
-    let config = crate::ai::read_ai_config(&app);
-    if !config.enabled {
-        return Err("AI is disabled in Settings -> AI.".to_string());
-    }
+    let config = require_enabled_ai(&app)?;
 
     let cancel = Arc::new(AtomicBool::new(false));
     let run_id = request.run_id.clone();
@@ -4352,12 +5224,17 @@ pub async fn ai_agent_run(
     Ok(())
 }
 
+fn require_enabled_ai(app: &AppHandle) -> Result<crate::ai::AiConfig, String> {
+    let config = crate::ai::read_ai_config(app);
+    if !config.enabled {
+        return Err("AI is disabled in Settings -> AI.".to_string());
+    }
+    Ok(config)
+}
+
 /// Cancel a running agent loop by its run_id.
 #[tauri::command]
-pub async fn ai_agent_stop(
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<(), String> {
+pub async fn ai_agent_stop(state: State<'_, AppState>, run_id: String) -> Result<(), String> {
     let runs = state.agent_runs.lock().await;
     if let Some(cancel) = runs.get(&run_id) {
         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
