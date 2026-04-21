@@ -1,11 +1,15 @@
+import { useEffect, useState, type FocusEvent } from 'react';
 import type { AppSettings } from '../../../store/settingsSlice';
 import { useAppStore } from '../../../store/useAppStore';
+import { getPluginCategory } from '../../editor/providers';
 import { Select } from '../../ui/Select';
 import { Section } from '../common/Section';
 import { Toggle } from '../common/Toggle';
 import { DEFAULT_GLOBAL_FONT_SIZE, DEFAULT_GLOBAL_FONT_STACK } from '../constants/defaults';
 
 const THEME_PREFIX = 'com.zync.theme.';
+const GLOBAL_FONT_SIZE_MIN = 10;
+const GLOBAL_FONT_SIZE_MAX = 24;
 
 interface PluginManifest {
     id: string;
@@ -42,6 +46,21 @@ function getThemeAccent(plugin: ThemePlugin | undefined, themeName: string): str
     if (themeName === 'dark') return '#797bce';
     if (themeName === 'light') return '#6366f1';
     return 'var(--color-app-accent)';
+}
+
+function normalizeHexColor(value: string | null | undefined): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    const shortMatch = /^#([0-9A-Fa-f]{3})$/.exec(trimmed);
+    if (shortMatch) {
+        const [r, g, b] = shortMatch[1].split('');
+        return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+    }
+    const fullMatch = /^#([0-9A-Fa-f]{6})$/.exec(trimmed);
+    if (fullMatch) {
+        return `#${fullMatch[1]}`.toLowerCase();
+    }
+    return null;
 }
 
 function ThemeButton({ plugin, isSelected, onClick }: ThemeButtonProps) {
@@ -94,8 +113,11 @@ export function AppearanceTab({
         void applyUpdate({ globalFontFamily: next });
     };
 
-    const lightPlugins = plugins.filter((p) => (p.manifest.mode ?? 'light') === 'light');
-    const darkPlugins = plugins.filter((p) => p.manifest.mode === 'dark');
+    const themePlugins = plugins.filter(
+        (p) => p.manifest.id !== 'com.zync.theme.manager' && getPluginCategory(p.manifest) === 'theme',
+    );
+    const lightPlugins = themePlugins.filter((p) => (p.manifest.mode ?? 'light') === 'light');
+    const darkPlugins = themePlugins.filter((p) => p.manifest.mode === 'dark');
     const baseFontOptions = [
         {
             value: DEFAULT_GLOBAL_FONT_STACK,
@@ -129,10 +151,66 @@ export function AppearanceTab({
             },
             ...baseFontOptions,
         ];
-    const activeThemePlugin = plugins.find((p) => p.manifest.id === `${THEME_PREFIX}${settings.theme}`);
+    const activeThemePlugin = themePlugins.find((p) => p.manifest.id === `${THEME_PREFIX}${settings.theme}`);
     const themeAccent = getThemeAccent(activeThemePlugin, settings.theme);
+    const normalizedAccentColor = normalizeHexColor(settings.accentColor);
+    const normalizedThemeAccent = normalizeHexColor(themeAccent);
+    const colorPickerValue = normalizedAccentColor ?? normalizedThemeAccent ?? '#6366f1';
+    const [tempAccentColor, setTempAccentColor] = useState(colorPickerValue);
+    useEffect(() => {
+        setTempAccentColor(colorPickerValue);
+    }, [colorPickerValue]);
+
+    const commitAccentColor = () => {
+        const normalizedTempAccentColor = normalizeHexColor(tempAccentColor);
+        if (!normalizedTempAccentColor) {
+            setTempAccentColor(colorPickerValue);
+            return;
+        }
+        if (normalizedTempAccentColor === colorPickerValue) return;
+        setTempAccentColor(normalizedTempAccentColor);
+        void applyUpdate({ accentColor: normalizedTempAccentColor });
+    };
+
+    const clampedGlobalFontSize = Math.max(
+        GLOBAL_FONT_SIZE_MIN,
+        Math.min(GLOBAL_FONT_SIZE_MAX, settings.globalFontSize ?? DEFAULT_GLOBAL_FONT_SIZE),
+    );
     const clampedOpacity = Math.min(1, Math.max(0.3, settings.windowOpacity ?? 1));
     const clampedPercent = Math.round(clampedOpacity * 100);
+    const [draftGlobalFontSize, setDraftGlobalFontSize] = useState(clampedGlobalFontSize);
+    const [draftOpacityPercent, setDraftOpacityPercent] = useState(clampedPercent);
+
+    useEffect(() => {
+        setDraftGlobalFontSize(clampedGlobalFontSize);
+    }, [clampedGlobalFontSize]);
+
+    useEffect(() => {
+        setDraftOpacityPercent(clampedPercent);
+    }, [clampedPercent]);
+
+    const commitGlobalFontSize = () => {
+        const next = Math.max(
+            GLOBAL_FONT_SIZE_MIN,
+            Math.min(GLOBAL_FONT_SIZE_MAX, Number.parseInt(String(draftGlobalFontSize), 10) || DEFAULT_GLOBAL_FONT_SIZE),
+        );
+        if (next === clampedGlobalFontSize) return;
+        void applyUpdate({ globalFontSize: next });
+    };
+
+    const commitTerminalOpacity = () => {
+        const nextPercent = Math.max(30, Math.min(100, Number.parseInt(String(draftOpacityPercent), 10) || 100));
+        if (nextPercent === clampedPercent) return;
+        void applyUpdate({ windowOpacity: nextPercent / 100 });
+    };
+
+    const handleColorInputBlur = (event: FocusEvent<HTMLInputElement>) => {
+        const nextFocusedElement = event.relatedTarget as HTMLElement | null;
+        if (nextFocusedElement?.getAttribute('aria-label')?.toLowerCase().includes('accent')) {
+            return;
+        }
+        commitAccentColor();
+    };
 
     return (
         <div className="space-y-6">
@@ -239,16 +317,23 @@ export function AppearanceTab({
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
                             <label className="text-sm font-medium text-[var(--color-app-text)]">Global Font Size</label>
-                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{settings.globalFontSize ?? DEFAULT_GLOBAL_FONT_SIZE}px</span>
+                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{draftGlobalFontSize}px</span>
                         </div>
                         <input
                             type="range"
-                            min="12"
-                            max="20"
+                            min={GLOBAL_FONT_SIZE_MIN}
+                            max={GLOBAL_FONT_SIZE_MAX}
                             step="1"
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
-                            value={settings.globalFontSize ?? DEFAULT_GLOBAL_FONT_SIZE}
-                            onChange={(e) => { void applyUpdate({ globalFontSize: parseInt(e.target.value, 10) }); }}
+                            value={draftGlobalFontSize}
+                            onChange={(e) => {
+                                const parsed = Number.parseInt(e.target.value, 10);
+                                const clamped = Math.max(GLOBAL_FONT_SIZE_MIN, Math.min(GLOBAL_FONT_SIZE_MAX, Number.isFinite(parsed) ? parsed : GLOBAL_FONT_SIZE_MIN));
+                                setDraftGlobalFontSize(clamped);
+                            }}
+                            onPointerUp={commitGlobalFontSize}
+                            onKeyUp={commitGlobalFontSize}
+                            onBlur={commitGlobalFontSize}
                         />
                         <div className="text-[11px] text-[var(--color-app-muted)]">
                             Changes app-wide UI text scale (menus, panels, labels, buttons).
@@ -299,6 +384,7 @@ export function AppearanceTab({
                                     }`}
                                 title="Theme Default"
                                 aria-label="Use theme default accent color"
+                                type="button"
                             >
                                 <div className="absolute inset-0.5 rounded-full" style={{ backgroundColor: themeAccent }} />
                             </button>
@@ -314,12 +400,19 @@ export function AppearanceTab({
                                     style={{ backgroundColor: color }}
                                     title={`Accent ${color}`}
                                     aria-label={`Select accent color ${color}`}
+                                    type="button"
                                 />
                             ))}
                             <input
                                 type="color"
-                                value={settings.accentColor || '#6366f1'}
-                                onChange={(e) => { void applyUpdate({ accentColor: e.target.value }); }}
+                                value={tempAccentColor}
+                                onChange={(e) => { setTempAccentColor(e.target.value); }}
+                                onBlur={handleColorInputBlur}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                        commitAccentColor();
+                                    }
+                                }}
                                 className="w-8 h-8 rounded-lg overflow-hidden border-0 p-0 cursor-pointer"
                                 title="Custom accent color"
                                 aria-label="Choose custom accent color"
@@ -330,17 +423,20 @@ export function AppearanceTab({
                     <div className="space-y-3 pt-4 border-t border-[var(--color-app-border)]/50">
                         <div className="flex justify-between">
                             <label className="text-sm font-medium text-[var(--color-app-text)] opacity-80">Terminal Opacity</label>
-                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{clampedPercent}%</span>
+                            <span className="text-sm text-[var(--color-app-accent)] font-mono">{draftOpacityPercent}%</span>
                         </div>
                         <input
                             type="range" min="30" max="100" step="1"
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
-                            value={clampedPercent}
+                            value={draftOpacityPercent}
                             onChange={(e) => {
                                 const parsed = Number.parseInt(e.target.value, 10);
-                                const clamped = Math.max(30, Math.min(100, Number.isFinite(parsed) ? parsed : 100));
-                                void applyUpdate({ windowOpacity: clamped / 100 });
+                                const clamped = Math.max(30, Math.min(100, Number.isFinite(parsed) ? parsed : 30));
+                                setDraftOpacityPercent(clamped);
                             }}
+                            onPointerUp={commitTerminalOpacity}
+                            onKeyUp={commitTerminalOpacity}
+                            onBlur={commitTerminalOpacity}
                         />
                         <div className="text-xs text-[var(--color-app-muted)]">
                             100% keeps the terminal solid. Lower values let the desktop show through the terminal viewport only.

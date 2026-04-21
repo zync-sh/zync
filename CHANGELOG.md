@@ -4,7 +4,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
-## [2.14.0]
+## [2.14.0] - 2026-04-21
 
 ### Added
 - **In-App `settings.json` Editing Surface**: Added a full in-app editor workflow for global `settings.json` including load/save/reload/restore integration in the Settings experience. ([7f9c425])
@@ -32,6 +32,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **SSH Config Import Redundant Read**: Removed unnecessary duplicate file open before parse. ([7f9c425])
 - **Data Directory Resolution Cost**: Added cached data-dir resolution to avoid repeated blocking settings reads on hot paths. ([7f9c425])
 - **AI Settings Parse Diagnostics**: Expanded debug logging to include actual settings path context for AI config parse/default fallback cases. ([7f9c425])
+- **Settings Action Re-entry + Parser/Picker Consistency**: Added in-flight guards for update actions, switched welcome quick-connect helper parsing to shared canonical logic, and aligned theme color picker fallback with theme default accent when valid. ([c9e8345])
 - **File Manager Interaction Stability**: Improved callback/effect stability, keyboard behavior, and quick-connect parsing edge-case handling. ([9f41e0f])
 - **Plugin Temp HTML Lifecycle**: Hardened plugin temp-file registration and stale cache cleanup behavior. ([2ef1c90])
 
@@ -677,6 +678,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 [8dfe727]: https://github.com/zync-sh/zync/commit/8dfe727
 [e70f7a0]: https://github.com/zync-sh/zync/commit/e70f7a0
 [e7f4f02]: https://github.com/zync-sh/zync/commit/e7f4f02
+[c9e8345]: https://github.com/zync-sh/zync/commit/c9e8345
+[da93f23]: https://github.com/zync-sh/zync/commit/da93f23
+[bb42e1c]: https://github.com/zync-sh/zync/commit/bb42e1c
+[9958c44]: https://github.com/zync-sh/zync/commit/9958c44
+[e1d6109]: https://github.com/zync-sh/zync/commit/e1d6109
+[9f41e0f]: https://github.com/zync-sh/zync/commit/9f41e0f
+[2ef1c90]: https://github.com/zync-sh/zync/commit/2ef1c90
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1

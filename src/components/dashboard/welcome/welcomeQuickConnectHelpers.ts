@@ -1,3 +1,5 @@
+import { parseConnectionString, parsePort } from './quick-connect/parsing';
+
 export interface QuickConnectParseResult {
     username: string;
     host: string;
@@ -16,71 +18,10 @@ export interface QuickConnectConnectionDraft {
     createdAt: number;
 }
 
-function parsePortStrict(token: string): number | null {
-    const trimmed = token.trim();
-    if (!/^\d+$/.test(trimmed)) return null;
-    const parsed = Number(trimmed);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
-    return parsed;
-}
-
 export function parseQuickConnectInput(rawInput: string): QuickConnectParseResult | null {
-    const trimmed = rawInput.trim();
-    if (!trimmed) return null;
-
-    let username = 'root';
-    let hostPort = trimmed;
-
-    if (hostPort.includes('@')) {
-        if (hostPort.indexOf('@') !== hostPort.lastIndexOf('@')) {
-            return null;
-        }
-        const atIndex = hostPort.indexOf('@');
-        const nextUsername = hostPort.slice(0, atIndex).trim();
-        const nextHostPort = hostPort.slice(atIndex + 1).trim();
-        if (!nextUsername || !nextHostPort) return null;
-        username = nextUsername;
-        hostPort = nextHostPort;
-    }
-
-    let host = hostPort;
-    let parsedPort = 22;
-
-    if (hostPort.startsWith('[')) {
-        const bracketCloseIndex = hostPort.indexOf(']');
-        if (bracketCloseIndex <= 1) return null;
-
-        host = hostPort.slice(1, bracketCloseIndex).trim();
-        const trailing = hostPort.slice(bracketCloseIndex + 1).trim();
-        if (trailing === '') {
-            // no-op
-        } else if (trailing.startsWith(':')) {
-            const possiblePort = parsePortStrict(trailing.slice(1));
-            if (possiblePort === null) return null;
-            parsedPort = possiblePort;
-        } else {
-            return null;
-        }
-    } else {
-        const colonCount = (hostPort.match(/:/g) || []).length;
-        if (colonCount <= 1) {
-            const colonIndex = hostPort.lastIndexOf(':');
-            if (colonIndex > -1 && colonIndex === hostPort.length - 1) {
-                return null;
-            } else if (colonIndex > -1 && colonIndex < hostPort.length - 1) {
-                const possibleHost = hostPort.slice(0, colonIndex).trim();
-                const possiblePort = parsePortStrict(hostPort.slice(colonIndex + 1));
-                if (!possibleHost || possiblePort === null) return null;
-                host = possibleHost;
-                parsedPort = possiblePort;
-            }
-        }
-    }
-
-    host = host.trim();
-    if (!host) return null;
-
-    return { username, host, parsedPort };
+    const parsed = parseConnectionString(rawInput);
+    if (!parsed) return null;
+    return { username: parsed.username, host: parsed.host, parsedPort: parsed.port };
 }
 
 export function buildQuickConnectDraft(params: {
@@ -96,7 +37,7 @@ export function buildQuickConnectDraft(params: {
 
     let finalPort = parsed.parsedPort;
     if (params.portOverride?.trim()) {
-        const overridePort = parsePortStrict(params.portOverride);
+        const overridePort = parsePort(params.portOverride);
         if (overridePort === null) return null;
         finalPort = overridePort;
     }

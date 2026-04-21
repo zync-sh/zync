@@ -13,11 +13,13 @@ interface ListenerRegistration {
 }
 const eventListeners = new Map<string, Map<Function, ListenerRegistration>>();
 const PENDING_UNLISTEN: UnlistenFn = () => { };
-const isPlainObject = (value: unknown): value is Record<string, unknown> => (
-  value !== null
-  && typeof value === 'object'
-  && !Array.isArray(value)
-);
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
 // Progress tracking state
 let downloadState = {
@@ -248,7 +250,7 @@ const ipcRenderer = {
         if (!isPlainObject(patch)) {
           const receivedType = patch === null ? 'null' : Array.isArray(patch) ? 'array' : typeof patch;
           const message = `config:set expects a plain object patch, received ${receivedType}`;
-          console.error(message, patch);
+          console.error(message, { receivedType });
           throw new Error(message);
         }
         return await invoke('settings_set', {
@@ -318,6 +320,7 @@ const ipcRenderer = {
               }
             } catch (err) {
               console.error('Error in download callback:', err);
+              window.dispatchEvent(new CustomEvent('zync:update-progress', { detail: { percent: 0, status: 'error' } }));
             }
           });
         }

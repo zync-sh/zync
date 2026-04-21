@@ -25,6 +25,8 @@ export function useSettingsUpdateFlow({
     showToast,
 }: UseSettingsUpdateFlowOptions) {
     const isCheckingRef = useRef(false);
+    const isUpdateActionInFlightRef = useRef(false);
+    const isInstallingRef = useRef(false);
     const isMountedRef = useRef(false);
     const isOpenRef = useRef(isOpen);
     const [appVersion, setAppVersion] = useState('');
@@ -106,42 +108,53 @@ export function useSettingsUpdateFlow({
     const canAutoUpdate = resolvedPlatform !== 'darwin';
 
     const handleUpdateAction = async () => {
+        if (isUpdateActionInFlightRef.current) return;
         if (updateStatus === 'checking' || updateStatus === 'downloading') return;
-        if (updateStatus === 'available') {
-            if (canAutoUpdate) {
-                setUpdateStatus('downloading');
-                try {
-                    await window.ipcRenderer.invoke('update:download');
-                } catch (error: unknown) {
-                    console.error('Update download failed', error);
-                    setUpdateStatus('available');
-                    if (isMountedRef.current && isOpenRef.current) {
-                        showToast('error', 'Update download failed. Please try again.');
+        isUpdateActionInFlightRef.current = true;
+        try {
+            if (updateStatus === 'available') {
+                if (canAutoUpdate) {
+                    setUpdateStatus('downloading');
+                    try {
+                        await window.ipcRenderer.invoke('update:download');
+                    } catch (error: unknown) {
+                        console.error('Update download failed', error);
+                        setUpdateStatus('available');
+                        if (isMountedRef.current && isOpenRef.current) {
+                            showToast('error', 'Update download failed. Please try again.');
+                        }
+                    }
+                } else {
+                    try {
+                        await window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/releases/latest');
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        console.error('Failed to open release page', error);
+                        if (isMountedRef.current && isOpenRef.current) {
+                            showToast('error', `Failed to open release page: ${message}`);
+                        }
                     }
                 }
+            } else if (updateStatus === 'ready') {
+                setShowRestartConfirm(true);
             } else {
-                try {
-                    await window.ipcRenderer.invoke('shell:open', 'https://github.com/zync-sh/zync/releases/latest');
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    console.error('Failed to open release page', error);
-                    if (isMountedRef.current && isOpenRef.current) {
-                        showToast('error', `Failed to open release page: ${message}`);
-                    }
-                }
+                await checkForUpdates();
             }
-        } else if (updateStatus === 'ready') {
-            setShowRestartConfirm(true);
-        } else {
-            await checkForUpdates();
+        } finally {
+            isUpdateActionInFlightRef.current = false;
         }
     };
 
     const handleConfirmRestart = async () => {
+        if (isInstallingRef.current) return;
+        isInstallingRef.current = true;
         try {
             await window.ipcRenderer.invoke('update:install');
             if (!isMountedRef.current) return;
             setShowRestartConfirm(false);
+            if (isOpenRef.current) {
+                showToast('success', 'Restart initiated.');
+            }
         } catch (error) {
             if (!isMountedRef.current) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -149,6 +162,8 @@ export function useSettingsUpdateFlow({
             if (isOpenRef.current) {
                 showToast('error', `Failed to install update: ${message}`);
             }
+        } finally {
+            isInstallingRef.current = false;
         }
     };
 

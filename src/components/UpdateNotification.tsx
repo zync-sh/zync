@@ -6,6 +6,7 @@ import { useAppStore } from '../store/useAppStore';
 // Imports updated
 
 export function UpdateNotification() {
+    const releaseUrl = 'https://github.com/zync-sh/zync/releases/latest';
     // Global State
     const status = useAppStore(state => state.updateStatus);
     const updateInfo = useAppStore(state => state.updateInfo);
@@ -34,6 +35,9 @@ export function UpdateNotification() {
             } else if (detail.status === 'finished') {
                 setDownloadProgress(100);
                 setUpdateStatus('ready');
+            } else if (detail.status === 'error') {
+                setUpdateStatus('error');
+                setError('Update download failed. Please try again.');
             }
         };
 
@@ -84,12 +88,25 @@ export function UpdateNotification() {
 
     const startDownload = async () => {
         try {
+            if (window.electronUtils.platform === 'darwin') {
+                await window.ipcRenderer.invoke('shell:open', releaseUrl);
+                return;
+            }
             setUpdateStatus('downloading');
             setDownloadProgress(0);
             await window.ipcRenderer.invoke('update:download');
         } catch (err: any) {
             console.error('Download failed:', err);
             setUpdateStatus('error');
+            setError(String(err));
+        }
+    };
+
+    const openManualDownload = async () => {
+        try {
+            await window.ipcRenderer.invoke('shell:open', releaseUrl);
+        } catch (err: any) {
+            console.error('Failed to open release page:', err);
             setError(String(err));
         }
     };
@@ -172,7 +189,7 @@ export function UpdateNotification() {
                                 </Button>
                             )}
                             {status === 'error' && (
-                                <Button size="sm" onClick={startDownload} className="w-full bg-app-surface hover:bg-app-surface-hover text-app-text border border-app-border">
+                                <Button size="sm" onClick={openManualDownload} className="w-full bg-app-surface hover:bg-app-surface-hover text-app-text border border-app-border">
                                     <ExternalLink size={14} className="mr-2" />
                                     Download Manually
                                 </Button>
