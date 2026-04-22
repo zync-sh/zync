@@ -6,15 +6,18 @@ export interface TabState {
     activeConnectionId: string | null;
 }
 
+export const LOCAL_TERMINAL_CONNECTION_ID = 'local';
+export const GLOBAL_SNIPPETS_CONNECTION_ID = 'global';
+
 export const createLocalTerminalTabState = (tabs: Tab[]): TabState => {
     const existingLocalTerminal = tabs.find(
-        (tab) => tab.connectionId === 'local' && tab.type === 'connection' && tab.view === 'terminal',
+        (tab) => tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID && tab.type === 'connection' && tab.view === 'terminal',
     );
     if (existingLocalTerminal) {
         return {
             tabs,
             activeTabId: existingLocalTerminal.id,
-            activeConnectionId: 'local',
+            activeConnectionId: LOCAL_TERMINAL_CONNECTION_ID,
         };
     }
 
@@ -22,14 +25,14 @@ export const createLocalTerminalTabState = (tabs: Tab[]): TabState => {
         id: crypto.randomUUID(),
         type: 'connection',
         title: 'Local Terminal',
-        connectionId: 'local',
+        connectionId: LOCAL_TERMINAL_CONNECTION_ID,
         view: 'terminal',
     };
 
     return {
         tabs: [...tabs, newTab],
         activeTabId: newTab.id,
-        activeConnectionId: 'local',
+        activeConnectionId: LOCAL_TERMINAL_CONNECTION_ID,
     };
 };
 
@@ -92,22 +95,24 @@ export const ensureSingleTabByType = (
 export const ensureGlobalSnippetsTab = (
     tabs: Tab[],
 ): { tabs?: Tab[]; activeTabId: string; activeConnectionId?: string } => {
-    const existing = tabs.find((tab) => tab.connectionId === 'local' && tab.view === 'snippets');
+    const existing = tabs.find(
+        (tab) => tab.connectionId === GLOBAL_SNIPPETS_CONNECTION_ID && tab.type === 'connection' && tab.view === 'snippets',
+    );
     if (existing) {
-        return { activeTabId: existing.id, activeConnectionId: 'local' };
+        return { activeTabId: existing.id, activeConnectionId: GLOBAL_SNIPPETS_CONNECTION_ID };
     }
 
     const newTab: Tab = {
         id: crypto.randomUUID(),
         type: 'connection',
         title: 'Global Snippets',
-        connectionId: 'local',
+        connectionId: GLOBAL_SNIPPETS_CONNECTION_ID,
         view: 'snippets',
     };
 
     return {
         tabs: [...tabs, newTab],
         activeTabId: newTab.id,
-        activeConnectionId: 'local',
+        activeConnectionId: GLOBAL_SNIPPETS_CONNECTION_ID,
     };
 };

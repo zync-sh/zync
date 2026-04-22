@@ -14,7 +14,6 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { ShieldAlert, Loader2 } from 'lucide-react';
 import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
-import { SnippetPicker } from '../snippets/SnippetPicker';
 import { SnippetSidebar } from '../snippets/SnippetSidebar';
 import { SetupWizard } from '../onboarding/SetupWizard';
 import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
@@ -161,7 +160,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const [openFeatures, setOpenFeatures] = useState<string[]>([]);
 
     // Snippet quick access overlay state
-    const [isSnippetPickerOpen, setIsSnippetPickerOpen] = useState(false);
     const [isSnippetSidebarOpen, setIsSnippetSidebarOpen] = useState(false);
 
     // Effect hooks must be unconditional
@@ -201,18 +199,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         window.addEventListener('ssh-ui:open-feature', handleFeatureEvent);
         return () => window.removeEventListener('ssh-ui:open-feature', handleFeatureEvent);
     }, [tab.id, handleOpenFeature]);
-
-    // Snippet picker toggle
-    useEffect(() => {
-        const handler = (e: Event) => {
-            const ev = e as CustomEvent;
-            if (ev.detail?.tabId === tab.id) {
-                setIsSnippetPickerOpen(true);
-            }
-        };
-        window.addEventListener('ssh-ui:open-snippet-picker', handler);
-        return () => window.removeEventListener('ssh-ui:open-snippet-picker', handler);
-    }, [tab.id]);
 
     // Snippet sidebar toggle
     useEffect(() => {
@@ -352,21 +338,23 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 </div>
             ) : (
                 <>
-                    {/* Unified Tab Bar */}
-                    <CombinedTabBar
-                        connectionId={tab.connectionId}
-                        activeView={tab.view}
-                        activeTerminalId={activeTermId}
-                        openFeatures={openFeatures}
-                        pinnedFeatures={pinnedFeatures}
-                        pluginPanels={pluginPanels.map(p => ({ id: p.id, title: p.title }))}
-                        onTabSelect={handleTabSelect}
-                        onFeatureClose={handleFeatureClose}
-                        onTerminalClose={handleTerminalClose}
-                        onNewTerminal={handleNewTerminal}
-                        onOpenFeature={handleOpenFeature}
-                        onTogglePin={handleTogglePin}
-                    />
+                    {/* Unified Tab Bar — not shown for the standalone global snippets tab */}
+                    {tab.connectionId !== 'global' && (
+                        <CombinedTabBar
+                            connectionId={tab.connectionId}
+                            activeView={tab.view}
+                            activeTerminalId={activeTermId}
+                            openFeatures={openFeatures}
+                            pinnedFeatures={pinnedFeatures}
+                            pluginPanels={pluginPanels.map(p => ({ id: p.id, title: p.title }))}
+                            onTabSelect={handleTabSelect}
+                            onFeatureClose={handleFeatureClose}
+                            onTerminalClose={handleTerminalClose}
+                            onNewTerminal={handleNewTerminal}
+                            onOpenFeature={handleOpenFeature}
+                            onTogglePin={handleTogglePin}
+                        />
+                    )}
 
                     {/* Content Area */}
                     <div className="flex-1 overflow-hidden relative flex flex-col">
@@ -430,19 +418,6 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                 />
                             </div>
 
-                            {/* Snippet picker palette — renders via ZPortal over everything */}
-                            {isSnippetPickerOpen && (
-                                <SnippetPicker
-                                    connectionId={tab.connectionId}
-                                    /* 
-                                       Note: isOpen is technically redundant here because of the conditional 
-                                       rendering above, but we keep it because SnippetPicker uses it internally
-                                       for focus management and animation transitions.
-                                    */
-                                    isOpen={isSnippetPickerOpen}
-                                    onClose={() => setIsSnippetPickerOpen(false)}
-                                />
-                            )}
                         </Suspense>
                     </div>
                 </>

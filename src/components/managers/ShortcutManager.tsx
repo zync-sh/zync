@@ -32,11 +32,11 @@ export function ShortcutManager() {
             const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
             const isContentEditable = e.target instanceof HTMLElement && e.target.isContentEditable;
 
+            const isSnippetSidebar = e.ctrlKey && e.shiftKey && (e.key.toLowerCase() === 's' || e.code === 'Backquote' || e.key === '`' || e.key === '~');
+
             if (isInput || isContentEditable) {
                 // Allow terminal shortcuts to always pass through (terminal uses a hidden textarea)
-                const isSnippetPicker = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's';
-                const isSnippetSidebar = e.ctrlKey && e.shiftKey && (e.key === '`' || e.key === '~');
-                if (matchShortcut(e, kb.termCopy) || matchShortcut(e, kb.termPaste) || matchShortcut(e, kb.termFind) || isSnippetPicker || isSnippetSidebar) {
+                if (matchShortcut(e, kb.termCopy) || matchShortcut(e, kb.termPaste) || matchShortcut(e, kb.termFind) || isSnippetSidebar) {
                     // allow to pass through
                 } else {
                     // Always ignore Mod+F, Mod+S, Mod+/, Mod+A, Mod+C/V/X in inputs/editors
@@ -163,24 +163,11 @@ export function ShortcutManager() {
                     }
                 }
             }
-            else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+            else if (isSnippetSidebar) {
                 e.preventDefault();
                 if (activeTabId) {
                     const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
                     if (currentTab && currentTab.type === 'connection') {
-                        // Open the fuzzy snippet picker over the terminal
-                        window.dispatchEvent(new CustomEvent('ssh-ui:open-snippet-picker', {
-                            detail: { tabId: activeTabId }
-                        }));
-                    }
-                }
-            }
-            else if (e.ctrlKey && e.shiftKey && (e.key === '`' || e.key === '~')) {
-                e.preventDefault();
-                if (activeTabId) {
-                    const currentTab = tabs.find((t: Tab) => t.id === activeTabId);
-                    if (currentTab && currentTab.type === 'connection') {
-                        // Toggle the snippet overlay sidebar
                         window.dispatchEvent(new CustomEvent('ssh-ui:toggle-snippet-sidebar', {
                             detail: { tabId: activeTabId }
                         }));

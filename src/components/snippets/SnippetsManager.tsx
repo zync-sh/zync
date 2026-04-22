@@ -86,26 +86,24 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
   };
 
   const handleRun = (command: string) => {
-    // Send to active terminal via Event Bus
-    if (!activeConnectionId) {
+    // On the global snippets tab use whatever connection is currently active in the store.
+    const targetConnectionId = connectionId === 'global' ? storeActiveConnectionId : activeConnectionId;
+    if (!targetConnectionId) {
       showToast('error', 'No active connection to run command');
       return;
     }
 
-    // Dispatch event for TerminalManager to pick up
-    const event = new CustomEvent('ssh-ui:run-command', {
-      detail: {
-        connectionId: activeConnectionId,
-        command: command + '\r' // Append return to execute
-      }
-    });
-    window.dispatchEvent(event);
+    window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
+      detail: { connectionId: targetConnectionId, command: command + '\r' }
+    }));
     showToast('success', 'Command sent to terminal');
   };
 
-  // Filter snippets based on connection scope
+  // Filter snippets based on connection scope.
+  // Global snippets tab (connectionId='global'): show only truly global snippets.
+  // Connection tab: show global + host-scoped snippets for that connection.
   const filteredSnippets = snippets.filter(s => {
-    // Show if global (no connectionId) OR if it matches current connection
+    if (connectionId === 'global') return !s.connectionId;
     return !s.connectionId || s.connectionId === activeConnectionId;
   });
 
@@ -126,8 +124,9 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
         </h2>
         <Button
           onClick={() => {
-            // Default to current host/local if available, otherwise global
-            const defaultScope = activeConnectionId ? activeConnectionId : undefined;
+            // On the global snippets tab, default to global scope (undefined).
+            // On a real SSH connection tab, default to that connection.
+            const defaultScope = (activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'global') ? activeConnectionId : undefined;
             setEditingSnippet({ name: '', command: '', category: '', connectionId: defaultScope });
             setIsModalOpen(true);
           }}

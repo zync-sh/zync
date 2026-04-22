@@ -95,7 +95,7 @@ export function SnippetSidebar({ connectionId, isOpen, onClose }: SnippetSidebar
                 <button
                     onClick={onClose}
                     className="text-app-muted hover:text-app-text hover:bg-app-surface/50 transition-all p-1 rounded-md"
-                    title="Close (Ctrl+Shift+`)"
+                    title="Close (Ctrl+Shift+S)"
                     aria-label="Close snippets"
                 >
                     <X size={12} />
@@ -169,7 +169,7 @@ export function SnippetSidebar({ connectionId, isOpen, onClose }: SnippetSidebar
             <div className="px-3 py-2 border-t border-app-border/20 bg-app-surface/20 shrink-0">
                 <div className="flex items-center justify-between">
                     <span className="text-[9px] text-app-muted/40 font-medium tracking-tight">Snippet Panel</span>
-                    <kbd className="text-[8px] font-mono bg-app-surface/50 border border-app-border/40 px-1 py-0.5 rounded text-app-muted/50">Ctrl+Shift+`</kbd>
+                    <kbd className="text-[8px] font-mono bg-app-surface/50 border border-app-border/40 px-1 py-0.5 rounded text-app-muted/50">Ctrl+Shift+S</kbd>
                 </div>
             </div>
         </div>
