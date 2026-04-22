@@ -7,6 +7,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 ## [2.14.1] - 2026-04-23
 
 ### Changed
+- **Welcome Screen Layout**: Content is now vertically centered on large displays. Connection lists grow with available height (up to 40% of viewport) instead of a fixed cap. On wide screens the content area expands slightly (`max-w-3xl`). On narrow widths, Favorites and Recent stack vertically with a horizontal divider and tighter padding. ([cea3fa0])
 - **Snippet Sidebar Shortcut**: Reassigned `Ctrl+Shift+S` to toggle the snippet sidebar (previously only `Ctrl+Shift+`` triggered it). Both bindings remain active for compatibility. ([4104e34])
 - **Snippet Picker Removed**: Removed the snippet picker modal in favour of the snippet sidebar, simplifying the snippets UX to a single surface. ([4104e34])
 - **Global Snippets Tab Isolation**: Global snippets tab now uses `connectionId: 'global'` (no longer shares the `'local'` sentinel with the local terminal), preventing tab collision and incorrect snippet filtering. The tab now shows only globally-scoped snippets. ([4104e34])
@@ -699,6 +700,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2ef1c90]: https://github.com/zync-sh/zync/commit/2ef1c90
 [a5a25ef]: https://github.com/zync-sh/zync/commit/a5a25ef
 [4104e34]: https://github.com/zync-sh/zync/commit/4104e34
+[cea3fa0]: https://github.com/zync-sh/zync/commit/cea3fa0
 [2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2

@@ -182,7 +182,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     deleteConnection: (id) => {
         set(state => {
-            const newConns = state.connections.filter(c => c.id !== id);
+            const newConns = state.connections
+                .filter(c => c.id !== id)
+                .map(c => c.jumpServerId === id ? { ...c, jumpServerId: undefined } : c);
             // Also close related tabs
             const newTabs = state.tabs.filter(t => t.connectionId !== id);
             // If active tab was closed, pick new active
@@ -221,6 +223,31 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 let nextConnections = [...state.connections];
                 const creates: Connection[] = [];
 
+                // Pre-pass: build importedId → existingId remap for the entire batch so
+                // jumpServerId references can be resolved even when the jump server itself
+                // is later in the list (or not in this batch at all).
+                const idRemap = new Map<string, string>();
+                planItems.forEach((item) => {
+                    if (item.targetId && item.connection.id !== item.targetId) {
+                        idRemap.set(item.connection.id, item.targetId);
+                    }
+                });
+
+                const resolveJumpServerId = (
+                    importedJumpId: string | undefined,
+                    existingJumpId: string | undefined,
+                ): string | undefined => {
+                    if (!importedJumpId) return importedJumpId;
+                    // Follow the remap chain (jump server was also in this batch)
+                    const remapped = idRemap.get(importedJumpId) ?? importedJumpId;
+                    // If remapped ID exists in the store, use it
+                    if (nextConnections.some(c => c.id === remapped)) return remapped;
+                    // New connection being added in this batch — keep the imported reference
+                    if (planItems.some(p => p.connection.id === importedJumpId && !p.targetId)) return importedJumpId;
+                    // importedJumpId doesn't resolve → preserve the existing working reference
+                    return existingJumpId;
+                };
+
                 planItems.forEach((item) => {
                     const normalizedFolder = normalizeFolderPath(item.connection.folder || '');
                     const normalizedConnection = { ...item.connection, folder: normalizedFolder };
@@ -242,12 +269,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                                 ...preservedMetadata,
                                 id: existing.id,
                                 status: existing.status,
+                                jumpServerId: resolveJumpServerId(normalizedConnection.jumpServerId, existing.jumpServerId),
                             };
                             return;
                         }
                     }
 
-                    creates.push(normalizedConnection);
+                    creates.push({
+                        ...normalizedConnection,
+                        jumpServerId: resolveJumpServerId(normalizedConnection.jumpServerId, undefined),
+                    });
                 });
 
                 finalConns = creates.length > 0
@@ -317,7 +348,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (!conn) throw new Error('Connection not found');
 
             const fullConfig = buildConnectConfig(connections, id);
-            if (!fullConfig) throw new Error('Failed to build connection config (possible cycle or missing host)');
+            if (!fullConfig) {
+                set(state => ({ connections: markConnectionStatus(state.connections, id, 'error') }));
+                get().showToast('error', `Jump server for "${conn.name}" not found. Re-import your SSH config to repair the reference.`, 8000);
+                return;
+            }
 
             console.log('[CONNECT] Connecting with config:', fullConfig);
 
@@ -510,7 +545,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (!tab) return state;
             didActivate = true;
             const newConnId = tab.connectionId || null;
-            const isReal = newConnId !== GLOBAL_SNIPPETS_CONNECTION_ID;
+            const isReal = newConnId !== null && newConnId !== GLOBAL_SNIPPETS_CONNECTION_ID;
             return {
                 activeTabId: tabId,
                 activeConnectionId: newConnId,
@@ -634,9 +669,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const resolvedConnId =
                 resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
 
+            const lastRealConnectionId =
+                resolvedConnId !== null && resolvedConnId !== GLOBAL_SNIPPETS_CONNECTION_ID
+                    ? resolvedConnId
+                    : [...tabs].reverse().find((t: Tab) => t.type === 'connection' && !!t.connectionId && t.connectionId !== GLOBAL_SNIPPETS_CONNECTION_ID)?.connectionId ?? null;
+
             return showWelcomeScreen
-                ? { tabs, activeTabId: null, activeConnectionId: null, showWelcomeScreen: true }
-                : { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId, showWelcomeScreen: false };
+                ? { tabs, activeTabId: null, activeConnectionId: null, lastRealConnectionId, showWelcomeScreen: true }
+                : { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId, lastRealConnectionId, showWelcomeScreen: false };
         });
     },
 
