@@ -43,15 +43,17 @@ const resolveAuthMethod = (
         return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
     }
 
-    if (candidate.password !== undefined) {
-        const normalizedPassword = normalizeText(candidate.password);
-        if (!normalizedPassword) throw new Error('Password is required for password auth.');
-        return { type: 'Password', password: normalizedPassword };
+    // Use privateKeyPath as the discriminator — matches buildConnectConfig and correctly
+    // handles connections loaded from Rust where password comes back as null (not undefined).
+    if (candidate.privateKeyPath) {
+        const normalizedKeyPath = normalizeText(candidate.privateKeyPath);
+        if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
+        return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
     }
 
-    const normalizedKeyPath = normalizeText(candidate.privateKeyPath);
-    if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
-    return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
+    const normalizedPassword = normalizeText(candidate.password);
+    if (!normalizedPassword) throw new Error('Password is required for password auth.');
+    return { type: 'Password', password: normalizedPassword };
 };
 
 const toBackendConfig = (
