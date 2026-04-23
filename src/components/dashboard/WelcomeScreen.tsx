@@ -321,7 +321,7 @@ export function WelcomeScreen() {
             {/* Subtle radial dot grid */}
             <div
                 aria-hidden="true"
-                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] mask-[radial-gradient(ellipse_70%_60%_at_50%_30%,black_30%,transparent_100%)] opacity-40"
+                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] mask-[radial-gradient(ellipse_70%_60%_at_50%_50%,black_30%,transparent_100%)] opacity-40"
             />
 
             {/* Scrollable centered column */}
@@ -332,7 +332,8 @@ export function WelcomeScreen() {
                     WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 1.5rem, black calc(100% - 1.5rem), transparent)',
                 }}
             >
-                <div className="max-w-2xl mx-auto px-6 py-10">
+                <div className="min-h-full flex flex-col justify-center">
+                <div className="max-w-2xl lg:max-w-3xl mx-auto w-full px-4 sm:px-6 py-8">
 
                     {/* Clock */}
                     <motion.div variants={item} className="mb-5 relative">
@@ -488,13 +489,13 @@ export function WelcomeScreen() {
                     ) : (
                         <motion.div
                             variants={item}
-                            className={`flex gap-4 ${favorites.length > 0 && recents.length > 0 ? 'items-start' : ''}`}
+                            className="flex flex-col sm:flex-row sm:items-start gap-4"
                         >
                             {/* Favorites column */}
                             {favorites.length > 0 && (
                                 <section
                                     aria-labelledby="fav-heading"
-                                    className="flex-1 min-w-0 flex flex-col max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
+                                    className="sm:flex-1 min-w-0 flex flex-col max-h-[32vh] sm:max-h-[40vh] overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
                                 >
                                     <SectionHeading id="fav-heading">
                                         <span className="inline-flex items-center gap-1.5">
@@ -527,16 +528,16 @@ export function WelcomeScreen() {
                                 </section>
                             )}
 
-                            {/* Vertical divider between columns */}
+                            {/* Divider: horizontal on narrow, vertical on sm+ */}
                             {favorites.length > 0 && recents.length > 0 && (
-                                <div aria-hidden="true" className="w-px bg-app-border/30 self-stretch shrink-0 mx-1" />
+                                <div aria-hidden="true" className="h-px w-full sm:h-auto sm:w-px sm:self-stretch bg-app-border/30 sm:mx-1 shrink-0" />
                             )}
 
                             {/* Recent column */}
                             {recents.length > 0 && (
                                 <section
                                     aria-labelledby="recent-heading"
-                                    className="flex-1 min-w-0 flex flex-col max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
+                                    className="sm:flex-1 min-w-0 flex flex-col max-h-[32vh] sm:max-h-[40vh] overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-app-border/30 hover:[&::-webkit-scrollbar-thumb]:bg-app-border/50 [&::-webkit-scrollbar-thumb]:rounded-full"
                                 >
                                     <SectionHeading id="recent-heading">
                                         <span className="inline-flex items-center gap-1.5">
@@ -566,6 +567,7 @@ export function WelcomeScreen() {
                         </motion.div>
                     )}
 
+                </div>
                 </div>
             </div>
 

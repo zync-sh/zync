@@ -4,6 +4,19 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-04-23
+
+### Changed
+- **Welcome Screen Layout**: Content is now vertically centered on large displays. Connection lists grow with available height (up to 40% of viewport) instead of a fixed cap. On wide screens the content area expands slightly (`max-w-3xl`). On narrow widths, Favorites and Recent stack vertically with a horizontal divider and tighter padding. ([cea3fa0])
+- **Snippet Sidebar Shortcut**: Reassigned `Ctrl+Shift+S` to toggle the snippet sidebar (previously only `Ctrl+Shift+Backquote` triggered it). Both bindings remain active for compatibility. ([4104e34])
+- **Snippet Picker Removed**: Removed the snippet picker modal in favour of the snippet sidebar, simplifying the snippets UX to a single surface. ([4104e34])
+- **Global Snippets Tab Isolation**: Global snippets tab now uses `connectionId: 'global'` (no longer shares the `'local'` sentinel with the local terminal), preventing tab collision and incorrect snippet filtering. The tab now shows only globally-scoped snippets. ([4104e34])
+- **`LOCAL_TERMINAL_CONNECTION_ID` Constant**: Exported named constant from `tabService` to mirror `GLOBAL_SNIPPETS_CONNECTION_ID` and eliminate bare `'local'` string literals. ([4104e34])
+
+### Fixed
+- **Ctrl+Shift+Backquote Cross-Platform**: Added `e.code === 'Backquote'` check so the snippet sidebar shortcut fires reliably on Windows keyboard layouts where `e.key` may not produce a backtick with Ctrl held. ([4104e34])
+- **Jump Host / Bastion Auth Detection**: Fixed key-auth jump hosts failing with "Password is required" after app restart. Connections loaded from disk have `password: null` (Rust `Option<String>` serializes `None` as JSON `null`), which incorrectly satisfied the `password !== undefined` discriminator and routed key-auth connections into the password branch. Switched to `privateKeyPath` as the auth discriminator — matching `buildConnectConfig` — so `null`, `undefined`, and `''` all correctly resolve as "no key set". No connection data migration required. ([a5a25ef])
+
 ## [2.14.0] - 2026-04-21
 
 ### Added
@@ -604,7 +617,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.14.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.14.1...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -685,6 +698,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 [e1d6109]: https://github.com/zync-sh/zync/commit/e1d6109
 [9f41e0f]: https://github.com/zync-sh/zync/commit/9f41e0f
 [2ef1c90]: https://github.com/zync-sh/zync/commit/2ef1c90
+[a5a25ef]: https://github.com/zync-sh/zync/commit/a5a25ef
+[4104e34]: https://github.com/zync-sh/zync/commit/4104e34
+[cea3fa0]: https://github.com/zync-sh/zync/commit/cea3fa0
+[2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
 [2.13.1]: https://github.com/zync-sh/zync/compare/v2.13.0...v2.13.1
