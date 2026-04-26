@@ -64,6 +64,7 @@ function ShellBadge({ shellId, size }: { shellId: string; size: number }) {
  */
 export const ShellIcon = memo(function ShellIcon({ shell, size = 14 }: ShellIconProps) {
     const [imgFailed, setImgFailed] = useState(false);
+    const baseUrl = import.meta.env.BASE_URL || '/';
     const iconKey = useMemo(() => {
         if (!shell.icon) return 'none';
         if (shell.icon.type === 'bundled') return `bundled:${shell.icon.name}`;
@@ -80,7 +81,7 @@ export const ShellIcon = memo(function ShellIcon({ shell, size = 14 }: ShellIcon
             : shell.icon.type === 'base64Icon'
             ? `data:image/x-icon;base64,${shell.icon.data}`
             : (typeof shell.icon.name === 'string' && shell.icon.name.trim().length > 0
-                ? `/shell-icons/${shell.icon.name}`
+                ? new URL(`shell-icons/${shell.icon.name}`, window.location.origin + baseUrl).toString()
                 : undefined);
         if (src) {
             return (

@@ -363,6 +363,7 @@ function flushPendingInput(termId: string | null | undefined): void {
 
 interface TerminalLifecycleEvent {
   generation: number;
+  exit_code?: number;
 }
 
 interface TerminalOutputEvent extends TerminalLifecycleEvent {

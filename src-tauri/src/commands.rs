@@ -1503,13 +1503,13 @@ pub async fn terminal_create(
             .map_err(|e| e.to_string())?;
         Ok(term_id)
     } else {
+        let channel = open_ssh_channel_with_single_reconnect(&connection_id, &state).await?;
         let remote_os = {
             let connections = state.connections.lock().await;
             connections
                 .get(&connection_id)
                 .and_then(|c| c.detected_os.clone())
         };
-        let channel = open_ssh_channel_with_single_reconnect(&connection_id, &state).await?;
 
         state
             .pty_manager
@@ -4702,6 +4702,8 @@ async fn query_remote_windows_shells(
     connection_id: &str,
     state: &tauri::State<'_, AppState>,
 ) -> Result<Vec<DetectedShell>, String> {
+    const WINDOWS_SHELL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
     let mut channel = open_ssh_channel_with_single_reconnect(connection_id, state).await?;
     let list_cmd = "cmd /c \"where powershell.exe >nul 2>nul && echo powershell & where pwsh.exe >nul 2>nul && echo pwsh & where cmd.exe >nul 2>nul && echo cmd\"";
     channel
@@ -4711,7 +4713,14 @@ async fn query_remote_windows_shells(
 
     let mut output = String::new();
     let mut stderr = String::new();
-    while let Some(msg) = channel.wait().await {
+    loop {
+        let msg = match tokio::time::timeout(WINDOWS_SHELL_QUERY_TIMEOUT, channel.wait()).await {
+            Ok(msg) => msg,
+            Err(_) => return Err("Failed to query remote Windows shells: timeout".to_string()),
+        };
+        let Some(msg) = msg else {
+            break;
+        };
         match msg {
             russh::ChannelMsg::Data { data } => {
                 output.push_str(&String::from_utf8_lossy(&data));

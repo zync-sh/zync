@@ -61,6 +61,7 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
     }, []);
 
     useEffect(() => {
+        if (scopeKeyRef.current === scopeKey) return;
         scopeKeyRef.current = scopeKey;
         inFlightRef.current = null;
         if (!isMountedRef.current) return;

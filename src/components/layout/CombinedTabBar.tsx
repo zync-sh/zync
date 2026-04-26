@@ -189,7 +189,9 @@ export function CombinedTabBar({
     // Merge Items: Terminals first, then Pinned Features, then Open Features.
     // Keep only built-in features for this section.
     const visibleFeatures = Array.from(new Set([...pinnedFeatures, ...openFeatures]))
-        .filter((featureId): featureId is FeatureId => featureId in FEATURE_META);
+        .filter((featureId): featureId is FeatureId =>
+            Object.prototype.hasOwnProperty.call(FEATURE_META, featureId)
+        );
 
     return (
         <div ref={dragRegionRef} className="flex items-center w-full bg-app-panel border-b border-app-border px-1 h-9 shrink-0 gap-1 select-none app-drag-region" data-tauri-drag-region>

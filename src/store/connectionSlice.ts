@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
-import type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
+import type { Connection, CoreTabView, Folder, Tab } from '../features/connections/domain/types.js';
 import {
     addFolderToState,
     deleteFolderFromState,
@@ -65,7 +65,7 @@ export interface ConnectionSlice {
     disconnect: (id: string) => Promise<void>;
 
     // Tab Actions
-    openTab: (connectionId: string, startView?: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
+    openTab: (connectionId: string, startView?: CoreTabView) => void;
     openPortForwardingTab: () => void;
     openSnippetsTab: () => void;
     openReleaseNotesTab: () => void;
@@ -74,7 +74,7 @@ export interface ConnectionSlice {
     activateTab: (tabId: string) => void;
     /** Deactivate all tabs and show the welcome screen without closing anything. */
     goHome: () => void;
-    setTabView: (tabId: string, view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal') => void;
+    setTabView: (tabId: string, view: Tab['view']) => void;
 
     // Folder Actions
     addFolder: (name: string, tags?: string[]) => void;
@@ -458,7 +458,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
-    openTab: (connectionId, startView = 'terminal') => {
+    openTab: (connectionId, startView: CoreTabView = 'terminal') => {
         set(state => {
             if (connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
                 return { ...createLocalTerminalTabState(state.tabs), lastRealConnectionId: LOCAL_TERMINAL_CONNECTION_ID, showWelcomeScreen: false };
@@ -664,8 +664,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     return true;
                 })
                 .map(s => {
-                    const VALID_VIEWS = new Set<Tab['view']>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard']);
-                    const view: Tab['view'] = VALID_VIEWS.has(s.view as Tab['view']) ? s.view as Tab['view'] : 'terminal';
+                    const VALID_VIEWS = new Set<CoreTabView>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard']);
+                    const view: Tab['view'] = VALID_VIEWS.has(s.view as CoreTabView) ? (s.view as CoreTabView) : 'terminal';
                     return {
                         id: s.id,
                         type: s.tabType as Tab['type'],

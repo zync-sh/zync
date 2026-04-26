@@ -63,11 +63,20 @@ pub async fn prefetch_all_wsl_icons(cache: &IconCache, cache_path: &Path) {
     }
 
     // Step 4: resolve icons for new distros concurrently.
+    const MAX_CONCURRENT_ICON_READS: usize = 8;
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_ICON_READS));
     let tasks: Vec<_> = uncached
         .iter()
         .map(|(_, base_path)| {
             let path = base_path.clone();
-            tokio::task::spawn_blocking(move || read_icon_from_base_path(&path))
+            let semaphore = semaphore.clone();
+            tokio::spawn(async move {
+                let _permit = semaphore.acquire_owned().await.ok()?;
+                tokio::task::spawn_blocking(move || read_icon_from_base_path(&path))
+                    .await
+                    .ok()
+                    .flatten()
+            })
         })
         .collect();
 
@@ -106,7 +115,17 @@ fn load_disk_cache(path: &Path) -> HashMap<String, Option<String>> {
         Ok(b) => b,
         Err(_) => return HashMap::new(),
     };
-    serde_json::from_slice(&bytes).unwrap_or_default()
+    match serde_json::from_slice(&bytes) {
+        Ok(cache) => cache,
+        Err(error) => {
+            eprintln!(
+                "[ShellIcons] Failed to deserialize disk cache at {}: {}",
+                path.display(),
+                error
+            );
+            HashMap::new()
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -134,7 +153,13 @@ fn save_disk_cache(path: &Path, data: &HashMap<String, Option<String>>) -> std::
                     let _ = std::fs::remove_file(&backup_path);
                 }
 
-                std::fs::rename(path, &backup_path)?;
+                match std::fs::rename(path, &backup_path) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        let _ = std::fs::remove_file(&tmp_path);
+                        return Err(err);
+                    }
+                }
 
                 match std::fs::rename(&tmp_path, path) {
                     Ok(()) => {

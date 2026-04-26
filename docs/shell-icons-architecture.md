@@ -12,7 +12,7 @@ All three phases are complete (design, implementation, and rollout). Below is th
 
 ## Icon Resolution Chain
 
-```
+```text
 Rust (backend):
   WSL distro  → shortcut.ico exists + has PNG frame  → Base64Png { data }
               → shortcut.ico exists, BMP-only         → Base64Icon { data }
@@ -70,7 +70,7 @@ Two-layer cache to avoid redundant I/O:
 
 **Flow on shell picker open:**
 
-```
+```text
 First ever launch:
   memory empty → disk missing → read registry → read shortcut.ico for each distro
   → write memory → write disk

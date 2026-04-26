@@ -1,3 +1,7 @@
+export type CoreTabView = 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal';
+export type PluginTabView = `plugin:${string}`;
+export type TabView = CoreTabView | PluginTabView;
+
 export interface Connection {
     id: string;
     name: string;
@@ -29,5 +33,5 @@ export interface Tab {
     type: 'connection' | 'settings' | 'port-forwarding' | 'release-notes';
     title: string;
     connectionId?: string;
-    view: 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal';
+    view: TabView;
 }

@@ -1,6 +1,7 @@
 import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
+import type { CoreTabView } from '../../features/connections/domain/types';
 import { usePlugins } from '../../context/PluginContext';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../lib/utils';
@@ -81,15 +82,15 @@ const CORE_TAB_VIEWS = [
     'terminal',
 ] as const satisfies readonly Tab['view'][];
 
-function isCoreTabView(view: string): view is Tab['view'] {
-    return CORE_TAB_VIEWS.includes(view as Tab['view']);
+function isCoreTabView(view: string): view is CoreTabView {
+    return CORE_TAB_VIEWS.includes(view as CoreTabView);
 }
 
 /**
  * Connection tabs support plugin-backed views using a `plugin:<id>` token.
- * These are intentionally outside `Tab['view']` and are runtime-validated.
+ * These are represented by the `plugin:${string}` portion of `Tab['view']`.
  */
-function isPluginTabView(view: string): boolean {
+function isPluginTabView(view: string): view is `plugin:${string}` {
     return view.startsWith('plugin:');
 }
 
@@ -175,8 +176,8 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
 
-    const isWindows = window.electronUtils?.platform === 'win32';
-    const { shells: availableShells, isLoading: shellsLoading, error: shellsError, refetch: refetchShells } = useAvailableShells({ isWindows, connectionId: tab.connectionId });
+    const hostIsWindows = tab.connectionId === 'local' && window.electronUtils?.platform === 'win32';
+    const { shells: availableShells, isLoading: shellsLoading, error: shellsError, refetch: refetchShells } = useAvailableShells({ isWindows: hostIsWindows, connectionId: tab.connectionId });
     const defaultWindowsShell = useAppStore(state => state.settings.localTerm?.windowsShell);
 
     // Feature Pinning
@@ -303,7 +304,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             return;
         }
 
-        setTabView(tab.id, view as Tab['view']);
+        setTabView(tab.id, view);
         if (view === 'terminal' && termId && tab.connectionId) {
             setActiveTerminal(tab.connectionId, termId);
         }

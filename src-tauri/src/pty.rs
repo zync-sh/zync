@@ -55,22 +55,38 @@ fn powershell_single_quote(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-fn windows_double_quote(value: &str) -> String {
-    // cmd.exe escaping is best-effort for literal paths:
-    //  - ^  => ^^
-    //  - !  => ^! (delayed expansion)
-    //  - %  => %% (env expansion)
-    //  - "  => ""
-    value
-        .replace('^', "^^")
-        .replace('!', "^!")
-        .replace('%', "%%")
-        .replace('"', "\"\"")
+fn windows_double_quote(value: &str, batch_mode: bool) -> String {
+    // cmd.exe escaping for literal values:
+    //  - always: ^ => ^^, " => ""
+    //  - batch/exec only: ! => ^!, % => %% (expansion semantics differ from interactive input)
+    let escaped = value.replace('^', "^^").replace('"', "\"\"");
+    if batch_mode {
+        escaped.replace('!', "^!").replace('%', "%%")
+    } else {
+        escaped
+    }
+}
+
+fn is_posix_interactive_shell(shell: &str) -> bool {
+    let normalized = shell.trim().to_ascii_lowercase();
+    normalized.contains("/bin/")
+        || normalized.contains("bash")
+        || normalized.contains("zsh")
+        || normalized.contains("fish")
+        || normalized.contains("dash")
+        || normalized.contains("ksh")
+        || normalized.contains("tcsh")
+        || normalized.contains("csh")
+        || normalized.contains("/usr/bin/sh")
+        || normalized.ends_with("/sh")
+        || normalized.contains("git\\bin\\bash.exe")
 }
 
 #[derive(Clone, Serialize)]
 struct TerminalLifecycleEvent {
     generation: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -232,14 +248,8 @@ impl PtyManager {
             cmd.cwd(path);
         }
 
-        // Add interactive flag if not already present
-        let shell_lower = shell.to_ascii_lowercase();
-        if !args.contains(&"-i".to_string())
-            && !shell_lower.contains("powershell")
-            && !shell_lower.contains("pwsh")
-            && !shell_lower.contains("cmd.exe")
-            && !shell_lower.contains("wsl.exe")
-        {
+        // Add interactive flag only for shells known to support POSIX-style `-i`.
+        if !args.iter().any(|arg| arg == "-i") && is_posix_interactive_shell(&shell) {
             cmd.arg("-i");
         }
         cmd.env("TERM", "xterm-256color");
@@ -310,7 +320,10 @@ impl PtyManager {
                         // Notify frontend that terminal exited
                         let _ = app_handle_clone.emit(
                             &format!("terminal-exit-{}", term_id_clone),
-                            TerminalLifecycleEvent { generation },
+                            TerminalLifecycleEvent {
+                                generation,
+                                exit_code: None,
+                            },
                         );
                         break;
                     } // EOF
@@ -323,7 +336,10 @@ impl PtyManager {
                         // Notify frontend that terminal exited due to error
                         let _ = app_handle_clone.emit(
                             &format!("terminal-exit-{}", term_id_clone),
-                            TerminalLifecycleEvent { generation },
+                            TerminalLifecycleEvent {
+                                generation,
+                                exit_code: None,
+                            },
                         );
                         break;
                     }
@@ -343,7 +359,10 @@ impl PtyManager {
         // session has a live reader handle wired for cleanup.
         let _ = app_handle.emit(
             &format!("terminal-ready-{}", term_id),
-            TerminalLifecycleEvent { generation },
+            TerminalLifecycleEvent {
+                generation,
+                exit_code: None,
+            },
         );
         let _ = reader_start_tx.send(());
 
@@ -391,7 +410,7 @@ impl PtyManager {
             let launch = if remote_is_windows {
                 remote_windows_shell_command(shell)
                     .map(|command| command.to_string())
-                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell)))
+                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell, true)))
             } else {
                 let escaped_shell = shell_single_quote(shell);
                 match remote_shell_login_flag(shell) {
@@ -399,6 +418,20 @@ impl PtyManager {
                     None => format!("exec '{}'", escaped_shell),
                 }
             };
+            if remote_is_windows {
+                let computed_payload = remote_windows_shell_command(shell)
+                    .map(|command| command.to_string())
+                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell, true)));
+                eprintln!(
+                    "[PTY] Remote Windows explicit shell launch via channel.exec (remote_is_windows={}, shell='{}', payload='{}')",
+                    remote_is_windows,
+                    shell,
+                    computed_payload
+                );
+            }
+            // Note: a successful `channel.exec` acknowledgement doesn't always guarantee
+            // an actually usable interactive shell. We only fall back to request_shell
+            // on explicit exec transport errors to avoid double-launching on success.
             match channel.exec(false, launch).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -426,9 +459,9 @@ impl PtyManager {
         // If cwd is provided, send a cd command immediately.
         if let Some(path) = cwd {
             let cd_cmd = if remote_is_windows {
-                match selected_shell.map(|s| s.to_ascii_lowercase()) {
+                match selected_shell.map(|s| s.trim().to_ascii_lowercase()) {
                     Some(shell) if shell == "cmd" || shell == "command prompt" => {
-                        format!("cd /d \"{}\" && cls\r", windows_double_quote(&path))
+                        format!("cd /d \"{}\" && cls\r", windows_double_quote(&path, false))
                     }
                     Some(shell)
                         if shell == "powershell"
@@ -441,12 +474,12 @@ impl PtyManager {
                             powershell_single_quote(&path)
                         )
                     }
-                    Some(_) => format!("cd \"{}\" && cls\r", windows_double_quote(&path)),
+                    Some(_) => format!("cd \"{}\" && cls\r", windows_double_quote(&path, false)),
                     None => {
                         // Unknown Windows default shell. `cd \"...\"` is accepted by
                         // both cmd and PowerShell for same-drive navigation; avoid
                         // shell-specific `/d` or `Set-Location` syntax here.
-                        format!("cd \"{}\" && cls\r", windows_double_quote(&path))
+                        format!("cd \"{}\" && cls\r", windows_double_quote(&path, false))
                     }
                 }
             } else {
@@ -479,7 +512,10 @@ impl PtyManager {
         // Notify frontend that terminal is ready for input
         let _ = app_handle.emit(
             &format!("terminal-ready-{}", term_id),
-            TerminalLifecycleEvent { generation },
+            TerminalLifecycleEvent {
+                generation,
+                exit_code: None,
+            },
         );
 
         let term_id_clone = term_id.clone();
@@ -506,11 +542,14 @@ impl PtyManager {
                                     flush_deadline = Some(Instant::now() + Duration::from_millis(REMOTE_OUTPUT_BATCH_MS));
                                 }
                             }
-                            Some(ChannelMsg::ExitStatus { .. }) => {
+                            Some(ChannelMsg::ExitStatus { exit_status }) => {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: Some(exit_status),
+                                    },
                                 );
                                 break;
                             }
@@ -518,7 +557,10 @@ impl PtyManager {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: None,
+                                    },
                                 );
                                 break;
                             }
@@ -526,7 +568,10 @@ impl PtyManager {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: None,
+                                    },
                                 );
                                 break;
                             }

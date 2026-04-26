@@ -23,12 +23,15 @@ export function Tooltip({ content, children, position = 'top', className, conten
       }}
     >
       <RadixTooltip.Trigger asChild>
-        <div
+        <span
+          tabIndex={0}
           className={cn("relative inline-flex items-center justify-center", className)}
-          onClick={() => dismissOnClick && setOpen(false)}
+          onClickCapture={() => {
+            if (dismissOnClick) setOpen(false);
+          }}
         >
           {children}
-        </div>
+        </span>
       </RadixTooltip.Trigger>
 
       {!disabled && (
