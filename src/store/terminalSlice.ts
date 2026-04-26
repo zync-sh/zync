@@ -12,6 +12,9 @@ export interface TerminalTab {
     isSynced?: boolean;
     /** True for SSH terminal tabs restored from session — PTY not yet spawned, waiting for reconnect. */
     pendingRestore?: boolean;
+    /** Shell override passed to the backend PTY spawner for this specific tab.
+     *  Undefined means "use the global default shell setting". */
+    shellOverride?: string;
 }
 
 export interface TerminalSlice {
@@ -26,11 +29,10 @@ export interface TerminalSlice {
     /**
      * Creates a new terminal tab for a specific connection.
      * @param connectionId The ID of the connection to create the terminal for.
-     * @param initialPath Optional starting directory.
-     * @param isSynced Whether this terminal should sync with File Manager navigation.
+     * @param opts Optional creation options.
      * @returns The generated ID of the new terminal.
      */
-    createTerminal: (connectionId: string, initialPath?: string, isSynced?: boolean) => string;
+    createTerminal: (connectionId: string, opts?: { initialPath?: string; isSynced?: boolean; shellOverride?: string; title?: string }) => string;
 
     /**
      * Ensures at least one terminal exists for a connection. Creates one if none exist.
@@ -98,15 +100,19 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
     syncedTerminalId: {},
 
     /** @inheritdoc */
-    createTerminal: (connectionId, initialPath, isSynced) => {
+    createTerminal: (connectionId, opts) => {
+        const initialPath = opts?.initialPath;
+        const isSynced = opts?.isSynced ?? false;
         const newId = `term-${crypto.randomUUID()}`;
         set(state => {
             const currentTabs = state.terminals[connectionId] || [];
+            const defaultTitle = `Shell ${currentTabs.length + 1}`;
             const newTab: TerminalTab = {
                 id: newId,
-                title: isSynced ? `Synced Terminal` : `Terminal ${currentTabs.length + 1}`,
+                title: opts?.title ?? (isSynced ? `Synced Terminal` : defaultTitle),
                 initialPath,
-                isSynced
+                isSynced,
+                shellOverride: opts?.shellOverride,
             };
 
             const nextSyncedIds = { ...state.syncedTerminalId };
@@ -136,7 +142,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         const state = get();
         const currentTabs = state.terminals[connectionId] || [];
         if (currentTabs.length === 0) {
-            return get().createTerminal(connectionId, initialPath);
+            return get().createTerminal(connectionId, { initialPath });
         }
         const activeId = state.activeTerminalIds[connectionId];
         if (activeId && currentTabs.some((tab) => tab.id === activeId)) {
@@ -292,6 +298,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             initialPath: s.initialPath,
             lastKnownCwd: s.cwd,
             isSynced: s.isSynced ?? false,
+            shellOverride: s.shellOverride,
             pendingRestore: isSSH || undefined,
         }));
 

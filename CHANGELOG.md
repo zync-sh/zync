@@ -4,6 +4,24 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-04-26
+
+### Added
+- **Shell Icon Pipeline**: Added reusable shell icon infrastructure across frontend and Tauri backend, including cache/types helpers, `ShellIcon` UI component, shell icon discovery backend module, and architecture notes for future maintenance. ([dd13dcf])
+
+### Changed
+- **Shell Picker & Dropdown UX**: Unified local/remote shell discovery flow and refreshed terminal dropdown UX by renaming the section to **Shells**, moving shortcut hints to tooltips, improving tooltip consistency for tabs/header controls, and keeping reload affordances aligned with the shell header row. ([dd13dcf])
+- **Cross-Host Shell Handling**: Improved host-aware shell option normalization so local and SSH contexts return appropriate shell choices for Linux/macOS/Windows scenarios. ([dd13dcf])
+- **Feature Dropdown Guard Redundancy**: Removed redundant `onOpenFeature` null checks inside already-gated feature/plugin sections to simplify click/disabled logic without changing behavior. ([dd13dcf])
+
+### Fixed
+- **Terminal Wakeup Shell Resolution**: Wakeup/restart paths now read fresh `windowsShell` settings from store state instead of closure-captured values, preventing stale shell selection after settings changes. ([dd13dcf])
+- **Close Terminal Shortcut Reliability**: Fixed `Ctrl+Shift+W` / `Mod+Shift+W` terminal-tab close handling to always target the current active terminal tab by using the live ref in the event listener path. ([53aeb1f])
+- **Shell Discovery, Caching, and Terminal Lifecycle Hardening**: Added timeout protection for remote Windows shell discovery, improved shell cache scoping/reset behavior, hardened shell-icon cache file handling, and included terminal exit codes in lifecycle events for clearer diagnostics. ([817ccb6])
+- **UI Accessibility and Safety Refinements**: Made tooltip triggers keyboard-focusable, tightened feature-key filtering to own properties only, and made bundled shell icon URLs base-path aware. ([817ccb6])
+- **WSL Startup Working Directory**: Fixed local WSL terminal startup so new WSL tabs open in Linux home (or saved Linux path) instead of inheriting the host Windows working directory. ([1c519b2])
+- **Plugin View Restore, Tooltip Composition, and Shell Cache Invalidation**: Hardened restored plugin view validation against loaded plugin panels, improved tooltip trigger composition/dismiss behavior, invalidated cached shell lists after connection target edits/imports, preserved `plugin:*` views on restore, and tightened PTY shell parsing/interactivity checks while removing noisy recompute logs. ([8faf6ef])
+
 ## [2.14.1] - 2026-04-23
 
 ### Changed
@@ -617,7 +635,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.14.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.15.0...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -701,6 +719,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 [a5a25ef]: https://github.com/zync-sh/zync/commit/a5a25ef
 [4104e34]: https://github.com/zync-sh/zync/commit/4104e34
 [cea3fa0]: https://github.com/zync-sh/zync/commit/cea3fa0
+[dd13dcf]: https://github.com/zync-sh/zync/commit/dd13dcf
+[53aeb1f]: https://github.com/zync-sh/zync/commit/53aeb1f
+[817ccb6]: https://github.com/zync-sh/zync/commit/817ccb6
+[1c519b2]: https://github.com/zync-sh/zync/commit/1c519b2
+[8faf6ef]: https://github.com/zync-sh/zync/commit/8faf6ef
+[2.15.0]: https://github.com/zync-sh/zync/compare/v2.14.1...v2.15.0
 [2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2

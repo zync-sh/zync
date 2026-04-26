@@ -8,6 +8,7 @@ import { useTransferEvents } from './hooks/useTransferEvents';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PluginProvider } from './context/PluginContext';
 import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
+import * as RadixTooltip from '@radix-ui/react-tooltip';
 
 function AppContent() {
     const loadConnections = useAppStore((state) => state.loadConnections);
@@ -27,7 +28,11 @@ function AppContent() {
                 // loadSession must always run — it sets sessionLoaded which gates the UI.
                 await loadSession();
             }
-            fetchSystemInfo();
+            try {
+                await fetchSystemInfo();
+            } catch (e) {
+                console.warn('[App] fetchSystemInfo failed:', e);
+            }
         };
         init().catch(e => console.warn('[App] Initialisation error:', e));
         // eslint-disable-next-line react-hooks/exhaustive-deps -- store actions are stable
@@ -51,8 +56,10 @@ function App() {
     return (
         <ErrorBoundary>
             <PluginProvider>
-                <AppContent />
-                <GlobalConfirmDialog />
+                <RadixTooltip.Provider delayDuration={120}>
+                    <AppContent />
+                    <GlobalConfirmDialog />
+                </RadixTooltip.Provider>
             </PluginProvider>
         </ErrorBoundary>
     );

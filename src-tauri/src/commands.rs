@@ -3,8 +3,9 @@ use crate::pty::PtyManager;
 use crate::ssh::{Client, SshManager};
 use crate::types::*;
 use anyhow::Result;
-use russh::client::Handle;
-use std::collections::HashMap;
+use russh::client::{Handle, Msg};
+use russh::Channel;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -425,6 +426,8 @@ pub struct AppState {
     pub command_whitelist: Arc<Mutex<HashMap<String, std::collections::HashSet<String>>>>,
     // Ghost suggestions: frecency-scored command history, persisted to disk.
     pub ghost_manager: Arc<crate::ghost::GhostManager>,
+    pub shell_icon_cache: crate::shell_icons::IconCache,
+    pub shell_icon_cache_path: std::path::PathBuf,
 }
 
 impl AppState {
@@ -441,6 +444,8 @@ impl AppState {
             agent_checkpoints: Arc::new(Mutex::new(HashMap::new())),
             command_whitelist: Arc::new(Mutex::new(HashMap::new())),
             ghost_manager: Arc::new(crate::ghost::GhostManager::new(&data_dir)),
+            shell_icon_cache: crate::shell_icons::new_cache(),
+            shell_icon_cache_path: data_dir.join("shell-icon-cache.json"),
         }
     }
 }
@@ -461,11 +466,6 @@ async fn reconnect_connection(
     ssh_manager: &crate::ssh::SshManager,
     tunnel_manager: &crate::tunnel::TunnelManager,
 ) -> Result<ConnectionHandle, String> {
-    println!(
-        "[SSH] (Re)connecting to {} ({}@{}:{})",
-        config.name, config.username, config.host, config.port
-    );
-
     let session = ssh_manager
         .connect(config.clone(), Arc::new(tunnel_manager.clone()))
         .await
@@ -539,10 +539,35 @@ async fn reconnect_connection(
             }
         }
     }
+    if detected_os.is_none() {
+        if let Ok(mut channel) = session.channel_open_session().await {
+            if channel.exec(true, "cmd /c ver").await.is_ok() {
+                let mut output = String::new();
+                while let Some(msg) = channel.wait().await {
+                    match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            output.push_str(&String::from_utf8_lossy(&data))
+                        }
+                        russh::ChannelMsg::ExitStatus { .. } => break,
+                        _ => {}
+                    }
+                }
+                if output.to_lowercase().contains("windows") {
+                    detected_os = Some("windows".to_string());
+                }
+            }
+        }
+    }
 
     // Detect login shell (best-effort)
     let mut detected_shell = None;
-    if let Ok(mut channel) = session.channel_open_session().await {
+    if detected_os
+        .as_deref()
+        .map(|os| os.eq_ignore_ascii_case("windows"))
+        .unwrap_or(false)
+    {
+        detected_shell = Some("powershell".to_string());
+    } else if let Ok(mut channel) = session.channel_open_session().await {
         if channel.exec(true, "basename \"${SHELL:-}\"").await.is_ok() {
             let mut output = String::new();
             while let Some(msg) = channel.wait().await {
@@ -561,11 +586,6 @@ async fn reconnect_connection(
         }
     }
 
-    println!(
-        "[SSH] (Re)connected. Detected OS: {:?}, shell: {:?}",
-        detected_os, detected_shell
-    );
-
     Ok(ConnectionHandle {
         config: config.clone(),
         session: Some(Arc::new(Mutex::new(session))),
@@ -580,11 +600,6 @@ pub async fn ssh_connect(
     config: ConnectionConfig,
     state: State<'_, AppState>,
 ) -> Result<ConnectionResponse, String> {
-    println!(
-        "[SSH] Connect request for: {} ({}@{}:{})",
-        config.name, config.username, config.host, config.port
-    );
-
     match reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await {
         Ok(handle) => {
             let detected_os = handle.detected_os.clone();
@@ -599,7 +614,7 @@ pub async fn ssh_connect(
             })
         }
         Err(e) => {
-            println!("[SSH] Connection failed: {}", e);
+            eprintln!("[SSH] Connection failed: {}", e);
             Err(e)
         }
     }
@@ -610,11 +625,6 @@ pub async fn ssh_test_connection(
     config: ConnectionConfig,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    println!(
-        "[SSH] Test connection for: {} ({}@{}:{})",
-        config.name, config.username, config.host, config.port
-    );
-
     match state
         .ssh_manager
         .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
@@ -1474,14 +1484,8 @@ pub async fn terminal_create(
             0
         }
     };
-    println!(
-        "[TERM] Creating terminal for connection {} with ID {}, shell: {:?}",
-        connection_id, term_id, shell
-    );
-
     // Check if this is a local or remote connection
     if connection_id == "local" {
-        println!("[TERM] Creating local PTY session");
         // Use term_id (UUID) for the session, not connection_id
         state
             .pty_manager
@@ -1499,92 +1503,14 @@ pub async fn terminal_create(
             .map_err(|e| e.to_string())?;
         Ok(term_id)
     } else {
-        println!("[TERM] Creating remote SSH session");
-
-        // Helper: get live session, reconnecting if necessary
-        async fn get_live_session(
-            connection_id: &str,
-            state: &State<'_, AppState>,
-        ) -> Result<Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>, String> {
-            let existing = {
-                let connections = state.connections.lock().await;
-                connections
-                    .get(connection_id)
-                    .and_then(|c| c.session.clone())
-            };
-            if let Some(s) = existing {
-                return Ok(s);
-            }
-            // No session — reconnect using cached config
-            let config = {
-                let connections = state.connections.lock().await;
-                connections
-                    .get(connection_id)
-                    .map(|c| c.config.clone())
-                    .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
-            };
-            let mut new_handle =
-                reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await?;
-            let new_session = new_handle
-                .session
-                .take()
-                .ok_or("Reconnection did not produce a session")?;
-            new_handle.session = Some(new_session.clone());
-            state
-                .connections
-                .lock()
-                .await
-                .insert(connection_id.to_string(), new_handle);
-            Ok(new_session)
-        }
-
-        // 1. Get (or reconnect to get) a live session
-        let session = get_live_session(&connection_id, &state).await?;
-
-        // 2. Try opening a channel; if it fails (session dead), reconnect once and retry
-        let channel = {
-            let ch_result = {
-                let guard = session.lock().await;
-                guard.channel_open_session().await
-            };
-            match ch_result {
-                Ok(ch) => ch,
-                Err(e) => {
-                    println!("[TERM] Channel open failed ({}), reconnecting...", e);
-                    // Drop stale session, force a fresh one
-                    let config = {
-                        let connections = state.connections.lock().await;
-                        connections
-                            .get(&connection_id)
-                            .map(|c| c.config.clone())
-                            .ok_or_else(|| {
-                                format!("Connection config for {} not found", connection_id)
-                            })?
-                    };
-                    let mut new_handle =
-                        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager)
-                            .await
-                            .map_err(|e| format!("Auto-reconnect failed: {}", e))?;
-                    let new_session = new_handle
-                        .session
-                        .take()
-                        .ok_or("Reconnection did not produce a session")?;
-                    new_handle.session = Some(new_session.clone());
-                    state
-                        .connections
-                        .lock()
-                        .await
-                        .insert(connection_id.clone(), new_handle);
-                    let guard = new_session.lock().await;
-                    guard
-                        .channel_open_session()
-                        .await
-                        .map_err(|e| format!("Channel open failed after reconnect: {}", e))?
-                }
-            }
+        let channel = open_ssh_channel_with_single_reconnect(&connection_id, &state).await?;
+        let remote_os = {
+            let connections = state.connections.lock().await;
+            connections
+                .get(&connection_id)
+                .and_then(|c| c.detected_os.clone())
         };
 
-        println!("[TERM] SSH channel opened, requesting PTY");
         state
             .pty_manager
             .create_remote_session(
@@ -1595,6 +1521,8 @@ pub async fn terminal_create(
                 cols,
                 rows,
                 app,
+                shell,
+                remote_os,
                 cwd,
             )
             .await
@@ -1602,6 +1530,71 @@ pub async fn terminal_create(
 
         Ok(term_id)
     }
+}
+
+async fn get_live_ssh_session(
+    connection_id: &str,
+    state: &State<'_, AppState>,
+) -> Result<Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>, String> {
+    let existing = {
+        let connections = state.connections.lock().await;
+        connections
+            .get(connection_id)
+            .and_then(|c| c.session.clone())
+    };
+    if let Some(session) = existing {
+        return Ok(session);
+    }
+
+    let config = {
+        let connections = state.connections.lock().await;
+        connections
+            .get(connection_id)
+            .map(|c| c.config.clone())
+            .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
+    };
+    let mut new_handle =
+        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await?;
+    let new_session = new_handle
+        .session
+        .take()
+        .ok_or("Reconnection did not produce a session")?;
+    new_handle.session = Some(new_session.clone());
+    state
+        .connections
+        .lock()
+        .await
+        .insert(connection_id.to_string(), new_handle);
+    Ok(new_session)
+}
+
+async fn open_ssh_channel_with_single_reconnect(
+    connection_id: &str,
+    state: &State<'_, AppState>,
+) -> Result<Channel<Msg>, String> {
+    let session = get_live_ssh_session(connection_id, state).await?;
+    let first_try = {
+        let guard = session.lock().await;
+        guard.channel_open_session().await
+    };
+    if let Ok(channel) = first_try {
+        return Ok(channel);
+    }
+
+    // First channel open failed; clear stale session and re-use centralized
+    // get_live_ssh_session() reconnect path.
+    {
+        let mut connections = state.connections.lock().await;
+        if let Some(conn) = connections.get_mut(connection_id) {
+            conn.session = None;
+        }
+    }
+    let new_session = get_live_ssh_session(connection_id, state).await?;
+    let guard = new_session.lock().await;
+    guard
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Channel open failed after reconnect: {}", e))
 }
 
 #[tauri::command]
@@ -1678,7 +1671,6 @@ pub async fn fs_list(
             .list_local(&path)
             .map_err(|e| e.to_string())
     } else {
-        println!("[FS] Listing remote dir: {} on {}", path, connection_id);
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
 
         let timeout_duration = std::time::Duration::from_secs(10);
@@ -1868,7 +1860,6 @@ pub async fn fs_cwd(connection_id: String, state: State<'_, AppState>) -> Result
             .get_home_dir(&connection_id)
             .map_err(|e| e.to_string())
     } else {
-        println!("[FS] Getting remote CWD for {}", connection_id);
         let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
 
@@ -4623,6 +4614,410 @@ pub async fn shell_get_wsl_distros() -> Result<Vec<String>, String> {
     {
         Ok(Vec::new())
     }
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ShellIconData {
+    Bundled { name: String },
+    Base64Png { data: String },
+    Base64Icon { data: String },
+}
+
+fn bundled(name: &'static str) -> Option<ShellIconData> {
+    Some(ShellIconData::Bundled { name: name.to_string() })
+}
+
+fn wsl_bundled_icon(_distro: &str) -> Option<ShellIconData> {
+    // TODO: support distro-specific bundled icons; `_distro` is intentionally unused for now.
+    bundled("wsl.png")
+}
+
+fn remote_shell_icon(path_or_name: &str) -> Option<ShellIconData> {
+    let value = path_or_name.to_lowercase();
+    if value.contains("bash") {
+        bundled("bash.png")
+    } else if value.contains("zsh") {
+        bundled("zsh.svg")
+    } else if value.contains("fish") {
+        bundled("fish.png")
+    } else {
+        bundled("terminal.png")
+    }
+}
+
+fn remote_shell_fallbacks(detected_default: Option<String>) -> Vec<DetectedShell> {
+    // No hardcoded shells — the dropdown must reflect only what the host actually has.
+    // If the /etc/shells query fails, surface at most the user's detected login shell
+    // (captured at connect time) so the picker isn't empty. Nothing else is invented.
+    let Some(default_shell) = detected_default else {
+        return Vec::new();
+    };
+    let label = std::path::Path::new(&default_shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&default_shell)
+        .to_string();
+    vec![DetectedShell {
+        id: default_shell.clone(),
+        label,
+        icon: remote_shell_icon(&default_shell),
+    }]
+}
+
+fn dedupe_shells_by_label(shells: Vec<DetectedShell>) -> Vec<DetectedShell> {
+    let mut seen_labels = HashSet::new();
+    let mut deduped = Vec::new();
+    for shell in shells {
+        let key = shell.label.trim().to_lowercase();
+        if seen_labels.insert(key) {
+            deduped.push(shell);
+        }
+    }
+    deduped
+}
+
+fn remote_windows_shell_entry(id: &str) -> Option<DetectedShell> {
+    match id.trim().to_ascii_lowercase().as_str() {
+        "powershell" | "powershell.exe" => Some(DetectedShell {
+            id: "powershell".to_string(),
+            label: "Windows PowerShell".to_string(),
+            icon: bundled("powershell.svg"),
+        }),
+        "pwsh" | "pwsh.exe" => Some(DetectedShell {
+            id: "pwsh".to_string(),
+            label: "PowerShell".to_string(),
+            icon: bundled("pwsh.svg"),
+        }),
+        "cmd" | "cmd.exe" => Some(DetectedShell {
+            id: "cmd".to_string(),
+            label: "Command Prompt".to_string(),
+            icon: bundled("cmd.png"),
+        }),
+        _ => None,
+    }
+}
+
+async fn query_remote_windows_shells(
+    connection_id: &str,
+    state: &tauri::State<'_, AppState>,
+) -> Result<Vec<DetectedShell>, String> {
+    const WINDOWS_SHELL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+
+    let mut channel = open_ssh_channel_with_single_reconnect(connection_id, state).await?;
+    let list_cmd = "cmd /c \"where powershell.exe >nul 2>nul && echo powershell & where pwsh.exe >nul 2>nul && echo pwsh & where cmd.exe >nul 2>nul && echo cmd\"";
+    channel
+        .exec(true, list_cmd)
+        .await
+        .map_err(|e| format!("Failed to query remote Windows shells: {}", e))?;
+
+    let mut output = String::new();
+    let mut stderr = String::new();
+    loop {
+        let msg = match tokio::time::timeout(WINDOWS_SHELL_QUERY_TIMEOUT, channel.wait()).await {
+            Ok(msg) => msg,
+            Err(_) => return Err("Failed to query remote Windows shells: timeout".to_string()),
+        };
+        let Some(msg) = msg else {
+            break;
+        };
+        match msg {
+            russh::ChannelMsg::Data { data } => {
+                output.push_str(&String::from_utf8_lossy(&data));
+            }
+            russh::ChannelMsg::ExtendedData { data, .. } => {
+                stderr.push_str(&String::from_utf8_lossy(&data));
+            }
+            _ => {}
+        }
+    }
+
+    if !stderr.trim().is_empty() {
+        eprintln!(
+            "[Shells] Remote Windows stderr for '{}': {}",
+            connection_id,
+            stderr.trim()
+        );
+    }
+
+    let mut shells: Vec<DetectedShell> = output
+        .lines()
+        .filter_map(remote_windows_shell_entry)
+        .collect();
+
+    if shells.is_empty() {
+        // Windows OpenSSH defaults commonly use PowerShell even when explicit
+        // probing fails because of policy/path quirks. Keep the picker useful
+        // while default terminal creation still uses request_shell fallback.
+        shells.push(remote_windows_shell_entry("powershell").expect("static shell id"));
+        shells.push(remote_windows_shell_entry("cmd").expect("static shell id"));
+    }
+
+    Ok(dedupe_shells_by_label(shells))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn linux_icon(path: &str) -> Option<ShellIconData> {
+    let name = if path.contains("bash") { "bash.png" }
+        else if path.contains("zsh")  { "zsh.svg"  }
+        else if path.contains("fish") { "fish.png" }
+        else                           { "terminal.png" };
+    Some(ShellIconData::Bundled { name: name.to_string() })
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct DetectedShell {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<ShellIconData>,
+}
+
+#[tauri::command]
+pub async fn shell_get_windows_shells(state: tauri::State<'_, AppState>) -> Result<Vec<DetectedShell>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tokio::process::Command;
+        let mut shells = Vec::new();
+
+        // Windows PowerShell — always present on Win10+
+        shells.push(DetectedShell { id: "powershell".into(), label: "Windows PowerShell".into(), icon: bundled("powershell.svg") });
+
+        // PowerShell 7 (pwsh) — optional install
+        let pwsh_paths = [
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "C:\\Program Files\\PowerShell\\pwsh.exe",
+        ];
+        if pwsh_paths.iter().any(|p| std::path::Path::new(p).exists()) {
+            shells.push(DetectedShell { id: "pwsh".into(), label: "PowerShell".into(), icon: bundled("pwsh.svg") });
+        }
+
+        // Command Prompt — always present
+        shells.push(DetectedShell { id: "cmd".into(), label: "Command Prompt".into(), icon: bundled("cmd.png") });
+
+        // Git Bash — check common install paths
+        let git_bash_paths = [
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+        ];
+        if git_bash_paths.iter().any(|p| std::path::Path::new(p).exists()) {
+            shells.push(DetectedShell { id: "gitbash".into(), label: "Git Bash".into(), icon: bundled("gitbash.svg") });
+        }
+
+        // WSL distros — reuse the same UTF-16 decode as shell_get_wsl_distros
+        if let Ok(output) = Command::new("wsl.exe").args(["-l", "-q"]).output().await {
+            if output.status.success() {
+                let bytes = &output.stdout;
+                let mut words = Vec::with_capacity(bytes.len() / 2);
+                let mut i = 0usize;
+                while i + 1 < bytes.len() {
+                    words.push(u16::from_le_bytes([bytes[i], bytes[i + 1]]));
+                    i += 2;
+                }
+                let mut decoded = String::from_utf16_lossy(&words);
+                if decoded.starts_with('\u{feff}') { decoded.remove(0); }
+                let distros: Vec<String> = decoded.lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty() && !l.to_lowercase().starts_with("docker-"))
+                    .collect();
+                if !distros.is_empty() {
+                    let cache = state.shell_icon_cache.clone();
+                    let cache_path = state.shell_icon_cache_path.clone();
+                    let should_prefetch = {
+                        let guard = cache.read().await;
+                        distros
+                            .iter()
+                            .any(|distro| !guard.contains_key(&distro.to_lowercase()))
+                    };
+                    if should_prefetch {
+                        crate::shell_icons::prefetch_all_wsl_icons(&cache, &cache_path).await;
+                    }
+
+                    let guard = cache.read().await;
+                    for distro in distros {
+                        let icon = guard
+                            .get(&distro.to_lowercase())
+                            .and_then(|v| v.clone())
+                            .map(|tagged| {
+                                if let Some(data) = tagged.strip_prefix("png:") {
+                                    ShellIconData::Base64Png { data: data.to_string() }
+                                } else if let Some(data) = tagged.strip_prefix("ico:") {
+                                    ShellIconData::Base64Icon { data: data.to_string() }
+                                } else {
+                                    ShellIconData::Base64Png { data: tagged }
+                                }
+                            })
+                            .or_else(|| wsl_bundled_icon(&distro));
+                        shells.push(DetectedShell { id: format!("wsl:{}", distro), label: distro, icon });
+                    }
+                }
+            }
+        }
+
+        Ok(shells)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+pub async fn shell_get_available_shells() -> Result<Vec<DetectedShell>, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let contents = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        let shells = contents
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter(|l| std::path::Path::new(l).exists())
+            .map(|l| DetectedShell {
+                label: l.split('/').last().unwrap_or(l).to_string(),
+                icon: linux_icon(l),
+                id: l.to_string(),
+            })
+            .collect();
+        Ok(shells)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+pub async fn shell_get_connection_shells(
+    connection_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DetectedShell>, String> {
+    // `local` shell discovery is intentionally handled by dedicated local
+    // commands (`shell_get_windows_shells` / `shell_get_available_shells`).
+    if connection_id == "local" {
+        return Ok(Vec::new());
+    }
+
+    let (detected_default, detected_os) = {
+        let connections = state.connections.lock().await;
+        let entry = connections.get(&connection_id);
+        (
+            entry.and_then(|c| c.detected_shell.clone()),
+            entry.and_then(|c| c.detected_os.clone()),
+        )
+    };
+    if detected_os
+        .as_deref()
+        .map(|os| os.eq_ignore_ascii_case("windows"))
+        .unwrap_or(false)
+    {
+        let shells = query_remote_windows_shells(&connection_id, &state).await?;
+        return Ok(shells);
+    }
+
+    let mut output = String::new();
+    let mut stderr = String::new();
+    let query_result: Result<(), String> = match tokio::time::timeout(Duration::from_secs(10), async {
+        let mut channel = open_ssh_channel_with_single_reconnect(&connection_id, &state).await?;
+        // Compound query: cat /etc/shells (canonical login-shell registry) plus
+        // a disk probe of well-known shell paths. The probe catches shells that
+        // exist on disk but aren't registered in /etc/shells (rare but real).
+        //
+        // Both halves are dynamic — every emitted line is a path that actually
+        // exists on the remote — so nothing is invented. Duplicates are removed
+        // downstream (by id, then by basename).
+        //
+        // Run as a bare compound command, NOT wrapped in `/bin/sh -c '...'`.
+        // SSH exec already runs under the user's login shell; an extra wrapper
+        // adds a quoting layer that has bitten us before on hosts with quirky
+        // login shells.
+        let list_cmd = "cat /etc/shells 2>/dev/null; for s in /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh /bin/dash /usr/bin/dash /bin/zsh /usr/bin/zsh /usr/local/bin/zsh /bin/fish /usr/bin/fish /usr/local/bin/fish /bin/rbash /usr/bin/rbash /bin/ksh /usr/bin/ksh /bin/tcsh /usr/bin/tcsh /bin/csh /usr/bin/csh; do [ -x \"$s\" ] && echo \"$s\"; done";
+        channel
+            .exec(true, list_cmd)
+            .await
+            .map_err(|e| format!("Failed to query remote shells: {}", e))?;
+        // Drain the channel to completion. Breaking early on ExitStatus risks
+        // losing trailing Data messages that haven't been pulled yet, which is
+        // how this query was returning empty on some hosts.
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                russh::ChannelMsg::Data { data } => {
+                    output.push_str(&String::from_utf8_lossy(&data));
+                }
+                russh::ChannelMsg::ExtendedData { data, .. } => {
+                    stderr.push_str(&String::from_utf8_lossy(&data));
+                }
+                russh::ChannelMsg::ExitStatus { .. } => {}
+                _ => {}
+            }
+        }
+        Ok(())
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err("Failed to query remote shells: timeout".to_string()),
+    };
+
+    if let Err(err) = query_result {
+        eprintln!("[Shells] Remote query FAILED for '{}': {}", connection_id, err);
+        // Return Err — not Ok([]) — so the frontend keeps any cached shells
+        // visible and exposes an explicit reload affordance instead of caching
+        // a sticky empty result during connection-startup races.
+        return Err(err);
+    }
+    if !stderr.trim().is_empty() {
+        eprintln!("[Shells] Remote stderr for '{}': {}", connection_id, stderr.trim());
+    }
+
+    let mut seen = HashSet::new();
+    let mut shells: Vec<DetectedShell> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|line| line.starts_with('/'))
+        .filter_map(|line| {
+            let id = line.to_string();
+            if !seen.insert(id.clone()) {
+                return None;
+            }
+            let label = std::path::Path::new(&id)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&id)
+                .to_string();
+            Some(DetectedShell {
+                id: id.clone(),
+                label,
+                icon: remote_shell_icon(&id),
+            })
+        })
+        .collect();
+
+    if shells.is_empty() {
+        shells = remote_shell_fallbacks(detected_default.clone());
+    }
+
+    shells.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+
+    if let Some(default_shell) = detected_default {
+        // Keep the user/account default shell pinned at the top after sorting.
+        shells.retain(|shell| shell.id != default_shell);
+        let label = std::path::Path::new(&default_shell)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&default_shell)
+            .to_string();
+        shells.insert(
+            0,
+            DetectedShell {
+                id: default_shell.clone(),
+                label,
+                icon: remote_shell_icon(&default_shell),
+            },
+        );
+    }
+
+    Ok(dedupe_shells_by_label(shells))
 }
 
 #[tauri::command]

@@ -16,6 +16,7 @@ pub struct TerminalTabSnapshot {
     pub cwd: Option<String>,
     pub initial_path: Option<String>,
     pub is_synced: Option<bool>,
+    pub shell_override: Option<String>,
 }
 
 /// Snapshot of a sidebar connection tab.

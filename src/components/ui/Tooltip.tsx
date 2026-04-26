@@ -1,5 +1,5 @@
-import { type ReactNode, useState, useRef, useLayoutEffect } from 'react';
-import { ZPortal } from './ZPortal';
+import { isValidElement, type MouseEvent, type ReactNode, useEffect, useState } from 'react';
+import * as RadixTooltip from '@radix-ui/react-tooltip';
 import { cn } from '../../lib/utils';
 
 interface TooltipProps {
@@ -10,72 +10,73 @@ interface TooltipProps {
   contentClassName?: string;
   disabled?: boolean;
   dismissOnClick?: boolean;
+  asChild?: boolean;
 }
 
-export function Tooltip({ content, children, position = 'top', className, contentClassName, disabled = false, dismissOnClick = true }: TooltipProps) {
-  const [show, setShow] = useState(false);
-  const triggerRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState({ top: 0, left: 0 });
+function shouldDismissTooltip(open: boolean, dismissOnClick: boolean): boolean {
+  return open && dismissOnClick;
+}
 
-  useLayoutEffect(() => {
-    if (show && !disabled && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const spacing = 8; // Distance from trigger
+export function Tooltip({
+  content,
+  children,
+  position = 'top',
+  className,
+  contentClassName,
+  disabled = false,
+  dismissOnClick = true,
+  asChild = true,
+}: TooltipProps) {
+  const [open, setOpen] = useState(false);
 
-      let top = 0;
-      let left = 0;
-
-      switch (position) {
-        case 'top':
-          top = rect.top - spacing;
-          left = rect.left + rect.width / 2;
-          break;
-        case 'bottom':
-          top = rect.bottom + spacing;
-          left = rect.left + rect.width / 2;
-          break;
-        case 'left':
-          top = rect.top + rect.height / 2;
-          left = rect.left - spacing;
-          break;
-        case 'right':
-          top = rect.top + rect.height / 2;
-          left = rect.right + spacing;
-          break;
-      }
-
-      setCoords({ top, left });
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
     }
-  }, [show, position, disabled]);
+  }, [disabled]);
+
+  const handleDismissCapture = (_event: MouseEvent<HTMLElement>) => {
+    if (!shouldDismissTooltip(open, dismissOnClick)) return;
+    setOpen(false);
+  };
+  const shouldUseAsChild = asChild && isValidElement(children);
 
   return (
-    <div
-      ref={triggerRef}
-      className={cn("relative inline-flex items-center justify-center", className)}
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-      onFocus={() => setShow(true)}
-      onBlur={() => setShow(false)}
-      onClick={() => dismissOnClick && setShow(false)}
+    <RadixTooltip.Root
+      open={disabled ? false : open}
+      onOpenChange={(next) => {
+        if (!disabled) setOpen(next);
+      }}
     >
-      {children}
-      {show && !disabled && (
-        <ZPortal passive={true}>
-          <div
-            style={{ top: coords.top, left: coords.left }}
+      <RadixTooltip.Trigger
+        asChild={shouldUseAsChild}
+        className={cn("relative inline-flex items-center justify-center", className)}
+        onClickCapture={handleDismissCapture}
+      >
+        {children}
+      </RadixTooltip.Trigger>
+
+      {!disabled && (
+        <RadixTooltip.Portal>
+          <RadixTooltip.Content
+            side={position}
+            sideOffset={8}
+            collisionPadding={8}
+            avoidCollisions
+            align="center"
             className={cn(
-              "absolute px-2.5 py-1.5 bg-app-panel/95 backdrop-blur-md text-app-text text-xs font-medium rounded-md whitespace-nowrap shadow-xl border border-app-border z-[9999] animate-in fade-in duration-150 pointer-events-none",
-              position === 'top' ? "-translate-y-full -translate-x-1/2 slide-in-from-bottom-1" :
-                position === 'bottom' ? "-translate-x-1/2 slide-in-from-top-1" :
-                  position === 'left' ? "-translate-x-full -translate-y-1/2 slide-in-from-right-1" :
-                    "-translate-y-1/2 slide-in-from-left-1",
+              "z-[99999] px-2.5 py-1.5 bg-app-panel/95 backdrop-blur-md text-app-text text-xs font-medium rounded-md whitespace-nowrap shadow-xl border border-app-border animate-in fade-in duration-150 pointer-events-none",
+              "data-[side=top]:slide-in-from-bottom-1",
+              "data-[side=bottom]:slide-in-from-top-1",
+              "data-[side=left]:slide-in-from-right-1",
+              "data-[side=right]:slide-in-from-left-1",
               contentClassName
             )}
           >
             {content}
-          </div>
-        </ZPortal>
+          </RadixTooltip.Content>
+        </RadixTooltip.Portal>
       )}
-    </div>
+    </RadixTooltip.Root>
   );
 }

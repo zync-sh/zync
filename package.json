@@ -1,7 +1,7 @@
 {
   "name": "zync",
   "private": true,
-  "version": "2.14.1",
+  "version": "2.15.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -51,6 +51,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@enjoys/context-engine": "file:./context-engine",
+    "@radix-ui/react-tooltip": "^1.2.8",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.6.0",

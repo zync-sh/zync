@@ -302,18 +302,11 @@ impl SshManager {
 
         // Recursive Jump Host Logic
         if let Some(ref jump_host_config) = config.jump_host {
-            println!(
-                "[SSH] Connecting via Jump Host: {} -> {}",
-                jump_host_config.host, config.host
-            );
-
             // 1. Connect to Jump Host (Recursive)
             let jump_session =
                 Box::pin(self.connect((**jump_host_config).clone(), tunnel_manager.clone()))
                     .await
                     .map_err(|e| anyhow!("Failed to connect to jump host: {}", e))?;
-
-            println!("[SSH] Jump Host Connected. Opening tunnel to target...");
 
             // 2. Open Direct TCP/IP Channel through Jump Host
             let channel = jump_session
@@ -327,7 +320,6 @@ impl SshManager {
                 .map_err(|e| anyhow!("Failed to open direct-tcpip channel on jump host: {}", e))?;
 
             // 3. Establish SSH Session over the Channel
-            println!("[SSH] Tunnel established. Handshaking with target...");
             let stream = channel.into_stream();
 
             // 4. Create handler with agent keys
@@ -355,10 +347,6 @@ impl SshManager {
             agent_keys: self.agent_keys.clone(),
         };
 
-        println!(
-            "[SSH] Connecting directly to {}:{}...",
-            config.host, config.port
-        );
         let mut session = client::connect(
             client_config,
             (config.host.as_str(), config.port),
@@ -376,8 +364,6 @@ impl SshManager {
         session: &mut client::Handle<Client>,
         config: &ConnectionConfig,
     ) -> Result<()> {
-        println!("[SSH] Connected, authenticating as {}...", config.username);
-
         let (pwd, pk, passphrase) = match &config.auth_method {
             AuthMethod::Password { password } => (Some(password.clone()), None, None),
             AuthMethod::PrivateKey {
@@ -393,7 +379,6 @@ impl SshManager {
                     expanded_path = expanded_path.replacen("~", &home.to_string_lossy(), 1);
                 }
             }
-            println!("[SSH] Loading private key from: {}", expanded_path);
             let key_data = std::fs::read_to_string(&expanded_path)
                 .map_err(|e| anyhow!("Failed to read private key file: {}", e))?;
 
@@ -420,8 +405,6 @@ impl SshManager {
         if !auth_res {
             return Err(anyhow!("Authentication failed"));
         }
-
-        println!("[SSH] Authentication successful!");
         Ok(())
     }
 }

@@ -170,7 +170,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // Sync terminal to FM navigation if a synced terminal is active
   useEffect(() => {
     if (syncedTerminalId && currentPath && isVisible) {
-      console.log('[FM] Syncing terminal to:', currentPath);
       // Use the safe navigation IPC instead of manual string injection
       window.ipcRenderer.invoke('terminal:navigate', { termId: syncedTerminalId, path: currentPath });
       // Update store tracking
@@ -614,7 +613,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         // If TerminalManager already created one without a path, ensureTerminal is a no-op
         // (terminal already exists). If none exists yet, it creates one with the path baked in.
         // Either way, we then tag any still-untracked terminals (covers the race case).
-        // Either way, we then tag any still-untracked terminals (covers the race case).
         const termId = ensureTerminal(activeConnectionId, path);
         const store = useAppStore.getState();
         const t = store.terminals[activeConnectionId]?.find(tab => tab.id === termId);
@@ -854,7 +852,6 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   // (Done above)
 
   const handleUpload = async () => {
-    // ... (existing logic) ...
     try {
       const { filePaths, canceled } = await window.ipcRenderer.invoke('dialog:openFile');
       if (canceled || filePaths.length === 0) return;
@@ -1118,7 +1115,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
   };
 
   // Context Menu Items
-  const contextMenuItems: ContextMenuItem[] = contextMenu ? [] : [];
+  const contextMenuItems: ContextMenuItem[] = [];
 
   if (contextMenu) {
     if (contextMenu.file) {
@@ -1204,7 +1201,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
             } else {
               // Case 2: No match — spawn a new terminal that starts natively at the target path.
               // The shell opens there directly; no 'cd' command is ever typed.
-              const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
+              const termId = useAppStore.getState().createTerminal(activeConnectionId, { initialPath: targetPath });
               useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
               useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
@@ -1241,7 +1238,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                   return; // Halt on failure
                 }
               } else {
-                termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath, true);
+                termId = useAppStore.getState().createTerminal(activeConnectionId, { initialPath: targetPath, isSynced: true });
                 useAppStore.getState().setTerminalCwd(activeConnectionId || 'local', termId, targetPath);
               }
 
@@ -1314,7 +1311,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
             } else {
               // Case 2: No match — spawn a new terminal that starts natively at the target path.
               // The shell opens there directly; no 'cd' command is ever typed.
-              const termId = useAppStore.getState().createTerminal(activeConnectionId, targetPath);
+              const termId = useAppStore.getState().createTerminal(activeConnectionId, { initialPath: targetPath });
               useAppStore.getState().setActiveTerminal(activeConnectionId, termId);
               useAppStore.getState().setTerminalCwd(connId, termId, targetPath);
             }
@@ -1347,7 +1344,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
                   return; // Halt on failure
                 }
               } else {
-                termId = useAppStore.getState().createTerminal(activeConnectionId, currentPath, true);
+                termId = useAppStore.getState().createTerminal(activeConnectionId, { initialPath: currentPath, isSynced: true });
                 useAppStore.getState().setTerminalCwd(connId, termId, currentPath);
               }
 
@@ -1679,8 +1676,14 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
 
       <FileToolbar
         currentPath={currentPath}
-        onNavigate={(path) => loadFiles(activeConnectionId!, path)}
-        onRefresh={() => refreshFiles(activeConnectionId!)}
+        onNavigate={(path) => {
+          if (!activeConnectionId) return;
+          loadFiles(activeConnectionId, path);
+        }}
+        onRefresh={() => {
+          if (!activeConnectionId) return;
+          refreshFiles(activeConnectionId);
+        }}
         onUpload={handleUpload}
         onUploadFolder={async () => {
           if (!activeConnectionId || !isConnected) return;
@@ -1694,7 +1697,7 @@ export function FileManager({ connectionId, isVisible }: { connectionId?: string
         }}
         onNewFolder={() => setIsNewFolderModalOpen(true)}
         onNewFile={() => setIsNewFileModalOpen(true)}
-        onDownloadAsZip={activeConnectionId !== 'local' ? handleDownloadAsZip : undefined}
+        onDownloadAsZip={activeConnectionId && activeConnectionId !== 'local' ? handleDownloadAsZip : undefined}
         selectedCount={selectedFiles.length}
         viewMode={viewMode}
         onToggleView={setViewMode}

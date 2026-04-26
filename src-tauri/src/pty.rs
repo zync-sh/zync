@@ -17,9 +17,114 @@ const REMOTE_OUTPUT_BATCH_MS: u64 = 8;
 /// Flush buffered remote output immediately once it reaches this many bytes.
 const REMOTE_OUTPUT_FLUSH_THRESHOLD: usize = 4096;
 
+fn remote_shell_login_flag(shell_override: &str) -> Option<&'static str> {
+    let token = shell_override.split_whitespace().next().unwrap_or(shell_override);
+    let base_name = std::path::Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+
+    match base_name.as_str() {
+        "bash" | "zsh" | "sh" | "dash" | "ksh" | "rbash" | "tcsh" | "csh" => Some("-l"),
+        "fish" => Some("--login"),
+        _ => None,
+    }
+}
+
+fn is_remote_windows(remote_os: Option<&str>) -> bool {
+    remote_os
+        .map(|os| os.eq_ignore_ascii_case("windows"))
+        .unwrap_or(false)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShellKind {
+    Cmd,
+    PowerShell,
+    Pwsh,
+    Other,
+}
+
+fn classify_windows_shell(shell_label: &str) -> ShellKind {
+    let trimmed = shell_label.trim();
+    if trimmed.is_empty() {
+        return ShellKind::Other;
+    }
+
+    let token = trimmed.split_whitespace().next().unwrap_or(trimmed);
+    let base_name = std::path::Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+
+    match base_name.as_str() {
+        "cmd" | "cmd.exe" => ShellKind::Cmd,
+        "powershell" | "powershell.exe" => ShellKind::PowerShell,
+        "pwsh" | "pwsh.exe" => ShellKind::Pwsh,
+        _ => {
+            let lc = trimmed.to_ascii_lowercase();
+            if lc == "command prompt" {
+                ShellKind::Cmd
+            } else if lc == "windows powershell" || lc == "powershell" {
+                ShellKind::PowerShell
+            } else if lc.starts_with("powershell 7") {
+                ShellKind::Pwsh
+            } else {
+                ShellKind::Other
+            }
+        }
+    }
+}
+
+fn remote_windows_shell_command(shell_override: &str) -> Option<&'static str> {
+    match classify_windows_shell(shell_override) {
+        ShellKind::PowerShell => Some("powershell.exe -NoLogo"),
+        ShellKind::Pwsh => Some("pwsh.exe -NoLogo"),
+        ShellKind::Cmd => Some("cmd.exe"),
+        ShellKind::Other => None,
+    }
+}
+
+fn shell_single_quote(value: &str) -> String {
+    value.replace('\'', "'\\''")
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn windows_double_quote(value: &str, batch_mode: bool) -> String {
+    // cmd.exe escaping for literal values:
+    //  - always: ^ => ^^, " => ""
+    //  - batch/exec only: ! => ^!, % => %% (expansion semantics differ from interactive input)
+    let escaped = value.replace('^', "^^").replace('"', "\"\"");
+    if batch_mode {
+        escaped.replace('!', "^!").replace('%', "%%")
+    } else {
+        escaped
+    }
+}
+
+fn is_posix_interactive_shell(shell: &str) -> bool {
+    let normalized = shell.trim().to_ascii_lowercase();
+    let basename = normalized
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(normalized.as_str());
+    let normalized_base = basename.strip_suffix(".exe").unwrap_or(basename);
+    matches!(
+        normalized_base,
+        "bash" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | "sh"
+    )
+}
+
 #[derive(Clone, Serialize)]
 struct TerminalLifecycleEvent {
     generation: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -123,9 +228,9 @@ impl PtyManager {
             .map_err(|e| anyhow!("Failed to open PTY: {}", e))?;
 
         // Determine shell to use based on platform and user preference
-        let (shell, args): (String, Vec<String>) = if cfg!(target_os = "windows") {
+        let (shell, mut args, is_wsl_shell): (String, Vec<String>, bool) = if cfg!(target_os = "windows") {
             match shell_override.as_deref() {
-                Some("cmd") => ("cmd.exe".to_string(), vec![]),
+                Some("cmd") => ("cmd.exe".to_string(), vec![], false),
                 Some("gitbash") => {
                     // Try common Git Bash locations
                     let git_bash_paths = [
@@ -137,42 +242,80 @@ impl PtyManager {
                         .find(|p| std::path::Path::new(p).exists())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "bash.exe".to_string());
-                    (bash_path, vec!["--login".to_string(), "-i".to_string()])
+                    (bash_path, vec!["--login".to_string(), "-i".to_string()], false)
                 }
-                Some("wsl") => ("wsl.exe".to_string(), vec![]),
+                Some("wsl") => ("wsl.exe".to_string(), vec![], true),
                 Some(wsl_distro) if wsl_distro.starts_with("wsl:") => {
                     let distro = wsl_distro.strip_prefix("wsl:").unwrap_or("").to_string();
-                    ("wsl.exe".to_string(), vec!["-d".to_string(), distro])
+                    if distro.trim().is_empty() {
+                        ("wsl.exe".to_string(), vec![], true)
+                    } else {
+                        ("wsl.exe".to_string(), vec!["-d".to_string(), distro], true)
+                    }
+                }
+                Some("pwsh") => {
+                    let pwsh_paths = [
+                        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+                        "C:\\Program Files\\PowerShell\\pwsh.exe",
+                    ];
+                    let pwsh_path = pwsh_paths
+                        .iter()
+                        .find(|p| std::path::Path::new(p).exists())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "pwsh.exe".to_string());
+                    (pwsh_path, vec!["-NoLogo".to_string()], false)
                 }
                 Some("powershell") | Some("default") | None => {
-                    ("powershell.exe".to_string(), vec![])
+                    ("powershell.exe".to_string(), vec![], false)
                 }
                 Some(other) => {
                     // Try to use it as a direct path or command
-                    (other.to_string(), vec![])
+                    (other.to_string(), vec![], false)
                 }
             }
         } else {
-            (
-                std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()),
-                vec![],
-            )
+            let path = shell_override
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
+            (path, vec![], false)
         };
+
+        // WSL should open in Linux context. If we have a Linux cwd, pass it via `--cd`.
+        // Otherwise force distro home (`~`) instead of inheriting host Windows cwd.
+        if is_wsl_shell {
+            let provided_cwd = cwd.as_deref().map(str::trim);
+            let linux_cwd = provided_cwd
+                .filter(|path| !path.is_empty() && path.starts_with('/'));
+            if linux_cwd.is_none() {
+                if let Some(original) = provided_cwd {
+                    eprintln!(
+                        "[PTY] WSL: provided cwd '{}' is not a Linux path, falling back to '~'",
+                        original
+                    );
+                } else {
+                    eprintln!("[PTY] WSL: no Linux cwd provided, falling back to '~'");
+                }
+            }
+            let wsl_cwd = linux_cwd.unwrap_or("~").to_string();
+            args.push("--cd".to_string());
+            args.push(wsl_cwd);
+        }
+
         let mut cmd = CommandBuilder::new(&shell);
         for arg in &args {
             cmd.arg(arg);
         }
 
-        if let Some(path) = cwd {
-            cmd.cwd(path);
+        if !is_wsl_shell {
+            if let Some(path) = cwd {
+                cmd.cwd(path);
+            }
         }
 
-        // Add interactive flag if not already present
-        if !args.contains(&"-i".to_string())
-            && !shell.contains("powershell")
-            && !shell.contains("cmd.exe")
-            && !shell.contains("wsl.exe")
-        {
+        // Add interactive flag only for shells known to support POSIX-style `-i`.
+        if !args.iter().any(|arg| arg == "-i") && is_posix_interactive_shell(&shell) {
             cmd.arg("-i");
         }
         cmd.env("TERM", "xterm-256color");
@@ -243,7 +386,10 @@ impl PtyManager {
                         // Notify frontend that terminal exited
                         let _ = app_handle_clone.emit(
                             &format!("terminal-exit-{}", term_id_clone),
-                            TerminalLifecycleEvent { generation },
+                            TerminalLifecycleEvent {
+                                generation,
+                                exit_code: None,
+                            },
                         );
                         break;
                     } // EOF
@@ -256,7 +402,10 @@ impl PtyManager {
                         // Notify frontend that terminal exited due to error
                         let _ = app_handle_clone.emit(
                             &format!("terminal-exit-{}", term_id_clone),
-                            TerminalLifecycleEvent { generation },
+                            TerminalLifecycleEvent {
+                                generation,
+                                exit_code: None,
+                            },
                         );
                         break;
                     }
@@ -276,7 +425,10 @@ impl PtyManager {
         // session has a live reader handle wired for cleanup.
         let _ = app_handle.emit(
             &format!("terminal-ready-{}", term_id),
-            TerminalLifecycleEvent { generation },
+            TerminalLifecycleEvent {
+                generation,
+                exit_code: None,
+            },
         );
         let _ = reader_start_tx.send(());
 
@@ -293,10 +445,10 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
+        shell_override: Option<String>,
+        remote_os: Option<String>,
         cwd: Option<String>,
     ) -> Result<()> {
-        println!("[PTY] Creating remote session for {}", term_id);
-
         // Clean up any existing dead/stale session with this ID before creating a new one
         let _ = self.close(&term_id).await;
 
@@ -314,15 +466,62 @@ impl PtyManager {
             .await
             .map_err(|e| anyhow!("Failed to request PTY: {}", e))?;
 
-        // Request shell
-        channel
-            .request_shell(false)
-            .await
-            .map_err(|e| anyhow!("Failed to request shell: {}", e))?;
+        let remote_is_windows = is_remote_windows(remote_os.as_deref());
+        let selected_shell = shell_override.as_deref().filter(|s| !s.trim().is_empty());
 
-        // If cwd is provided, send a cd command immediately
+        if let Some(shell) = selected_shell {
+            let shell_trimmed = shell.trim();
+            // Start explicit remote shell (path or command name) when user selected one.
+            // Unix hosts use `exec` to replace the current command process with the chosen shell.
+            // Windows OpenSSH hosts need native shell executables instead of POSIX `exec`.
+            let launch = if remote_is_windows {
+                remote_windows_shell_command(shell_trimmed)
+                    .map(|command| command.to_string())
+                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell_trimmed, true)))
+            } else {
+                let escaped_shell = shell_single_quote(shell_trimmed);
+                match remote_shell_login_flag(shell_trimmed) {
+                    Some(login_flag) => format!("exec '{}' {}", escaped_shell, login_flag),
+                    None => format!("exec '{}'", escaped_shell),
+                }
+            };
+            // Important: `exec` and `request_shell` are different channel request
+            // types. If `exec` fails, callers must open a fresh channel before retrying.
+            channel
+                .exec(false, launch)
+                .await
+                .map_err(|e| anyhow!("Failed to launch selected remote shell '{}': {}", shell, e))?;
+        } else {
+            // Default remote login shell.
+            channel
+                .request_shell(false)
+                .await
+                .map_err(|e| anyhow!("Failed to request shell: {}", e))?;
+        }
+
+        // If cwd is provided, send a cd command immediately.
         if let Some(path) = cwd {
-            let cd_cmd = format!("cd '{}' && clear\r", path.replace("'", "'\\''"));
+            let cd_cmd = if remote_is_windows {
+                match selected_shell.map(classify_windows_shell).unwrap_or(ShellKind::Other) {
+                    ShellKind::Cmd => {
+                        format!("cd /d \"{}\" && cls\r", windows_double_quote(&path, false))
+                    }
+                    ShellKind::PowerShell | ShellKind::Pwsh => {
+                        format!(
+                            "Set-Location -LiteralPath '{}'; Clear-Host\r",
+                            powershell_single_quote(&path)
+                        )
+                    }
+                    ShellKind::Other => {
+                        // Unknown Windows default shell. `cd \"...\"` is accepted by
+                        // both cmd and PowerShell for same-drive navigation; avoid
+                        // shell-specific `/d` or `Set-Location` syntax here.
+                        format!("cd \"{}\" && cls\r", windows_double_quote(&path, false))
+                    }
+                }
+            } else {
+                format!("cd '{}' && clear\r", shell_single_quote(&path))
+            };
             channel
                 .data(cd_cmd.as_bytes())
                 .await
@@ -350,7 +549,10 @@ impl PtyManager {
         // Notify frontend that terminal is ready for input
         let _ = app_handle.emit(
             &format!("terminal-ready-{}", term_id),
-            TerminalLifecycleEvent { generation },
+            TerminalLifecycleEvent {
+                generation,
+                exit_code: None,
+            },
         );
 
         let term_id_clone = term_id.clone();
@@ -360,7 +562,6 @@ impl PtyManager {
         // output/exit events can never arrive before the frontend has seen ready.
         let task_handle = tokio::task::spawn(async move {
             let app_handle = app_handle_clone;
-            println!("[PTY] Starting manager task for {}", term_id_clone);
             let mut pending_output = Vec::new();
             let mut flush_deadline: Option<Instant> = None;
 
@@ -382,27 +583,33 @@ impl PtyManager {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: Some(exit_status),
+                                    },
                                 );
-                                println!("[PTY] Remote shell exited with status: {}", exit_status);
                                 break;
                             }
                             Some(ChannelMsg::Eof) => {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: None,
+                                    },
                                 );
-                                println!("[PTY] Remote channel EOF");
                                 break;
                             }
                             None => {
                                 flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
                                 let _ = app_handle.emit(
                                     &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent { generation },
+                                    TerminalLifecycleEvent {
+                                        generation,
+                                        exit_code: None,
+                                    },
                                 );
-                                println!("[PTY] Channel closed");
                                 break;
                             }
                             _ => {}
@@ -439,7 +646,6 @@ impl PtyManager {
 
             flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
             let _ = channel.close().await;
-            println!("[PTY] Remote session task ended");
         });
 
         let mut sessions = self.sessions.lock().await;
@@ -448,8 +654,6 @@ impl PtyManager {
                 *session_task_handle = Some(task_handle);
             }
         }
-        println!("[PTY] Remote session created successfully");
-
         Ok(())
     }
 
@@ -551,12 +755,6 @@ impl PtyManager {
                 ids_to_remove.push(id.clone());
             }
         }
-
-        println!(
-            "[PTY] Closing {} sessions for connection {}",
-            ids_to_remove.len(),
-            connection_id
-        );
 
         for id in ids_to_remove {
             if let Some(mut session) = sessions.remove(&id) {

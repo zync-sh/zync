@@ -7167,6 +7167,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.56.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7621,7 +7631,7 @@ dependencies = [
 
 [[package]]
 name = "zync"
-version = "2.14.1"
+version = "2.15.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7647,5 +7657,6 @@ dependencies = [
  "url",
  "uuid",
  "whoami",
+ "winreg 0.56.0",
  "zip 2.4.2",
 ]

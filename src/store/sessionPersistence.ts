@@ -6,6 +6,7 @@ export interface TerminalTabSnapshot {
     cwd?: string;
     initialPath?: string;
     isSynced?: boolean;
+    shellOverride?: string;
 }
 
 export interface TabSnapshot {
@@ -31,14 +32,17 @@ export interface SessionStoreSnapshot {
     activeTabId: string | null;
     activeConnectionId: string | null;
     tabs: Tab[];
-    terminals: Record<string, Array<{
-        id: string;
-        title: string;
-        lastKnownCwd?: string;
-        initialPath?: string;
-        isSynced?: boolean;
-    }>>;
+    terminals: Record<string, SessionTerminalTabState[]>;
     activeTerminalIds: Record<string, string | null>;
+}
+
+export interface SessionTerminalTabState {
+    id: string;
+    title: string;
+    lastKnownCwd?: string;
+    initialPath?: string;
+    isSynced?: boolean;
+    shellOverride?: string;
 }
 
 export const MAX_TABS_PER_SCOPE = 20;
@@ -54,6 +58,7 @@ export function buildSessionData(state: SessionStoreSnapshot): SessionData {
                 cwd: t.lastKnownCwd,
                 initialPath: t.initialPath,
                 isSynced: t.isSynced,
+                shellOverride: t.shellOverride,
             })),
         ]),
     ) as Record<string, TerminalTabSnapshot[]>;

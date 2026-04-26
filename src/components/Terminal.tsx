@@ -363,10 +363,19 @@ function flushPendingInput(termId: string | null | undefined): void {
 
 interface TerminalLifecycleEvent {
   generation: number;
+  exit_code?: number;
 }
 
 interface TerminalOutputEvent extends TerminalLifecycleEvent {
   data: number[];
+}
+
+function resolveShellSetting(
+  terminalKey: string,
+  terminalTab: { shellOverride?: string } | undefined,
+  globalWindowsShell: string | undefined,
+): string | undefined {
+  return terminalTab?.shellOverride ?? (terminalKey === 'local' ? globalWindowsShell : undefined);
 }
 
 /**
@@ -508,7 +517,6 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
   const activeConnectionId = connectionId || globalActiveId;
   const terminalKey = activeConnectionId || 'local';
   const ghostScope = connectionId || terminalKey;
-  const windowsShell = settings.localTerm?.windowsShell;
   const currentFontSizeRef = useRef(settings.terminal.fontSize);
 
   useEffect(() => {
@@ -976,16 +984,16 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           term.clear();
           term.reset();
 
-          // Get shell preference for local terminals on Windows
-          const isLocalTerminal = terminalKey === 'local';
-          const shellSetting = isLocalTerminal
-            ? useAppStore.getState().settings.localTerm?.windowsShell
-            : undefined;
-
-          // Resolve CWD for restart
+          // Resolve CWD and per-tab shell override for restart
           const terminals = useAppStore.getState().terminals;
           const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
           const restartCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
+
+          const shellSetting = resolveShellSetting(
+            terminalKey,
+            terminalTab,
+            useAppStore.getState().settings.localTerm?.windowsShell,
+          );
 
           // Respawn the terminal session
           window.ipcRenderer
@@ -1103,20 +1111,23 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
       cachedEntry.spawned = true;
       cachedEntry.starting = true;
 
-      // Get shell preference for local terminals on Windows
-      const isLocalTerminal = (connectionId || 'local') === 'local';
-      const shellSetting = isLocalTerminal ? settings.localTerm?.windowsShell : undefined;
-
       // Clear any existing content from a previous session (fresh start)
       if (!isNewTerminal) {
         term.clear();
         term.reset();
       }
 
-      // Get initial/current path if any
+      // Get initial/current path and per-tab shell override
       const terminals = useAppStore.getState().terminals;
       const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
       const spawnCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
+
+      // Per-tab override takes priority over the global default shell setting
+      const shellSetting = resolveShellSetting(
+        terminalKey,
+        terminalTab,
+        settings.localTerm?.windowsShell,
+      );
 
       window.ipcRenderer
         .invoke('terminal:create', {
@@ -1291,11 +1302,15 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
           termRef.current?.clear();
           termRef.current?.reset();
           
-          const isLocalTerminal = (connectionId || 'local') === 'local';
-          const shellSetting = isLocalTerminal ? windowsShell : undefined;
           const terminals = useAppStore.getState().terminals;
           const terminalTab = terminals[terminalKey]?.find(t => t.id === sessionId);
           const wakeCwd = terminalTab?.lastKnownCwd || terminalTab?.initialPath;
+
+          const shellSetting = resolveShellSetting(
+            terminalKey,
+            terminalTab,
+            useAppStore.getState().settings.localTerm?.windowsShell
+          );
 
           window.ipcRenderer
             .invoke('terminal:create', {
@@ -1321,7 +1336,7 @@ export function TerminalComponent({ connectionId, termId, isVisible }: { connect
     
     window.addEventListener('connection-wakeup', handleWakeup);
     return () => window.removeEventListener('connection-wakeup', handleWakeup);
-  }, [sessionId, connectionId, terminalKey, windowsShell]);
+  }, [sessionId, connectionId, terminalKey]);
 
   useEffect(() => {
     if (!termRef.current || !activeConnectionId) return;

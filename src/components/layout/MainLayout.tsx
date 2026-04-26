@@ -1,6 +1,7 @@
 import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback, useRef } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
+import type { CoreTabView } from '../../features/connections/domain/types';
 import { usePlugins } from '../../context/PluginContext';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../lib/utils';
@@ -9,7 +10,9 @@ import { TabBar } from './TabBar';
 import { ShortcutManager } from '../managers/ShortcutManager';
 import { CommandPalette } from './CommandPalette';
 import { CombinedTabBar } from './CombinedTabBar';
-import { GLOBAL_SNIPPETS_CONNECTION_ID } from '../../features/connections/application/tabService';
+import { useAvailableShells } from '../../hooks/useAvailableShells';
+import type { ShellEntry } from '../../lib/shells/types';
+import { GLOBAL_SNIPPETS_CONNECTION_ID, LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
 import { listen } from '@tauri-apps/api/event';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -70,6 +73,26 @@ const SplashScreen = () => (
         </div>
     </div>
 );
+
+const CORE_TAB_VIEWS = [
+    'dashboard',
+    'files',
+    'port-forwarding',
+    'snippets',
+    'terminal',
+] as const satisfies readonly CoreTabView[];
+
+function isCoreTabView(view: string): view is CoreTabView {
+    return (CORE_TAB_VIEWS as readonly string[]).includes(view);
+}
+
+/**
+ * Connection tabs support plugin-backed views using a `plugin:<id>` token.
+ * These are represented by the `plugin:${string}` portion of `Tab['view']`.
+ */
+function isPluginTabView(view: string): view is `plugin:${string}` {
+    return view.startsWith('plugin:');
+}
 
 
 /**
@@ -153,6 +176,10 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const closeTerminal = useAppStore(state => state.closeTerminal);
     const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
 
+    const hostIsWindows = tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID && window.electronUtils?.platform === 'win32';
+    const { shells: availableShells, isLoading: shellsLoading, error: shellsError, refetch: refetchShells } = useAvailableShells({ isWindows: hostIsWindows, connectionId: tab.connectionId });
+    const defaultWindowsShell = useAppStore(state => state.settings.localTerm?.windowsShell);
+
     // Feature Pinning
     const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
     const localPinnedFeatures = useAppStore(state => state.settings.localTerm?.pinnedFeatures);
@@ -165,7 +192,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     // Effect hooks must be unconditional
     // Ensure active view is always in openFeatures
-    const pinnedFeatures = tab.connectionId === 'local' ? (localPinnedFeatures || EMPTY_ARRAY) : (connection?.pinnedFeatures || EMPTY_ARRAY);
+    const pinnedFeatures = tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID ? (localPinnedFeatures || EMPTY_ARRAY) : (connection?.pinnedFeatures || EMPTY_ARRAY);
 
     useEffect(() => {
         if (tab.view && tab.view !== 'terminal' && !pinnedFeatures.includes(tab.view)) {
@@ -263,13 +290,37 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const isConnecting = connection?.status === 'connecting';
     const isError = connection?.status === 'error';
 
-    // Handle Tab Selection
-    const handleTabSelect = useCallback((view: Tab['view'], termId?: string) => {
+    /**
+     * Handles selection from the combined tab bar.
+     *
+     * Notes:
+     * - Core views are type-safe (`Tab['view']`).
+     * - Plugin panels use dynamic `plugin:*` view ids, so we keep a guarded
+     *   cast only after runtime validation.
+     */
+    const handleTabSelect = useCallback((view: string, termId?: string) => {
+        const isCoreView = isCoreTabView(view);
+        const isPluginView = isPluginTabView(view);
+
+        if (!isCoreView && !isPluginView) {
+            console.warn('[MainLayout] Ignoring unknown tab view:', view);
+            return;
+        }
+
+        if (isPluginView) {
+            const pluginId = view.slice('plugin:'.length);
+            const pluginExists = pluginPanels.some((panel) => panel.id === pluginId);
+            if (!pluginExists) {
+                console.warn('[MainLayout] Ignoring plugin tab view without registered panel:', view);
+                return;
+            }
+        }
+
         setTabView(tab.id, view);
         if (view === 'terminal' && termId && tab.connectionId) {
             setActiveTerminal(tab.connectionId, termId);
         }
-    }, [setTabView, tab.id, tab.connectionId, setActiveTerminal]);
+    }, [pluginPanels, setTabView, tab.id, tab.connectionId, setActiveTerminal]);
 
     const handleFeatureClose = useCallback((feature: string) => {
         setOpenFeatures(prev => prev.filter(f => f !== feature));
@@ -300,9 +351,12 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         }
     }, [tab.connectionId, closeTerminal]);
 
-    const handleNewTerminal = useCallback(() => {
+    const handleNewTerminal = useCallback((shell?: ShellEntry) => {
         if (tab.connectionId) {
-            createTerminal(tab.connectionId);
+            createTerminal(
+                tab.connectionId,
+                shell ? { shellOverride: shell.id, title: shell.label } : undefined,
+            );
             setTabView(tab.id, 'terminal');
         }
     }, [tab.connectionId, createTerminal, tab.id, setTabView]);
@@ -348,6 +402,11 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                             openFeatures={openFeatures}
                             pinnedFeatures={pinnedFeatures}
                             pluginPanels={pluginPanels.map(p => ({ id: p.id, title: p.title }))}
+                            availableShells={availableShells}
+                            shellsLoading={shellsLoading}
+                            shellsError={shellsError}
+                            onRefetchShells={refetchShells}
+                                        defaultShellId={tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID ? defaultWindowsShell : undefined}
                             onTabSelect={handleTabSelect}
                             onFeatureClose={handleFeatureClose}
                             onTerminalClose={handleTerminalClose}
@@ -459,7 +518,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const [isShuttingDown, setIsShuttingDown] = useState(false);
     const connections = useAppStore(state => state.connections);
     const disconnect = useAppStore(state => state.disconnect);
-    const activeConnections = connections.filter(c => c.status === 'connected' && c.id !== 'local');
+    const activeConnections = connections.filter(c => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID);
 
     const handleShutdown = useCallback(async () => {
         setIsShuttingDown(true);
@@ -482,7 +541,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         const setupShutdownListener = async () => {
             const unlisten = await listen('app:request-close', () => {
                 // Check latest state
-                const currentConnections = useAppStore.getState().connections.filter(c => c.status === 'connected' && c.id !== 'local');
+                const currentConnections = useAppStore.getState().connections.filter(c => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID);
                 if (currentConnections.length > 0) {
                     setIsShutdownModalOpen(true);
                 } else {
