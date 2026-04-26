@@ -190,9 +190,9 @@ impl PtyManager {
             .map_err(|e| anyhow!("Failed to open PTY: {}", e))?;
 
         // Determine shell to use based on platform and user preference
-        let (shell, args): (String, Vec<String>) = if cfg!(target_os = "windows") {
+        let (shell, mut args, is_wsl_shell): (String, Vec<String>, bool) = if cfg!(target_os = "windows") {
             match shell_override.as_deref() {
-                Some("cmd") => ("cmd.exe".to_string(), vec![]),
+                Some("cmd") => ("cmd.exe".to_string(), vec![], false),
                 Some("gitbash") => {
                     // Try common Git Bash locations
                     let git_bash_paths = [
@@ -204,12 +204,12 @@ impl PtyManager {
                         .find(|p| std::path::Path::new(p).exists())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "bash.exe".to_string());
-                    (bash_path, vec!["--login".to_string(), "-i".to_string()])
+                    (bash_path, vec!["--login".to_string(), "-i".to_string()], false)
                 }
-                Some("wsl") => ("wsl.exe".to_string(), vec![]),
+                Some("wsl") => ("wsl.exe".to_string(), vec![], true),
                 Some(wsl_distro) if wsl_distro.starts_with("wsl:") => {
                     let distro = wsl_distro.strip_prefix("wsl:").unwrap_or("").to_string();
-                    ("wsl.exe".to_string(), vec!["-d".to_string(), distro])
+                    ("wsl.exe".to_string(), vec!["-d".to_string(), distro], true)
                 }
                 Some("pwsh") => {
                     let pwsh_paths = [
@@ -221,14 +221,14 @@ impl PtyManager {
                         .find(|p| std::path::Path::new(p).exists())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "pwsh.exe".to_string());
-                    (pwsh_path, vec!["-NoLogo".to_string()])
+                    (pwsh_path, vec!["-NoLogo".to_string()], false)
                 }
                 Some("powershell") | Some("default") | None => {
-                    ("powershell.exe".to_string(), vec![])
+                    ("powershell.exe".to_string(), vec![], false)
                 }
                 Some(other) => {
                     // Try to use it as a direct path or command
-                    (other.to_string(), vec![])
+                    (other.to_string(), vec![], false)
                 }
             }
         } else {
@@ -237,15 +237,31 @@ impl PtyManager {
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
-            (path, vec![])
+            (path, vec![], false)
         };
+
+        // WSL should open in Linux context. If we have a Linux cwd, pass it via `--cd`.
+        // Otherwise force distro home (`~`) instead of inheriting host Windows cwd.
+        if is_wsl_shell {
+            let wsl_cwd = cwd
+                .as_deref()
+                .map(str::trim)
+                .filter(|path| !path.is_empty() && path.starts_with('/'))
+                .unwrap_or("~")
+                .to_string();
+            args.push("--cd".to_string());
+            args.push(wsl_cwd);
+        }
+
         let mut cmd = CommandBuilder::new(&shell);
         for arg in &args {
             cmd.arg(arg);
         }
 
-        if let Some(path) = cwd {
+        if !is_wsl_shell {
+            if let Some(path) = cwd {
             cmd.cwd(path);
+            }
         }
 
         // Add interactive flag only for shells known to support POSIX-style `-i`.
