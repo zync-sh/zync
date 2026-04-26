@@ -14,6 +14,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Fixed
 - **Terminal Wakeup Shell Resolution**: Wakeup/restart paths now read fresh `windowsShell` settings from store state instead of closure-captured values, preventing stale shell selection after settings changes. ([dd13dcf])
 - **Feature Dropdown Guard Redundancy**: Removed redundant `onOpenFeature` null checks inside already-gated feature/plugin sections to simplify click/disabled logic without changing behavior. ([dd13dcf])
+- **Close Terminal Shortcut Reliability**: Fixed `Ctrl+Shift+W` / `Mod+Shift+W` terminal-tab close handling to always target the current active terminal tab by using the live ref in the event listener path. ([53aeb1f])
 
 ## [2.14.1] - 2026-04-23
 
@@ -713,6 +714,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [4104e34]: https://github.com/zync-sh/zync/commit/4104e34
 [cea3fa0]: https://github.com/zync-sh/zync/commit/cea3fa0
 [dd13dcf]: https://github.com/zync-sh/zync/commit/dd13dcf
+[53aeb1f]: https://github.com/zync-sh/zync/commit/53aeb1f
 [2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
