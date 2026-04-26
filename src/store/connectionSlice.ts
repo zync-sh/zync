@@ -33,6 +33,7 @@ import {
 import { buildConnectConfig, normalizeFolderPath, type ImportPlanItem } from '../features/connections/domain';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc } from '../features/connections/infrastructure/connectionPersistence';
+import { clearRemoteShellCache } from '../lib/shells/cache';
 import type { TabSnapshot } from './sessionPersistence';
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
@@ -181,6 +182,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     deleteConnection: (id) => {
+        try {
+            clearRemoteShellCache(id);
+        } catch (error) {
+            console.warn('[Connections] Failed to clear remote shell cache during deleteConnection:', error);
+        }
         set(state => {
             const newConns = state.connections.filter(c => c.id !== id);
             // Also close related tabs
@@ -334,6 +340,13 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     clearConnections: () => {
+        get().connections.forEach(conn => {
+            try {
+                clearRemoteShellCache(conn.id);
+            } catch (error) {
+                console.warn('[Connections] Failed to clear remote shell cache during clearConnections:', error);
+            }
+        });
         set({
             connections: [],
             folders: [],

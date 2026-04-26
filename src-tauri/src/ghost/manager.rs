@@ -40,15 +40,6 @@ impl GhostManager {
             })
             .unwrap_or_default();
 
-        let total_entries: usize = data.scopes.values().map(|s| s.history.len()).sum();
-
-        eprintln!(
-            "[Ghost] Loaded {} history entries across {} scopes from {:?}",
-            total_entries,
-            data.scopes.len(),
-            persist_path
-        );
-
         Self {
             data: Mutex::new(data),
             persist_path,

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { useAppStore, Connection, Folder } from '../../store/useAppStore';
-import { Code, Files, Info, LayoutDashboard, Network, Pencil, Power, Search, TerminalIcon, Trash2 } from 'lucide-react';
+import { Files, Info, Network, Pencil, Power, Search, TerminalIcon, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -17,6 +17,7 @@ import {
     exportConnectionsToFileIpc,
     type ConnectionExchangeExportFormat,
 } from '../../features/connections/infrastructure/connectionTransfer';
+import { FEATURE_META, type FeatureId } from './featureMeta';
 
 // Lazy Load Modals
 const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
@@ -285,10 +286,22 @@ export function Sidebar({ className }: { className?: string }) {
     const connectionContextMenuItems = useMemo<ContextMenuItem[]>(() => {
         if (!contextMenuConnection) return [];
 
+        const featureItems: Array<{ id: FeatureId; label: string }> = [
+            { id: 'files', label: 'File Manager' },
+            { id: 'port-forwarding', label: 'Port Forwarding' },
+            { id: 'snippets', label: 'Snippets' },
+            { id: 'dashboard', label: 'Dashboard' },
+        ];
+
         return [
             {
                 label: contextMenuConnection.status === 'connected' ? 'Disconnect' : 'Connect',
-                icon: <Power size={14} className={contextMenuConnection.status === 'connected' ? 'text-red-400' : 'text-emerald-400'} />,
+                icon: (
+                    <Power
+                        size={14}
+                        className={contextMenuConnection.status === 'connected' ? 'text-red-400' : 'text-emerald-400'}
+                    />
+                ),
                 action: () => {
                     if (contextMenuConnection.status === 'connected') {
                         disconnect(contextMenuConnection.id);
@@ -304,26 +317,14 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => setViewingDetailsId(contextMenuConnection.id)
             },
             { separator: true },
-            {
-                label: 'File Manager',
-                icon: <Files size={14} />,
-                action: () => openTab(contextMenuConnection.id, 'files')
-            },
-            {
-                label: 'Port Forwarding',
-                icon: <Network size={14} />,
-                action: () => openTab(contextMenuConnection.id, 'port-forwarding')
-            },
-            {
-                label: 'Snippets',
-                icon: <Code size={14} />,
-                action: () => openTab(contextMenuConnection.id, 'snippets')
-            },
-            {
-                label: 'Dashboard',
-                icon: <LayoutDashboard size={14} />,
-                action: () => openTab(contextMenuConnection.id, 'dashboard')
-            },
+            ...featureItems.map(({ id, label }) => {
+                const Icon = FEATURE_META[id].icon;
+                return {
+                    label,
+                    icon: <Icon size={14} />,
+                    action: () => openTab(contextMenuConnection.id, id),
+                };
+            }),
             { separator: true },
             {
                 label: 'Edit',

@@ -1,5 +1,6 @@
 mod ai;
 mod commands;
+mod shell_icons;
 mod fs;
 mod ghost;
 pub mod plugins;
@@ -157,6 +158,9 @@ pub fn run() {
             commands::sftp_download_as_zip,
             commands::shell_open,
             commands::shell_get_wsl_distros,
+            commands::shell_get_windows_shells,
+            commands::shell_get_available_shells,
+            commands::shell_get_connection_shells,
             commands::app_get_exe_dir,
             commands::app_exit,
             commands::plugins_load,

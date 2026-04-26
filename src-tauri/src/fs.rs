@@ -105,14 +105,12 @@ impl FileSystem {
         path: &str,
     ) -> Result<Vec<FileEntry>> {
         let path = if path.is_empty() { "." } else { path }; // Default to current dir if empty, usually Home
-        println!("[FS] SFTP listing: {}", path);
 
         let entries_iter = sftp
             .read_dir(path)
             .await
             .map_err(|e| anyhow!("SFTP read_dir failed: {}", e))?;
         let entries: Vec<_> = entries_iter.collect();
-        println!("[FS] SFTP read_dir returned {} entries", entries.len());
         let mut result = Vec::new();
 
         for entry in entries {

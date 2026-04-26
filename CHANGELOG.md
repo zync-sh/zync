@@ -4,6 +4,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Shell Icon Pipeline**: Added reusable shell icon infrastructure across frontend and Tauri backend, including cache/types helpers, `ShellIcon` UI component, shell icon discovery backend module, and architecture notes for future maintenance. ([dd13dcf])
+
+### Changed
+- **Shell Picker & Dropdown UX**: Unified local/remote shell discovery flow and refreshed terminal dropdown UX by renaming the section to **Shells**, moving shortcut hints to tooltips, improving tooltip consistency for tabs/header controls, and keeping reload affordances aligned with the shell header row. ([dd13dcf])
+- **Cross-Host Shell Handling**: Improved host-aware shell option normalization so local and SSH contexts return appropriate shell choices for Linux/macOS/Windows scenarios. ([dd13dcf])
+
+### Fixed
+- **Terminal Wakeup Shell Resolution**: Wakeup/restart paths now read fresh `windowsShell` settings from store state instead of closure-captured values, preventing stale shell selection after settings changes. ([dd13dcf])
+- **Feature Dropdown Guard Redundancy**: Removed redundant `onOpenFeature` null checks inside already-gated feature/plugin sections to simplify click/disabled logic without changing behavior. ([dd13dcf])
+
 ## [2.14.1] - 2026-04-23
 
 ### Changed
@@ -701,6 +712,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 [a5a25ef]: https://github.com/zync-sh/zync/commit/a5a25ef
 [4104e34]: https://github.com/zync-sh/zync/commit/4104e34
 [cea3fa0]: https://github.com/zync-sh/zync/commit/cea3fa0
+[dd13dcf]: https://github.com/zync-sh/zync/commit/dd13dcf
 [2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
 [2.13.2]: https://github.com/zync-sh/zync/compare/v2.13.1...v2.13.2
