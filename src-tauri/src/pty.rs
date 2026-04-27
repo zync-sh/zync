@@ -265,9 +265,13 @@ impl PtyManager {
                         .unwrap_or_else(|| "pwsh.exe".to_string());
                     (pwsh_path, vec!["-NoLogo".to_string()], false)
                 }
-                Some("powershell") | Some("default") | None => {
+                Some(s)
+                    if s.eq_ignore_ascii_case("powershell")
+                        || s.eq_ignore_ascii_case("default") =>
+                {
                     ("powershell.exe".to_string(), vec![], false)
                 }
+                None => ("powershell.exe".to_string(), vec![], false),
                 Some(other) => {
                     // Try to use it as a direct path or command
                     (other.to_string(), vec![], false)
@@ -474,17 +478,16 @@ impl PtyManager {
             .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("default"));
 
         if let Some(shell) = selected_shell {
-            let shell_trimmed = shell.trim();
             // Start explicit remote shell (path or command name) when user selected one.
             // Unix hosts use `exec` to replace the current command process with the chosen shell.
             // Windows OpenSSH hosts need native shell executables instead of POSIX `exec`.
             let launch = if remote_is_windows {
-                remote_windows_shell_command(shell_trimmed)
+                remote_windows_shell_command(shell)
                     .map(|command| command.to_string())
-                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell_trimmed, true)))
+                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell, true)))
             } else {
-                let escaped_shell = shell_single_quote(shell_trimmed);
-                match remote_shell_login_flag(shell_trimmed) {
+                let escaped_shell = shell_single_quote(shell);
+                match remote_shell_login_flag(shell) {
                     Some(login_flag) => format!("exec '{}' {}", escaped_shell, login_flag),
                     None => format!("exec '{}'", escaped_shell),
                 }

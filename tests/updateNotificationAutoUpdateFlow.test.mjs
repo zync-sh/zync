@@ -16,14 +16,27 @@ function runTest(name, fn) {
 }
 
 function extractFunctionBody(name) {
-  const start = source.indexOf(`const ${name} = async () => {`);
-  assert.notEqual(start, -1, `Function "${name}" not found`);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const signature = new RegExp(
+    String.raw`(?:const\s+${escaped}\s*=\s*(?:async\s*)?\(?[^)]*\)?\s*=>\s*\{|function\s+${escaped}\s*\([^)]*\)\s*\{|async\s+function\s+${escaped}\s*\([^)]*\)\s*\{)`,
+    'm',
+  );
+  const match = signature.exec(source);
+  assert.ok(match, `Function "${name}" signature not found`);
 
-  const afterStart = source.slice(start);
-  const endMarker = '\n    };';
-  const end = afterStart.indexOf(endMarker);
-  assert.notEqual(end, -1, `Function "${name}" terminator not found`);
-  return afterStart.slice(0, end);
+  const start = match.index + match[0].length - 1; // opening "{"
+  let depth = 0;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start + 1, i);
+      }
+    }
+  }
+  assert.fail(`Function "${name}" body could not be parsed (unbalanced braces)`);
 }
 
 runTest('startDownload uses in-app updater flow', () => {

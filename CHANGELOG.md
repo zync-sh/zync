@@ -4,11 +4,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.15.1] - 2026-04-27
+
 ### Fixed
 - **macOS/Linux Default Shell Sentinel Handling**: Local PTY startup now treats shell override `"default"` as "use user login shell" instead of trying to spawn a literal `default` binary. This restores expected behavior for shells configured via `chsh`. ([480a8f9])
 - **macOS Maximize Behavior**: Window maximize toggle now uses native fullscreen semantics on macOS and treats native fullscreen as a maximized state for UI layout decisions (for example, suppressing rounded corners). ([480a8f9])
 - **macOS/Linux Default Shell Icon Consistency**: Local shell discovery now pins the login shell (`$SHELL`) to the top of the detected list, and terminal-tab fallback icon resolution now prefers that first entry so default-shell tabs show the correct icon (e.g., zsh/fish instead of bash). ([480a8f9])
-- **macOS Auto-Update Download Flow**: Removed forced GitHub redirect for available updates on macOS; update notifications now trigger the same in-app download/install pipeline used on other platforms, with manual download still available as an error fallback.
+- **macOS Auto-Update Download Flow**: Removed forced GitHub redirect for available updates on macOS; update notifications now trigger the same in-app download/install pipeline used on other platforms, with manual download still available as an error fallback. ([b915006])
 
 ## [2.15.0] - 2026-04-26
 
@@ -641,7 +643,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.15.1...HEAD
 [#38]: https://github.com/zync-sh/zync/pull/38
 [f766ac2]: https://github.com/zync-sh/zync/commit/f766ac2
 [3df9766]: https://github.com/zync-sh/zync/commit/3df9766
@@ -731,6 +733,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 [1c519b2]: https://github.com/zync-sh/zync/commit/1c519b2
 [8faf6ef]: https://github.com/zync-sh/zync/commit/8faf6ef
 [480a8f9]: https://github.com/zync-sh/zync/commit/480a8f9
+[b915006]: https://github.com/zync-sh/zync/commit/b915006
+[2.15.1]: https://github.com/zync-sh/zync/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/zync-sh/zync/compare/v2.14.1...v2.15.0
 [2.14.1]: https://github.com/zync-sh/zync/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/zync-sh/zync/compare/v2.13.2...v2.14.0
