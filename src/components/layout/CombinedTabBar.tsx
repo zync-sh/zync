@@ -129,7 +129,7 @@ export function CombinedTabBar({
             return defaultShellId && defaultShellId !== 'default' ? defaultShellId : 'powershell';
         }
 
-        return findPreferredShellId(availableShells);
+        return availableShells[0]?.id;
     }, [availableShells, connectionId, defaultShellId]);
 
     const resolveShell = useCallback((shellId?: string): ShellEntry | undefined => {

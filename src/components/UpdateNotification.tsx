@@ -88,10 +88,6 @@ export function UpdateNotification() {
 
     const startDownload = async () => {
         try {
-            if (window.electronUtils.platform === 'darwin') {
-                await window.ipcRenderer.invoke('shell:open', releaseUrl);
-                return;
-            }
             setUpdateStatus('downloading');
             setDownloadProgress(0);
             await window.ipcRenderer.invoke('update:download');
@@ -155,9 +151,7 @@ export function UpdateNotification() {
                         </div>
 
                         <p className="text-xs text-app-muted mb-3 leading-relaxed">
-                            {status === 'available' && (window.electronUtils.platform === 'darwin'
-                                ? 'A new version of Zync is available. Download it manually to update.'
-                                : 'A new version of Zync is available. Do you want to download it now?')}
+                            {status === 'available' && 'A new version of Zync is available. Do you want to download it now?'}
                             {status === 'downloading' && `${Math.round(progress)}% downloaded. You can keep working while we prepare the update.`}
                             {status === 'ready' && 'Totally downloaded. Restart Zync to apply the latest features and fixes.'}
                             {status === 'error' && (error || 'Something went wrong. Please try downloading manually.')}
@@ -179,7 +173,7 @@ export function UpdateNotification() {
                                         Later
                                     </Button>
                                     <Button size="sm" onClick={startDownload} className="bg-app-accent hover:bg-app-accent/90 text-white border-0 shadow-lg shadow-app-accent/20">
-                                        {window.electronUtils.platform === 'darwin' ? 'Download from GitHub' : 'Download'}
+                                        Download
                                     </Button>
                                 </>
                             )}

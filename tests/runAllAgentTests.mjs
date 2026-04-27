@@ -18,6 +18,7 @@ const tests = [
   'tests/sessionPersistence.test.mjs',
   'tests/sidebarSubmit.test.mjs',
   'tests/tunnelAutoStartService.test.mjs',
+  'tests/updateNotificationAutoUpdateFlow.test.mjs',
 ];
 
 for (const file of tests) {

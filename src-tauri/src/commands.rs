@@ -3042,9 +3042,13 @@ pub async fn tunnel_stop(
 
 #[tauri::command]
 pub async fn window_is_maximized(app: AppHandle) -> bool {
-    app.get_webview_window("main")
-        .and_then(|w| w.is_maximized().ok())
-        .unwrap_or(false)
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+
+    let maximized = window.is_maximized().unwrap_or(false);
+    let fullscreen = window.is_fullscreen().unwrap_or(false);
+    maximized || fullscreen
 }
 
 #[tauri::command]
@@ -3052,11 +3056,24 @@ pub async fn window_maximize(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or("Main window not found")?;
-    if window.is_maximized().map_err(|e| e.to_string())? {
-        window.unmaximize().map_err(|e| e.to_string())?;
-    } else {
-        window.maximize().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let fullscreen = window.is_fullscreen().map_err(|e| e.to_string())?;
+        window
+            .set_fullscreen(!fullscreen)
+            .map_err(|e| e.to_string())?;
     }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if window.is_maximized().map_err(|e| e.to_string())? {
+            window.unmaximize().map_err(|e| e.to_string())?;
+        } else {
+            window.maximize().map_err(|e| e.to_string())?;
+        }
+    }
+
     Ok(())
 }
 
@@ -4865,18 +4882,49 @@ pub async fn shell_get_windows_shells(state: tauri::State<'_, AppState>) -> Resu
 pub async fn shell_get_available_shells() -> Result<Vec<DetectedShell>, String> {
     #[cfg(not(target_os = "windows"))]
     {
+        let detected_default = std::env::var("SHELL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && std::path::Path::new(s).exists());
         let contents = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-        let shells = contents
+        let mut seen = HashSet::new();
+        let mut shells: Vec<DetectedShell> = contents
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .filter(|l| std::path::Path::new(l).exists())
-            .map(|l| DetectedShell {
-                label: l.split('/').last().unwrap_or(l).to_string(),
-                icon: linux_icon(l),
-                id: l.to_string(),
+            .filter_map(|l| {
+                let id = l.to_string();
+                if !seen.insert(id.clone()) {
+                    return None;
+                }
+                Some(DetectedShell {
+                    label: l.split('/').last().unwrap_or(l).to_string(),
+                    icon: linux_icon(l),
+                    id,
+                })
             })
             .collect();
+
+        shells.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+
+        if let Some(default_shell) = detected_default {
+            shells.retain(|shell| shell.id != default_shell);
+            let label = std::path::Path::new(&default_shell)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&default_shell)
+                .to_string();
+            shells.insert(
+                0,
+                DetectedShell {
+                    id: default_shell.clone(),
+                    label,
+                    icon: linux_icon(&default_shell),
+                },
+            );
+        }
+
         Ok(shells)
     }
     #[cfg(target_os = "windows")]
