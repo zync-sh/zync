@@ -14,6 +14,27 @@ const generateUniqueId = (usedIds: Set<string>): string => {
     return next;
 };
 
+export const preserveVaultCredentialOnUpdate = (
+    existing: Connection,
+    incoming: Connection,
+): Connection => {
+    if (incoming.authRef) {
+        return {
+            ...incoming,
+            password: undefined,
+            privateKeyPath: undefined,
+        };
+    }
+    if (!existing.authRef) return incoming;
+
+    return {
+        ...incoming,
+        authRef: existing.authRef,
+        password: undefined,
+        privateKeyPath: undefined,
+    };
+};
+
 // Current strategy parity: name is the import identity key in existing flow.
 export const mergeImportedConnectionsByName = (
     existing: Connection[],
@@ -37,21 +58,15 @@ export const mergeImportedConnectionsByName = (
 
     for (const incoming of imported) {
         const matches = existingMap.get(incoming.name);
+        // Duplicate names are matched in order: each imported entry consumes the
+        // next existing match, then preserveVaultCredentialOnUpdate keeps vault
+        // secrets while matchedIds/mergedImported track the update target.
         const match = matches && matches.length > 0 ? matches.shift() : undefined;
         if (match) {
             updated += 1;
             matchedIds.add(match.id);
-            const preservedMetadata: Partial<Connection> = {};
-            if (match.isFavorite !== undefined) preservedMetadata.isFavorite = match.isFavorite;
-            if (match.pinnedFeatures !== undefined) preservedMetadata.pinnedFeatures = match.pinnedFeatures;
-            if (match.icon !== undefined) preservedMetadata.icon = match.icon;
-            if (match.lastConnected !== undefined) preservedMetadata.lastConnected = match.lastConnected;
-            if (match.homePath !== undefined) preservedMetadata.homePath = match.homePath;
-            if (match.createdAt !== undefined) preservedMetadata.createdAt = match.createdAt;
-            if (match.folder !== undefined) preservedMetadata.folder = match.folder;
-            if (match.theme !== undefined) preservedMetadata.theme = match.theme;
-            if (match.tags !== undefined) preservedMetadata.tags = match.tags;
-            mergedImported.push({ ...incoming, ...preservedMetadata, id: match.id, status: match.status });
+            const secureIncoming = preserveVaultCredentialOnUpdate(match, incoming);
+            mergedImported.push({ ...match, ...secureIncoming, id: match.id, status: match.status });
         } else {
             created += 1;
             const normalizedId = (incoming.id || '').trim();

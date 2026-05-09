@@ -1,4 +1,5 @@
 import type { Tab } from '../features/connections/domain/types.js';
+import type { VaultProfileId } from '../vault/profileTypes.js';
 
 export interface TerminalTabSnapshot {
     id: string;
@@ -14,6 +15,7 @@ export interface TabSnapshot {
     tabType: string;
     title: string;
     connectionId?: string;
+    vaultProfileId?: VaultProfileId;
     view: string;
 }
 
@@ -58,7 +60,7 @@ export function buildSessionData(state: SessionStoreSnapshot): SessionData {
                 cwd: t.lastKnownCwd,
                 initialPath: t.initialPath,
                 isSynced: t.isSynced,
-                shellOverride: t.shellOverride,
+                ...(t.shellOverride !== undefined && { shellOverride: t.shellOverride }),
             })),
         ]),
     ) as Record<string, TerminalTabSnapshot[]>;
@@ -76,6 +78,7 @@ export function buildSessionData(state: SessionStoreSnapshot): SessionData {
             tabType: t.type,
             title: t.title,
             connectionId: t.connectionId,
+            ...(t.vaultProfileId !== undefined && { vaultProfileId: t.vaultProfileId }),
             view: t.view,
         })),
         terminals,

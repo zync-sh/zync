@@ -10,6 +10,7 @@ import {
 } from '../.tmp-agent-tests/src/features/connections/domain/folderTreeOps.js';
 import {
   mergeImportedConnectionsByName,
+  preserveVaultCredentialOnUpdate,
 } from '../.tmp-agent-tests/src/features/connections/domain/merge.js';
 import {
   applyImportPlan,
@@ -156,6 +157,182 @@ runTest('import merge preserves existing folder/theme/tags metadata on matched u
   assert.equal(web?.folder, 'prod');
   assert.equal(web?.theme, 'blue');
   assert.deepEqual(web?.tags, ['core']);
+});
+
+runTest('import merge preserves existing vault auth when overriding with plaintext import', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const existing = [{
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef,
+  }];
+  const incoming = [{
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    privateKeyPath: 'C:/Users/me/.ssh/id_rsa',
+    password: 'key-passphrase',
+  }];
+
+  const result = mergeImportedConnectionsByName(existing, incoming);
+  const web = result.merged.find((c) => c.id === 'a');
+  assert.deepEqual(web?.authRef, authRef);
+  assert.equal(web?.privateKeyPath, undefined);
+  assert.equal(web?.password, undefined);
+
+  const preserved = preserveVaultCredentialOnUpdate(existing[0], incoming[0]);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.privateKeyPath, undefined);
+  assert.equal(preserved.password, undefined);
+});
+
+runTest('import merge allows incoming metadata to override or clear matched metadata', () => {
+  const existing = [{
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    folder: 'prod',
+    theme: 'blue',
+    tags: ['core'],
+    icon: 'Server',
+  }];
+  const incoming = [{
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    folder: '',
+    theme: null,
+    tags: [],
+    icon: 'Ubuntu',
+  }];
+
+  const result = mergeImportedConnectionsByName(existing, incoming);
+  const web = result.merged.find((c) => c.id === 'a');
+  assert.equal(web?.folder, '');
+  assert.equal(web?.theme, null);
+  assert.deepEqual(web?.tags, []);
+  assert.equal(web?.icon, 'Ubuntu');
+});
+
+runTest('preserveVaultCredentialOnUpdate lets incoming vault auth replace plaintext credentials', () => {
+  const authRef = {
+    vaultId: 'vault-2',
+    itemId: 'item-2',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    password: 'old-plaintext',
+  };
+  const incoming = {
+    ...existing,
+    id: 'x',
+    status: 'disconnected',
+    password: undefined,
+    privateKeyPath: 'incoming-key-path',
+    authRef,
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
+});
+
+runTest('preserveVaultCredentialOnUpdate lets incoming vault auth win when both sides are vaulted', () => {
+  const existingAuthRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const incomingAuthRef = {
+    vaultId: 'vault-2',
+    itemId: 'item-2',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef: existingAuthRef,
+  };
+  const incoming = {
+    ...existing,
+    id: 'x',
+    status: 'disconnected',
+    password: 'stale-password',
+    privateKeyPath: 'stale-key',
+    authRef: incomingAuthRef,
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, incomingAuthRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
+});
+
+runTest('preserveVaultCredentialOnUpdate strips plaintext when existing vault auth is retained', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef,
+    password: 'stale-password',
+    privateKeyPath: 'stale-key',
+  };
+  const incoming = {
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    password: 'imported-password',
+    privateKeyPath: 'imported-key',
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
 });
 
 runTest('import plan builds recommendations and applies new/update/skip decisions', () => {

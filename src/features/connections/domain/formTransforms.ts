@@ -1,7 +1,7 @@
 import type { Connection } from './types.js';
 import { normalizeFolderPath, normalizeTags, normalizeText, parsePort } from './normalization.js';
 
-export type ConnectionAuthMode = 'password' | 'key';
+export type ConnectionAuthMode = 'password' | 'key' | 'vault';
 
 export type ConnectionFormDraft = Partial<Connection>;
 
@@ -11,7 +11,10 @@ interface ToBackendConfig {
     host: string;
     port: number;
     username: string;
-    auth_method: { type: 'Password'; password: string } | { type: 'PrivateKey'; key_path: string; passphrase: null };
+    auth_method:
+        | { type: 'Password'; password: string }
+        | { type: 'PrivateKey'; key_path: string; passphrase: null }
+        | { type: 'VaultRef'; item_id: string };
     jump_host: ToBackendConfig | null;
 }
 
@@ -38,13 +41,22 @@ const resolveAuthMethod = (
             if (!normalizedPassword) throw new Error('Password is required for password auth.');
             return { type: 'Password', password: normalizedPassword };
         }
+        if (authMode === 'vault') {
+            const authRef = (candidate as Connection).authRef;
+            const itemId = authRef?.itemId;
+            if (!itemId) throw new Error('No vault credential selected.');
+            return { type: 'VaultRef', item_id: itemId };
+        }
         const normalizedKeyPath = normalizeText(keyPath);
         if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
         return { type: 'PrivateKey', key_path: normalizedKeyPath, passphrase: null };
     }
 
-    // Use privateKeyPath as the discriminator — matches buildConnectConfig and correctly
-    // handles connections loaded from Rust where password comes back as null (not undefined).
+    // Use authRef as highest-priority discriminator for existing connections.
+    const itemId = (candidate as Connection).authRef?.itemId;
+    if (itemId) {
+        return { type: 'VaultRef', item_id: itemId };
+    }
     if (candidate.privateKeyPath) {
         const normalizedKeyPath = normalizeText(candidate.privateKeyPath);
         if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
@@ -96,6 +108,7 @@ const buildJumpChain = (
     if (!jumpConnection) return null;
 
     return {
+        // Auth mode is ignored when `candidate` is an existing Connection (isForm=false).
         ...toBackendConfig(jumpConnection, {} as ConnectionFormDraft, 'password'),
         jump_host: buildJumpChain(connections, jumpConnection.jumpServerId, new Set(visited)),
     };
@@ -117,6 +130,9 @@ export const buildConnectionSavePayload = ({
     const name = normalizeText(formData.name) || host;
     const portResult = parsePort(formData.port);
     if (portResult.error) throw new Error(portResult.error);
+    if (authMethod === 'vault' && !formData.authRef?.itemId) {
+        throw new Error('No vault credential selected.');
+    }
 
     return {
         id: editingConnectionId || crypto.randomUUID(),
@@ -126,6 +142,7 @@ export const buildConnectionSavePayload = ({
         port: portResult.normalizedPort,
         password: authMethod === 'password' ? formData.password : undefined,
         privateKeyPath: authMethod === 'key' ? formData.privateKeyPath : undefined,
+        authRef: authMethod === 'vault' ? formData.authRef : undefined,
         status: editingConnectionId ? (connections.find((c) => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
         jumpServerId: formData.jumpServerId,
         icon: formData.icon,

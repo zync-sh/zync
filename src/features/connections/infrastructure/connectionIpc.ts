@@ -9,7 +9,12 @@ export interface AuthMethodPrivateKey {
     passphrase: string | null;
 }
 
-export type AuthMethodPayload = AuthMethodPassword | AuthMethodPrivateKey;
+export interface AuthMethodVaultRef {
+    type: 'VaultRef';
+    item_id: string;
+}
+
+export type AuthMethodPayload = AuthMethodPassword | AuthMethodPrivateKey | AuthMethodVaultRef;
 
 export interface ConnectionConfigPayload {
     id: string;
@@ -70,6 +75,9 @@ export const connectIpc = async (config: ConnectionConfigPayload): Promise<Conne
 
 export const disconnectIpc = async (connectionId: string): Promise<void> =>
     window.ipcRenderer.invoke('ssh:disconnect', connectionId);
+
+export const disconnectVaultBackedIpc = async (): Promise<string[]> =>
+    window.ipcRenderer.invoke('ssh_disconnect_vault_backed');
 
 export const getRemoteCwdIpc = async (connectionId: string): Promise<string> =>
     window.ipcRenderer.invoke('fs:cwd', connectionId);

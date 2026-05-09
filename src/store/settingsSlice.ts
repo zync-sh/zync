@@ -17,6 +17,9 @@ export interface AppSettings {
     compactMode: boolean;
     sidebarWidth: number;
     sidebarCollapsed: boolean;
+    sidebarSections: {
+        vaultExpanded: boolean;
+    };
     terminal: {
         fontSize: number;
         fontFamily: string;
@@ -111,6 +114,9 @@ export const defaultSettings: AppSettings = {
     compactMode: true,
     sidebarWidth: 288,
     sidebarCollapsed: false,
+    sidebarSections: {
+        vaultExpanded: true,
+    },
     expandedFolders: [],
     ai: {
         provider: 'ollama',
@@ -225,6 +231,7 @@ export interface SettingsSlice {
     updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
     updateAiSettings: (updates: Partial<AppSettings['ai']>) => Promise<void>;
     updateEditorSettings: (updates: Partial<AppSettings['editor']>) => Promise<void>;
+    updateSidebarSectionsSettings: (updates: Partial<AppSettings['sidebarSections']>) => Promise<void>;
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
@@ -257,6 +264,10 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                     fontFamily: normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ?? defaultSettings.terminal.fontFamily,
                 },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
+                sidebarSections: {
+                    ...defaultSettings.sidebarSections,
+                    ...(loaded?.sidebarSections || {}),
+                },
                 localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                 ghostSuggestions: {
                     ...defaultSettings.ghostSuggestions,
@@ -341,6 +352,38 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 changedKeys.map((key) => [key, previous.editor[key]])
             ) as Partial<AppSettings['editor']>;
             set({ settings: { ...current, editor: { ...current.editor, ...rollbackPatch } } });
+            throw error;
+        }
+    },
+
+    updateSidebarSectionsSettings: async (updates) => {
+        const previous = get().settings;
+        const updated = {
+            ...previous,
+            sidebarSections: { ...previous.sidebarSections, ...updates }
+        };
+        set({ settings: updated });
+        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['sidebarSections']>;
+        const optimisticSidebarSections = updated.sidebarSections;
+        try {
+            await persistSettings({ sidebarSections: updates });
+        } catch (error) {
+            console.error('Failed to save sidebar section settings:', error);
+            const current = get().settings;
+            const rollbackPatch = Object.fromEntries(
+                changedKeys
+                    .filter((key) => current.sidebarSections[key] === optimisticSidebarSections[key])
+                    .map((key) => [key, previous.sidebarSections[key]])
+            ) as Partial<AppSettings['sidebarSections']>;
+            if (Object.keys(rollbackPatch).length === 0) {
+                throw error;
+            }
+            set({
+                settings: {
+                    ...current,
+                    sidebarSections: { ...current.sidebarSections, ...rollbackPatch }
+                }
+            });
             throw error;
         }
     },

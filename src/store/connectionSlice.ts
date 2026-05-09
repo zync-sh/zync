@@ -13,6 +13,7 @@ import {
     activateExistingConnectionTab,
     createConnectionTabState,
     createLocalTerminalTabState,
+    ensureVaultTabState,
     ensureGlobalSnippetsTab,
     ensureSingleTabByType,
     findConnectionTab,
@@ -30,11 +31,12 @@ import {
     pinFeatureOnConnectionIfNeeded,
     startAutoStartTunnels,
 } from '../features/connections/application/tunnelAutoStartService';
-import { buildConnectConfig, normalizeFolderPath, type ImportPlanItem } from '../features/connections/domain';
+import { buildConnectConfig, normalizeFolderPath, preserveVaultCredentialOnUpdate, type ImportPlanItem } from '../features/connections/domain';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
-import { loadConnectionsIpc, saveConnectionsIpc } from '../features/connections/infrastructure/connectionPersistence';
+import { loadConnectionsIpc, saveConnectionsIpc, type LoadConnectionsIpcResult } from '../features/connections/infrastructure/connectionPersistence';
 import { clearRemoteShellCache } from '../lib/shells/cache';
 import type { TabSnapshot } from './sessionPersistence';
+import { DEFAULT_VAULT_PROFILE_ID, isVaultProfileId, type VaultProfileId } from '../vault/profileTypes';
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
 export interface ConnectionSlice {
@@ -70,6 +72,7 @@ export interface ConnectionSlice {
     openSnippetsTab: () => void;
     openReleaseNotesTab: () => void;
     openSettingsJsonTab: () => void;
+    openVaultTab: (profileId?: VaultProfileId) => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     /** Deactivate all tabs and show the welcome screen without closing anything. */
@@ -108,6 +111,9 @@ export interface ConnectionSlice {
 }
 
 const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard']);
+const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings', 'vault']);
+
+type PersistedConnection = Omit<Connection, 'status'> & Partial<Pick<Connection, 'status'>>;
 
 export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSlice> = (set, get) => ({
     connections: [],
@@ -135,24 +141,25 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             //     console.log(`[RENDERER] Migrated ${migratedCount} connection keys`);
             // }
 
-            console.error('[RENDERER] Loading connections...');
+            console.info('[RENDERER] Loading connections...');
             const loaded = await loadConnectionsIpc();
-            console.error('[RENDERER] Loaded connections from IPC:', loaded);
             if (loaded && (Array.isArray(loaded) || 'connections' in loaded)) {
-                const conns = Array.isArray(loaded) ? loaded : loaded.connections;
-                const foldersSource = Array.isArray(loaded) ? [] : (loaded.folders || []);
-                const folders = foldersSource.map((f: any) => typeof f === 'string' ? { name: f } : f);
+                const payload = loaded as LoadConnectionsIpcResult;
+                const conns: PersistedConnection[] = Array.isArray(payload) ? payload : payload.connections;
+                const foldersSource: Array<Folder | string> = Array.isArray(payload) ? [] : (payload.folders || []);
+                const folders: Folder[] = foldersSource.map((folder) => typeof folder === 'string' ? { name: folder } : folder);
 
-                // Deduplicate connections by ID to prevent React key collisions
-                const uniqueConns = Array.from(new Map(conns.map((c: any) => [c.id, c])).values());
+                // Deduplicate connections by ID to prevent React key collisions.
+                // Map keeps the last occurrence for duplicate IDs by design.
+                const uniqueConns = Array.from(new Map(conns.map((connection) => [connection.id, connection])).values());
 
                 if (uniqueConns.length !== conns.length) {
                     console.warn(`[RENDERER] Found ${conns.length - uniqueConns.length} duplicate connection IDs. Deduplicated.`);
                 }
 
-                console.log('Setting connections state:', uniqueConns);
+                console.info(`[RENDERER] Applying ${uniqueConns.length} connection(s) and ${folders.length} folder(s).`);
                 set({
-                    connections: uniqueConns.map((c: any) => ({ ...c, status: 'disconnected' })),
+                    connections: uniqueConns.map((connection): Connection => ({ ...connection, status: 'disconnected' })),
                     folders
                 });
             } else {
@@ -284,8 +291,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                                 homePath: existing.homePath,
                                 createdAt: existing.createdAt,
                             };
+                            const secureConnection = preserveVaultCredentialOnUpdate(existing, normalizedConnection);
                             nextConnections[targetIndex] = {
-                                ...normalizedConnection,
+                                ...secureConnection,
                                 ...preservedMetadata,
                                 id: existing.id,
                                 status: existing.status,
@@ -326,7 +334,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 const existing = folderMap.get(normalized);
                 if (existing) {
                     if (folder.tags && folder.tags.length > 0) {
-                        existing.tags = folder.tags;
+                        folderMap.set(normalized, { ...existing, tags: folder.tags });
                     }
                     return;
                 }
@@ -409,9 +417,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             // Auto-start tunnels
             try {
                 await get().loadTunnels(id);
-                // @ts-ignore - tunnels slice access
                 const tunnels = get().tunnels[id] || [];
-                // @ts-ignore
                 const startTunnel = get().startTunnel;
 
                 const autoStartCount = await startAutoStartTunnels(
@@ -537,6 +543,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         get().saveSession();
     },
 
+    openVaultTab: (profileId = DEFAULT_VAULT_PROFILE_ID) => {
+        set(state => {
+            return {
+                ...ensureVaultTabState(state.tabs, profileId),
+                showWelcomeScreen: false,
+            };
+        });
+        get().saveSession();
+    },
+
     openSnippetsTab: () => {
         set(state => {
             return { ...ensureGlobalSnippetsTab(state.tabs), showWelcomeScreen: false };
@@ -655,9 +671,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         set(state => {
-        const RESTORABLE_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings']);
             const tabs: Tab[] = snapshots
-                .filter(s => RESTORABLE_TYPES.has(s.tabType))
+                .filter(s => RESTORABLE_TAB_TYPES.has(s.tabType))
                 .filter(s => {
                     // Drop connection tabs whose connection was deleted.
                     // 'local' is always valid — it is not in the connections array.
@@ -676,6 +691,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         type: s.tabType as Tab['type'],
                         title: s.title,
                         connectionId: s.connectionId,
+                        vaultProfileId: isVaultProfileId(s.vaultProfileId)
+                            ? s.vaultProfileId
+                            : undefined,
                         view,
                     };
                 });
@@ -735,8 +753,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const updated = current.includes(feature)
                 ? current.filter(f => f !== feature)
                 : [...current, feature];
-            // Use specific store method to sync pined features to local terminal settings
-            (get() as any as AppStore).updateLocalTermSettings({ pinnedFeatures: updated });
+            // Use specific store method to sync pinned features to local terminal settings.
+            void get().updateLocalTermSettings({ pinnedFeatures: updated }).catch(error => {
+                console.error('Failed to update local terminal pinned features:', error);
+                get().showToast('error', `Failed to save pinned features: ${error instanceof Error ? error.message : String(error)}`, 5000);
+            });
             return;
         }
 

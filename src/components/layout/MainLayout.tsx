@@ -53,6 +53,9 @@ const PluginPanel = lazy(() => import('../plugins/PluginPanel').then(module => (
 const SettingsJsonEditorPanel = lazy(() =>
     import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
 );
+const VaultWorkspacePanel = lazy(() =>
+    import('../vault/VaultWorkspacePanel').then(module => ({ default: module.default }))
+);
 
 // Loading Component
 const TabLoading = () => (
@@ -278,6 +281,20 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             )}>
                 <Suspense fallback={<TabLoading />}>
                     <SettingsJsonEditorPanel />
+                </Suspense>
+            </div>
+        );
+    }
+
+    if (tab.type === 'vault') {
+        return (
+            <div className={cn(
+                "absolute inset-0 z-10 bg-app-bg",
+                !isActive && "hidden",
+                isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
+            )}>
+                <Suspense fallback={<TabLoading />}>
+                    <VaultWorkspacePanel profileId={tab.vaultProfileId} />
                 </Suspense>
             </div>
         );

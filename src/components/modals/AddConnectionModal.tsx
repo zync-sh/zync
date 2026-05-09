@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -7,14 +7,16 @@ import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Connection } from '../../store/useAppStore';
 import { open } from '@tauri-apps/plugin-dialog';
 import { cn } from '../../lib/utils';
-import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, Files, ChevronDown, ChevronRight } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, Files, ChevronDown, ChevronRight, Shield, KeyRound } from 'lucide-react';
 import { testConnectionIpc, type ConnectionConfigPayload } from '../../features/connections/infrastructure/connectionIpc';
-import { buildConnectionSavePayload, buildConnectionTestPayload, getCredentialHealthChecks, validateConnectionDraft } from '../../features/connections/domain';
-import { findDuplicateConnectionByEndpoint } from '../../features/connections/application/connectionService';
+import { buildConnectionSavePayload, buildConnectionTestPayload } from '../../features/connections/domain';
 import {
     importConnectionsFromFileIpc,
     type ConnectionExchangeImportFormat,
 } from '../../features/connections/infrastructure/connectionTransfer';
+import { useConnectionForm } from './useConnectionForm';
+import { useAutoVault } from './useAutoVault';
+
 const ImportSshModal = lazy(async () => {
     const module = await import('./ImportSshModal');
     return { default: module.ImportSshModal };
@@ -42,13 +44,45 @@ const THEMES = [
 ];
 
 export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: AddConnectionModalProps) {
-    const connections = useAppStore(state => state.connections);
-    const folders = useAppStore(state => state.folders);
-    const addConnection = useAppStore(state => state.addConnection);
-    const editConnection = useAppStore(state => state.editConnection);
     const importConnections = useAppStore(state => state.importConnections);
     const showToast = useAppStore(state => state.showToast);
     const openTab = useAppStore(state => state.openTab);
+
+    const {
+        connections, folders, addConnection, editConnection,
+        formData, setFormData,
+        authMethod, setAuthMethod,
+        keyInputMode, setKeyInputMode,
+        setTouched,
+        submitAttempted: _submitAttempted, setSubmitAttempted,
+        allowDuplicateEndpoint, setAllowDuplicateEndpoint,
+        activeEditingConnectionId,
+        validation,
+        visibleHostError, visibleUsernameError, visiblePortError, visibleKeyPathError,
+        duplicateConnection, credentialHealthChecks, jumpCycleWarning,
+        saveForm,
+    } = useConnectionForm(isOpen, editingConnectionId);
+
+    const {
+        vaultStatus, vaultItems, refreshItems,
+        pastedKeyText,
+        setPastedKeyText,
+        pastedPassphrase, setPastedPassphrase,
+        pastedKeyError, setPastedKeyError,
+        vaultLabel, setVaultLabel,
+        keyVaultLabel, setKeyVaultLabel,
+        defaultVaultLabel, effectiveVaultLabel: _effectiveVaultLabel, vaultLabelConflict,
+        defaultKeyVaultLabel, effectiveKeyVaultLabel: _effectiveKeyVaultLabel, keyVaultLabelConflict,
+        autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
+    } = useAutoVault({
+        isOpen,
+        formData,
+        authMethod,
+        keyInputMode,
+        activeEditingConnectionId,
+        validationOk: validation.ok,
+        showToast,
+    });
 
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testMessage, setTestMessage] = useState('');
@@ -56,78 +90,20 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
     const [showAllIcons, setShowAllIcons] = useState(false);
     const [entryMode, setEntryMode] = useState<'chooser' | 'manual'>('manual');
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-    const [submitAttempted, setSubmitAttempted] = useState(false);
-    const [touched, setTouched] = useState({ host: false, username: false, port: false, keyPath: false });
-
-    const [formData, setFormData] = useState<Partial<Connection>>({
-        name: '', host: '', username: '', port: 22, password: '', privateKeyPath: '', jumpServerId: undefined, icon: 'Server', folder: '', theme: '', tags: []
-    });
-    const [authMethod, setAuthMethod] = useState<'password' | 'key'>('password');
-    const [allowDuplicateEndpoint, setAllowDuplicateEndpoint] = useState(false);
-    const activeEditingConnectionId = useMemo(
-        () => (editingConnectionId && connections.some((connection) => connection.id === editingConnectionId))
-            ? editingConnectionId
-            : null,
-        [connections, editingConnectionId]
-    );
+    const [isSaving, setIsSaving] = useState(false);
+    const lastImportPlaintextCountRef = useRef(0);
 
     useEffect(() => {
         if (!isOpen) return;
-
         setTestStatus('idle');
         setTestMessage('');
-        setAllowDuplicateEndpoint(false);
         setIsAdvancedOpen(!!activeEditingConnectionId);
         setShowAllIcons(false);
         setEntryMode(activeEditingConnectionId ? 'manual' : 'chooser');
-        setSubmitAttempted(false);
-        setTouched({ host: false, username: false, port: false, keyPath: false });
-
-        if (activeEditingConnectionId) {
-            const conn = useAppStore.getState().connections.find(c => c.id === activeEditingConnectionId);
-            if (conn) {
-                setFormData({
-                    ...conn,
-                    password: conn.password || '',
-                    privateKeyPath: conn.privateKeyPath || '',
-                    jumpServerId: conn.jumpServerId,
-                    icon: conn.icon || 'Server',
-                    tags: conn.tags || []
-                });
-                setAuthMethod(conn.privateKeyPath ? 'key' : 'password');
-                return;
-            }
-
-            setFormData({ name: '', host: '', username: '', port: 22, password: '', privateKeyPath: '', jumpServerId: undefined, icon: 'Server', folder: '', theme: '', tags: [] });
-            setAuthMethod('password');
-            return;
-        }
-
-        setFormData({ name: '', host: '', username: '', port: 22, password: '', privateKeyPath: '', jumpServerId: undefined, icon: 'Server', folder: '', theme: '', tags: [] });
-        setAuthMethod('password');
+        setIsSaving(false);
     }, [activeEditingConnectionId, isOpen]);
 
-    const validation = useMemo(
-        () => validateConnectionDraft(formData, authMethod),
-        [formData, authMethod]
-    );
-    const hostError = validation.fieldErrors.host || '';
-    const usernameError = validation.fieldErrors.username || '';
-    const keyPathError = validation.fieldErrors.privateKeyPath || '';
-    const portError = validation.fieldErrors.port || '';
-    const visibleHostError = (submitAttempted || touched.host) ? hostError : '';
-    const visibleUsernameError = (submitAttempted || touched.username) ? usernameError : '';
-    const visiblePortError = (submitAttempted || touched.port) ? portError : '';
-    const visibleKeyPathError = (submitAttempted || touched.keyPath) ? keyPathError : '';
-    const duplicateConnection = useMemo(
-        () => findDuplicateConnectionByEndpoint(connections, formData, activeEditingConnectionId),
-        [activeEditingConnectionId, connections, formData]
-    );
-    const credentialHealthChecks = useMemo(
-        () => getCredentialHealthChecks(formData, authMethod),
-        [formData, authMethod]
-    );
-    const canSave = !duplicateConnection || allowDuplicateEndpoint;
+    const canSave = (!duplicateConnection || allowDuplicateEndpoint) && !vaultLabelConflict && !keyVaultLabelConflict;
     const selectedIcon = formData.icon || 'Server';
     const compactIcons = ICONS.slice(0, 12);
     const visibleIcons = showAllIcons
@@ -136,35 +112,69 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             ? compactIcons
             : [...compactIcons, selectedIcon];
 
-    const saveForm = (): Connection | null => {
-        if (!canSave || !validation.ok) return null;
-
-        const connectionData = buildConnectionSavePayload({
-            formData,
-            authMethod,
-            editingConnectionId: activeEditingConnectionId,
-            connections,
-        }) as Connection;
-
-        if (activeEditingConnectionId) {
-            editConnection(connectionData);
-        } else {
-            addConnection(connectionData);
+    const performSave = async (): Promise<Connection | null> => {
+        if (isSaving) return null;
+        setIsSaving(true);
+        setSubmitAttempted(true);
+        try {
+            if (authMethod === 'key' && keyInputMode === 'paste') {
+                const connectionData = await buildPastedKeyConnection();
+                if (!connectionData) return null;
+                activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                return connectionData;
+            }
+            if (authMethod === 'key' && keyInputMode === 'file' && vaultStatus?.status === 'unlocked' && formData.privateKeyPath) {
+                try {
+                    const vaultedData = await autoVaultKeyFile();
+                    if (vaultedData) {
+                        const connectionData = buildConnectionSavePayload({
+                            formData: vaultedData,
+                            authMethod: 'vault',
+                            editingConnectionId: activeEditingConnectionId,
+                            connections: useAppStore.getState().connections,
+                        });
+                        activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                        await refreshItems();
+                        return connectionData;
+                    }
+                } catch (e: unknown) {
+                    showToast('error', `Failed to encrypt key: ${e instanceof Error ? e.message : String(e)}`);
+                    return null;
+                }
+            }
+            if (authMethod === 'password' && vaultStatus?.status === 'unlocked') {
+                try {
+                    const vaultedData = await autoVaultPassword();
+                    if (vaultedData) {
+                        const connectionData = buildConnectionSavePayload({
+                            formData: vaultedData,
+                            authMethod: 'vault',
+                            editingConnectionId: activeEditingConnectionId,
+                            connections: useAppStore.getState().connections,
+                        });
+                        activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                        await refreshItems();
+                        return connectionData;
+                    }
+                } catch (e: unknown) {
+                    showToast('error', `Failed to encrypt credential: ${e instanceof Error ? e.message : String(e)}`);
+                    return null;
+                }
+            }
+            return saveForm(canSave);
+        } finally {
+            setIsSaving(false);
         }
-
-        return connectionData;
     };
 
-    const handleSave = () => {
-        setSubmitAttempted(true);
-        const saved = saveForm();
+    const handleSave = async () => {
+        const saved = await performSave();
         if (!saved) return;
         onClose();
     };
 
-    const handleSaveAndConnect = () => {
-        setSubmitAttempted(true);
-        const saved = saveForm();
+    const handleSaveAndConnect = async () => {
+        const saved = await performSave();
         if (!saved) return;
         openTab(saved.id, 'terminal');
         onClose();
@@ -177,19 +187,11 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             setTestMessage(validation.errors[0] || 'Please fill required fields.');
             return;
         }
-
         setTestStatus('testing');
         setTestMessage('');
-
         try {
-            const config = buildConnectionTestPayload({
-                formData,
-                authMethod,
-                connections,
-            });
-
+            const config = buildConnectionTestPayload({ formData, authMethod, connections });
             await testConnectionIpc(config as ConnectionConfigPayload);
-
             setTestStatus('success');
             setTestMessage('Connection successful!');
         } catch (error: unknown) {
@@ -201,30 +203,12 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
 
     const handleBrowseKey = async () => {
         try {
-            const selected = await open({
-                multiple: false,
-                directory: false,
-            });
-
+            const selected = await open({ multiple: false, directory: false });
             if (!selected) return;
             const path = Array.isArray(selected) ? selected[0] : selected;
             if (!path) return;
-
-            if (!window?.ipcRenderer?.invoke) {
-                setTouched((prev) => ({ ...prev, keyPath: true }));
-                setFormData((prev) => ({ ...prev, privateKeyPath: path }));
-                showToast('success', 'Private key path saved.');
-                return;
-            }
-
-            try {
-                const extractedPath = await window.ipcRenderer.invoke('ssh:extract-pem', path);
-                setTouched((prev) => ({ ...prev, keyPath: true }));
-                setFormData((prev) => ({ ...prev, privateKeyPath: extractedPath }));
-            } catch {
-                setTouched((prev) => ({ ...prev, keyPath: true }));
-                setFormData((prev) => ({ ...prev, privateKeyPath: path }));
-            }
+            setTouched((prev) => ({ ...prev, keyPath: true }));
+            setFormData((prev) => ({ ...prev, privateKeyPath: path }));
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             setTouched((prev) => ({ ...prev, keyPath: true }));
@@ -243,26 +227,25 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
 
     const handleImportConnectionsFile = async () => {
         try {
-            const selected = await open({
-                multiple: false,
-                directory: false,
-            });
-
+            const selected = await open({ multiple: false, directory: false });
             if (!selected) return;
             const path = Array.isArray(selected) ? selected[0] : selected;
             if (!path || typeof path !== 'string') return;
-
             const imported = await importConnectionsFromFileIpc({
                 path,
                 format: inferImportFormatFromPath(path),
             });
-
             const mappedConnections: Connection[] = (imported.connections || []).map((connection) => ({
                 ...connection,
                 status: 'disconnected',
             }));
             importConnections(mappedConnections, imported.folders || []);
-            showToast('success', `Imported ${mappedConnections.length} connection(s) from file.`);
+            const plaintextCount = mappedConnections.filter(c => !c.authRef && (c.password || c.privateKeyPath)).length;
+            if (plaintextCount > 0 && vaultStatus?.status !== 'uninitialized') {
+                showToast('success', `Imported ${mappedConnections.length} connection(s) — ${plaintextCount} have plaintext credentials. Open Vault tab to migrate.`);
+            } else {
+                showToast('success', `Imported ${mappedConnections.length} connection(s) from file.`);
+            }
             onClose();
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
@@ -438,10 +421,15 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         label="Port"
                                         type="number"
                                         placeholder="22"
-                                        value={formData.port}
+                                        value={formData.port ?? ''}
                                         onChange={e => {
                                             setTouched((prev) => ({ ...prev, port: true }));
-                                            setFormData({ ...formData, port: Number(e.target.value) });
+                                            if (e.target.value === '') {
+                                                setFormData({ ...formData, port: undefined });
+                                                return;
+                                            }
+                                            const p = parseInt(e.target.value, 10);
+                                            if (!isNaN(p)) setFormData({ ...formData, port: p });
                                         }}
                                         error={visiblePortError}
                                     />
@@ -467,46 +455,226 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         >
                                             Private Key
                                         </button>
+                                        {vaultStatus?.status === 'unlocked' && (
+                                            <button
+                                                onClick={() => setAuthMethod('vault')}
+                                                className={cn(
+                                                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5",
+                                                    authMethod === 'vault' ? "bg-app-accent text-white shadow-sm" : "text-app-muted hover:text-app-text"
+                                                )}
+                                            >
+                                                <Shield size={13} />
+                                                Vault
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
                                 {authMethod === 'password' ? (
-                                    <Input label="Password" type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+                                    <div className="space-y-2">
+                                        <Input label="Password" type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+                                        {vaultStatus?.status === 'unlocked' && formData.password && (
+                                            <div className="space-y-1.5">
+                                                <div className="flex items-center gap-2">
+                                                    <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
+                                                    <input
+                                                        type="text"
+                                                        value={vaultLabel}
+                                                        onChange={e => setVaultLabel(e.target.value)}
+                                                        placeholder={defaultVaultLabel}
+                                                        className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
+                                                    />
+                                                </div>
+                                                {vaultLabelConflict ? (
+                                                    <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
+                                                        <Shield size={10} /> A vault item with this label already exists — rename to avoid a duplicate.
+                                                    </p>
+                                                ) : (
+                                                    <p className="text-[10px] text-emerald-400/70 flex items-center gap-1">
+                                                        <Shield size={10} /> Password will be encrypted in vault on save.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                        {vaultStatus?.status === 'locked' && formData.password && (
+                                            <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                                                <Shield size={10} /> Vault is locked — password will be saved as plaintext.
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : authMethod === 'key' ? (
+                                    <div className="space-y-3">
+                                        <div className="flex gap-1 p-0.5 bg-app-surface/50 rounded-lg w-fit border border-app-border">
+                                            <button
+                                                onClick={() => setKeyInputMode('file')}
+                                                className={cn(
+                                                    "px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5",
+                                                    keyInputMode === 'file' ? "bg-app-accent text-white shadow-sm" : "text-app-muted hover:text-app-text"
+                                                )}
+                                            >
+                                                <FileText size={11} /> File
+                                            </button>
+                                            <button
+                                                onClick={() => setKeyInputMode('paste')}
+                                                className={cn(
+                                                    "px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5",
+                                                    keyInputMode === 'paste' ? "bg-app-accent text-white shadow-sm" : "text-app-muted hover:text-app-text"
+                                                )}
+                                            >
+                                                <KeyRound size={11} /> Paste to Vault
+                                            </button>
+                                        </div>
+                                        {keyInputMode === 'file' ? (
+                                            <div className="space-y-2">
+                                                <div className="flex gap-2">
+                                                    <Input
+                                                        className="flex-1"
+                                                        readOnly
+                                                        placeholder="No key selected"
+                                                        value={formData.privateKeyPath ? formData.privateKeyPath.split(/[/\\]/).pop() : ''}
+                                                        error={visibleKeyPathError}
+                                                    />
+                                                    <Button variant="secondary" onClick={handleBrowseKey}>Browse</Button>
+                                                </div>
+                                                {vaultStatus?.status === 'unlocked' && formData.privateKeyPath ? (
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex items-center gap-2">
+                                                            <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
+                                                            <input
+                                                                type="text"
+                                                                value={keyVaultLabel}
+                                                                onChange={e => setKeyVaultLabel(e.target.value)}
+                                                                placeholder={defaultKeyVaultLabel}
+                                                                className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
+                                                            />
+                                                        </div>
+                                                        {keyVaultLabelConflict ? (
+                                                            <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
+                                                                <Shield size={10} /> A vault item with this label already exists — rename to avoid a duplicate.
+                                                            </p>
+                                                        ) : (
+                                                            <p className="text-[10px] text-emerald-400/70 flex items-center gap-1">
+                                                                <Shield size={10} /> Key will be read and encrypted in vault on save.
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-[10px] text-app-muted/70">Key file path is stored and read at connect time.</p>
+                                                )}
+                                                {vaultStatus?.status === 'locked' && formData.privateKeyPath && (
+                                                    <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                                                        <Shield size={10} /> Vault is locked — key path will be saved as plaintext. Use &quot;Paste to Vault&quot; to encrypt.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {vaultStatus?.status === 'unlocked' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
+                                                        <input
+                                                            type="text"
+                                                            value={keyVaultLabel}
+                                                            onChange={e => setKeyVaultLabel(e.target.value)}
+                                                            placeholder={defaultKeyVaultLabel}
+                                                            className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
+                                                        />
+                                                    </div>
+                                                )}
+                                                <textarea
+                                                    value={pastedKeyText}
+                                                    className="w-full h-28 rounded-lg border border-app-border bg-app-bg px-3 py-2 text-xs font-mono text-app-text placeholder:text-app-muted/50 resize-none focus:outline-none focus:ring-1 focus:ring-app-accent/50"
+                                                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                                    onChange={(event) => {
+                                                        setPastedKeyText(event.target.value);
+                                                        if (pastedKeyError) setPastedKeyError('');
+                                                    }}
+                                                    spellCheck={false}
+                                                />
+                                                {pastedKeyError && (
+                                                    <p className="text-[10px] text-red-400">{pastedKeyError}</p>
+                                                )}
+                                                <Input
+                                                    label="Passphrase (if key is encrypted)"
+                                                    type="password"
+                                                    placeholder="Leave empty if none"
+                                                    value={pastedPassphrase}
+                                                    onChange={e => setPastedPassphrase(e.target.value)}
+                                                />
+                                                {vaultStatus?.status !== 'unlocked' && (
+                                                    <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                                                        <Shield size={10} /> Vault must be unlocked to store a pasted key.
+                                                    </p>
+                                                )}
+                                                {vaultStatus?.status === 'unlocked' && (
+                                                    <p className="text-[10px] text-emerald-400/70 flex items-center gap-1">
+                                                        <Shield size={10} /> Key will be encrypted in vault on save.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">Private Key</label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                className="flex-1"
-                                                readOnly
-                                                placeholder="No key selected"
-                                                value={formData.privateKeyPath ? formData.privateKeyPath.split(/[/\\]/).pop() : ''}
-                                                error={visibleKeyPathError}
+                                        <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">Vault Credential</label>
+                                        {vaultItems.length === 0 ? (
+                                            <p className="text-xs text-app-muted rounded-lg border border-app-border bg-app-bg/50 px-3 py-2.5">
+                                                No items in vault. Migrate existing connections to populate.
+                                            </p>
+                                        ) : (
+                                            <Select
+                                                value={formData.authRef?.itemId || ''}
+                                                onChange={(val) => {
+                                                    const item = vaultItems.find(i => i.id === val);
+                                                    if (!item) return;
+                                                    if (vaultStatus?.status !== 'unlocked') return;
+                                                    const vaultId = vaultStatus.vaultId;
+                                                    setFormData({
+                                                        ...formData,
+                                                        authRef: { vaultId, itemId: item.id, itemKind: item.kind as NonNullable<Connection['authRef']>['itemKind'], purpose: 'ssh-auth' },
+                                                    });
+                                                }}
+                                                options={vaultItems.map(item => ({
+                                                    value: item.id,
+                                                    label: item.label,
+                                                    description: item.kind,
+                                                    icon: <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-muted"><Shield className="w-3 h-3" /></div>,
+                                                }))}
+                                                placeholder="Select a vault credential…"
+                                                portal
                                             />
-                                            <Button variant="secondary" onClick={handleBrowseKey}>Browse</Button>
-                                        </div>
-                                        <p className="text-[10px] text-app-muted/70">Selected key will be securely used for this connection.</p>
+                                        )}
+                                        {formData.authRef && (
+                                            <p className="text-[10px] text-emerald-400/80">
+                                                Using vault item · {formData.authRef.itemId.slice(0, 8)}
+                                            </p>
+                                        )}
                                     </div>
                                 )}
 
                                 <div className="flex items-center justify-between gap-2">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={handleTestConnection}
-                                    disabled={!validation.ok || testStatus === 'testing'}
-                                    className={cn(
-                                        "text-xs gap-2 min-w-fit",
-                                        testStatus === 'success' && "text-green-500 hover:text-green-600 hover:bg-green-500/10",
-                                            testStatus === 'error' && "text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                                    <div>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={handleTestConnection}
+                                            disabled={!validation.ok || testStatus === 'testing' || (authMethod === 'key' && keyInputMode === 'paste')}
+                                            className={cn(
+                                                "text-xs gap-2 min-w-fit",
+                                                testStatus === 'success' && "text-green-500 hover:text-green-600 hover:bg-green-500/10",
+                                                testStatus === 'error' && "text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                                            )}
+                                        >
+                                            {testStatus === 'testing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                                                testStatus === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                                                    testStatus === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> :
+                                                        <ShieldCheck className="w-3.5 h-3.5" />}
+                                            <span>{testStatus === 'testing' ? 'Testing...' : 'Test Connection'}</span>
+                                        </Button>
+                                        {authMethod === 'key' && keyInputMode === 'paste' && (
+                                            <p className="mt-1 text-[10px] text-app-muted">Save first so the pasted key is encrypted in the vault before testing.</p>
                                         )}
-                                    >
-                                        {testStatus === 'testing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
-                                            testStatus === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> :
-                                                testStatus === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> :
-                                                    <ShieldCheck className="w-3.5 h-3.5" />}
-                                        <span>{testStatus === 'testing' ? 'Testing...' : 'Test Connection'}</span>
-                                    </Button>
+                                    </div>
                                     <span className={cn(
                                         "text-xs",
                                         testStatus === 'success' ? 'text-green-400' :
@@ -602,6 +770,11 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                             placeholder="Select a Jump Server..."
                                         />
                                         <p className="text-[10px] text-app-muted/70 mt-1 pl-1">Route this connection through another SSH server.</p>
+                                        {jumpCycleWarning && (
+                                            <p className="text-[10px] text-amber-400/90 flex items-center gap-1 mt-1 pl-1">
+                                                <AlertCircle size={10} /> Jump chain creates a loop — this connection will not be reachable.
+                                            </p>
+                                        )}
                                     </div>
                                 )}
                             </section>
@@ -614,10 +787,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                 </Button>
                             ) : <div />}
                             <div className="flex items-center gap-2">
-                                <Button disabled={!canSave} onClick={handleSave}>
+                                <Button disabled={!canSave || isSaving} onClick={handleSave}>
                                     {activeEditingConnectionId ? 'Save Changes' : 'Create Connection'}
                                 </Button>
-                                <Button disabled={!canSave} onClick={handleSaveAndConnect}>
+                                <Button disabled={!canSave || isSaving} onClick={handleSaveAndConnect}>
                                     {activeEditingConnectionId ? 'Save & Open' : 'Save & Connect'}
                                 </Button>
                             </div>
@@ -633,6 +806,9 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                         onClose={() => setIsImportModalOpen(false)}
                         onImport={(configs) => {
                             importConnections(configs);
+                            lastImportPlaintextCountRef.current = configs.filter(
+                                c => !c.connection.authRef && (c.connection.password || c.connection.privateKeyPath)
+                            ).length;
                         }}
                         onImportReport={(report) => {
                             const renamedSuffix = report.renamed.length > 0
@@ -641,17 +817,22 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                             const conflictSuffix = report.conflicted > 0
                                 ? `, ${report.conflicted} conflicts`
                                 : '';
+                            const count = lastImportPlaintextCountRef.current;
+                            const migrationSuffix = count > 0 && vaultStatus?.status !== 'uninitialized'
+                                ? ` — ${count} have plaintext credentials. Open Vault tab to migrate.`
+                                : '.';
                             showToast(
                                 'success',
-                                `Imported ${report.selected}: ${report.created} new, ${report.updated} updated, ${report.skipped} skipped${conflictSuffix}${renamedSuffix}.`
+                                `Imported ${report.selected}: ${report.created} new, ${report.updated} updated, ${report.skipped} skipped${conflictSuffix}${renamedSuffix}${migrationSuffix}`
                             );
+                            lastImportPlaintextCountRef.current = 0;
                             setIsImportModalOpen(false);
                             onClose();
                         }}
                     />
                 </Suspense>
             )}
-    </Modal>
+        </Modal>
     );
 }
 
