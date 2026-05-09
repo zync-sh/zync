@@ -4,6 +4,19 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Global Vault Workspace**: Introduced Vault as a first-class sidebar/workspace surface with profile-based navigation for Local Vault and Google Vault Sync. Added dedicated vault workspace UI, unlock/recovery flows, and vault-focused panels. ([6e8dd42], [d9d3663])
+- **Vault Core Backend Foundation**: Added backend vault modules for crypto, schema, storage, lifecycle commands, and migration scaffolding to support encrypted credential storage and recovery workflows. ([6e8dd42])
+- **Google Drive Vault Sync Module**: Added sync command module and IPC surface for connect/disconnect/backup/restore flows dedicated to vault data sync. ([8cdb20d])
+
+### Changed
+- **Settings Information Architecture**: Removed Vault from Settings navigation; vault management now lives in the dedicated Vault workspace flow. Updated related UX copy from “Settings → Vault” to “Vault tab/workspace” guidance. ([d9d3663])
+- **Sync Status UX Resilience**: Sync IPC status events now use canonical post-operation status refresh and last-known-state fallback behavior to avoid false disconnected states when status refresh fails. ([8cdb20d])
+
+### Fixed
+- **Command Palette Vault Icon Semantics**: Corrected icon mapping so Local Vault and Google Vault Sync entries use appropriate visual semantics. ([d9d3663])
+- **Pasted Key Vaulting Consistency**: Converted pasted private-key flow to controlled state handling and centralized private-key marker validation logic to keep save/validation behavior consistent. ([d9d3663])
+
 ## [2.15.1] - 2026-04-27
 
 ### Fixed
