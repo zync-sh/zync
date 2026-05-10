@@ -528,4 +528,86 @@ runTest('syncCredentialAssignments assigns selected hosts and unassigns deselect
   assert.deepEqual(synced[2].authRef, otherAuthRef);
 });
 
+runTest('syncCredentialAssignments matches legacy item-id refs safely without clearing unrelated undefined refs', () => {
+  const legacyAuthRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const incomingLegacyRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const unrelatedUndefinedRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-other',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const connections = [
+    {
+      id: 'a',
+      name: 'legacy-match',
+      host: 'prod',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      authRef: legacyAuthRef,
+    },
+    {
+      id: 'b',
+      name: 'unrelated-legacy',
+      host: 'api',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      authRef: unrelatedUndefinedRef,
+    },
+    {
+      id: 'c',
+      name: 'credential-match',
+      host: 'db',
+      username: 'postgres',
+      port: 22,
+      status: 'disconnected',
+      authRef: {
+        vaultId: 'vault-1',
+        credentialId: 'cred-2',
+        itemId: 'item-stale',
+        itemKind: 'ssh-password',
+        purpose: 'ssh-auth',
+      },
+    },
+  ];
+
+  const synced = syncCredentialAssignments(connections, ['a'], {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  });
+
+  assert.equal(synced[0].authRef?.vaultId, incomingLegacyRef.vaultId);
+  assert.equal(synced[0].authRef?.itemId, incomingLegacyRef.itemId);
+  assert.equal(synced[0].authRef?.itemKind, incomingLegacyRef.itemKind);
+  assert.equal(synced[0].authRef?.purpose, incomingLegacyRef.purpose);
+  assert.equal(synced[0].authRef?.credentialId, undefined);
+  assert.deepEqual(synced[1].authRef, unrelatedUndefinedRef);
+
+  const credentialSynced = syncCredentialAssignments(connections, ['c'], {
+    vaultId: 'vault-1',
+    credentialId: 'cred-2',
+    itemId: 'item-fresh',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  });
+  assert.deepEqual(credentialSynced[0].authRef, legacyAuthRef);
+  assert.deepEqual(credentialSynced[1].authRef, unrelatedUndefinedRef);
+  assert.equal(credentialSynced[2].authRef?.credentialId, 'cred-2');
+  assert.equal(credentialSynced[2].authRef?.itemId, 'item-fresh');
+});
+
 console.log('Connection domain tests passed.');

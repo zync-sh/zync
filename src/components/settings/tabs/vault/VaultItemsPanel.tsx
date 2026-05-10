@@ -41,6 +41,7 @@ export function VaultItemsPanel({
         <div className="flex items-center gap-2">
           {duplicateCount > 0 && (
             <button
+              type="button"
               onClick={onDeduplicate}
               disabled={isDeduplicating}
               className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 transition-colors disabled:opacity-50"
@@ -71,6 +72,7 @@ export function VaultItemsPanel({
           <div className="relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-app-muted/50 pointer-events-none" />
             <input
+              aria-label="Search vault items"
               type="text"
               placeholder="Search items…"
               value={itemSearch}
@@ -92,7 +94,7 @@ export function VaultItemsPanel({
                       {item.kind} · {item.logicalId.slice(0, 8)} · {item.id.slice(0, 8)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     {(item.kind === 'ssh-private-key' || item.kind === 'ssh-password' || item.kind === 'ssh-agent-key') && (
                       <Button
                         variant="ghost"
@@ -112,6 +114,7 @@ export function VaultItemsPanel({
                       Rotate
                     </Button>
                     <button
+                      type="button"
                       onClick={() => onDelete(item.id, item.label)}
                       className="focus:opacity-100 focus-visible:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-400/40 p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-red-400 hover:bg-red-400/10 transition-all"
                       title="Delete item"

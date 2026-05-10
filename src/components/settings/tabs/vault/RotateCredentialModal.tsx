@@ -63,10 +63,14 @@ export function RotateCredentialModal({
         ) : (
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1">
+              <label
+                htmlFor="vault-rotate-private-key"
+                className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1"
+              >
                 New Private Key
               </label>
               <textarea
+                id="vault-rotate-private-key"
                 value={secret}
                 onChange={(event) => onSecretChange(event.target.value)}
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
@@ -115,4 +119,3 @@ export function RotateCredentialModal({
     </Modal>
   );
 }
-

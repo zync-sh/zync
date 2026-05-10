@@ -26,6 +26,8 @@ static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::Pa
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
+pub(crate) static CONNECTIONS_MUTATION_LOCK: LazyLock<StdMutex<()>> =
+    LazyLock::new(|| StdMutex::new(()));
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -729,6 +731,9 @@ fn persist_relinked_vault_refs(
         return Ok(());
     }
 
+    let _connections_guard = CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     let data = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
     let mut saved_data: SavedData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
     let mut changed = false;
@@ -1266,6 +1271,9 @@ pub async fn connections_save(
     let file_path = data_dir.join("connections.json");
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
 
+    let _connections_guard = CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     std::fs::write(file_path, json).map_err(|e| e.to_string())?;
 
     Ok(())

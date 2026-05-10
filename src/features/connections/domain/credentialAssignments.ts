@@ -32,8 +32,16 @@ export const syncCredentialAssignments = (
 ): Connection[] => {
     const selectedIds = new Set(selectedConnectionIds);
     return connections.map((connection) => {
-        const usesCredential = connection.authRef?.credentialId === authRef.credentialId
-            || connection.authRef?.itemId === authRef.itemId;
+        const existingCredentialId = connection.authRef?.credentialId;
+        const targetCredentialId = authRef.credentialId;
+        const usesCredential =
+            (existingCredentialId !== undefined
+                && targetCredentialId !== undefined
+                && existingCredentialId === targetCredentialId)
+            || ((existingCredentialId === undefined || targetCredentialId === undefined)
+                && connection.authRef?.itemId !== undefined
+                && authRef.itemId !== undefined
+                && connection.authRef.itemId === authRef.itemId);
 
         if (selectedIds.has(connection.id)) {
             return {

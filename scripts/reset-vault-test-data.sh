@@ -70,7 +70,7 @@ resolve_data_dir() {
   local native_settings_path="$HOME/.config/Zync/User/settings.json"
   local data_path=""
   if [[ -f "$native_settings_path" ]]; then
-    data_path="$(python - <<'PY' "$native_settings_path"
+    data_path="$(python3 - <<'PY' "$native_settings_path"
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
@@ -182,7 +182,7 @@ if [[ "$MODE" == "hard-auth-reset" ]]; then
   if [[ -f "$CONNECTIONS_PATH" ]]; then
     # Intentionally clears both vault refs and direct auth fields so hosts
     # cannot silently keep connecting through an old PEM path or password.
-    python - <<'PY' "$CONNECTIONS_PATH"
+    python3 - <<'PY' "$CONNECTIONS_PATH"
 import json
 import sys
 from pathlib import Path

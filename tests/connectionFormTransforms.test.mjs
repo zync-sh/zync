@@ -131,4 +131,30 @@ runTest('buildConnectionTestPayload includes stable credential id for vault auth
   assert.equal(payload.auth_method.credential_id, 'cred-1');
 });
 
+runTest('buildConnectionTestPayload handles vault auth without credential_id', () => {
+  const formData = {
+    id: 'main',
+    name: 'main',
+    host: '192.168.0.10',
+    username: 'ec2-user',
+    port: 22,
+    authRef: {
+      vaultId: 'vault-1',
+      itemId: 'item-legacy',
+      itemKind: 'ssh-private-key',
+      purpose: 'ssh-auth',
+    },
+  };
+
+  const payload = buildConnectionTestPayload({
+    formData,
+    authMethod: 'vault',
+    connections: [],
+  });
+
+  assert.equal(payload.auth_method.type, 'VaultRef');
+  assert.equal(payload.auth_method.item_id, 'item-legacy');
+  assert.equal(payload.auth_method.credential_id, undefined);
+});
+
 console.log('Connection form transform tests passed.');

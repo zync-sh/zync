@@ -168,9 +168,11 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
     let original_json = std::fs::read_to_string(&connections_path).map_err(|e| {
         VaultError::InvalidData(format!("backup read failed ({connections_path:?}): {e}"))
     })?;
-    std::fs::write(&backup_path, &original_json).map_err(|e| {
-        VaultError::InvalidData(format!("backup write failed ({backup_path:?}): {e}"))
-    })?;
+    if !backup_path.exists() {
+        std::fs::write(&backup_path, &original_json).map_err(|e| {
+            VaultError::InvalidData(format!("backup write failed ({backup_path:?}): {e}"))
+        })?;
+    }
     if !legacy_backup_path.exists() {
         let _ = std::fs::write(&legacy_backup_path, &original_json);
     }

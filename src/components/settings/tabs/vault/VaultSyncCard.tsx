@@ -111,7 +111,7 @@ export function VaultSyncCard({
                 <Download size={13} />
                 Restore from Drive
               </Button>
-              {googleSync.lastSync && (
+              {googleSync.lastSync != null && (
                 <span className="text-[11px] text-[var(--color-app-muted)] ml-auto whitespace-nowrap">
                   Last sync: {new Date(googleSync.lastSync * 1000).toLocaleString()}
                 </span>
@@ -147,4 +147,3 @@ export function VaultSyncCard({
     </div>
   );
 }
-

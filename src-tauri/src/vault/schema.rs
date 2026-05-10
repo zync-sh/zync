@@ -16,3 +16,6 @@ pub const KEY_SLOTS: TableDefinition<&str, &[u8]> = TableDefinition::new("key_sl
 /// Encrypted vault records.
 /// Key: record UUID, Value: JSON StoredEnvelope bytes.
 pub const RECORDS: TableDefinition<&str, &[u8]> = TableDefinition::new("records");
+
+/// Logical credential id -> physical record id index.
+pub const LOGICAL_IDS: TableDefinition<&str, &str> = TableDefinition::new("logical_ids");

@@ -113,7 +113,12 @@ function Rewrite-ConnectionsJson {
         & $Transform $connection
     }
 
-    $json | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $ConnectionsFile -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        $ConnectionsFile,
+        ($json | ConvertTo-Json -Depth 100),
+        $utf8NoBom
+    )
     Write-Host $SuccessMessage
 }
 
@@ -193,15 +198,9 @@ switch ($Mode) {
         # cannot silently keep connecting through an old PEM path or password.
         Rewrite-ConnectionsJson -ConnectionsFile $connectionsPath -SuccessMessage 'Stripped authRef/privateKeyPath/password from live connections.json.' -Transform {
             param($connection)
-            if ($connection.PSObject.Properties.Match('authRef').Count -gt 0) {
-                $connection.authRef = $null
-            }
-            if ($connection.PSObject.Properties.Match('privateKeyPath').Count -gt 0) {
-                $connection.privateKeyPath = $null
-            }
-            if ($connection.PSObject.Properties.Match('password').Count -gt 0) {
-                $connection.password = $null
-            }
+            $connection.authRef = $null
+            $connection.privateKeyPath = $null
+            $connection.password = $null
         }
     }
 }

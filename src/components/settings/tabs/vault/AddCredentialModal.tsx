@@ -50,9 +50,13 @@ export function AddCredentialModal({
             <button
               key={candidate}
               type="button"
-              onClick={() => onKindChange(candidate)}
+              onClick={() => {
+                if (!isCreating) onKindChange(candidate);
+              }}
+              disabled={isCreating}
+              aria-disabled={isCreating}
               className={cn(
-                'rounded-md px-3 py-2 text-xs font-medium transition-colors',
+                'rounded-md px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                 kind === candidate
                   ? 'bg-app-accent text-white shadow-sm'
                   : 'text-app-muted hover:bg-app-surface hover:text-app-text'
@@ -83,10 +87,14 @@ export function AddCredentialModal({
         ) : (
           <div className="space-y-3">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1">
+              <label
+                htmlFor="vault-add-private-key"
+                className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1"
+              >
                 Private Key
               </label>
               <textarea
+                id="vault-add-private-key"
                 value={secret}
                 onChange={(event) => onSecretChange(event.target.value)}
                 placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
@@ -134,4 +142,3 @@ export function AddCredentialModal({
     </Modal>
   );
 }
-

@@ -379,16 +379,24 @@ pub fn repair_connection_refs(
     vault: &VaultService,
 ) -> Result<VaultBackfillResult, VaultError> {
     let path = data_dir.join("connections.json");
+    let _connections_guard = crate::commands::CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|e| VaultError::InvalidData(format!("lock connections file: {e}")))?;
     let mut saved = load_saved_connections(&path)?;
     let mut updated = 0u32;
     let mut relinked_item_ids = 0u32;
     let mut skipped_missing_items = 0u32;
     let mut changed = false;
+    let active_vault_id = vault.vault_id().ok_or(VaultError::Locked)?;
 
     for connection in &mut saved.connections {
         let Some(auth_ref) = connection.auth_ref.as_mut() else {
             continue;
         };
+        if auth_ref.vault_id != active_vault_id {
+            skipped_missing_items = skipped_missing_items.saturating_add(1);
+            continue;
+        }
 
         match vault.item_get(&auth_ref.item_id) {
             Ok(record) => {

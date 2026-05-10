@@ -17,6 +17,7 @@ pub enum VaultCryptoError {
     Argon2(argon2::Error),
     Aead,
     HkdfExpand,
+    InvalidHmacKeyLength,
     InvalidSaltLength,
 }
 
@@ -26,6 +27,7 @@ impl std::fmt::Display for VaultCryptoError {
             Self::Argon2(e) => write!(f, "KDF error: {e}"),
             Self::Aead => write!(f, "AEAD error: authentication failed or bad ciphertext"),
             Self::HkdfExpand => write!(f, "HKDF expand failed"),
+            Self::InvalidHmacKeyLength => write!(f, "HMAC key length is invalid"),
             Self::InvalidSaltLength => write!(f, "salt must be at least 8 bytes"),
         }
     }
@@ -143,7 +145,7 @@ pub fn derive_secret_fingerprint(
 ) -> Result<String, VaultCryptoError> {
     let fingerprint_key = derive_record_key(vek, b"zync:vault:fingerprint:v1")?;
     let mut mac = <SimpleHmac<Sha256> as HmacKeyInit>::new_from_slice(fingerprint_key.as_bytes())
-        .map_err(|_| VaultCryptoError::HkdfExpand)?;
+        .map_err(|_| VaultCryptoError::InvalidHmacKeyLength)?;
     mac.update(secret.as_bytes());
     let digest = mac.finalize().into_bytes();
     Ok(base64::engine::general_purpose::STANDARD.encode(digest))

@@ -4,14 +4,16 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use rand_core::{OsRng, RngCore};
 use redb::{Database, ReadTransaction, ReadableTable};
 use uuid::Uuid;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::vault::crypto::{
     decrypt_record, derive_kek, derive_record_key, derive_secret_fingerprint, encrypt_record,
     generate_salt, generate_vek, EncryptedEnvelope, KdfParams, SecretKey,
 };
 use crate::vault::error::VaultError;
-use crate::vault::schema::{KEY_SLOTS, RECORDS, SLOT_PASSPHRASE, SLOT_RECOVERY, VAULT_META};
+use crate::vault::schema::{
+    KEY_SLOTS, LOGICAL_IDS, RECORDS, SLOT_PASSPHRASE, SLOT_RECOVERY, VAULT_META,
+};
 use crate::vault::types::{PlaintextRecord, StoredEnvelope, VaultItemMeta, VaultMeta, VaultStatus};
 
 const CRYPTO_SUITE: &str = "xchacha20poly1305-argon2id-v1";
@@ -155,6 +157,7 @@ impl VaultService {
 
             // Pre-create records table so reads never hit TableDoesNotExist.
             write_txn.open_table(RECORDS)?;
+            write_txn.open_table(LOGICAL_IDS)?;
         }
         write_txn.commit()?;
 
@@ -198,15 +201,19 @@ impl VaultService {
 
         let slot_envelope = parse_envelope(&stored_slot)?;
         let slot_aad = slot_aad_string(&meta.vault_id, SLOT_PASSPHRASE);
-        let vek_bytes = decrypt_record(&kek, &slot_envelope, slot_aad.as_bytes())
-            .map_err(|_| VaultError::WrongPassphrase)?;
+        let vek_bytes = Zeroizing::new(
+            decrypt_record(&kek, &slot_envelope, slot_aad.as_bytes())
+                .map_err(|_| VaultError::WrongPassphrase)?,
+        );
 
-        let vek_arr: [u8; 32] = vek_bytes
+        let mut vek_arr: [u8; 32] = vek_bytes
+            .as_slice()
             .try_into()
             .map_err(|_| VaultError::InvalidData("VEK wrong length".into()))?;
 
         let vault_id = meta.vault_id.clone();
         self.vek = Some(SecretKey::from_bytes(vek_arr));
+        vek_arr.zeroize();
         self.meta = Some(meta);
 
         // Count existing records for the returned status
@@ -323,6 +330,8 @@ impl VaultService {
         {
             let mut records = write_txn.open_table(RECORDS)?;
             records.insert(id.as_str(), serde_json::to_vec(&stored)?.as_slice())?;
+            let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+            logical_ids.insert(Self::record_logical_id(&record).as_str(), id.as_str())?;
 
             let mut meta_table = write_txn.open_table(VAULT_META)?;
             let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
@@ -362,13 +371,31 @@ impl VaultService {
             return Err(VaultError::RecordNotFound(logical_id.to_string()));
         }
 
-        for record in self.item_list()? {
-            if Self::record_logical_id(&record) == logical_id {
-                return Ok(record);
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let read_txn = db.begin_read()?;
+        let logical_ids = match read_txn.open_table(LOGICAL_IDS) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return self
+                    .item_list()?
+                    .into_iter()
+                    .find(|record| Self::record_logical_id(record) == logical_id)
+                    .ok_or_else(|| VaultError::RecordNotFound(logical_id.to_string()));
             }
-        }
+            Err(error) => return Err(VaultError::from(error)),
+        };
 
-        Err(VaultError::RecordNotFound(logical_id.to_string()))
+        let record_id = logical_ids
+            .get(logical_id)?
+            .ok_or_else(|| VaultError::RecordNotFound(logical_id.to_string()))?;
+        let record_id = record_id.value().trim().to_string();
+        if record_id.is_empty() {
+            return Err(VaultError::RecordNotFound(logical_id.to_string()));
+        }
+        drop(logical_ids);
+        drop(read_txn);
+
+        self.item_get(&record_id)
     }
 
     pub fn item_update(
@@ -417,6 +444,8 @@ impl VaultService {
         {
             let mut records = write_txn.open_table(RECORDS)?;
             records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
+            let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+            logical_ids.insert(Self::record_logical_id(&record).as_str(), item_id)?;
 
             let mut meta_table = write_txn.open_table(VAULT_META)?;
             let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
@@ -459,6 +488,8 @@ impl VaultService {
         if self.vek.is_none() {
             return Err(VaultError::Locked);
         }
+        let existing = self.item_get(item_id)?;
+        let logical_id = Self::record_logical_id(&existing);
 
         let write_txn = db.begin_write()?;
         {
@@ -474,6 +505,8 @@ impl VaultService {
             stored.deleted = true;
             stored.revision += 1;
             records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
+            let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+            let _ = logical_ids.remove(logical_id.as_str());
 
             let mut meta_table = write_txn.open_table(VAULT_META)?;
             let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
@@ -559,10 +592,13 @@ impl VaultService {
 
         let slot_envelope = parse_envelope(&stored_slot)?;
         let slot_aad = slot_aad_string(&meta.vault_id, SLOT_RECOVERY);
-        let vek_bytes = decrypt_record(&kek, &slot_envelope, slot_aad.as_bytes())
-            .map_err(|_| VaultError::WrongPassphrase)?;
+        let vek_bytes = Zeroizing::new(
+            decrypt_record(&kek, &slot_envelope, slot_aad.as_bytes())
+                .map_err(|_| VaultError::WrongPassphrase)?,
+        );
 
         let mut vek_arr: [u8; 32] = vek_bytes
+            .as_slice()
             .try_into()
             .map_err(|_| VaultError::InvalidData("VEK wrong length".into()))?;
 
