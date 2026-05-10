@@ -760,7 +760,7 @@ fn persist_relinked_vault_refs(
 
     if changed {
         let json = serde_json::to_string_pretty(&saved_data).map_err(|e| e.to_string())?;
-        std::fs::write(file_path, json).map_err(|e| e.to_string())?;
+        write_atomic_file(&file_path, &json)?;
     }
 
     Ok(())
@@ -804,13 +804,11 @@ pub async fn ssh_connect(
 
 #[tauri::command]
 pub async fn ssh_test_connection(
-    app: AppHandle,
     mut config: ConnectionConfig,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<String, String> {
-    let relinked = resolve_vault_refs(&mut config, &vault).await?;
-    persist_relinked_vault_refs(&app, &relinked)?;
+    let _relinked = resolve_vault_refs(&mut config, &vault).await?;
     match state
         .ssh_manager
         .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
@@ -956,6 +954,9 @@ pub async fn ssh_migrate_all_keys(app_handle: tauri::AppHandle) -> Result<usize,
         return Ok(0);
     }
 
+    let _connections_guard = CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     let data = std::fs::read_to_string(&connections_path).map_err(|e| e.to_string())?;
     let mut saved_data: crate::types::SavedData =
         serde_json::from_str(&data).map_err(|e| e.to_string())?;
@@ -1103,22 +1104,27 @@ pub async fn ssh_disconnect_vault_backed(
             .collect::<Vec<_>>()
     };
 
+    let mut errors = Vec::new();
     for id in &ids {
-        state
-            .pty_manager
-            .close_by_connection(id)
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Err(error) = state.pty_manager.close_by_connection(id).await {
+            errors.push(format!("PTY close failed for {id}: {error}"));
+        }
     }
 
-    stop_tunnels_for_connections(&app, &state, &ids).await?;
+    if let Err(error) = stop_tunnels_for_connections(&app, &state, &ids).await {
+        errors.push(format!("Tunnel stop failed: {error}"));
+    }
 
     let mut connections = state.connections.lock().await;
     for id in &ids {
         connections.remove(id);
     }
 
-    Ok(ids)
+    if errors.is_empty() {
+        Ok(ids)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 async fn stop_tunnels_for_connections(
@@ -1274,7 +1280,7 @@ pub async fn connections_save(
     let _connections_guard = CONNECTIONS_MUTATION_LOCK
         .lock()
         .map_err(|e| e.to_string())?;
-    std::fs::write(file_path, json).map_err(|e| e.to_string())?;
+    write_atomic_file(&file_path, &json)?;
 
     Ok(())
 }
