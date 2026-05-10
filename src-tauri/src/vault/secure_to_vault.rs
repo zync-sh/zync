@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use base64::Engine;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::types::{CredentialItemKind, CredentialPurpose, CredentialRef, SavedData};
 use crate::vault::error::VaultError;
@@ -11,43 +9,44 @@ use crate::vault::store::VaultService;
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 
-/// One connection that can be migrated.
+/// One connection whose stored auth can be secured into the vault.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MigrationCandidate {
+pub struct SecureToVaultCandidate {
     pub connection_id: String,
     pub connection_name: String,
     pub host: String,
-    pub migration_kind: MigrationKind,
+    pub secure_kind: SecureKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum MigrationKind {
+pub enum SecureKind {
     SshPassword,
     SshPrivateKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MigrationPreview {
-    pub candidates: Vec<MigrationCandidate>,
-    pub already_migrated: u32,
-    /// Key files referenced in connections but not found on disk — cannot migrate.
+pub struct SecureToVaultPreview {
+    pub candidates: Vec<SecureToVaultCandidate>,
+    pub already_secured: u32,
+    /// Key files referenced in connections but not found on disk — cannot secure.
     pub skipped_no_file: u32,
 }
 
-/// Read connections.json and return what would be migrated. Does not require vault unlock.
-pub fn preview(data_dir: &Path) -> Result<MigrationPreview, VaultError> {
+/// Read connections.json and return what can be secured into the vault.
+/// Does not require vault unlock.
+pub fn preview(data_dir: &Path) -> Result<SecureToVaultPreview, VaultError> {
     let saved = load_connections(data_dir)?;
 
     let mut candidates = Vec::new();
-    let mut already_migrated = 0u32;
+    let mut already_secured = 0u32;
     let mut skipped_no_file = 0u32;
 
     for conn in &saved.connections {
         if conn.auth_ref.is_some() {
-            already_migrated += 1;
+            already_secured += 1;
             continue;
         }
         if let Some(key_path) = &conn.private_key_path {
@@ -58,50 +57,51 @@ pub fn preview(data_dir: &Path) -> Result<MigrationPreview, VaultError> {
                 skipped_no_file += 1;
                 continue;
             }
-            candidates.push(MigrationCandidate {
+            candidates.push(SecureToVaultCandidate {
                 connection_id: conn.id.clone(),
                 connection_name: conn.name.clone(),
                 host: conn.host.clone(),
-                migration_kind: MigrationKind::SshPrivateKey,
+                secure_kind: SecureKind::SshPrivateKey,
             });
             continue;
         }
         if conn.password.is_some() {
-            candidates.push(MigrationCandidate {
+            candidates.push(SecureToVaultCandidate {
                 connection_id: conn.id.clone(),
                 connection_name: conn.name.clone(),
                 host: conn.host.clone(),
-                migration_kind: MigrationKind::SshPassword,
+                secure_kind: SecureKind::SshPassword,
             });
         }
     }
 
-    Ok(MigrationPreview {
+    Ok(SecureToVaultPreview {
         candidates,
-        already_migrated,
+        already_secured,
         skipped_no_file,
     })
 }
 
-// ── Migrate ───────────────────────────────────────────────────────────────────
+// ── Secure ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MigrationResult {
-    pub migrated: u32,
+pub struct SecureToVaultResult {
+    pub secured: u32,
     pub skipped: u32,
     pub already_done: u32,
     pub backup_path: Option<String>,
 }
 
-/// Migrate all migratable connections to vault items and rewrite connections.json.
+/// Secure all eligible connections into vault items and rewrite connections.json.
 ///
 /// Handles password auth (ssh-password) and key file auth (ssh-private-key).
 /// Key files are read and stored in vault; original files are left untouched.
-/// A backup is written to `connections.json.pre-vault-migration` before any change.
-pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult, VaultError> {
+/// A backup is written to `connections.json.pre-secure-to-vault` before any change.
+pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResult, VaultError> {
     let connections_path = data_dir.join("connections.json");
-    let backup_path = data_dir.join("connections.json.pre-vault-migration");
+    let backup_path = data_dir.join("connections.json.pre-secure-to-vault");
+    let legacy_backup_path = data_dir.join("connections.json.pre-vault-migration");
 
     let mut saved = load_connections(data_dir)?;
 
@@ -130,7 +130,7 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
                 }
             };
             let label = format!("{} key ({}@{})", conn.name, conn.username, conn.host);
-            prepared.push(PreparedMigration {
+            prepared.push(PreparedSecureItem {
                 index,
                 label,
                 kind: CredentialItemKind::SshPrivateKey,
@@ -148,7 +148,7 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
             continue;
         };
         let label = format!("{} ({}@{})", conn.name, conn.username, conn.host);
-        prepared.push(PreparedMigration {
+        prepared.push(PreparedSecureItem {
             index,
             label,
             kind: CredentialItemKind::SshPassword,
@@ -157,8 +157,8 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
     }
 
     if prepared.is_empty() {
-        return Ok(MigrationResult {
-            migrated: 0,
+        return Ok(SecureToVaultResult {
+            secured: 0,
             skipped,
             already_done,
             backup_path: None,
@@ -171,45 +171,58 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
     std::fs::write(&backup_path, &original_json).map_err(|e| {
         VaultError::InvalidData(format!("backup write failed ({backup_path:?}): {e}"))
     })?;
+    if !legacy_backup_path.exists() {
+        let _ = std::fs::write(&legacy_backup_path, &original_json);
+    }
 
     let existing_records = vault.item_list()?;
-    let mut existing_by_fingerprint: HashMap<(String, String, String), (String, u64)> = HashMap::new();
+    let mut existing_by_fingerprint: HashMap<(String, String, String), (String, String, u64)> =
+        HashMap::new();
     for record in existing_records {
-        let key = (
-            record.kind.clone(),
-            record.label.clone(),
-            secret_fingerprint(&record.secret),
-        );
+        let fingerprint = vault.secret_fingerprint(&record.secret)?;
+        let key = (record.kind.clone(), record.label.clone(), fingerprint);
+        let credential_id = VaultService::record_logical_id(&record);
         existing_by_fingerprint
             .entry(key)
             .and_modify(|current| {
-                // Prefer the newest duplicate when earlier failed/stale migrations left
-                // multiple records with the same generated migration label and secret.
-                if record.created_at >= current.1 {
-                    *current = (record.id.clone(), record.created_at);
+                // Prefer the newest duplicate when earlier failed/stale secure-to-vault runs left
+                // multiple records with the same generated label and secret.
+                if record.created_at >= current.2 {
+                    *current = (record.id.clone(), credential_id.clone(), record.created_at);
                 }
             })
-            .or_insert((record.id.clone(), record.created_at));
+            .or_insert((record.id.clone(), credential_id, record.created_at));
     }
 
     let mut linked = Vec::new();
     let mut created_for_cleanup = Vec::new();
-    for migration in &prepared {
-        let kind = migration.kind.as_str();
-        let lookup_key = (
-            kind.to_string(),
-            migration.label.clone(),
-            secret_fingerprint(&migration.secret),
-        );
-        if let Some((existing_id, _)) = existing_by_fingerprint.get(&lookup_key) {
-            linked.push((migration.index, existing_id.clone(), migration.kind.clone()));
+    for secure_item in &prepared {
+        let kind = secure_item.kind.as_str();
+        let fingerprint = vault.secret_fingerprint(&secure_item.secret)?;
+        let lookup_key = (kind.to_string(), secure_item.label.clone(), fingerprint);
+        if let Some((existing_id, credential_id, _)) = existing_by_fingerprint.get(&lookup_key) {
+            linked.push((
+                secure_item.index,
+                existing_id.clone(),
+                credential_id.clone(),
+                secure_item.kind.clone(),
+            ));
             continue;
         }
 
-        match vault.item_create(&migration.label, kind, &migration.secret, None) {
+        match vault.item_create(&secure_item.label, kind, &secure_item.secret, None) {
             Ok(record) => {
-                let linked_record = (migration.index, record.id.clone(), migration.kind.clone());
-                existing_by_fingerprint.insert(lookup_key, (record.id.clone(), record.created_at));
+                let credential_id = VaultService::record_logical_id(&record);
+                let linked_record = (
+                    secure_item.index,
+                    record.id.clone(),
+                    credential_id.clone(),
+                    secure_item.kind.clone(),
+                );
+                existing_by_fingerprint.insert(
+                    lookup_key,
+                    (record.id.clone(), credential_id, record.created_at),
+                );
                 created_for_cleanup.push(linked_record.clone());
                 linked.push(linked_record);
             }
@@ -220,10 +233,11 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
         }
     }
 
-    for (index, record_id, kind) in &linked {
+    for (index, record_id, credential_id, kind) in &linked {
         let conn = &mut saved.connections[*index];
         conn.auth_ref = Some(CredentialRef {
             vault_id: vault_id.clone(),
+            credential_id: Some(credential_id.clone()),
             item_id: record_id.clone(),
             item_kind: kind.clone(),
             purpose: CredentialPurpose::SshAuth,
@@ -240,37 +254,35 @@ pub fn migrate(data_dir: &Path, vault: &VaultService) -> Result<MigrationResult,
         }
     }
 
-    let migrated = linked.len() as u32;
+    let secured = linked.len() as u32;
     let updated_json = serde_json::to_string_pretty(&saved).map_err(VaultError::Serde)?;
     if let Err(e) = atomic_write(&connections_path, &updated_json) {
         cleanup_created_items(vault, &created_for_cleanup);
         return Err(e);
     }
 
-    Ok(MigrationResult {
-        migrated,
+    Ok(SecureToVaultResult {
+        secured,
         skipped,
         already_done,
         backup_path: Some(backup_path.to_string_lossy().into_owned()),
     })
 }
 
-fn secret_fingerprint(secret: &str) -> String {
-    let digest = Sha256::digest(secret.as_bytes());
-    base64::engine::general_purpose::STANDARD.encode(digest)
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-struct PreparedMigration {
+struct PreparedSecureItem {
     index: usize,
     label: String,
     kind: CredentialItemKind,
     secret: String,
 }
 
-fn cleanup_created_items(vault: &VaultService, created: &[(usize, String, CredentialItemKind)]) {
-    for (_, item_id, _) in created {
+fn cleanup_created_items(
+    vault: &VaultService,
+    created: &[(usize, String, String, CredentialItemKind)],
+) {
+    for (_, item_id, _, _) in created {
         let _ = vault.item_delete(item_id);
     }
 }

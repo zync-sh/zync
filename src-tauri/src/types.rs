@@ -25,6 +25,8 @@ pub enum AuthMethod {
     /// The backend resolves this to Password or PrivateKeyData before authenticating.
     VaultRef {
         item_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credential_id: Option<String>,
     },
     /// Internal only — constructed by the backend after vault resolution.
     /// Never accepted from IPC input; VaultRef is the on-wire form.
@@ -48,6 +50,10 @@ pub struct ConnectionResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CredentialRef {
     pub vault_id: String,
+    /// Stable logical credential identity. When present, this survives vault
+    /// item recreation/import and `item_id` is only the current fast-path item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
     pub item_id: String,
     pub item_kind: CredentialItemKind,
     pub purpose: CredentialPurpose,
@@ -138,4 +144,24 @@ pub struct SavedTunnel {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SavedTunnelsData {
     pub tunnels: Vec<SavedTunnel>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CredentialRef;
+
+    #[test]
+    fn credential_ref_deserializes_legacy_without_credential_id() {
+        let raw = r#"{
+            "vaultId": "vault-1",
+            "itemId": "item-1",
+            "itemKind": "ssh-private-key",
+            "purpose": "ssh-auth"
+        }"#;
+
+        let parsed: CredentialRef = serde_json::from_str(raw).expect("legacy authRef");
+
+        assert_eq!(parsed.credential_id, None);
+        assert_eq!(parsed.item_id, "item-1");
+    }
 }

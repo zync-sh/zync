@@ -45,8 +45,9 @@ log = "0.4"
 # Vault crypto (Phase 0)
 argon2 = { version = "0.5", features = ["zeroize"] }
 chacha20poly1305 = "0.10"
-hkdf = "0.12"
-sha2 = "0.10"
+hkdf = "0.13"
+sha2 = "0.11"
+hmac = "0.13"
 zeroize = { version = "1.8", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
 rand_core = { version = "0.6", features = ["getrandom"] }

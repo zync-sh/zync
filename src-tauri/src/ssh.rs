@@ -370,6 +370,14 @@ impl SshManager {
     ) -> Result<()> {
         let auth_res = match &config.auth_method {
             AuthMethod::Password { password } => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using PASSWORD auth for {}@{} (length={})",
+                    config.id,
+                    config.username,
+                    config.host,
+                    password.len()
+                );
                 session
                     .authenticate_password(&config.username, password.clone())
                     .await?
@@ -384,6 +392,15 @@ impl SshManager {
                         expanded = expanded.replacen("~", &home.to_string_lossy(), 1);
                     }
                 }
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using PRIVATE KEY PATH auth for {}@{} path='{}' passphrase={}",
+                    config.id,
+                    config.username,
+                    config.host,
+                    expanded,
+                    if passphrase.is_some() { "yes" } else { "no" }
+                );
                 let key_data = tokio::fs::read_to_string(&expanded)
                     .await
                     .map_err(|e| anyhow!("Failed to read private key file: {}", e))?;
@@ -400,6 +417,15 @@ impl SshManager {
                 key_data,
                 passphrase,
             } => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using IN-MEMORY PRIVATE KEY auth for {}@{} key_bytes={} passphrase={}",
+                    config.id,
+                    config.username,
+                    config.host,
+                    key_data.len(),
+                    if passphrase.is_some() { "yes" } else { "no" }
+                );
                 Self::auth_with_key_data(
                     session,
                     &config.username,
@@ -409,7 +435,7 @@ impl SshManager {
                 )
                 .await?
             }
-            AuthMethod::VaultRef { item_id } => {
+            AuthMethod::VaultRef { item_id, .. } => {
                 return Err(anyhow!(
                     "VaultRef({}) was not resolved before authentication — call resolve_vault_refs first",
                     item_id

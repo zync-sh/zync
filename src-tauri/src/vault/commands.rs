@@ -1,13 +1,12 @@
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tauri::State;
 use tokio::sync::Mutex;
 use zeroize::Zeroize;
-use base64::Engine;
 
+use crate::types::SavedData;
 use crate::vault::error::VaultError;
-use crate::vault::migration::{MigrationPreview, MigrationResult};
+use crate::vault::secure_to_vault::{SecureToVaultPreview, SecureToVaultResult};
 use crate::vault::store::VaultService;
 use crate::vault::types::{PlaintextRecord, VaultItemMeta, VaultStatus};
 
@@ -91,6 +90,7 @@ pub struct ItemCreateArgs {
     pub kind: String,
     pub secret: SecretString,
     pub notes: Option<String>,
+    pub credential_id: Option<String>,
 }
 
 impl Drop for ItemCreateArgs {
@@ -106,25 +106,40 @@ pub async fn vault_item_create(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemCreateArgs,
 ) -> VaultResult<VaultItemMeta> {
-    let record = vault
-        .lock()
-        .await
-        .item_create(
-            &args.label,
-            &args.kind,
-            args.secret.expose_secret(),
-            args.notes.as_deref(),
-        )
-        .map_err(VaultCommandError::from)?;
-    Ok(item_meta_from_plaintext(record))
+    let vault = vault.lock().await;
+    let record = if let Some(credential_id) = args.credential_id.as_deref() {
+        vault
+            .item_create_with_logical_id(
+                &args.label,
+                &args.kind,
+                args.secret.expose_secret(),
+                args.notes.as_deref(),
+                Some(credential_id),
+            )
+            .map_err(VaultCommandError::from)?
+    } else {
+        vault
+            .item_create(
+                &args.label,
+                &args.kind,
+                args.secret.expose_secret(),
+                args.notes.as_deref(),
+            )
+            .map_err(VaultCommandError::from)?
+    };
+    vault.item_meta(&record).map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn vault_item_list(
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<Vec<VaultItemMeta>> {
-    let items = vault.lock().await.item_list().map_err(VaultCommandError::from)?;
-    Ok(items.into_iter().map(item_meta_from_plaintext).collect())
+    let vault = vault.lock().await;
+    let items = vault.item_list().map_err(VaultCommandError::from)?;
+    items
+        .into_iter()
+        .map(|record| vault.item_meta(&record).map_err(Into::into))
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -144,23 +159,6 @@ pub async fn vault_item_get(
         .map_err(Into::into)
 }
 
-fn item_meta_from_plaintext(record: PlaintextRecord) -> VaultItemMeta {
-    VaultItemMeta {
-        id: record.id.clone(),
-        kind: record.kind.clone(),
-        label: record.label.clone(),
-        secret_fingerprint: secret_fingerprint(&record.secret),
-        revision: record.revision,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-    }
-}
-
-fn secret_fingerprint(secret: &str) -> String {
-    let digest = Sha256::digest(secret.as_bytes());
-    base64::engine::general_purpose::STANDARD.encode(digest)
-}
-
 #[derive(Deserialize)]
 pub struct ItemDeleteArgs {
     pub item_id: String,
@@ -176,6 +174,41 @@ pub async fn vault_item_delete(
         .await
         .item_delete(&args.item_id)
         .map_err(Into::into)
+}
+
+#[derive(Deserialize)]
+pub struct ItemUpdateArgs {
+    pub item_id: String,
+    pub label: String,
+    pub kind: String,
+    pub secret: SecretString,
+    pub notes: Option<String>,
+}
+
+impl Drop for ItemUpdateArgs {
+    fn drop(&mut self) {
+        if let Some(notes) = &mut self.notes {
+            notes.zeroize();
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn vault_item_update(
+    vault: State<'_, Mutex<VaultService>>,
+    args: ItemUpdateArgs,
+) -> VaultResult<VaultItemMeta> {
+    let vault = vault.lock().await;
+    let record = vault
+        .item_update(
+            &args.item_id,
+            &args.label,
+            &args.kind,
+            args.secret.expose_secret(),
+            args.notes.as_deref(),
+        )
+        .map_err(VaultCommandError::from)?;
+    vault.item_meta(&record).map_err(Into::into)
 }
 
 // ── Recovery key commands ─────────────────────────────────────────────────────
@@ -251,22 +284,42 @@ pub async fn vault_import(
         .map_err(Into::into)
 }
 
-// ── Migration commands ────────────────────────────────────────────────────────
+// ── Secure-to-vault commands ──────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn vault_migration_preview(app: tauri::AppHandle) -> VaultResult<MigrationPreview> {
+pub async fn vault_secure_to_vault_preview(
+    app: tauri::AppHandle,
+) -> VaultResult<SecureToVaultPreview> {
     let data_dir = crate::commands::get_data_dir(&app);
-    crate::vault::migration::preview(&data_dir).map_err(Into::into)
+    crate::vault::secure_to_vault::preview(&data_dir).map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn vault_migrate_existing_secrets(
+pub async fn vault_secure_to_vault(
     app: tauri::AppHandle,
     vault: State<'_, Mutex<VaultService>>,
-) -> VaultResult<MigrationResult> {
+) -> VaultResult<SecureToVaultResult> {
     let data_dir = crate::commands::get_data_dir(&app);
     let guard = vault.lock().await;
-    crate::vault::migration::migrate(&data_dir, &guard).map_err(Into::into)
+    crate::vault::secure_to_vault::secure(&data_dir, &guard).map_err(Into::into)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultBackfillResult {
+    pub updated: u32,
+    pub relinked_item_ids: u32,
+    pub skipped_missing_items: u32,
+}
+
+#[tauri::command]
+pub async fn vault_backfill_connection_refs(
+    app: tauri::AppHandle,
+    vault: State<'_, Mutex<VaultService>>,
+) -> VaultResult<VaultBackfillResult> {
+    let data_dir = crate::commands::get_data_dir(&app);
+    let guard = vault.lock().await;
+    repair_connection_refs(&data_dir, &guard).map_err(Into::into)
 }
 
 fn validate_export_path(path: &str) -> VaultResult<std::path::PathBuf> {
@@ -287,8 +340,95 @@ fn validate_export_path(path: &str) -> VaultResult<std::path::PathBuf> {
 }
 
 fn validate_import_path(path: &str) -> VaultResult<std::path::PathBuf> {
-    std::fs::canonicalize(path).map_err(|e| VaultCommandError {
+    let path_buf = std::fs::canonicalize(path).map_err(|e| VaultCommandError {
         code: "invalid_path".into(),
         message: format!("Import file does not exist or is not accessible: {e}"),
+    })?;
+    if !path_buf.is_file() {
+        return Err(VaultCommandError {
+            code: "invalid_path".into(),
+            message: format!(
+                "Import file does not exist or is not accessible: {}",
+                path_buf.display()
+            ),
+        });
+    }
+    Ok(path_buf)
+}
+
+fn load_saved_connections(path: &std::path::Path) -> Result<SavedData, VaultError> {
+    if !path.exists() {
+        return Ok(SavedData {
+            connections: vec![],
+            folders: vec![],
+        });
+    }
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| VaultError::InvalidData(format!("read connections file: {e}")))?;
+    serde_json::from_str(&raw).map_err(VaultError::Serde)
+}
+
+fn save_saved_connections(path: &std::path::Path, saved: &SavedData) -> Result<(), VaultError> {
+    let json = serde_json::to_string_pretty(saved).map_err(VaultError::Serde)?;
+    std::fs::write(path, json)
+        .map_err(|e| VaultError::InvalidData(format!("write connections file: {e}")))
+}
+
+pub fn repair_connection_refs(
+    data_dir: &std::path::Path,
+    vault: &VaultService,
+) -> Result<VaultBackfillResult, VaultError> {
+    let path = data_dir.join("connections.json");
+    let mut saved = load_saved_connections(&path)?;
+    let mut updated = 0u32;
+    let mut relinked_item_ids = 0u32;
+    let mut skipped_missing_items = 0u32;
+    let mut changed = false;
+
+    for connection in &mut saved.connections {
+        let Some(auth_ref) = connection.auth_ref.as_mut() else {
+            continue;
+        };
+
+        match vault.item_get(&auth_ref.item_id) {
+            Ok(record) => {
+                let logical_id = VaultService::record_logical_id(&record);
+                if auth_ref.credential_id.as_deref() != Some(logical_id.as_str()) {
+                    auth_ref.credential_id = Some(logical_id);
+                    updated = updated.saturating_add(1);
+                    changed = true;
+                }
+            }
+            Err(VaultError::RecordNotFound(_)) => {
+                let Some(credential_id) = auth_ref.credential_id.as_deref() else {
+                    skipped_missing_items = skipped_missing_items.saturating_add(1);
+                    continue;
+                };
+                match vault.item_get_by_logical_id(credential_id) {
+                    Ok(record) => {
+                        if auth_ref.item_id != record.id {
+                            auth_ref.item_id = record.id.clone();
+                            relinked_item_ids = relinked_item_ids.saturating_add(1);
+                            changed = true;
+                        }
+                    }
+                    Err(VaultError::RecordNotFound(_)) => {
+                        skipped_missing_items = skipped_missing_items.saturating_add(1);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    if changed {
+        save_saved_connections(&path, &saved)?;
+    }
+
+    Ok(VaultBackfillResult {
+        updated,
+        relinked_item_ids,
+        skipped_missing_items,
     })
 }
