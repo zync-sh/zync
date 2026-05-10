@@ -7,12 +7,12 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::vault::crypto::{
-    decrypt_record, derive_kek, derive_record_key, encrypt_record, generate_salt, generate_vek,
-    EncryptedEnvelope, KdfParams, SecretKey,
+    decrypt_record, derive_kek, derive_record_key, derive_secret_fingerprint, encrypt_record,
+    generate_salt, generate_vek, EncryptedEnvelope, KdfParams, SecretKey,
 };
 use crate::vault::error::VaultError;
 use crate::vault::schema::{KEY_SLOTS, RECORDS, SLOT_PASSPHRASE, SLOT_RECOVERY, VAULT_META};
-use crate::vault::types::{PlaintextRecord, StoredEnvelope, VaultMeta, VaultStatus};
+use crate::vault::types::{PlaintextRecord, StoredEnvelope, VaultItemMeta, VaultMeta, VaultStatus};
 
 const CRYPTO_SUITE: &str = "xchacha20poly1305-argon2id-v1";
 const AAD_VERSION: u32 = 1;
@@ -231,6 +231,33 @@ impl VaultService {
         self.meta.as_ref().map(|m| m.vault_id.clone())
     }
 
+    pub fn secret_fingerprint(&self, secret: &str) -> Result<String, VaultError> {
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        derive_secret_fingerprint(vek, secret).map_err(VaultError::from)
+    }
+
+    pub fn item_meta(&self, record: &PlaintextRecord) -> Result<VaultItemMeta, VaultError> {
+        Ok(VaultItemMeta {
+            id: record.id.clone(),
+            logical_id: Self::record_logical_id(record),
+            kind: record.kind.clone(),
+            label: record.label.clone(),
+            secret_fingerprint: self.secret_fingerprint(&record.secret)?,
+            revision: record.revision,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        })
+    }
+
+    pub fn record_logical_id(record: &PlaintextRecord) -> String {
+        record
+            .logical_id
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| record.id.clone())
+    }
+
     // ── Item CRUD ─────────────────────────────────────────────────────────────
 
     pub fn item_create(
@@ -240,16 +267,33 @@ impl VaultService {
         secret: &str,
         notes: Option<&str>,
     ) -> Result<PlaintextRecord, VaultError> {
+        self.item_create_with_logical_id(label, kind, secret, notes, None)
+    }
+
+    pub fn item_create_with_logical_id(
+        &self,
+        label: &str,
+        kind: &str,
+        secret: &str,
+        notes: Option<&str>,
+        logical_id: Option<&str>,
+    ) -> Result<PlaintextRecord, VaultError> {
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
 
         let id = Uuid::new_v4().to_string();
+        let logical_id = logical_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = Self::now_secs();
         let revision = 1u64;
 
         let record = PlaintextRecord {
             id: id.clone(),
+            logical_id: Some(logical_id),
             kind: kind.to_string(),
             label: label.to_string(),
             secret: secret.to_string(),
@@ -310,6 +354,80 @@ impl VaultService {
         }
 
         decrypt_stored(vek, &meta.vault_id, &stored)
+    }
+
+    pub fn item_get_by_logical_id(&self, logical_id: &str) -> Result<PlaintextRecord, VaultError> {
+        let logical_id = logical_id.trim();
+        if logical_id.is_empty() {
+            return Err(VaultError::RecordNotFound(logical_id.to_string()));
+        }
+
+        for record in self.item_list()? {
+            if Self::record_logical_id(&record) == logical_id {
+                return Ok(record);
+            }
+        }
+
+        Err(VaultError::RecordNotFound(logical_id.to_string()))
+    }
+
+    pub fn item_update(
+        &self,
+        item_id: &str,
+        label: &str,
+        kind: &str,
+        secret: &str,
+        notes: Option<&str>,
+    ) -> Result<PlaintextRecord, VaultError> {
+        let existing = self.item_get(item_id)?;
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+
+        let revision = existing.revision.saturating_add(1);
+        let now = Self::now_secs();
+        let record = PlaintextRecord {
+            id: existing.id.clone(),
+            logical_id: Some(Self::record_logical_id(&existing)),
+            kind: kind.to_string(),
+            label: label.to_string(),
+            secret: secret.to_string(),
+            notes: notes.map(str::to_string),
+            revision,
+            created_at: existing.created_at,
+            updated_at: now,
+        };
+
+        let plaintext = serde_json::to_vec(&record)?;
+        let record_key = derive_record_key(vek, record_info_bytes(item_id, revision).as_bytes())?;
+        let aad = record_aad_string(&meta.vault_id, item_id, revision);
+        let envelope = encrypt_record(&record_key, &plaintext, aad.as_bytes())?;
+        let stored = StoredEnvelope {
+            id: item_id.to_string(),
+            kind: kind.to_string(),
+            revision,
+            deleted: false,
+            crypto_suite: CRYPTO_SUITE.into(),
+            aad_version: AAD_VERSION,
+            nonce: STANDARD.encode(envelope.nonce),
+            ciphertext: STANDARD.encode(&envelope.ciphertext),
+        };
+
+        let write_txn = db.begin_write()?;
+        {
+            let mut records = write_txn.open_table(RECORDS)?;
+            records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
+
+            let mut meta_table = write_txn.open_table(VAULT_META)?;
+            let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
+            let mut db_meta: VaultMeta = serde_json::from_slice(meta_bytes.value())?;
+            db_meta.updated_at = now;
+            drop(meta_bytes);
+            meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        Ok(record)
     }
 
     pub fn item_list(&self) -> Result<Vec<PlaintextRecord>, VaultError> {

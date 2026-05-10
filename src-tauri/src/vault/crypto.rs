@@ -1,8 +1,10 @@
 use argon2::{Algorithm, Argon2, Params, Version};
+use base64::Engine;
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, Payload},
+    aead::{Aead, KeyInit as AeadKeyInit, Payload},
     Key, XChaCha20Poly1305, XNonce,
 };
+use hmac::{digest::KeyInit as HmacKeyInit, Mac, SimpleHmac};
 use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
@@ -132,6 +134,19 @@ pub fn derive_record_key(vek: &SecretKey, info: &[u8]) -> Result<SecretKey, Vaul
     hk.expand(info, key.as_mut_bytes())
         .map_err(|_| VaultCryptoError::HkdfExpand)?;
     Ok(key)
+}
+
+/// Derive a stable keyed fingerprint for equality-only comparisons.
+pub fn derive_secret_fingerprint(
+    vek: &SecretKey,
+    secret: &str,
+) -> Result<String, VaultCryptoError> {
+    let fingerprint_key = derive_record_key(vek, b"zync:vault:fingerprint:v1")?;
+    let mut mac = <SimpleHmac<Sha256> as HmacKeyInit>::new_from_slice(fingerprint_key.as_bytes())
+        .map_err(|_| VaultCryptoError::HkdfExpand)?;
+    mac.update(secret.as_bytes());
+    let digest = mac.finalize().into_bytes();
+    Ok(base64::engine::general_purpose::STANDARD.encode(digest))
 }
 
 /// Encrypt `plaintext` with XChaCha20-Poly1305 using a random nonce.
@@ -366,6 +381,25 @@ mod tests {
             "f0fdb9b785c52b0f84b577f7a58bc57b7e82ae7ce49d3b5b7314b7e604b87cd3976944f774",
             "AEAD known-answer vector changed"
         );
+    }
+
+    #[test]
+    fn fingerprint_is_stable_for_same_secret_and_key() {
+        let vek = SecretKey::from_bytes([0x33u8; 32]);
+        let first = derive_secret_fingerprint(&vek, "hunter2").unwrap();
+        let second = derive_secret_fingerprint(&vek, "hunter2").unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn fingerprint_changes_when_secret_or_key_changes() {
+        let vek_a = SecretKey::from_bytes([0x44u8; 32]);
+        let vek_b = SecretKey::from_bytes([0x55u8; 32]);
+        let base = derive_secret_fingerprint(&vek_a, "hunter2").unwrap();
+        let other_secret = derive_secret_fingerprint(&vek_a, "hunter3").unwrap();
+        let other_key = derive_secret_fingerprint(&vek_b, "hunter2").unwrap();
+        assert_ne!(base, other_secret);
+        assert_ne!(base, other_key);
     }
 
     // ── Zeroize compiles ──────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ fn main() {
             }
             if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
-                if is_sensitive_env_key(key) {
+                if should_skip_rustc_env(key) {
                     continue;
                 }
                 let cleaned_value = clean_env_value(value.trim());
@@ -35,6 +35,18 @@ fn main() {
         }
     }
     tauri_build::build()
+}
+
+fn should_skip_rustc_env(key: &str) -> bool {
+    // Google Drive vault sync currently uses a desktop PKCE flow that may still
+    // require a client secret for some user-configured OAuth clients. Keep this
+    // explicitly allowlisted so future secret-filter tightening does not break
+    // local Google Drive connect again.
+    if key.eq_ignore_ascii_case("GOOGLE_CLIENT_SECRET") {
+        return false;
+    }
+
+    is_sensitive_env_key(key)
 }
 
 fn is_sensitive_env_key(key: &str) -> bool {

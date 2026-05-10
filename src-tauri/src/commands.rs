@@ -621,15 +621,74 @@ fn config_uses_vault_auth(config: &ConnectionConfig) -> bool {
             .unwrap_or(false)
 }
 
+#[derive(Debug, Clone)]
+struct RelinkedVaultRefUpdate {
+    connection_id: String,
+    credential_id: String,
+    item_id: String,
+}
+
 fn resolve_vault_refs<'a>(
     config: &'a mut ConnectionConfig,
     vault: &'a tokio::sync::Mutex<crate::vault::store::VaultService>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+) -> std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<Vec<RelinkedVaultRefUpdate>, String>> + Send + 'a,
+    >,
+> {
     Box::pin(async move {
-        if let crate::types::AuthMethod::VaultRef { item_id } = &config.auth_method {
+        let mut relinked = Vec::new();
+        if let crate::types::AuthMethod::VaultRef {
+            item_id,
+            credential_id,
+        } = &config.auth_method
+        {
             let item_id = item_id.clone();
+            let credential_id = credential_id.clone();
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[VaultAuth] Resolving VaultRef for connection='{}' item_id='{}' credential_id='{}'",
+                config.id,
+                item_id,
+                credential_id.as_deref().unwrap_or("<none>")
+            );
             let svc = vault.lock().await;
-            let record = svc.item_get(&item_id).map_err(|e| e.to_string())?;
+            let record = match svc.item_get(&item_id) {
+                Ok(record) => {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "[VaultAuth] Resolved by item_id for connection='{}' -> kind='{}' logical_id='{}'",
+                        config.id,
+                        record.kind,
+                        crate::vault::store::VaultService::record_logical_id(&record)
+                    );
+                    record
+                }
+                Err(item_error) => {
+                    let Some(credential_id) = credential_id.as_deref() else {
+                        return Err(item_error.to_string());
+                    };
+                    let record = svc.item_get_by_logical_id(credential_id).map_err(|logical_error| {
+                            format!(
+                                "{item_error}; relink by credentialId '{credential_id}' failed: {logical_error}"
+                            )
+                        })?;
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "[VaultAuth] Relinked by credential_id for connection='{}' old_item_id='{}' new_item_id='{}' logical_id='{}'",
+                        config.id,
+                        item_id,
+                        record.id,
+                        credential_id
+                    );
+                    relinked.push(RelinkedVaultRefUpdate {
+                        connection_id: config.id.clone(),
+                        credential_id: credential_id.to_string(),
+                        item_id: record.id.clone(),
+                    });
+                    record
+                }
+            };
             drop(svc);
             config.auth_method = match record.kind.as_str() {
                 "ssh-password" => crate::types::AuthMethod::Password {
@@ -650,21 +709,69 @@ fn resolve_vault_refs<'a>(
             };
         }
         if let Some(jump) = config.jump_host.as_mut() {
-            resolve_vault_refs(jump.as_mut(), vault).await?;
+            relinked.extend(resolve_vault_refs(jump.as_mut(), vault).await?);
         }
-        Ok(())
+        Ok(relinked)
     })
+}
+
+fn persist_relinked_vault_refs(
+    app: &AppHandle,
+    updates: &[RelinkedVaultRefUpdate],
+) -> Result<(), String> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+
+    let data_dir = get_data_dir(app);
+    let file_path = data_dir.join("connections.json");
+    if !file_path.exists() {
+        return Ok(());
+    }
+
+    let data = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+    let mut saved_data: SavedData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    let mut changed = false;
+
+    for update in updates {
+        if let Some(connection) = saved_data
+            .connections
+            .iter_mut()
+            .find(|connection| connection.id == update.connection_id)
+        {
+            if let Some(auth_ref) = connection.auth_ref.as_mut() {
+                let credential_matches = auth_ref
+                    .credential_id
+                    .as_deref()
+                    .map(|value| value == update.credential_id)
+                    .unwrap_or(false);
+                if credential_matches && auth_ref.item_id != update.item_id {
+                    auth_ref.item_id = update.item_id.clone();
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        let json = serde_json::to_string_pretty(&saved_data).map_err(|e| e.to_string())?;
+        std::fs::write(file_path, json).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn ssh_connect(
+    app: AppHandle,
     mut config: ConnectionConfig,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<ConnectionResponse, String> {
     let original_config = config.clone();
     let uses_vault_auth = config_uses_vault_auth(&original_config);
-    resolve_vault_refs(&mut config, &vault).await?;
+    let relinked = resolve_vault_refs(&mut config, &vault).await?;
+    persist_relinked_vault_refs(&app, &relinked)?;
     match reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await {
         Ok(mut handle) => {
             let detected_os = handle.detected_os.clone();
@@ -692,11 +799,13 @@ pub async fn ssh_connect(
 
 #[tauri::command]
 pub async fn ssh_test_connection(
+    app: AppHandle,
     mut config: ConnectionConfig,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<String, String> {
-    resolve_vault_refs(&mut config, &vault).await?;
+    let relinked = resolve_vault_refs(&mut config, &vault).await?;
+    persist_relinked_vault_refs(&app, &relinked)?;
     match state
         .ssh_manager
         .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
@@ -1111,8 +1220,18 @@ pub async fn terminal_navigate(
 }
 
 #[tauri::command]
-pub async fn connections_get(app: AppHandle) -> Result<SavedData, String> {
+pub async fn connections_get(
+    app: AppHandle,
+    vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
+) -> Result<SavedData, String> {
     let data_dir = get_data_dir(&app);
+    {
+        let guard = vault.lock().await;
+        if guard.vault_id().is_some() {
+            crate::vault::commands::repair_connection_refs(&data_dir, &guard)
+                .map_err(|e| e.to_string())?;
+        }
+    }
     let file_path = data_dir.join("connections.json");
 
     if !file_path.exists() {
@@ -1489,13 +1608,14 @@ fn build_ssh_config_export(connections: &[SavedConnection]) -> String {
 pub async fn connections_export_to_file(
     app: AppHandle,
     request: ConnectionExportRequest,
+    vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<String, String> {
     let path = request.path.trim();
     if path.is_empty() {
         return Err("Export path is required.".to_string());
     }
 
-    let data = connections_get(app).await?;
+    let data = connections_get(app, vault).await?;
     let SavedData {
         connections: all_connections,
         folders: all_folders,

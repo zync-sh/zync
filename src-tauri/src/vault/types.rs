@@ -32,6 +32,10 @@ pub enum VaultStatus {
 #[serde(rename_all = "camelCase")]
 pub struct PlaintextRecord {
     pub id: String,
+    /// Stable logical credential identity. New records get this at creation
+    /// time; legacy records may omit it and fall back to `id` for compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logical_id: Option<String>,
     /// e.g. "ssh-password", "ssh-private-key", "api-key", "secure-note"
     pub kind: String,
     pub label: String,
@@ -47,9 +51,12 @@ pub struct PlaintextRecord {
 #[serde(rename_all = "camelCase")]
 pub struct VaultItemMeta {
     pub id: String,
+    /// Stable logical credential identity used by hosts. This may differ from
+    /// `id`, which is the current physical vault item id.
+    pub logical_id: String,
     pub kind: String,
     pub label: String,
-    /// Stable hash of the decrypted secret for equality-only UI workflows.
+    /// Stable keyed fingerprint of the decrypted secret for equality-only UI workflows.
     /// The plaintext secret is never serialized by the list API.
     pub secret_fingerprint: String,
     pub revision: u64,
@@ -72,4 +79,27 @@ pub struct StoredEnvelope {
     pub nonce: String,
     /// Base64-encoded ciphertext + 16-byte Poly1305 tag.
     pub ciphertext: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PlaintextRecord;
+
+    #[test]
+    fn plaintext_record_deserializes_legacy_without_logical_id() {
+        let raw = r#"{
+            "id": "item-1",
+            "kind": "ssh-password",
+            "label": "legacy",
+            "secret": "secret",
+            "revision": 1,
+            "createdAt": 1,
+            "updatedAt": 1
+        }"#;
+
+        let parsed: PlaintextRecord = serde_json::from_str(raw).expect("legacy vault record");
+
+        assert_eq!(parsed.id, "item-1");
+        assert_eq!(parsed.logical_id, None);
+    }
 }
