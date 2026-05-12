@@ -1,27 +1,37 @@
-import { forwardRef, type InputHTMLAttributes } from 'react';
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
+  rightElement?: ReactNode;
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, label, error, ...props }, ref) => {
+export const Input = forwardRef<HTMLInputElement, InputProps>(({ className, label, error, rightElement, ...props }, ref) => {
   const isNumber = props.type === 'number';
 
   return (
     <div className="space-y-1 w-full">
       {label && <label className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1">{label}</label>}
-      <input
-        ref={ref}
-        className={cn(
-          'flex h-10 w-full rounded-xl border border-app-border bg-app-surface/50 px-3.5 py-2 text-[13px] text-app-text shadow-sm transition-all duration-300 placeholder:text-app-muted/50 focus-visible:outline-none focus-visible:border-app-accent/40 focus-visible:bg-app-surface/80 focus-visible:shadow-[0_0_15px_rgba(121,123,206,0.1)] focus-visible:ring-1 focus-visible:ring-app-accent/20 disabled:cursor-not-allowed disabled:opacity-40 drag-none hover:border-app-border/80',
-          isNumber && '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
-          error && 'border-red-500/50 focus-visible:ring-red-500/20 focus-visible:border-red-500/50',
-          className,
+      <div className="relative">
+        <input
+          ref={ref}
+          className={cn(
+            'flex h-10 w-full rounded-xl border border-app-border bg-app-surface/50 px-3.5 py-2 text-[13px] text-app-text shadow-sm transition-all duration-300 placeholder:text-app-muted/50 focus-visible:outline-none focus-visible:border-app-accent/40 focus-visible:bg-app-surface/80 focus-visible:shadow-[0_0_15px_rgba(121,123,206,0.1)] focus-visible:ring-1 focus-visible:ring-app-accent/20 disabled:cursor-not-allowed disabled:opacity-40 drag-none hover:border-app-border/80',
+            '[&::-ms-reveal]:hidden [&::-ms-clear]:hidden',
+            isNumber && '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
+            error && 'border-red-500/50 focus-visible:ring-red-500/20 focus-visible:border-red-500/50',
+            rightElement && 'pr-9',
+            className,
+          )}
+          {...props}
+        />
+        {rightElement && (
+          <div className="absolute inset-y-0 right-0 flex items-center pr-2.5">
+            {rightElement}
+          </div>
         )}
-        {...props}
-      />
+      </div>
       {error && <span className="text-xs text-red-500">{error}</span>}
     </div>
   );

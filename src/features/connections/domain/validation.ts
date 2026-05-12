@@ -10,7 +10,7 @@ export interface ConnectionDraft {
     folder?: string;
 }
 
-export type AuthMode = 'password' | 'key';
+export type AuthMode = 'password' | 'key' | 'vault';
 
 export type ConnectionDraftField = 'host' | 'username' | 'port' | 'privateKeyPath';
 

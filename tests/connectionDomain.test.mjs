@@ -10,6 +10,7 @@ import {
 } from '../.tmp-agent-tests/src/features/connections/domain/folderTreeOps.js';
 import {
   mergeImportedConnectionsByName,
+  preserveVaultCredentialOnUpdate,
 } from '../.tmp-agent-tests/src/features/connections/domain/merge.js';
 import {
   applyImportPlan,
@@ -18,6 +19,10 @@ import {
 import {
   buildConnectConfig,
 } from '../.tmp-agent-tests/src/features/connections/domain/connectionConfig.js';
+import {
+  assignCredentialToConnections,
+  syncCredentialAssignments,
+} from '../.tmp-agent-tests/src/features/connections/domain/credentialAssignments.js';
 import {
   hasRequiredHostAndUsername,
   getCredentialHealthChecks,
@@ -158,6 +163,182 @@ runTest('import merge preserves existing folder/theme/tags metadata on matched u
   assert.deepEqual(web?.tags, ['core']);
 });
 
+runTest('import merge preserves existing vault auth when overriding with plaintext import', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const existing = [{
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef,
+  }];
+  const incoming = [{
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    privateKeyPath: 'C:/Users/me/.ssh/id_rsa',
+    password: 'key-passphrase',
+  }];
+
+  const result = mergeImportedConnectionsByName(existing, incoming);
+  const web = result.merged.find((c) => c.id === 'a');
+  assert.deepEqual(web?.authRef, authRef);
+  assert.equal(web?.privateKeyPath, undefined);
+  assert.equal(web?.password, undefined);
+
+  const preserved = preserveVaultCredentialOnUpdate(existing[0], incoming[0]);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.privateKeyPath, undefined);
+  assert.equal(preserved.password, undefined);
+});
+
+runTest('import merge allows incoming metadata to override or clear matched metadata', () => {
+  const existing = [{
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    folder: 'prod',
+    theme: 'blue',
+    tags: ['core'],
+    icon: 'Server',
+  }];
+  const incoming = [{
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    folder: '',
+    theme: null,
+    tags: [],
+    icon: 'Ubuntu',
+  }];
+
+  const result = mergeImportedConnectionsByName(existing, incoming);
+  const web = result.merged.find((c) => c.id === 'a');
+  assert.equal(web?.folder, '');
+  assert.equal(web?.theme, null);
+  assert.deepEqual(web?.tags, []);
+  assert.equal(web?.icon, 'Ubuntu');
+});
+
+runTest('preserveVaultCredentialOnUpdate lets incoming vault auth replace plaintext credentials', () => {
+  const authRef = {
+    vaultId: 'vault-2',
+    itemId: 'item-2',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    password: 'old-plaintext',
+  };
+  const incoming = {
+    ...existing,
+    id: 'x',
+    status: 'disconnected',
+    password: undefined,
+    privateKeyPath: 'incoming-key-path',
+    authRef,
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
+});
+
+runTest('preserveVaultCredentialOnUpdate lets incoming vault auth win when both sides are vaulted', () => {
+  const existingAuthRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const incomingAuthRef = {
+    vaultId: 'vault-2',
+    itemId: 'item-2',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef: existingAuthRef,
+  };
+  const incoming = {
+    ...existing,
+    id: 'x',
+    status: 'disconnected',
+    password: 'stale-password',
+    privateKeyPath: 'stale-key',
+    authRef: incomingAuthRef,
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, incomingAuthRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
+});
+
+runTest('preserveVaultCredentialOnUpdate strips plaintext when existing vault auth is retained', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const existing = {
+    id: 'a',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'connected',
+    authRef,
+    password: 'stale-password',
+    privateKeyPath: 'stale-key',
+  };
+  const incoming = {
+    id: 'x',
+    name: 'web',
+    host: 'prod',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    password: 'imported-password',
+    privateKeyPath: 'imported-key',
+  };
+
+  const preserved = preserveVaultCredentialOnUpdate(existing, incoming);
+  assert.deepEqual(preserved.authRef, authRef);
+  assert.equal(preserved.password, undefined);
+  assert.equal(preserved.privateKeyPath, undefined);
+});
+
 runTest('import plan builds recommendations and applies new/update/skip decisions', () => {
   const existing = [
     { id: 'a', name: 'web', host: 'prod', username: 'root', port: 22, status: 'connected' },
@@ -229,6 +410,204 @@ runTest('buildConnectConfig builds jump-host chain and rejects simple cycle', ()
   ];
   const cyclicConfig = buildConnectConfig(cyclic, 'a');
   assert.equal(cyclicConfig, null);
+});
+
+runTest('buildConnectConfig includes stable credential id for vault auth', () => {
+  const connections = [{
+    id: 'vaulted',
+    name: 'Vaulted',
+    host: 'prod',
+    port: 22,
+    username: 'root',
+    status: 'disconnected',
+    authRef: {
+      vaultId: 'vault-1',
+      credentialId: 'cred-1',
+      itemId: 'item-1',
+      itemKind: 'ssh-private-key',
+      purpose: 'ssh-auth',
+    },
+  }];
+
+  const config = buildConnectConfig(connections, 'vaulted');
+
+  assert.equal(config?.auth_method.type, 'VaultRef');
+  assert.equal(config?.auth_method.item_id, 'item-1');
+  assert.equal(config?.auth_method.credential_id, 'cred-1');
+});
+
+runTest('assignCredentialToConnections clears plaintext fields and preserves untouched hosts', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    credentialId: 'cred-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const connections = [
+    {
+      id: 'a',
+      name: 'web',
+      host: 'prod',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      password: 'plaintext',
+      privateKeyPath: '/tmp/key.pem',
+    },
+    {
+      id: 'b',
+      name: 'db',
+      host: 'db',
+      username: 'postgres',
+      port: 22,
+      status: 'disconnected',
+      password: 'keep-me',
+    },
+  ];
+
+  const assigned = assignCredentialToConnections(connections, ['a'], authRef);
+
+  assert.deepEqual(assigned[0].authRef, authRef);
+  assert.equal(assigned[0].password, undefined);
+  assert.equal(assigned[0].privateKeyPath, undefined);
+  assert.equal(assigned[1].authRef, undefined);
+  assert.equal(assigned[1].password, 'keep-me');
+});
+
+runTest('syncCredentialAssignments assigns selected hosts and unassigns deselected hosts using same credential', () => {
+  const authRef = {
+    vaultId: 'vault-1',
+    credentialId: 'cred-1',
+    itemId: 'item-1',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const otherAuthRef = {
+    vaultId: 'vault-1',
+    credentialId: 'cred-2',
+    itemId: 'item-2',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  };
+  const connections = [
+    {
+      id: 'a',
+      name: 'web',
+      host: 'prod',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      authRef,
+    },
+    {
+      id: 'b',
+      name: 'api',
+      host: 'prod-api',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      password: 'plaintext',
+    },
+    {
+      id: 'c',
+      name: 'db',
+      host: 'db',
+      username: 'postgres',
+      port: 22,
+      status: 'disconnected',
+      authRef: otherAuthRef,
+    },
+  ];
+
+  const synced = syncCredentialAssignments(connections, ['b'], authRef);
+
+  assert.equal(synced[0].authRef, undefined);
+  assert.deepEqual(synced[1].authRef, authRef);
+  assert.equal(synced[1].password, undefined);
+  assert.deepEqual(synced[2].authRef, otherAuthRef);
+});
+
+runTest('syncCredentialAssignments matches legacy item-id refs safely without clearing unrelated undefined refs', () => {
+  const legacyAuthRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const incomingLegacyRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const unrelatedUndefinedRef = {
+    vaultId: 'vault-1',
+    itemId: 'item-other',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  };
+  const connections = [
+    {
+      id: 'a',
+      name: 'legacy-match',
+      host: 'prod',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      authRef: legacyAuthRef,
+    },
+    {
+      id: 'b',
+      name: 'unrelated-legacy',
+      host: 'api',
+      username: 'root',
+      port: 22,
+      status: 'disconnected',
+      authRef: unrelatedUndefinedRef,
+    },
+    {
+      id: 'c',
+      name: 'credential-match',
+      host: 'db',
+      username: 'postgres',
+      port: 22,
+      status: 'disconnected',
+      authRef: {
+        vaultId: 'vault-1',
+        credentialId: 'cred-2',
+        itemId: 'item-stale',
+        itemKind: 'ssh-password',
+        purpose: 'ssh-auth',
+      },
+    },
+  ];
+
+  const synced = syncCredentialAssignments(connections, ['a'], {
+    vaultId: 'vault-1',
+    itemId: 'item-legacy',
+    itemKind: 'ssh-private-key',
+    purpose: 'ssh-auth',
+  });
+
+  assert.equal(synced[0].authRef?.vaultId, incomingLegacyRef.vaultId);
+  assert.equal(synced[0].authRef?.itemId, incomingLegacyRef.itemId);
+  assert.equal(synced[0].authRef?.itemKind, incomingLegacyRef.itemKind);
+  assert.equal(synced[0].authRef?.purpose, incomingLegacyRef.purpose);
+  assert.equal(synced[0].authRef?.credentialId, undefined);
+  assert.deepEqual(synced[1].authRef, unrelatedUndefinedRef);
+
+  const credentialSynced = syncCredentialAssignments(connections, ['c'], {
+    vaultId: 'vault-1',
+    credentialId: 'cred-2',
+    itemId: 'item-fresh',
+    itemKind: 'ssh-password',
+    purpose: 'ssh-auth',
+  });
+  assert.deepEqual(credentialSynced[0].authRef, legacyAuthRef);
+  assert.deepEqual(credentialSynced[1].authRef, unrelatedUndefinedRef);
+  assert.equal(credentialSynced[2].authRef?.credentialId, 'cred-2');
+  assert.equal(credentialSynced[2].authRef?.itemId, 'item-fresh');
 });
 
 console.log('Connection domain tests passed.');

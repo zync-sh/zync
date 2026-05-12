@@ -39,6 +39,8 @@
         "src/components/editor/codemirror/status.ts",
         "src/components/editor/codemirror/theme.ts",
         "src/components/editor/providers.ts",
+        "src/components/settings/tabs/vaultFocus.ts",
+        "src/components/layout/sidebar/vaultNavState.ts",
         "src/components/ui/Button.tsx",
         "src/components/ui/KeyboardKey.tsx",
         "src/features/connections/application/connectionLifecycleService.ts",
@@ -58,6 +60,7 @@
         "src/lib/ghostSuggestions/popupState.ts",
         "src/lib/ghostSuggestions/runtime.ts",
         "src/lib/ghostSuggestions/tabState.ts",
-        "src/store/sessionPersistence.ts"
+        "src/store/sessionPersistence.ts",
+        "src/vault/profileTypes.ts"
     ]
 }

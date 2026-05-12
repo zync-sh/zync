@@ -10,6 +10,8 @@ import { SidebarSection } from './sidebar/SidebarSection';
 import { ConnectionItem } from './sidebar/ConnectionItem';
 import { FolderItem } from './sidebar/FolderItem';
 import { FolderFormModal } from './sidebar/FolderFormModal';
+import { SidebarActionButton } from './sidebar/SidebarActionButton';
+import { VaultNavSection } from './sidebar/VaultNavSection';
 import { AddConnectionModal } from '../modals/AddConnectionModal';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { normalizeFolderPath } from '../../features/connections/domain';
@@ -23,6 +25,13 @@ import { FEATURE_META, type FeatureId } from './featureMeta';
 const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
 const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(mod => ({ default: mod.ConnectionDetailsModal })));
 const ExportConnectionsModal = lazy(() => import('../modals/ExportConnectionsModal').then(mod => ({ default: mod.ExportConnectionsModal })));
+
+const FEATURE_ITEMS: Array<{ id: FeatureId; label: string }> = [
+    { id: 'files', label: 'File Manager' },
+    { id: 'port-forwarding', label: 'Port Forwarding' },
+    { id: 'snippets', label: 'Snippets' },
+    { id: 'dashboard', label: 'Dashboard' },
+];
 
 
 export function Sidebar({ className }: { className?: string }) {
@@ -153,7 +162,6 @@ export function Sidebar({ className }: { className?: string }) {
         return hostCount > 99 ? '99+' : String(hostCount);
     }, [connections]);
 
-
     const openEditConnection = useCallback((conn: Connection) => {
         openConnectionModal(conn.id);
     }, [openConnectionModal]);
@@ -184,9 +192,9 @@ export function Sidebar({ className }: { className?: string }) {
 
     const expandedFolders = useMemo(() => new Set(settings.expandedFolders), [settings.expandedFolders]);
 
-    const toggleFolder = (folderPath: string) => {
+    const toggleFolder = useCallback((folderPath: string) => {
         toggleExpandedFolder(folderPath);
-    };
+    }, [toggleExpandedFolder]);
 
     const handleAllHostsDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -212,10 +220,10 @@ export function Sidebar({ className }: { className?: string }) {
         }
     }, []);
 
-    const handleRenameFolder = (path: string) => {
+    const handleRenameFolder = useCallback((path: string) => {
         setFolderToRename(path);
         setIsRenameFolderModalOpen(true);
-    };
+    }, []);
 
     const openConnectionContextMenu = useCallback((conn: Connection, x: number, y: number) => {
         setConnectionContextMenu({ x, y, connectionId: conn.id });
@@ -286,13 +294,6 @@ export function Sidebar({ className }: { className?: string }) {
     const connectionContextMenuItems = useMemo<ContextMenuItem[]>(() => {
         if (!contextMenuConnection) return [];
 
-        const featureItems: Array<{ id: FeatureId; label: string }> = [
-            { id: 'files', label: 'File Manager' },
-            { id: 'port-forwarding', label: 'Port Forwarding' },
-            { id: 'snippets', label: 'Snippets' },
-            { id: 'dashboard', label: 'Dashboard' },
-        ];
-
         return [
             {
                 label: contextMenuConnection.status === 'connected' ? 'Disconnect' : 'Connect',
@@ -317,7 +318,7 @@ export function Sidebar({ className }: { className?: string }) {
                 action: () => setViewingDetailsId(contextMenuConnection.id)
             },
             { separator: true },
-            ...featureItems.map(({ id, label }) => {
+            ...FEATURE_ITEMS.map(({ id, label }) => {
                 const Icon = FEATURE_META[id].icon;
                 return {
                     label,
@@ -415,7 +416,7 @@ export function Sidebar({ className }: { className?: string }) {
         onOpenContextMenu: openConnectionContextMenu,
     }), [openEditConnection, openConnectionContextMenu]);
 
-    const allHostsContent = (
+    const allHostsContent = useMemo(() => (
         <div
             className="pl-1 min-h-6"
             onDragOver={handleAllHostsDragOver}
@@ -446,7 +447,23 @@ export function Sidebar({ className }: { className?: string }) {
                 />
             ))}
         </div>
-    );
+    ), [
+        compactMode,
+        connectionItemProps,
+        expandedFolders,
+        handleAllHostsDragOver,
+        handleAllHostsDrop,
+        handleRenameFolder,
+        renameFolder,
+        toggleFolder,
+        treeRoot.children,
+        treeRoot.connections,
+        updateConnectionFolder,
+    ]);
+
+    const initialConnectionId = activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding'
+        ? activeConnectionId
+        : undefined;
 
     return (
         <div
@@ -500,27 +517,19 @@ export function Sidebar({ className }: { className?: string }) {
                 {/* System Actions Column */}
                 <div className={cn(compactMode ? "px-3 mb-2" : "px-4 mb-2")}>
                     <div className="flex flex-col gap-1.5 w-full">
-                        <button
-                            className={cn(
-                                "group relative flex items-center transition-all cursor-pointer select-none outline-none w-full py-2 px-3 rounded-lg border border-transparent",
-                                "bg-app-surface/30 hover:bg-app-surface hover:border-app-border/30 text-app-muted hover:text-app-text"
-                            )}
+                        <SidebarActionButton
+                            icon={<TerminalIcon size={13} />}
+                            label="New Terminal"
                             onClick={() => openTab('local')}
-                        >
-                            <TerminalIcon size={13} className="opacity-70 group-hover:opacity-100" />
-                            <span className="ml-3 font-medium text-[10px] uppercase tracking-wider opacity-80 group-hover:opacity-100">New Terminal</span>
-                        </button>
+                        />
 
-                        <button
-                            className={cn(
-                                "group relative flex items-center transition-all cursor-pointer select-none outline-none w-full py-2 px-3 rounded-lg border border-transparent",
-                                "bg-app-surface/30 hover:bg-app-surface hover:border-app-border/30 text-app-muted hover:text-app-text"
-                            )}
+                        <SidebarActionButton
+                            icon={<Network size={13} />}
+                            label="Port Forwarding"
                             onClick={() => openPortForwardingTab()}
-                        >
-                            <Network size={13} className="opacity-70 group-hover:opacity-100" />
-                            <span className="ml-3 font-medium text-[10px] uppercase tracking-wider opacity-80 group-hover:opacity-100">Port Forwarding</span>
-                        </button>
+                        />
+
+                        <VaultNavSection />
                     </div>
                 </div>
 
@@ -559,16 +568,18 @@ export function Sidebar({ className }: { className?: string }) {
                             </SidebarSection>
                         </>
                     ) : (
-                        <SidebarSection
-                            title="All Hosts"
-                            compactMode={compactMode}
-                            onContextMenu={(event) => {
-                                event.preventDefault();
-                                setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
-                            }}
-                        >
-                            {allHostsContent}
-                        </SidebarSection>
+                        <>
+                            <SidebarSection
+                                title="All Hosts"
+                                compactMode={compactMode}
+                                onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
+                                }}
+                            >
+                                {allHostsContent}
+                            </SidebarSection>
+                        </>
                     )}
                 </div>
             </div>
@@ -599,7 +610,7 @@ export function Sidebar({ className }: { className?: string }) {
                 <AddTunnelModal
                     isOpen={isAddTunnelModalOpen}
                     onClose={() => setIsAddTunnelModalOpen(false)}
-                    initialConnectionId={activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding' ? activeConnectionId : undefined}
+                    initialConnectionId={initialConnectionId}
                 />
             )}
 

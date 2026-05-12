@@ -16,6 +16,9 @@ interface ModalProps {
   headerClassName?: string;
   contentClassName?: string;
   titleClassName?: string;
+  closeOnEsc?: boolean;
+  closeOnOverlayClick?: boolean;
+  showCloseButton?: boolean;
 }
 
 /**
@@ -31,6 +34,9 @@ interface ModalProps {
  * @param headerClassName - Optional classes applied to the modal header container.
  * @param contentClassName - Optional classes applied to the modal body/content container.
  * @param titleClassName - Optional classes applied to the modal title text.
+ * @param closeOnEsc - Whether pressing Escape closes the modal (default true).
+ * @param closeOnOverlayClick - Whether clicking the overlay closes the modal (default true).
+ * @param showCloseButton - Whether to render the close button in the header (default true).
  * @returns The modal element mounted into the ZPortal target when `isOpen` is true, otherwise null.
  */
 export function Modal({
@@ -44,15 +50,31 @@ export function Modal({
   headerClassName,
   contentClassName,
   titleClassName,
+  closeOnEsc = true,
+  closeOnOverlayClick = true,
+  showCloseButton = true,
 }: ModalProps) {
+  const hasCloseMechanism = closeOnEsc || closeOnOverlayClick || showCloseButton;
+  const effectiveShowCloseButton = hasCloseMechanism ? showCloseButton : true;
+
+  useEffect(() => {
+    if (import.meta.env.DEV && !hasCloseMechanism) {
+      console.warn(
+        '[Modal] closeOnEsc, closeOnOverlayClick, and showCloseButton are all false; forcing close button for accessibility.'
+      );
+    }
+  }, [hasCloseMechanism]);
+
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (document.querySelector('[data-zync-select-open="true"]')) return;
       if (e.key === 'Escape') onClose();
     };
-    if (isOpen) window.addEventListener('keydown', handleEsc, { capture: true });
+    if (isOpen && closeOnEsc) {
+      window.addEventListener('keydown', handleEsc, { capture: true });
+    }
     return () => window.removeEventListener('keydown', handleEsc, { capture: true });
-  }, [isOpen, onClose]);
+  }, [closeOnEsc, isOpen, onClose]);
 
   return (
     <ZPortal>
@@ -64,7 +86,7 @@ export function Modal({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              onClick={onClose}
+              onClick={closeOnOverlayClick ? onClose : undefined}
               className="absolute inset-0 bg-black/70 backdrop-blur-md"
             />
             <motion.div
@@ -87,14 +109,16 @@ export function Modal({
                     <p className="mt-1 text-xs text-app-muted leading-relaxed">{subtitle}</p>
                   )}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onClose}
-                  className="h-8 w-8 rounded-full text-app-muted hover:bg-app-accent hover:text-white transition-all hover:scale-110 active:scale-95 hover:shadow-lg hover:shadow-app-accent/20"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+                {effectiveShowCloseButton && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onClose}
+                    className="h-8 w-8 rounded-full text-app-muted hover:bg-app-accent hover:text-white transition-all hover:scale-110 active:scale-95 hover:shadow-lg hover:shadow-app-accent/20"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
               <div className={cn("p-6 overflow-y-auto custom-scrollbar flex-1", contentClassName)}>{children}</div>
             </motion.div>

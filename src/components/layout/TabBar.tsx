@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home, Shield } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -26,6 +26,17 @@ import {
     horizontalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+
+function getIconForTab(tab: Tab, connections: Connection[], size: 12 | 13 = 12) {
+    if (tab.type === 'port-forwarding') return <Network size={size} />;
+    if (tab.type === 'settings') return <SettingsIcon size={size} />;
+    if (tab.type === 'release-notes') return <Gift size={size} className="text-[var(--color-app-accent)]" />;
+    if (tab.type === 'vault') return <Shield size={size} />;
+
+    const conn = connections.find((c: Connection) => c.id === tab.connectionId);
+    const iconClassName = size === 13 ? "w-[13px] h-[13px]" : "w-[12px] h-[12px]";
+    return <OSIcon icon={conn?.icon || 'Server'} className={iconClassName} />;
+}
 
 // Extract SortableTab component
 function SortableTab({
@@ -73,14 +84,7 @@ function SortableTab({
             title={tab.title}
         >
             {/* Icon based on type */}
-            {(() => {
-                if (tab.type === 'port-forwarding') return <Network size={12} />;
-                if (tab.type === 'settings') return <SettingsIcon size={12} />;
-                if (tab.type === 'release-notes') return <Gift size={12} className="text-[var(--color-app-accent)]" />;
-
-                const conn = connections.find((c: Connection) => c.id === tab.connectionId);
-                return <OSIcon icon={conn?.icon || 'Server'} className="w-[12px] h-[12px]" />;
-            })()}
+            {getIconForTab(tab, connections, 12)}
 
             <span className="truncate max-w-[90px]">{tab.title}</span>
 
@@ -398,13 +402,7 @@ export function TabBar() {
                                     if (!tab) return null;
                                     return (
                                         <div className="flex items-center gap-2 px-2.5 py-1.5 h-8 text-sm rounded-md bg-app-surface text-app-text shadow-lg font-medium border border-app-border/50">
-                                            {(() => {
-                                                if (tab.type === 'port-forwarding') return <Network size={13} />;
-                                                if (tab.type === 'settings') return <SettingsIcon size={13} />;
-                                                if (tab.type === 'release-notes') return <Gift size={13} className="text-[var(--color-app-accent)]" />;
-                                                const conn = connections.find((c: Connection) => c.id === tab.connectionId);
-                                                return <OSIcon icon={conn?.icon || 'Server'} className="w-[13px] h-[13px]" />;
-                                            })()}
+                                            {getIconForTab(tab, connections, 13)}
                                             <span className="truncate max-w-[120px]">{tab.title}</span>
                                             <div className="p-0.5">
                                                 <X size={12} />

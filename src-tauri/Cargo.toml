@@ -39,9 +39,20 @@ base64 = "0.21"
 url = "2.5"
 regex = "1.12.3"
 tauri-plugin-clipboard-manager = "2.3.2"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 zip = "2.2"
 log = "0.4"
+# Vault crypto (Phase 0)
+argon2 = { version = "0.5", features = ["zeroize"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.13"
+sha2 = "0.11"
+hmac = "0.13"
+zeroize = { version = "1.8", features = ["derive"] }
+secrecy = { version = "0.10", features = ["serde"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+redb = "2"
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.56"

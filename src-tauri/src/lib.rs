@@ -1,18 +1,20 @@
 mod ai;
 mod commands;
-mod shell_icons;
 mod fs;
 mod ghost;
 pub mod plugins;
 mod pty;
 mod session;
+mod shell_icons;
 mod snippets;
 mod ssh;
 mod ssh_config;
 mod ssh_parser;
+mod sync;
 pub mod tunnel;
 mod types;
 mod utils;
+mod vault;
 
 use commands::AppState;
 use tauri::{Emitter, Manager};
@@ -36,8 +38,11 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             let data_dir = commands::get_data_dir(&app_handle);
-            let app_state = AppState::new(data_dir);
+            let app_state = AppState::new(data_dir.clone());
             app.manage(app_state);
+            app.manage(tokio::sync::Mutex::new(vault::store::VaultService::new(
+                data_dir,
+            )));
             commands::cleanup_stale_plugin_window_temp_files(&app_handle);
             Ok(())
         })
@@ -98,6 +103,7 @@ pub fn run() {
             commands::ssh_extract_pem,
             commands::ssh_migrate_all_keys,
             commands::ssh_disconnect,
+            commands::ssh_disconnect_vault_backed,
             commands::terminal_write,
             commands::terminal_navigate,
             commands::terminal_resize,
@@ -193,6 +199,28 @@ pub fn run() {
             ghost::commands::ghost_candidates,
             session::session_load,
             session::session_save,
+            vault::commands::vault_status,
+            vault::commands::vault_initialize,
+            vault::commands::vault_unlock,
+            vault::commands::vault_lock,
+            vault::commands::vault_item_create,
+            vault::commands::vault_item_list,
+            vault::commands::vault_item_get,
+            vault::commands::vault_item_update,
+            vault::commands::vault_item_delete,
+            vault::commands::vault_secure_to_vault_preview,
+            vault::commands::vault_secure_to_vault,
+            vault::commands::vault_backfill_connection_refs,
+            vault::commands::vault_generate_recovery_key,
+            vault::commands::vault_has_recovery_key,
+            vault::commands::vault_unlock_with_recovery_key,
+            vault::commands::vault_export,
+            vault::commands::vault_import,
+            sync::commands::sync_status,
+            sync::commands::sync_connect,
+            sync::commands::sync_disconnect,
+            sync::commands::sync_upload,
+            sync::commands::sync_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

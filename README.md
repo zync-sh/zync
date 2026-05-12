@@ -172,6 +172,15 @@ npm run tauri dev
 npm run tauri build
 ```
 
+Release builds require a real `GOOGLE_CLIENT_ID` for the Google Drive vault sync
+OAuth flow. This is validated in `src-tauri/build.rs`, and release builds will
+fail fast if the value is missing or still set to a placeholder.
+
+If your Google OAuth client also requires a secret, set `GOOGLE_CLIENT_SECRET`
+in `src-tauri/.env` or your build environment. `src-tauri/build.rs` intentionally
+allowlists this variable so the local desktop OAuth token exchange continues to
+work even though other secret-like env keys are filtered out.
+
 ### Available Scripts
 
 | Command | Description |

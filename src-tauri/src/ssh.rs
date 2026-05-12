@@ -190,16 +190,17 @@ fn handle_agent_request(
         11 => {
             // SSH_AGENTC_REQUEST_IDENTITIES
             // Response: SSH_AGENT_IDENTITIES_ANSWER (12) + u32 count + (string blob + string comment) * count
-            let keys = keys_mutex.lock().unwrap();
-            
+            let keys = match keys_mutex.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
             fn is_ed25519_blob(blob: &[u8]) -> bool {
                 if blob.len() < 15 {
                     return false;
                 }
                 // Read first 4 bytes as big-endian u32 length
-                let length = u32::from_be_bytes([
-                    blob[0], blob[1], blob[2], blob[3]
-                ]);
+                let length = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]);
                 // "ssh-ed25519" has length 11
                 if length != 11 || blob.len() < 15 {
                     return false;
@@ -207,11 +208,11 @@ fn handle_agent_request(
                 // Check if next bytes match "ssh-ed25519"
                 &blob[4..15] == b"ssh-ed25519"
             }
-            
+
             // Single-pass optimization: reserve space for count, then iterate once
             let mut buf = vec![12];
             buf.extend_from_slice(&0u32.to_be_bytes()); // Placeholder for count
-            
+
             let mut count = 0u32;
             for k in keys.iter() {
                 let blob = k.public_key_bytes();
@@ -234,7 +235,10 @@ fn handle_agent_request(
                 read_string(&mut cursor),
                 read_u32(&mut cursor),
             ) {
-                let keys = keys_mutex.lock().unwrap();
+                let keys = match keys_mutex.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 for k in keys.iter() {
                     let blob = k.public_key_bytes();
                     if blob == req_blob {
@@ -364,47 +368,113 @@ impl SshManager {
         session: &mut client::Handle<Client>,
         config: &ConnectionConfig,
     ) -> Result<()> {
-        let (pwd, pk, passphrase) = match &config.auth_method {
-            AuthMethod::Password { password } => (Some(password.clone()), None, None),
+        let auth_res = match &config.auth_method {
+            AuthMethod::Password { password } => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using PASSWORD auth for {}@{} (length={})",
+                    config.id,
+                    config.username,
+                    config.host,
+                    password.len()
+                );
+                session
+                    .authenticate_password(&config.username, password.clone())
+                    .await?
+            }
             AuthMethod::PrivateKey {
                 key_path,
                 passphrase,
-            } => (None, Some(key_path.clone()), passphrase.clone()),
-        };
-
-        let auth_res = if let Some(pk_path) = pk {
-            let mut expanded_path = pk_path.clone();
-            if expanded_path.starts_with("~") {
-                if let Some(home) = dirs::home_dir() {
-                    expanded_path = expanded_path.replacen("~", &home.to_string_lossy(), 1);
+            } => {
+                let mut expanded = key_path.clone();
+                if expanded.starts_with("~") {
+                    if let Some(home) = dirs::home_dir() {
+                        expanded = expanded.replacen("~", &home.to_string_lossy(), 1);
+                    }
                 }
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using PRIVATE KEY PATH auth for {}@{} path='{}' passphrase={}",
+                    config.id,
+                    config.username,
+                    config.host,
+                    expanded,
+                    if passphrase.is_some() { "yes" } else { "no" }
+                );
+                let key_data = tokio::fs::read_to_string(&expanded)
+                    .await
+                    .map_err(|e| anyhow!("Failed to read private key file: {}", e))?;
+                Self::auth_with_key_data(
+                    session,
+                    &config.username,
+                    &key_data,
+                    passphrase.as_deref(),
+                    &self.agent_keys,
+                )
+                .await?
             }
-            let key_data = std::fs::read_to_string(&expanded_path)
-                .map_err(|e| anyhow!("Failed to read private key file: {}", e))?;
-
-            // Decode key with optional passphrase
-            let privkey = russh_keys::decode_secret_key(&key_data, passphrase.as_deref())
-                .map_err(|e| anyhow!("Failed to decode private key: {}", e))?;
-            let privkey = Arc::new(privkey);
-
-            // Note: In russh 0.46, KeyPair implements Authenticate
-            let auth_success = session.authenticate_publickey(&config.username, privkey.clone()).await?;
-
-            if auth_success {
-                // Add the underlying key to Global Virtual Agent only on SUCCESS
-                let mut keys = self.agent_keys.lock().unwrap();
-                keys.push((*privkey).clone());
+            AuthMethod::PrivateKeyData {
+                key_data,
+                passphrase,
+            } => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[SSH Auth] connection='{}' using IN-MEMORY PRIVATE KEY auth for {}@{} key_bytes={} passphrase={}",
+                    config.id,
+                    config.username,
+                    config.host,
+                    key_data.len(),
+                    if passphrase.is_some() { "yes" } else { "no" }
+                );
+                Self::auth_with_key_data(
+                    session,
+                    &config.username,
+                    key_data,
+                    passphrase.as_deref(),
+                    &self.agent_keys,
+                )
+                .await?
             }
-            auth_success
-        } else if let Some(pwd) = pwd {
-             session.authenticate_password(&config.username, pwd).await?
-        } else {
-            false
+            AuthMethod::VaultRef { item_id, .. } => {
+                return Err(anyhow!(
+                    "VaultRef({}) was not resolved before authentication — call resolve_vault_refs first",
+                    item_id
+                ));
+            }
         };
 
         if !auth_res {
             return Err(anyhow!("Authentication failed"));
         }
         Ok(())
+    }
+
+    async fn auth_with_key_data(
+        session: &mut client::Handle<Client>,
+        username: &str,
+        key_data: &str,
+        passphrase: Option<&str>,
+        agent_keys: &std::sync::Mutex<Vec<russh_keys::key::KeyPair>>,
+    ) -> Result<bool> {
+        let privkey = russh_keys::decode_secret_key(key_data, passphrase)
+            .map_err(|e| anyhow!("Failed to decode private key: {}", e))?;
+        let privkey = Arc::new(privkey);
+        let auth_success = session
+            .authenticate_publickey(username, privkey.clone())
+            .await?;
+        if auth_success {
+            let mut keys = match agent_keys.lock() {
+                Ok(keys) => keys,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let public_key = privkey.public_key_bytes();
+            let already_loaded = keys
+                .iter()
+                .any(|key| key.public_key_bytes() == public_key);
+            if !already_loaded {
+                keys.push((*privkey).clone());
+            }
+        }
+        Ok(auth_success)
     }
 }

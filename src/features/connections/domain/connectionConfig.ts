@@ -11,7 +11,17 @@ export interface ConnectAuthMethodPrivateKey {
     passphrase: string | null;
 }
 
-export type ConnectAuthMethod = ConnectAuthMethodPassword | ConnectAuthMethodPrivateKey;
+/** Sent when the connection uses a vault credential. Backend resolves item_id → secret. */
+export interface ConnectAuthMethodVaultRef {
+    type: 'VaultRef';
+    item_id: string;
+    credential_id?: string;
+}
+
+export type ConnectAuthMethod =
+    | ConnectAuthMethodPassword
+    | ConnectAuthMethodPrivateKey
+    | ConnectAuthMethodVaultRef;
 
 export interface ConnectConfig {
     id: string;
@@ -36,9 +46,15 @@ export const buildConnectConfig = (
     const connection = connections.find((item) => item.id === connectionId);
     if (!connection) return null;
 
-    const auth_method: ConnectAuthMethod = connection.privateKeyPath
-        ? { type: 'PrivateKey', key_path: connection.privateKeyPath, passphrase: connection.password || null }
-        : { type: 'Password', password: connection.password || '' };
+    const auth_method: ConnectAuthMethod = connection.authRef
+        ? {
+            type: 'VaultRef',
+            item_id: connection.authRef.itemId,
+            credential_id: connection.authRef.credentialId,
+        }
+        : connection.privateKeyPath
+          ? { type: 'PrivateKey', key_path: connection.privateKeyPath, passphrase: connection.password || null }
+          : { type: 'Password', password: connection.password || '' };
 
     const config: ConnectConfig = {
         id: connection.id,

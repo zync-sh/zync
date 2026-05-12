@@ -5,6 +5,7 @@ import {
   createLocalTerminalTabState,
   ensureGlobalSnippetsTab,
   ensureSingleTabByType,
+  ensureVaultTabState,
   findConnectionTab,
 } from '../.tmp-agent-tests/src/features/connections/application/tabService.js';
 
@@ -71,12 +72,42 @@ runTest('ensureSingleTabByType returns existing tab activation', () => {
   assert.equal(state.activeConnectionId, null);
 });
 
-runTest('ensureGlobalSnippetsTab creates local snippets tab if absent', () => {
+runTest('ensureGlobalSnippetsTab creates global snippets tab if absent', () => {
   const state = ensureGlobalSnippetsTab([]);
   assert.equal(state.tabs?.length, 1);
-  assert.equal(state.tabs?.[0].connectionId, 'local');
+  assert.equal(state.tabs?.[0].connectionId, 'global');
   assert.equal(state.tabs?.[0].view, 'snippets');
-  assert.equal(state.activeConnectionId, 'local');
+  assert.equal(state.activeConnectionId, 'global');
+});
+
+runTest('ensureVaultTabState creates vault tab with selected profile', () => {
+  const state = ensureVaultTabState([], 'google');
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0].type, 'vault');
+  assert.equal(state.tabs[0].vaultProfileId, 'google');
+  assert.equal(state.activeConnectionId, null);
+});
+
+runTest('ensureVaultTabState updates existing vault tab profile', () => {
+  const tabs = [{ id: 'vault-1', type: 'vault', title: 'Vault', view: 'terminal', vaultProfileId: 'local' }];
+  const state = ensureVaultTabState(tabs, 'google');
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0].id, 'vault-1');
+  assert.equal(state.tabs[0].vaultProfileId, 'google');
+  assert.equal(state.activeTabId, 'vault-1');
+});
+
+runTest('ensureVaultTabState does not duplicate vault tab when other tabs exist', () => {
+  const tabs = [
+    { id: 'conn-1', type: 'connection', title: 'Prod', connectionId: 'c1', view: 'terminal' },
+    { id: 'vault-1', type: 'vault', title: 'Vault', view: 'terminal', vaultProfileId: 'local' },
+    { id: 'vault-legacy', type: 'vault', title: 'Legacy Vault', view: 'terminal', vaultProfileId: 'local' },
+  ];
+  const state = ensureVaultTabState(tabs, 'google');
+  assert.equal(state.tabs.length, 2);
+  assert.equal(state.tabs.filter((tab) => tab.type === 'vault').length, 1);
+  assert.equal(state.tabs.find((tab) => tab.type === 'vault')?.vaultProfileId, 'google');
+  assert.equal(state.activeTabId, 'vault-1');
 });
 
 console.log('Connection tab service tests passed.');
