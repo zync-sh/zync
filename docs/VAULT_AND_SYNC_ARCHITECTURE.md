@@ -175,14 +175,14 @@ Provider contract notes:
 
 ## 8) Sync Strategy
 
-## 8.1 Local-first semantics
+### 8.1 Local-first semantics
 - Local store is immediately updated.
 - Sync engine asynchronously reconciles with each enabled profile.
 
-## 8.2 Per-profile state machine
+### 8.2 Per-profile state machine
 - `idle -> syncing -> success|conflict|retrying|error`
 
-## 8.3 Conflict policy (phase 1)
+### 8.3 Conflict policy (phase 1)
 - No cross-provider merge.
 - Conflict resolution is **local vs specific provider**.
 - User choices:
@@ -190,7 +190,7 @@ Provider contract notes:
   - Keep Remote
   - Duplicate as new item (optional safety path)
 
-## 8.4 Retry policy
+### 8.4 Retry policy
 - Exponential backoff with jitter.
 - Bounded retry budget per run.
 - Persist retry reason and last failure code.

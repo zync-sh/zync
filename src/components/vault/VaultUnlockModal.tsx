@@ -5,6 +5,9 @@ import { Button } from '../ui/Button';
 import { Shield, Lock, Eye, EyeOff } from 'lucide-react';
 import { useVaultStore } from '../../vault/useVaultStore';
 
+/** Minimum passphrase length enforced at vault creation time. */
+export const PASSPHRASE_MIN_LENGTH = 12;
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
@@ -49,8 +52,8 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
     clearError();
 
     if (isUninitialized) {
-      if (passphrase.length < 8) {
-        setLocalError('Passphrase must be at least 8 characters.');
+      if (passphrase.length < PASSPHRASE_MIN_LENGTH) {
+        setLocalError(`Passphrase must be at least ${PASSPHRASE_MIN_LENGTH} characters.`);
         return;
       }
       if (passphrase !== confirm) {
@@ -74,8 +77,8 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
         handleClose();
       } catch (e: unknown) {
         const { code, message } = extractError(e);
-        const raw = `${code ?? ''} ${message}`.trim();
-        setLocalError(raw || 'Failed to unlock with recovery key.');
+        const parts = [code, message].filter(Boolean);
+        setLocalError(parts.join(': ') || 'Failed to unlock with recovery key.');
       }
     } else {
       try {
@@ -83,9 +86,10 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
         handleClose();
       } catch (e: unknown) {
         const { code, message } = extractError(e);
-        const raw = `${code ?? ''} ${message}`.trim();
+        const parts = [code, message].filter(Boolean);
+        const raw = parts.join(': ');
         setLocalError(
-          raw.includes('wrong_passphrase') ? 'Incorrect passphrase.' : raw
+          code === 'wrong_passphrase' ? 'Incorrect passphrase.' : raw || 'Failed to unlock vault.'
         );
       }
     }

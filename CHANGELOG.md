@@ -782,3 +782,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
 
+
+[6e8dd42]: https://github.com/zync-sh/zync/commit/6e8dd42
+[d9d3663]: https://github.com/zync-sh/zync/commit/d9d3663
+[8cdb20d]: https://github.com/zync-sh/zync/commit/8cdb20d
+[1d865ed]: https://github.com/zync-sh/zync/commit/1d865ed
+[bdbd81b]: https://github.com/zync-sh/zync/commit/bdbd81b
+[bf01457]: https://github.com/zync-sh/zync/commit/bf01457

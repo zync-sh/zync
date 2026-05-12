@@ -30,18 +30,25 @@ export function VaultNavSection() {
     });
     const vaultStatus = useVaultStore(state => state.status);
     const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
+    const [googleSyncError, setGoogleSyncError] = useState<string | null>(null);
 
     const expanded = resolveVaultExpanded(settings);
 
     const refreshGoogleSync = useCallback(() => {
         syncIpc.status('google')
-            .then(setGoogleSync)
-            .catch(error => console.warn('[VaultNavSection] Failed to load Google sync status:', error));
+            .then(result => {
+                setGoogleSync(result);
+                setGoogleSyncError(null);
+            })
+            .catch(error => {
+                setGoogleSyncError(error instanceof Error ? error.message : String(error));
+                console.error('[VaultNavSection] Failed to load Google sync status:', error);
+            });
     }, []);
 
     useEffect(() => {
         refreshGoogleSync();
-        const interval = window.setInterval(refreshGoogleSync, 10_000);
+        const interval = window.setInterval(refreshGoogleSync, 30_000);
         const handleSyncChanged = (event: Event) => {
             const detail = (event as CustomEvent<{ provider?: string }>).detail;
             if (!detail?.provider || detail.provider === 'google') {
@@ -68,10 +75,12 @@ export function VaultNavSection() {
             : vaultStatus?.status === 'locked'
                 ? { className: 'bg-amber-400/80', title: 'Local vault locked' }
                 : { className: 'bg-app-muted/40', title: 'Local vault not set up' },
-        google: googleSync?.connected
-            ? { className: 'bg-blue-400/80', title: 'Google sync connected' }
-            : { className: 'bg-app-muted/40', title: 'Google sync not connected' },
-    }), [googleSync?.connected, vaultStatus?.status]);
+        google: googleSyncError
+            ? { className: 'bg-red-400/70', title: 'Google sync status unavailable' }
+            : googleSync?.connected
+                ? { className: 'bg-blue-400/80', title: 'Google sync connected' }
+                : { className: 'bg-app-muted/40', title: 'Google sync not connected' },
+    }), [googleSync?.connected, googleSyncError, vaultStatus?.status]);
 
     return (
         <>

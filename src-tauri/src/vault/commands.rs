@@ -8,7 +8,7 @@ use crate::types::SavedData;
 use crate::vault::error::VaultError;
 use crate::vault::secure_to_vault::{SecureToVaultPreview, SecureToVaultResult};
 use crate::vault::store::VaultService;
-use crate::vault::types::{PlaintextRecord, VaultItemMeta, VaultStatus};
+use crate::vault::types::{PlaintextRecord, RevisionMeta, VaultItemMeta, VaultStatus};
 
 // ── Error wrapper (serializable for IPC) ─────────────────────────────────────
 
@@ -211,6 +211,43 @@ pub async fn vault_item_update(
     vault.item_meta(&record).map_err(Into::into)
 }
 
+// ── Revision history commands ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ItemRevisionHistoryArgs {
+    pub item_id: String,
+}
+
+#[tauri::command]
+pub async fn vault_item_revision_history(
+    vault: State<'_, Mutex<VaultService>>,
+    args: ItemRevisionHistoryArgs,
+) -> VaultResult<Vec<RevisionMeta>> {
+    vault
+        .lock()
+        .await
+        .item_revision_history(&args.item_id)
+        .map_err(Into::into)
+}
+
+#[derive(Deserialize)]
+pub struct ItemRestoreRevisionArgs {
+    pub item_id: String,
+    pub revision: u64,
+}
+
+#[tauri::command]
+pub async fn vault_item_restore_revision(
+    vault: State<'_, Mutex<VaultService>>,
+    args: ItemRestoreRevisionArgs,
+) -> VaultResult<VaultItemMeta> {
+    let vault = vault.lock().await;
+    let record = vault
+        .item_restore_revision(&args.item_id, args.revision)
+        .map_err(VaultCommandError::from)?;
+    vault.item_meta(&record).map_err(Into::into)
+}
+
 // ── Recovery key commands ─────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -369,15 +406,36 @@ fn load_saved_connections(path: &std::path::Path) -> Result<SavedData, VaultErro
 }
 
 fn save_saved_connections(path: &std::path::Path, saved: &SavedData) -> Result<(), VaultError> {
+    use std::io::Write;
     let json = serde_json::to_string_pretty(saved).map_err(VaultError::Serde)?;
-    std::fs::write(path, json)
-        .map_err(|e| VaultError::InvalidData(format!("write connections file: {e}")))
+    let unique_suffix = uuid::Uuid::new_v4();
+    let tmp = path.with_extension(format!("json.tmp.{unique_suffix}"));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp write open: {e}")))?;
+    f.write_all(json.as_bytes())
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp write: {e}")))?;
+    f.sync_all()
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp sync: {e}")))?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            VaultError::InvalidData(format!("connections atomic rename: {e}"))
+        })
 }
 
 pub fn repair_connection_refs(
     data_dir: &std::path::Path,
     vault: &VaultService,
 ) -> Result<VaultBackfillResult, VaultError> {
+    // Lock ordering invariant: callers must hold the vault-level Mutex<VaultService>
+    // BEFORE acquiring CONNECTIONS_MUTATION_LOCK. Reversing this order risks deadlock
+    // because other code paths (e.g. ssh_connect relink persistence) acquire the
+    // connections lock first and then call vault methods. Always: vault lock → connections lock.
     let path = data_dir.join("connections.json");
     let _connections_guard = crate::commands::CONNECTIONS_MUTATION_LOCK
         .lock()

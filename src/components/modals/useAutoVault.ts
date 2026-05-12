@@ -16,6 +16,11 @@ interface UseAutoVaultOptions {
     showToast: (type: ToastType, message: string) => void;
 }
 
+const PRIVATE_KEY_BEGIN_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const PRIVATE_KEY_END_PATTERN = /-----END [A-Z ]*PRIVATE KEY-----/;
+const isValidPrivateKeyFormat = (keyContent: string): boolean =>
+    PRIVATE_KEY_BEGIN_PATTERN.test(keyContent) && PRIVATE_KEY_END_PATTERN.test(keyContent);
+
 export function useAutoVault({
     isOpen,
     formData,
@@ -183,7 +188,3 @@ export function useAutoVault({
         savePastedKey, autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
     };
 }
-    const PRIVATE_KEY_BEGIN_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
-    const PRIVATE_KEY_END_PATTERN = /-----END [A-Z ]*PRIVATE KEY-----/;
-    const isValidPrivateKeyFormat = (keyContent: string): boolean =>
-        PRIVATE_KEY_BEGIN_PATTERN.test(keyContent) && PRIVATE_KEY_END_PATTERN.test(keyContent);

@@ -31,7 +31,14 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
       const status = await vaultIpc.status();
       set({ status });
       if (status.status === 'unlocked') {
-        await get().refreshItems();
+        try {
+          await get().refreshItems();
+        } catch (e) {
+          // refreshItems failed — clear items so the UI doesn't show stale data
+          // but keep the confirmed unlocked status; do not propagate so the
+          // outer catch does not reset status to null.
+          set({ items: [], error: extractErrorMessage(e) });
+        }
       } else {
         set({ items: [] });
       }
@@ -71,12 +78,14 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const status = await vaultIpc.unlock(passphrase);
-      set({ status, isLoading: false });
+      set({ status });
       await get().refreshItems();
     } catch (e: unknown) {
       const msg = extractErrorMessage(e);
-      set({ isLoading: false, error: msg });
+      set({ error: msg });
       throw e;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
@@ -84,12 +93,14 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const status = await vaultIpc.unlockWithRecoveryKey(recoveryKey);
-      set({ status, isLoading: false });
+      set({ status });
       await get().refreshItems();
     } catch (e: unknown) {
       const msg = extractErrorMessage(e);
-      set({ isLoading: false, error: msg });
+      set({ error: msg });
       throw e;
+    } finally {
+      set({ isLoading: false });
     }
   },
 

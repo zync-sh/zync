@@ -23,7 +23,7 @@ export function VaultStatusCard({
   const unlockedStatus = status?.status === 'unlocked' ? status : null;
 
   return (
-    <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/25 p-4">
+    <div className="rounded-xl border border-(--color-app-border)/60 bg-(--color-app-surface)/25 p-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className={cn(
@@ -32,17 +32,17 @@ export function VaultStatusCard({
               ? 'bg-emerald-500/15 text-emerald-400'
               : status?.status === 'locked'
                 ? 'bg-amber-500/15 text-amber-400'
-                : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)]'
+                : 'bg-(--color-app-surface) text-(--color-app-muted)'
           )}>
             <Shield size={18} />
           </div>
           <div>
-            <p className="text-sm font-semibold text-[var(--color-app-text)]">
+            <p className="text-sm font-semibold text-(--color-app-text)">
               {isUnlocked ? 'Vault Unlocked'
                 : status?.status === 'locked' ? 'Vault Locked'
                   : 'Vault Not Set Up'}
             </p>
-            <p className="text-xs text-[var(--color-app-muted)] mt-0.5">
+            <p className="text-xs text-(--color-app-muted) mt-0.5">
               {isUnlocked
                 ? `${unlockedStatus?.itemCount ?? 0} item(s) · XChaCha20-Poly1305 encrypted`
                 : status?.status === 'locked'

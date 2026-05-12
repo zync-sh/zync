@@ -1,4 +1,4 @@
-use redb::TableDefinition;
+use redb::{MultimapTableDefinition, TableDefinition};
 
 pub const SLOT_PASSPHRASE: &str = "passphrase";
 #[allow(dead_code)]
@@ -19,3 +19,9 @@ pub const RECORDS: TableDefinition<&str, &[u8]> = TableDefinition::new("records"
 
 /// Logical credential id -> physical record id index.
 pub const LOGICAL_IDS: TableDefinition<&str, &str> = TableDefinition::new("logical_ids");
+
+/// Immutable revision snapshots for rotation history.
+/// Multimap: Key: record UUID, Value: JSON RevisionEnvelope bytes (one entry per historical revision).
+/// The current live revision is NOT stored here; only superseded revisions are.
+pub const REVISION_HISTORY: MultimapTableDefinition<&str, &[u8]> =
+    MultimapTableDefinition::new("revision_history");

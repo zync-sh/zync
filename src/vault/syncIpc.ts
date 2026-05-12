@@ -28,7 +28,11 @@ function fallbackStatus(
 ): SyncProviderStatus {
   const message = error instanceof Error ? error.message : String(error);
   const lastKnown = lastKnownStatusByProvider[provider];
-  return lastKnown ? { ...lastKnown, error: message } : { ...fallback, error: message };
+  // Merge order: lastKnown supplies supplementary fields (email, lastSync),
+  // fallback overrides connection state (connected), error is always set.
+  return lastKnown
+    ? { ...lastKnown, ...fallback, error: message }
+    : { ...fallback, error: message };
 }
 
 export const syncIpc = {
@@ -36,8 +40,11 @@ export const syncIpc = {
    * @param provider Cloud sync provider.
    * @returns Current provider connection metadata.
    */
-  status: (provider: SyncProvider): Promise<SyncProviderStatus> =>
-    invoke<SyncProviderStatus>('sync_status', { provider }),
+  status: async (provider: SyncProvider): Promise<SyncProviderStatus> => {
+    const result = await invoke<SyncProviderStatus>('sync_status', { provider });
+    lastKnownStatusByProvider[provider] = result;
+    return result;
+  },
 
   /** Connect a sync provider using its OAuth flow.
    * @param provider Cloud sync provider.
@@ -45,7 +52,7 @@ export const syncIpc = {
    */
   connect: async (provider: SyncProvider): Promise<SyncProviderStatus> => {
     try {
-      await invoke<SyncProviderStatus>('sync_connect', { provider });
+      await invoke<void>('sync_connect', { provider });
       let latestStatus: SyncProviderStatus;
       try {
         latestStatus = await syncIpc.status(provider);

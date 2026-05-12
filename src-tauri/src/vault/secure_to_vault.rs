@@ -130,15 +130,18 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
                 }
             };
             let label = format!("{} key ({}@{})", conn.name, conn.username, conn.host);
+            let secret = conn.password
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .map(|passphrase| {
+                    serde_json::json!({ "key": key_content, "passphrase": passphrase }).to_string()
+                })
+                .unwrap_or(key_content);
             prepared.push(PreparedSecureItem {
                 index,
                 label,
                 kind: CredentialItemKind::SshPrivateKey,
-                secret: serde_json::json!({
-                    "key": key_content,
-                    "passphrase": conn.password.as_ref(),
-                })
-                .to_string(),
+                secret,
             });
             continue;
         }

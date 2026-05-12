@@ -171,6 +171,7 @@ const ipcRenderer = {
       'ssh:importConfigBySource': 'ssh_import_config_by_source',
       'ssh:readConfig': 'ssh_import_config',
       'ssh:internalize-connections': 'ssh_internalize_connections',
+      'ssh:disconnectVaultBacked': 'ssh_disconnect_vault_backed',
       'sftp:put': 'sftp_put',
       'sftp:get': 'sftp_get',
       'sftp:copyToServer': 'sftp_copy_to_server',

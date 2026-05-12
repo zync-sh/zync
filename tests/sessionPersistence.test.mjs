@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildSessionData, MAX_TABS_PER_SCOPE } from '../.tmp-agent-tests/src/store/sessionPersistence.js';
+import { DEFAULT_VAULT_PROFILE_ID } from '../.tmp-agent-tests/src/vault/profileTypes.js';
 
 function runTest(name, fn) {
   try {
@@ -15,7 +16,7 @@ function makeConnectionTab(id = 'tab-1') {
   return { id, type: 'connection', title: 'Prod', connectionId: 'conn-1', view: 'terminal' };
 }
 
-function makeVaultTab(id = 'vault-tab', profile = 'google') {
+function makeVaultTab(id = 'vault-tab', profile = DEFAULT_VAULT_PROFILE_ID) {
   return { id, type: 'vault', title: 'Vault', vaultProfileId: profile, view: 'terminal' };
 }
 
@@ -117,7 +118,7 @@ runTest('buildSessionData preserves vault tab profile metadata', () => {
 
   assert.equal(defaultProfileData.tabs.length, 1);
   assert.equal(defaultProfileData.tabs[0].tabType, 'vault');
-  assert.equal(defaultProfileData.tabs[0].vaultProfileId, 'google');
+  assert.equal(defaultProfileData.tabs[0].vaultProfileId, DEFAULT_VAULT_PROFILE_ID);
 
   const customProfileData = buildSessionData({
     activeTabId: 'vault-tab',

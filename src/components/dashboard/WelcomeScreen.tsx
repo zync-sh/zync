@@ -321,7 +321,11 @@ export function WelcomeScreen() {
             {/* Subtle radial dot grid */}
             <div
                 aria-hidden="true"
-                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] mask-[radial-gradient(ellipse_70%_60%_at_50%_50%,black_30%,transparent_100%)] opacity-40"
+                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(circle_at_center,var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] opacity-40"
+                style={{
+                    maskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 100%)',
+                    WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 100%)',
+                }}
             />
 
             {/* Scrollable centered column */}

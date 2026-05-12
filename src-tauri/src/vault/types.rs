@@ -81,6 +81,28 @@ pub struct StoredEnvelope {
     pub ciphertext: String,
 }
 
+/// Metadata-only summary of a single historical revision, returned to the UI.
+/// The encrypted snapshot envelope is stored in `REVISION_HISTORY`; this is
+/// the decrypted header that the renderer needs to display the history list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionMeta {
+    /// The physical item id this snapshot belongs to.
+    pub item_id: String,
+    /// Revision number of this snapshot (the revision *before* the rotation that superseded it).
+    pub revision: u64,
+    /// Label at the time of this revision.
+    pub label: String,
+    /// Kind at the time of this revision.
+    pub kind: String,
+    /// Keyed fingerprint of the secret at this revision (for equality-only UI).
+    pub secret_fingerprint: String,
+    /// When this revision was created (unix seconds).
+    pub created_at: u64,
+    /// When this revision was superseded / rotated away (unix seconds).
+    pub rotated_at: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::PlaintextRecord;
@@ -101,5 +123,26 @@ mod tests {
 
         assert_eq!(parsed.id, "item-1");
         assert_eq!(parsed.logical_id, None);
+    }
+
+    #[test]
+    fn plaintext_record_serializes_without_logical_id_when_none() {
+        let record = PlaintextRecord {
+            id: "item-2".to_string(),
+            logical_id: None,
+            kind: "ssh-password".to_string(),
+            label: "test".to_string(),
+            secret: "s3cr3t".to_string(),
+            notes: None,
+            revision: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+
+        let json = serde_json::to_string(&record).expect("serialize PlaintextRecord");
+        assert!(
+            !json.contains("logical_id"),
+            "logical_id must not appear in JSON when None, got: {json}"
+        );
     }
 }

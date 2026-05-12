@@ -34,6 +34,16 @@ export interface VaultBackfillResult {
   skippedMissingItems: number;
 }
 
+export interface RevisionMeta {
+  itemId: string;
+  revision: number;
+  label: string;
+  kind: string;
+  secretFingerprint: string;
+  createdAt: number;
+  rotatedAt: number;
+}
+
 export interface SecureToVaultCandidate {
   connectionId: string;
   connectionName: string;
@@ -124,4 +134,10 @@ export const vaultIpc = {
 
   importVault: (srcPath: string): Promise<VaultStatus> =>
     invoke('vault_import', { args: { src_path: srcPath } }),
+
+  itemRevisionHistory: (itemId: string): Promise<RevisionMeta[]> =>
+    invoke('vault_item_revision_history', { args: { item_id: itemId } }),
+
+  itemRestoreRevision: (itemId: string, revision: number): Promise<VaultItem> =>
+    invoke('vault_item_restore_revision', { args: { item_id: itemId, revision } }),
 };

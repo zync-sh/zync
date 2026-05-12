@@ -9,7 +9,10 @@ use tokio::sync::Mutex;
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Loaded from .env at build time (src-tauri/.env → GOOGLE_CLIENT_ID=...).
-const GOOGLE_CLIENT_ID: &str = env!("GOOGLE_CLIENT_ID");
+const GOOGLE_CLIENT_ID: &str = match option_env!("GOOGLE_CLIENT_ID") {
+    Some(v) => v,
+    None => "",
+};
 const GOOGLE_CLIENT_SECRET: Option<&str> = option_env!("GOOGLE_CLIENT_SECRET");
 
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -634,47 +637,6 @@ pub async fn sync_status(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tokens_for_disk_strips_access_and_refresh_tokens() {
-        let tokens = StoredTokens {
-            access_token: Some("access-abc".into()),
-            refresh_token: Some("refresh-xyz".into()),
-            has_refresh_token: false,
-            expires_at: 123,
-            last_sync: Some(456),
-        };
-
-        let safe = tokens_for_disk(&tokens);
-        let on_disk = serde_json::to_string(&safe).expect("token file json should serialize");
-        assert!(!on_disk.contains("access-abc"), "access_token must not be persisted");
-        assert!(!on_disk.contains("refresh-xyz"), "refresh_token must not be persisted in plaintext");
-
-        assert!(safe.access_token.is_none());
-        assert!(safe.refresh_token.is_none());
-        assert!(safe.has_refresh_token);
-        assert_eq!(safe.expires_at, 123);
-        assert_eq!(safe.last_sync, Some(456));
-    }
-
-    #[test]
-    fn token_scope_check_requires_exact_drive_scope() {
-        assert!(token_has_scope(
-            Some("email https://www.googleapis.com/auth/drive.appdata"),
-            GOOGLE_DRIVE_SCOPE
-        ));
-        assert!(!token_has_scope(
-            Some("email https://www.googleapis.com/auth/drive.file"),
-            GOOGLE_DRIVE_SCOPE
-        ));
-        assert!(!token_has_scope(None, GOOGLE_DRIVE_SCOPE));
-    }
-
-}
-
 #[tauri::command]
 pub async fn sync_connect(
     app: tauri::AppHandle,
@@ -785,5 +747,45 @@ pub async fn sync_download(
             Ok(())
         }
         _ => Err(format!("Unknown provider: {provider}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_for_disk_strips_access_and_refresh_tokens() {
+        let tokens = StoredTokens {
+            access_token: Some("access-abc".into()),
+            refresh_token: Some("refresh-xyz".into()),
+            has_refresh_token: false,
+            expires_at: 123,
+            last_sync: Some(456),
+        };
+
+        let safe = tokens_for_disk(&tokens);
+        let on_disk = serde_json::to_string(&safe).expect("token file json should serialize");
+        assert!(!on_disk.contains("access-abc"), "access_token must not be persisted");
+        assert!(!on_disk.contains("refresh-xyz"), "refresh_token must not be persisted in plaintext");
+
+        assert!(safe.access_token.is_none());
+        assert!(safe.refresh_token.is_none());
+        assert!(safe.has_refresh_token);
+        assert_eq!(safe.expires_at, 123);
+        assert_eq!(safe.last_sync, Some(456));
+    }
+
+    #[test]
+    fn token_scope_check_requires_exact_drive_scope() {
+        assert!(token_has_scope(
+            Some("email https://www.googleapis.com/auth/drive.appdata"),
+            GOOGLE_DRIVE_SCOPE
+        ));
+        assert!(!token_has_scope(
+            Some("email https://www.googleapis.com/auth/drive.file"),
+            GOOGLE_DRIVE_SCOPE
+        ));
+        assert!(!token_has_scope(None, GOOGLE_DRIVE_SCOPE));
     }
 }

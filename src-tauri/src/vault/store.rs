@@ -12,9 +12,11 @@ use crate::vault::crypto::{
 };
 use crate::vault::error::VaultError;
 use crate::vault::schema::{
-    KEY_SLOTS, LOGICAL_IDS, RECORDS, SLOT_PASSPHRASE, SLOT_RECOVERY, VAULT_META,
+    KEY_SLOTS, LOGICAL_IDS, RECORDS, REVISION_HISTORY, SLOT_PASSPHRASE, SLOT_RECOVERY, VAULT_META,
 };
-use crate::vault::types::{PlaintextRecord, StoredEnvelope, VaultItemMeta, VaultMeta, VaultStatus};
+use crate::vault::types::{
+    PlaintextRecord, RevisionMeta, StoredEnvelope, VaultItemMeta, VaultMeta, VaultStatus,
+};
 
 const CRYPTO_SUITE: &str = "xchacha20poly1305-argon2id-v1";
 const AAD_VERSION: u32 = 1;
@@ -45,13 +47,26 @@ impl VaultService {
     }
 
     /// Opens an existing vault.redb without unlocking. No-op if already open.
+    /// Also ensures that tables added in later schema versions exist in
+    /// already-deployed databases (forward-compatible migration).
     fn try_open(&mut self) -> Result<(), VaultError> {
         if self.db.is_some() {
             return Ok(());
         }
         let path = self.vault_path();
         if path.exists() {
-            self.db = Some(Database::open(&path)?);
+            let db = Database::open(&path)?;
+            // Ensure tables introduced after the initial schema exist.
+            // This is a no-op for new databases (initialize() already creates them)
+            // and a safe migration for existing databases that predate these tables.
+            let write_txn = db.begin_write()?;
+            {
+                // open_table / open_multimap_table creates the table if absent.
+                write_txn.open_table(LOGICAL_IDS)?;
+                write_txn.open_multimap_table(REVISION_HISTORY)?;
+            }
+            write_txn.commit()?;
+            self.db = Some(db);
         }
         Ok(())
     }
@@ -158,6 +173,7 @@ impl VaultService {
             // Pre-create records table so reads never hit TableDoesNotExist.
             write_txn.open_table(RECORDS)?;
             write_txn.open_table(LOGICAL_IDS)?;
+            write_txn.open_multimap_table(REVISION_HISTORY)?;
         }
         write_txn.commit()?;
 
@@ -290,9 +306,10 @@ impl VaultService {
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
 
         let id = Uuid::new_v4().to_string();
-        let logical_id = logical_id
+        let caller_provided_logical_id = logical_id
             .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.is_empty());
+        let logical_id = caller_provided_logical_id
             .map(str::to_string)
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = Self::now_secs();
@@ -331,6 +348,21 @@ impl VaultService {
             let mut records = write_txn.open_table(RECORDS)?;
             records.insert(id.as_str(), serde_json::to_vec(&stored)?.as_slice())?;
             let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+
+            // Reject duplicate logical IDs when the caller explicitly provided one.
+            // Auto-generated UUIDs are collision-free by construction and skip this check.
+            if caller_provided_logical_id.is_some() {
+                if let Some(existing) = logical_ids.get(Self::record_logical_id(&record).as_str())? {
+                    let existing_id = existing.value().to_string();
+                    drop(existing);
+                    return Err(VaultError::InvalidData(format!(
+                        "logical_id '{}' is already assigned to item '{}'",
+                        Self::record_logical_id(&record),
+                        existing_id,
+                    )));
+                }
+            }
+
             logical_ids.insert(Self::record_logical_id(&record).as_str(), id.as_str())?;
 
             let mut meta_table = write_txn.open_table(VAULT_META)?;
@@ -442,6 +474,29 @@ impl VaultService {
 
         let write_txn = db.begin_write()?;
         {
+            // ── Snapshot the superseded revision into history ──────────────────
+            let snapshot_bytes = serde_json::to_vec(&existing)?;
+            let snapshot_key = derive_record_key(
+                vek,
+                record_info_bytes(&existing.id, existing.revision).as_bytes(),
+            )?;
+            let snapshot_aad = record_aad_string(&meta.vault_id, &existing.id, existing.revision);
+            let snapshot_envelope =
+                encrypt_record(&snapshot_key, &snapshot_bytes, snapshot_aad.as_bytes())?;
+            let snapshot_stored = StoredEnvelope {
+                id: existing.id.clone(),
+                kind: existing.kind.clone(),
+                revision: existing.revision,
+                deleted: false,
+                crypto_suite: CRYPTO_SUITE.into(),
+                aad_version: AAD_VERSION,
+                nonce: STANDARD.encode(snapshot_envelope.nonce),
+                ciphertext: STANDARD.encode(&snapshot_envelope.ciphertext),
+            };
+            let snapshot_json = serde_json::to_vec(&snapshot_stored)?;
+            let mut history = write_txn.open_multimap_table(REVISION_HISTORY)?;
+            history.insert(item_id, snapshot_json.as_slice())?;
+
             let mut records = write_txn.open_table(RECORDS)?;
             records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
             let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
@@ -506,7 +561,11 @@ impl VaultService {
             stored.revision += 1;
             records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
             let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
-            let _ = logical_ids.remove(logical_id.as_str());
+            // Propagate real DB errors; only a missing entry is safe to ignore.
+            match logical_ids.remove(logical_id.as_str()) {
+                Ok(_) => {}
+                Err(e) => return Err(VaultError::from(e)),
+            }
 
             let mut meta_table = write_txn.open_table(VAULT_META)?;
             let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
@@ -518,6 +577,99 @@ impl VaultService {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    // ── Revision history ──────────────────────────────────────────────────────
+
+    /// Returns all stored historical revisions for `item_id`, oldest first.
+    /// The current live revision is NOT included — only superseded snapshots.
+    pub fn item_revision_history(
+        &self,
+        item_id: &str,
+    ) -> Result<Vec<RevisionMeta>, VaultError> {
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+
+        let read_txn = db.begin_read()?;
+        let history = match read_txn.open_multimap_table(REVISION_HISTORY) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(vec![]),
+            Err(e) => return Err(VaultError::from(e)),
+        };
+
+        let mut snapshots: Vec<RevisionMeta> = Vec::new();
+        for entry in history.get(item_id)? {
+            let value = entry?;
+            let stored: StoredEnvelope = serde_json::from_slice(value.value())?;
+            let record = decrypt_stored(vek, &meta.vault_id, &stored)?;
+            let fingerprint = derive_secret_fingerprint(vek, &record.secret)
+                .map_err(VaultError::from)?;
+            snapshots.push(RevisionMeta {
+                item_id: item_id.to_string(),
+                revision: record.revision,
+                label: record.label.clone(),
+                kind: record.kind.clone(),
+                secret_fingerprint: fingerprint,
+                created_at: record.created_at,
+                rotated_at: record.updated_at,
+            });
+        }
+
+        // Sort oldest revision first.
+        snapshots.sort_by_key(|s| s.revision);
+        Ok(snapshots)
+    }
+
+    /// Restores a specific historical revision as the new current value.
+    /// The current live record is snapshotted into history first, then the
+    /// chosen historical snapshot is re-encrypted as the new live record.
+    /// The restored revision gets a new incremented revision number.
+    pub fn item_restore_revision(
+        &self,
+        item_id: &str,
+        revision: u64,
+    ) -> Result<PlaintextRecord, VaultError> {
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+
+        // Find the requested snapshot.
+        let read_txn = db.begin_read()?;
+        let history = match read_txn.open_multimap_table(REVISION_HISTORY) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Err(VaultError::RecordNotFound(format!(
+                    "no history for {item_id}"
+                )))
+            }
+            Err(e) => return Err(VaultError::from(e)),
+        };
+
+        let mut target_record: Option<PlaintextRecord> = None;
+        for entry in history.get(item_id)? {
+            let value = entry?;
+            let stored: StoredEnvelope = serde_json::from_slice(value.value())?;
+            if stored.revision == revision {
+                target_record = Some(decrypt_stored(vek, &meta.vault_id, &stored)?);
+                break;
+            }
+        }
+        drop(read_txn);
+
+        let target = target_record.ok_or_else(|| {
+            VaultError::RecordNotFound(format!("revision {revision} not found for {item_id}"))
+        })?;
+
+        // Use item_update to write the restored secret — this automatically
+        // snapshots the current live record into history and increments revision.
+        self.item_update(
+            item_id,
+            &target.label,
+            &target.kind,
+            &target.secret,
+            target.notes.as_deref(),
+        )
     }
 
     // ── Recovery key ─────────────────────────────────────────────────────────
@@ -559,7 +711,8 @@ impl VaultService {
         Ok(recovery_key)
     }
 
-    pub fn has_recovery_key(&self) -> Result<bool, VaultError> {
+    pub fn has_recovery_key(&mut self) -> Result<bool, VaultError> {
+        self.try_open()?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let read_txn = db.begin_read()?;
         let ks = match read_txn.open_table(KEY_SLOTS) {
@@ -816,12 +969,37 @@ fn validate_vault_database(path: &Path) -> Result<(), VaultError> {
     let read_txn = db
         .begin_read()
         .map_err(|e| VaultError::InvalidData(format!("Import file cannot be read: {e}")))?;
-    read_txn
+
+    // Verify vault_meta table exists and contains a non-empty vault_id and parseable meta row.
+    let vm = read_txn
         .open_table(VAULT_META)
         .map_err(|_| VaultError::InvalidData("Import file is missing vault metadata.".into()))?;
-    read_txn
+    let vault_id_bytes = vm
+        .get("vault_id")
+        .map_err(|e| VaultError::InvalidData(format!("Import file vault_id unreadable: {e}")))?
+        .ok_or_else(|| VaultError::InvalidData("Import file has no vault_id.".into()))?;
+    if vault_id_bytes.value().is_empty() {
+        return Err(VaultError::InvalidData("Import file vault_id is empty.".into()));
+    }
+    let meta_bytes = vm
+        .get("meta")
+        .map_err(|e| VaultError::InvalidData(format!("Import file meta row unreadable: {e}")))?
+        .ok_or_else(|| VaultError::InvalidData("Import file has no meta row.".into()))?;
+    serde_json::from_slice::<VaultMeta>(meta_bytes.value())
+        .map_err(|e| VaultError::InvalidData(format!("Import file meta row is malformed: {e}")))?;
+
+    // Verify key_slots table exists and contains the passphrase slot.
+    let ks = read_txn
         .open_table(KEY_SLOTS)
         .map_err(|_| VaultError::InvalidData("Import file is missing key slots.".into()))?;
+    let slot = ks
+        .get(SLOT_PASSPHRASE)
+        .map_err(|e| VaultError::InvalidData(format!("Import file passphrase slot unreadable: {e}")))?
+        .ok_or_else(|| VaultError::InvalidData("Import file has no passphrase key slot.".into()))?;
+    if slot.value().is_empty() {
+        return Err(VaultError::InvalidData("Import file passphrase slot is empty.".into()));
+    }
+
     read_txn
         .open_table(RECORDS)
         .map_err(|_| VaultError::InvalidData("Import file is missing records table.".into()))?;
@@ -855,4 +1033,145 @@ fn sync_parent_dir(path: &Path) -> Result<(), VaultError> {
 #[cfg(target_os = "windows")]
 fn sync_parent_dir(_path: &Path) -> Result<(), VaultError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestVault {
+        service: VaultService,
+        dir: PathBuf,
+    }
+
+    impl TestVault {
+        fn new() -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("zync-vault-store-test-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).expect("create temp vault dir");
+            let service = VaultService::new(dir.clone());
+            Self { service, dir }
+        }
+    }
+
+    impl Drop for TestVault {
+        fn drop(&mut self) {
+            let replacement = VaultService::new(PathBuf::new());
+            let old_service = std::mem::replace(&mut self.service, replacement);
+            drop(old_service);
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn initialized_test_vault() -> TestVault {
+        let mut vault = TestVault::new();
+        vault
+            .service
+            .initialize("correct horse battery staple")
+            .expect("initialize vault");
+        vault
+    }
+
+    #[test]
+    fn item_update_records_revision_history_without_current_revision() {
+        let vault = initialized_test_vault();
+        let item = vault
+            .service
+            .item_create_with_logical_id(
+                "prod key",
+                "ssh-private-key",
+                "secret-v1",
+                Some("initial note"),
+                Some("credential-prod"),
+            )
+            .expect("create item");
+
+        vault
+            .service
+            .item_update(
+                &item.id,
+                "prod key rotated",
+                "ssh-private-key",
+                "secret-v2",
+                Some("rotated note"),
+            )
+            .expect("rotate item");
+        let live = vault.service.item_get(&item.id).expect("get live item");
+        let history = vault
+            .service
+            .item_revision_history(&item.id)
+            .expect("load revision history");
+
+        assert_eq!(live.revision, 2);
+        assert_eq!(live.secret, "secret-v2");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].revision, 1);
+        assert_eq!(history[0].label, "prod key");
+        assert_eq!(history[0].kind, "ssh-private-key");
+        assert_ne!(
+            history[0].secret_fingerprint,
+            vault.service.secret_fingerprint(&live.secret).unwrap()
+        );
+    }
+
+    #[test]
+    fn item_restore_revision_preserves_logical_id_and_snapshots_current_value() {
+        let vault = initialized_test_vault();
+        let item = vault
+            .service
+            .item_create_with_logical_id(
+                "prod password",
+                "ssh-password",
+                "secret-v1",
+                Some("first"),
+                Some("credential-prod-password"),
+            )
+            .expect("create item");
+
+        vault
+            .service
+            .item_update(
+                &item.id,
+                "prod password v2",
+                "ssh-password",
+                "secret-v2",
+                Some("second"),
+            )
+            .expect("rotate to v2");
+        vault
+            .service
+            .item_update(
+                &item.id,
+                "prod password v3",
+                "ssh-password",
+                "secret-v3",
+                Some("third"),
+            )
+            .expect("rotate to v3");
+
+        let restored = vault
+            .service
+            .item_restore_revision(&item.id, 1)
+            .expect("restore v1");
+        let live = vault.service.item_get(&item.id).expect("get restored live item");
+        let relinked = vault
+            .service
+            .item_get_by_logical_id("credential-prod-password")
+            .expect("logical id still resolves");
+        let history = vault
+            .service
+            .item_revision_history(&item.id)
+            .expect("load revision history after restore");
+
+        assert_eq!(restored.id, item.id);
+        assert_eq!(restored.revision, 4);
+        assert_eq!(restored.logical_id.as_deref(), Some("credential-prod-password"));
+        assert_eq!(live.secret, "secret-v1");
+        assert_eq!(live.label, "prod password");
+        assert_eq!(live.notes.as_deref(), Some("first"));
+        assert_eq!(relinked.id, item.id);
+
+        let revisions: Vec<u64> = history.iter().map(|revision| revision.revision).collect();
+        assert_eq!(revisions, vec![1, 2, 3]);
+    }
 }

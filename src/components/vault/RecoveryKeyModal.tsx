@@ -63,7 +63,9 @@ export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
     a.href = url;
     a.download = 'zync-vault-recovery-key.txt';
     a.click();
-    URL.revokeObjectURL(url);
+    // Defer revocation so the browser has time to start the download
+    // before the object URL is invalidated.
+    window.setTimeout(() => URL.revokeObjectURL(url), 250);
   };
 
   // Split key into visual groups of 4 chars for display
@@ -75,7 +77,7 @@ export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
       onClose={onClose}
       title="Vault Recovery Key"
       subtitle="Save this key somewhere safe. It can unlock your vault if you forget your passphrase."
-      width="max-w-md"
+      width="max-w-lg"
       closeOnEsc={false}
       closeOnOverlayClick={false}
       showCloseButton={false}

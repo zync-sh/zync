@@ -208,6 +208,8 @@ pub fn run() {
             vault::commands::vault_item_get,
             vault::commands::vault_item_update,
             vault::commands::vault_item_delete,
+            vault::commands::vault_item_revision_history,
+            vault::commands::vault_item_restore_revision,
             vault::commands::vault_secure_to_vault_preview,
             vault::commands::vault_secure_to_vault,
             vault::commands::vault_backfill_connection_refs,

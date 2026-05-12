@@ -693,7 +693,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         connectionId: s.connectionId,
                         vaultProfileId: isVaultProfileId(s.vaultProfileId)
                             ? s.vaultProfileId
-                            : undefined,
+                            : s.tabType === 'vault' ? DEFAULT_VAULT_PROFILE_ID : undefined,
                         view,
                     };
                 });

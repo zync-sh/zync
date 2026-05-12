@@ -1,4 +1,4 @@
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { History, Plus, Search, Trash2 } from 'lucide-react';
 import type { VaultItem } from '../../../../vault/ipc';
 import { Button } from '../../../ui/Button';
 
@@ -13,6 +13,7 @@ interface VaultItemsPanelProps {
   onAddCredential: () => void;
   onAssign: (itemId: string) => void;
   onRotate: (itemId: string) => void;
+  onHistory: (itemId: string) => void;
   onDelete: (itemId: string, label: string) => void;
 }
 
@@ -27,6 +28,7 @@ export function VaultItemsPanel({
   onAddCredential,
   onAssign,
   onRotate,
+  onHistory,
   onDelete,
 }: VaultItemsPanelProps) {
   return (
@@ -112,6 +114,17 @@ export function VaultItemsPanel({
                       className="h-7 gap-1 px-2 text-[11px]"
                     >
                       Rotate
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onHistory(item.id)}
+                      className="h-7 gap-1 px-2 text-[11px]"
+                      title="View revision history"
+                      aria-label={`View history for ${item.label}`}
+                    >
+                      <History size={12} />
+                      History
                     </Button>
                     <button
                       type="button"
