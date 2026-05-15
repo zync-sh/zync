@@ -71,7 +71,8 @@ for (const file of files) {
     return found;
   };
   const short = file.replace(root + path.sep, '');
-  const expectedUnlockModalShellModule = short === 'src\\components\\vault\\VaultUnlockModal.tsx'
+  const vaultUnlockModalPath = path.normalize('src/components/vault/VaultUnlockModal.tsx');
+  const expectedUnlockModalShellModule = short === vaultUnlockModalPath
     ? './UnlockModalShell'
     : '../../../vault/UnlockModalShell';
   runTest(`${short} imports UnlockModalShell`, () => {

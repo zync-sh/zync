@@ -59,6 +59,7 @@ pub fn validate_provider_contract(provider: &dyn VaultProviderV1) -> SyncResult<
 mod tests {
     use super::*;
     use crate::sync::types::EncryptionMode;
+    use crate::sync::providers::google::GoogleVaultProvider;
 
     fn make_test_capabilities(encryption_mode: EncryptionMode) -> ProviderCapabilities {
         ProviderCapabilities {
@@ -152,5 +153,21 @@ mod tests {
             capabilities: make_test_capabilities(EncryptionMode::ProviderEncrypted),
         };
         validate_provider_contract(&provider).expect("enum mode should pass contract");
+    }
+
+    #[test]
+    fn google_provider_passes_contract_validation() {
+        let provider = GoogleVaultProvider;
+        validate_provider_contract(&provider).expect("google provider should satisfy base contract");
+        assert_eq!(provider.kind(), SyncProviderKind::Google);
+    }
+
+    #[test]
+    fn google_provider_declares_expected_capabilities_shape() {
+        let provider = GoogleVaultProvider;
+        let caps = provider.capabilities();
+        assert_eq!(caps.encryption_mode, EncryptionMode::AppEncryptedOnly);
+        assert!(caps.supports_incremental);
+        assert!(!caps.supports_etag);
     }
 }

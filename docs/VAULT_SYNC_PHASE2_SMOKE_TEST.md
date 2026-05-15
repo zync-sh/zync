@@ -118,8 +118,27 @@ Trigger any sync failure (network off / invalid token / revoked grant) and verif
 - Frontend extracts and keeps `errorCode` + readable message.
 - Vault sync card can show warning text without breaking actions.
 
+## 8) Restore convergence check (critical)
+1. Ensure at least one remote credential record exists for Google sync.
+2. Run **Restore Credentials** once and note result counts.
+3. Run **Restore Credentials** immediately again with no local edits.
+4. Expected:
+   - Second run should not keep re-applying the same record as updated/new.
+   - Most records should move to skipped/stale unless remote changed.
+   - This confirms local records preserved remote `revision`/`updated_at` metadata.
+
+## 9) Cross-platform finalize check
+On Windows, macOS, and Linux:
+1. Connect provider and perform setup/unlock/backup/restore flows.
+2. Restart app and repeat.
+3. Expected:
+   - No sync profile/manifest corruption.
+   - No destructive replace of valid files on non-conflict rename errors.
+   - No leftover temp artifacts (`*.tmp`) after successful operations.
+
 ## Pass criteria
 - Connect/disconnect/upload/restore all function through provider interface.
 - SyncProfile file is canonical source of provider status metadata.
 - Legacy fallback path does not break existing users.
 - Error/state handling remains stable across refresh/restart.
+- Restore converges (same remote payload is not repeatedly re-applied).

@@ -197,7 +197,11 @@ pub fn save_profiles_store(data_dir: &Path, store: &SyncProfilesStore) -> SyncRe
                         }
                         return Ok(());
                     }
-                    Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {}
+                    Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {
+                        if std::fs::rename(&temp_path, &final_path).is_ok() {
+                            return Ok(());
+                        }
+                    }
                     Err(remove_err) => {
                         let _ = std::fs::remove_file(&temp_path);
                         return Err(SyncError::new(

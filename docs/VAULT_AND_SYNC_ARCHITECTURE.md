@@ -237,6 +237,8 @@ Provider contract notes:
   [`VAULT_PROVIDER_SYNC_KEY_MODEL.md`](./VAULT_PROVIDER_SYNC_KEY_MODEL.md).
 - Current implementation includes a provider contract validator and Google adapter conformance
   coverage for capability invariants. New providers must pass the same `VaultProviderV1` gate.
+- Phase 2 closure snapshot and handoff notes are tracked in
+  [`VAULT_PHASE2_CLOSURE_STATUS.md`](./VAULT_PHASE2_CLOSURE_STATUS.md).
 
 ### Phase 3 — Robust sync behavior
 - Add state machine, retries, conflict objects, conflict badge center.

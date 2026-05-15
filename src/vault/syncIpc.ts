@@ -109,8 +109,9 @@ export interface SyncRestoreConflictItem {
 
 export const SYNC_STATUS_CHANGED_EVENT = 'zync:sync-status-changed';
 const lastKnownStatusByProvider: Partial<Record<SyncProvider, SyncProviderStatus>> = {};
+let invokeCore: typeof invoke = invoke;
 
-function normalizeProviderStatus(
+export function normalizeProviderStatus(
   provider: SyncProvider,
   status: SyncProviderStatus,
 ): SyncProviderStatus {
@@ -122,9 +123,22 @@ function normalizeProviderStatus(
   };
 }
 
+export function __setSyncIpcInvokeForTests(mockInvoke: typeof invoke): void {
+  invokeCore = mockInvoke;
+}
+
+export function __resetSyncIpcInvokeForTests(): void {
+  invokeCore = invoke;
+}
+
 export function notifySyncStatusChanged(provider: SyncProvider, status?: SyncProviderStatus): void {
   if (status) {
-    lastKnownStatusByProvider[provider] = status;
+    const normalized = normalizeProviderStatus(provider, status);
+    lastKnownStatusByProvider[provider] = normalized;
+    window.dispatchEvent(new CustomEvent(SYNC_STATUS_CHANGED_EVENT, {
+      detail: { provider, status: normalized },
+    }));
+    return;
   }
   window.dispatchEvent(new CustomEvent(SYNC_STATUS_CHANGED_EVENT, {
     detail: { provider, status },
@@ -162,47 +176,47 @@ function fallbackStatus(
 
 export const syncIpc = {
   collectionStatus: async (provider: SyncProvider): Promise<SyncCollectionStatus> =>
-    invoke<SyncCollectionStatus>('sync_collection_status', { provider }),
+    invokeCore<SyncCollectionStatus>('sync_collection_status', { provider }),
 
   collectionSetup: async (
     provider: SyncProvider,
     args: SyncCollectionSetupArgs,
   ): Promise<SyncCollectionSetupResult> =>
-    invoke<SyncCollectionSetupResult>('sync_collection_setup', { provider, args }),
+    invokeCore<SyncCollectionSetupResult>('sync_collection_setup', { provider, args }),
 
   collectionUnlock: async (
     provider: SyncProvider,
     args: SyncCollectionUnlockArgs,
   ): Promise<SyncCollectionStatus> =>
-    invoke<SyncCollectionStatus>('sync_collection_unlock', { provider, args }),
+    invokeCore<SyncCollectionStatus>('sync_collection_unlock', { provider, args }),
 
   collectionRegenerateRecoveryKey: async (
     provider: SyncProvider,
   ): Promise<SyncCollectionSetupResult> =>
-    invoke<SyncCollectionSetupResult>('sync_collection_regenerate_recovery_key', { provider }),
+    invokeCore<SyncCollectionSetupResult>('sync_collection_regenerate_recovery_key', { provider }),
 
   collectionLock: async (
     provider: SyncProvider,
   ): Promise<SyncCollectionStatus> =>
-    invoke<SyncCollectionStatus>('sync_collection_lock', { provider }),
+    invokeCore<SyncCollectionStatus>('sync_collection_lock', { provider }),
 
   collectionForgetKey: async (
     provider: SyncProvider,
   ): Promise<SyncCollectionStatus> =>
-    invoke<SyncCollectionStatus>('sync_collection_forget_key', { provider }),
+    invokeCore<SyncCollectionStatus>('sync_collection_forget_key', { provider }),
 
   collectionSetCacheTtl: async (
     provider: SyncProvider,
     ttlSecs: number,
   ): Promise<SyncCollectionStatus> =>
-    invoke<SyncCollectionStatus>('sync_collection_set_cache_ttl', { provider, ttlSecs }),
+    invokeCore<SyncCollectionStatus>('sync_collection_set_cache_ttl', { provider, ttlSecs }),
 
   /** Get connection status for a sync provider.
    * @param provider Cloud sync provider.
    * @returns Current provider connection metadata.
    */
   status: async (provider: SyncProvider): Promise<SyncProviderStatus> => {
-    const result = await invoke<SyncProviderStatus>('sync_status', { provider });
+    const result = await invokeCore<SyncProviderStatus>('sync_status', { provider });
     const normalized = normalizeProviderStatus(provider, result);
     lastKnownStatusByProvider[provider] = normalized;
     return normalized;
@@ -214,7 +228,7 @@ export const syncIpc = {
    */
   connect: async (provider: SyncProvider): Promise<SyncProviderStatus> => {
     try {
-      const connectStatus = await invoke<SyncProviderStatus>('sync_connect', { provider });
+      const connectStatus = await invokeCore<SyncProviderStatus>('sync_connect', { provider });
       let latestStatus: SyncProviderStatus;
       if (typeof connectStatus?.connected === 'boolean') {
         latestStatus = normalizeProviderStatus(provider, connectStatus);
@@ -240,7 +254,7 @@ export const syncIpc = {
    */
   disconnect: async (provider: SyncProvider): Promise<void> => {
     try {
-      await invoke<void>('sync_disconnect', { provider });
+      await invokeCore<void>('sync_disconnect', { provider });
       let providerStatus: SyncProviderStatus;
       try {
         providerStatus = await syncIpc.status(provider);
@@ -257,7 +271,7 @@ export const syncIpc = {
   /** Upload vault.redb to provider. Returns the sync timestamp. */
   upload: async (provider: SyncProvider): Promise<number> => {
     try {
-      const lastSync = await invoke<number>('sync_upload', { provider });
+      const lastSync = await invokeCore<number>('sync_upload', { provider });
       let providerStatus: SyncProviderStatus;
       try {
         providerStatus = await syncIpc.status(provider);
@@ -277,7 +291,7 @@ export const syncIpc = {
     args: SyncUploadCredentialArgs,
   ): Promise<SyncUploadCredentialResult> => {
     try {
-      const result = await invoke<SyncUploadCredentialResult>('sync_upload_credential', { provider, args });
+      const result = await invokeCore<SyncUploadCredentialResult>('sync_upload_credential', { provider, args });
       let providerStatus: SyncProviderStatus;
       try {
         providerStatus = await syncIpc.status(provider);
@@ -297,7 +311,7 @@ export const syncIpc = {
     args: SyncRestoreCredentialsArgs = {},
   ): Promise<SyncRestoreCredentialsResult> => {
     try {
-      const result = await invoke<SyncRestoreCredentialsResult>('sync_restore_credentials', {
+      const result = await invokeCore<SyncRestoreCredentialsResult>('sync_restore_credentials', {
         provider,
         args,
       });
@@ -319,12 +333,12 @@ export const syncIpc = {
     provider: SyncProvider,
     args: SyncRestoreCredentialsArgs = {},
   ): Promise<SyncRestorePreviewResult> =>
-    invoke<SyncRestorePreviewResult>('sync_restore_preview', { provider, args }),
+    invokeCore<SyncRestorePreviewResult>('sync_restore_preview', { provider, args }),
 
   /** Download vault.redb from provider and replace the local file. */
   download: async (provider: SyncProvider): Promise<SyncDownloadResult> => {
     try {
-      const result = await invoke<SyncDownloadResult>('sync_download', { provider });
+      const result = await invokeCore<SyncDownloadResult>('sync_download', { provider });
       let providerStatus: SyncProviderStatus;
       try {
         providerStatus = await syncIpc.status(provider);

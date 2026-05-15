@@ -87,7 +87,7 @@ pub fn save_manifest(data_dir: &Path, manifest: &SyncCollectionManifest) -> Sync
     match std::fs::rename(&temp_path, &final_path) {
         Ok(()) => Ok(()),
         Err(rename_err) => {
-            if final_path.exists() {
+            if rename_err.kind() == ErrorKind::AlreadyExists && final_path.exists() {
                 match std::fs::remove_file(&final_path) {
                     Ok(()) => {
                         if let Err(retry_err) = std::fs::rename(&temp_path, &final_path) {
