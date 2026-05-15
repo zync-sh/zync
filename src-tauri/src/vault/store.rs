@@ -104,11 +104,14 @@ impl VaultService {
             return Ok(VaultStatus::Uninitialized);
         }
 
-        if self.vek.is_none() {
-            return Ok(VaultStatus::Locked { vault_id });
-        }
-
         let item_count = live_record_count(&read_txn)?;
+
+        if self.vek.is_none() {
+            return Ok(VaultStatus::Locked {
+                vault_id,
+                item_count,
+            });
+        }
 
         Ok(VaultStatus::Unlocked {
             vault_id,
@@ -1019,8 +1022,16 @@ fn copy_file_synced(src: &Path, dest: &Path) -> Result<(), VaultError> {
 }
 
 fn sync_file(path: &Path) -> Result<(), VaultError> {
-    std::fs::OpenOptions::new()
-        .read(true)
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "windows")]
+    {
+        // Windows may return "Access is denied" for sync_all on a read-only handle.
+        // Requesting write access avoids false failures during import/export backup sync.
+        options.write(true);
+    }
+
+    options
         .open(path)
         .and_then(|file| file.sync_all())
         .map_err(|e| VaultError::InvalidData(format!("sync failed for {path:?}: {e}")))

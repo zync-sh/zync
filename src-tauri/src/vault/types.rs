@@ -23,7 +23,7 @@ pub struct VaultMeta {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum VaultStatus {
     Uninitialized,
-    Locked { vault_id: String },
+    Locked { vault_id: String, item_count: u64 },
     Unlocked { vault_id: String, item_count: u64 },
 }
 
