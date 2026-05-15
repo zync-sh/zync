@@ -30,12 +30,18 @@ for (const file of files) {
   }
   const src = fs.readFileSync(file, 'utf8');
   const sourceFile = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const hasImportNamed = (importedName) => sourceFile.statements.some((statement) => {
+  const hasImportNamed = (importedName, expectedModule) => sourceFile.statements.some((statement) => {
     if (!ts.isImportDeclaration(statement)) return false;
+    if (expectedModule) {
+      const source = ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : '';
+      if (source !== expectedModule) return false;
+    }
     if (!statement.importClause?.namedBindings || !ts.isNamedImports(statement.importClause.namedBindings)) {
       return false;
     }
-    return statement.importClause.namedBindings.elements.some((element) => element.name.text === importedName);
+    return statement.importClause.namedBindings.elements.some((element) =>
+      element.name.text === importedName || element.propertyName?.text === importedName
+    );
   });
   const hasJsxElementNamed = (jsxName) => {
     const resolveTagName = (tag) => {
@@ -65,8 +71,14 @@ for (const file of files) {
     return found;
   };
   const short = file.replace(root + path.sep, '');
+  const expectedUnlockModalShellModule = short === 'src\\components\\vault\\VaultUnlockModal.tsx'
+    ? './UnlockModalShell'
+    : '../../../vault/UnlockModalShell';
   runTest(`${short} imports UnlockModalShell`, () => {
-    assert.ok(hasImportNamed('UnlockModalShell'), 'UnlockModalShell import missing');
+    assert.ok(
+      hasImportNamed('UnlockModalShell', expectedUnlockModalShellModule),
+      'UnlockModalShell import missing',
+    );
   });
   runTest(`${short} uses UnlockModalShell`, () => {
     assert.ok(hasJsxElementNamed('UnlockModalShell'), 'UnlockModalShell usage missing');

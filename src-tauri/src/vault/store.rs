@@ -387,6 +387,88 @@ impl VaultService {
         Ok(record)
     }
 
+    /// Creates a record from a remote sync payload while preserving the remote
+    /// revision/updated_at metadata so restore reconciliation converges.
+    pub fn item_create_from_sync(
+        &self,
+        label: &str,
+        kind: &str,
+        secret: &str,
+        notes: Option<&str>,
+        logical_id: &str,
+        revision: u64,
+        updated_at: u64,
+    ) -> Result<PlaintextRecord, VaultError> {
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+
+        let id = Uuid::new_v4().to_string();
+        let logical_id = logical_id.trim();
+        if logical_id.is_empty() {
+            return Err(VaultError::InvalidData(
+                "logical_id is required for sync restore create".to_string(),
+            ));
+        }
+        let revision = revision.max(1);
+        let created_at = updated_at;
+
+        let record = PlaintextRecord {
+            id: id.clone(),
+            logical_id: Some(logical_id.to_string()),
+            kind: kind.to_string(),
+            label: label.to_string(),
+            secret: secret.to_string(),
+            notes: notes.map(str::to_string),
+            revision,
+            created_at,
+            updated_at,
+        };
+
+        let plaintext = serde_json::to_vec(&record)?;
+        let record_key = derive_record_key(vek, record_info_bytes(&id, revision).as_bytes())?;
+        let aad = record_aad_string(&meta.vault_id, &id, revision);
+        let envelope = encrypt_record(&record_key, &plaintext, aad.as_bytes())?;
+
+        let stored = StoredEnvelope {
+            id: id.clone(),
+            kind: kind.to_string(),
+            revision,
+            deleted: false,
+            crypto_suite: CRYPTO_SUITE.into(),
+            aad_version: AAD_VERSION,
+            nonce: STANDARD.encode(envelope.nonce),
+            ciphertext: STANDARD.encode(&envelope.ciphertext),
+        };
+
+        let write_txn = db.begin_write()?;
+        {
+            let mut records = write_txn.open_table(RECORDS)?;
+            records.insert(id.as_str(), serde_json::to_vec(&stored)?.as_slice())?;
+            let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+            if let Some(existing) = logical_ids.get(logical_id)? {
+                let existing_id = existing.value().to_string();
+                drop(existing);
+                return Err(VaultError::InvalidData(format!(
+                    "logical_id '{}' is already assigned to item '{}'",
+                    logical_id, existing_id
+                )));
+            }
+            logical_ids.insert(logical_id, id.as_str())?;
+
+            let mut meta_table = write_txn.open_table(VAULT_META)?;
+            let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
+            let mut db_meta: VaultMeta = serde_json::from_slice(meta_bytes.value())?;
+            db_meta.live_records = Some(db_meta.live_records.unwrap_or(0).saturating_add(1));
+            db_meta.updated_at = Self::now_secs();
+            drop(meta_bytes);
+            meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        Ok(record)
+    }
+
     pub fn item_get(&self, item_id: &str) -> Result<PlaintextRecord, VaultError> {
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
@@ -515,6 +597,118 @@ impl VaultService {
             let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
             let mut db_meta: VaultMeta = serde_json::from_slice(meta_bytes.value())?;
             db_meta.updated_at = now;
+            drop(meta_bytes);
+            meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        Ok(record)
+    }
+
+    /// Overwrites an existing record from remote sync while preserving remote
+    /// revision/updated_at metadata so restore reconciliation converges.
+    pub fn item_apply_sync_restore(
+        &self,
+        item_id: &str,
+        logical_id: &str,
+        label: &str,
+        kind: &str,
+        secret: &str,
+        notes: Option<&str>,
+        revision: u64,
+        updated_at: u64,
+    ) -> Result<PlaintextRecord, VaultError> {
+        let existing = self.item_get(item_id)?;
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+
+        let logical_id = logical_id.trim();
+        if logical_id.is_empty() {
+            return Err(VaultError::InvalidData(
+                "logical_id is required for sync restore update".to_string(),
+            ));
+        }
+
+        let revision = revision.max(1);
+        let record = PlaintextRecord {
+            id: existing.id.clone(),
+            logical_id: Some(logical_id.to_string()),
+            kind: kind.to_string(),
+            label: label.to_string(),
+            secret: secret.to_string(),
+            notes: notes.map(str::to_string),
+            revision,
+            created_at: existing.created_at,
+            updated_at,
+        };
+
+        let plaintext = serde_json::to_vec(&record)?;
+        let record_key = derive_record_key(vek, record_info_bytes(item_id, revision).as_bytes())?;
+        let aad = record_aad_string(&meta.vault_id, item_id, revision);
+        let envelope = encrypt_record(&record_key, &plaintext, aad.as_bytes())?;
+        let stored = StoredEnvelope {
+            id: item_id.to_string(),
+            kind: kind.to_string(),
+            revision,
+            deleted: false,
+            crypto_suite: CRYPTO_SUITE.into(),
+            aad_version: AAD_VERSION,
+            nonce: STANDARD.encode(envelope.nonce),
+            ciphertext: STANDARD.encode(&envelope.ciphertext),
+        };
+
+        let write_txn = db.begin_write()?;
+        {
+            let snapshot_bytes = serde_json::to_vec(&existing)?;
+            let snapshot_key = derive_record_key(
+                vek,
+                record_info_bytes(&existing.id, existing.revision).as_bytes(),
+            )?;
+            let snapshot_aad = record_aad_string(&meta.vault_id, &existing.id, existing.revision);
+            let snapshot_envelope =
+                encrypt_record(&snapshot_key, &snapshot_bytes, snapshot_aad.as_bytes())?;
+            let snapshot_stored = StoredEnvelope {
+                id: existing.id.clone(),
+                kind: existing.kind.clone(),
+                revision: existing.revision,
+                deleted: false,
+                crypto_suite: CRYPTO_SUITE.into(),
+                aad_version: AAD_VERSION,
+                nonce: STANDARD.encode(snapshot_envelope.nonce),
+                ciphertext: STANDARD.encode(snapshot_envelope.ciphertext),
+            };
+            let snapshot_json = serde_json::to_vec(&snapshot_stored)?;
+            let mut history = write_txn.open_multimap_table(REVISION_HISTORY)?;
+            history.insert(item_id, snapshot_json.as_slice())?;
+
+            let mut records = write_txn.open_table(RECORDS)?;
+            records.insert(item_id, serde_json::to_vec(&stored)?.as_slice())?;
+
+            let mut logical_ids = write_txn.open_table(LOGICAL_IDS)?;
+            let previous_logical_id = Self::record_logical_id(&existing);
+            if previous_logical_id != logical_id {
+                match logical_ids.remove(previous_logical_id.as_str()) {
+                    Ok(_) => {}
+                    Err(e) => return Err(VaultError::from(e)),
+                }
+            }
+            if let Some(existing_mapping) = logical_ids.get(logical_id)? {
+                let mapped_id = existing_mapping.value().to_string();
+                drop(existing_mapping);
+                if mapped_id != item_id {
+                    return Err(VaultError::InvalidData(format!(
+                        "logical_id '{}' is already assigned to item '{}'",
+                        logical_id, mapped_id
+                    )));
+                }
+            }
+            logical_ids.insert(logical_id, item_id)?;
+
+            let mut meta_table = write_txn.open_table(VAULT_META)?;
+            let meta_bytes = meta_table.get("meta")?.ok_or(VaultError::NotInitialized)?;
+            let mut db_meta: VaultMeta = serde_json::from_slice(meta_bytes.value())?;
+            db_meta.updated_at = Self::now_secs();
             drop(meta_bytes);
             meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
         }

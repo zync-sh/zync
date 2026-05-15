@@ -52,7 +52,6 @@ function Get-CandidateDataDirs {
 
     if ($env:LOCALAPPDATA) {
         $candidates += (Join-Path $env:LOCALAPPDATA 'Zync\User')
-        $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\zync')
         $candidates += (Join-Path $env:LOCALAPPDATA 'com.zync.desktop')
         $candidates += (Join-Path $env:LOCALAPPDATA 'zync')
     }

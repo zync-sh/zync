@@ -8,6 +8,7 @@ use crate::vault::crypto::{
 };
 use base64::Engine;
 use rand_core::RngCore;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -83,13 +84,43 @@ pub fn save_manifest(data_dir: &Path, manifest: &SyncCollectionManifest) -> Sync
         )
     })?;
 
-    std::fs::rename(&temp_path, &final_path).map_err(|e| {
-        let _ = std::fs::remove_file(&temp_path);
-        SyncError::new(
-            "sync_collection_write_failed",
-            format!("Failed to finalize sync collection manifest: {e}"),
-        )
-    })
+    match std::fs::rename(&temp_path, &final_path) {
+        Ok(()) => Ok(()),
+        Err(rename_err) => {
+            if final_path.exists() {
+                match std::fs::remove_file(&final_path) {
+                    Ok(()) => {
+                        if let Err(retry_err) = std::fs::rename(&temp_path, &final_path) {
+                            let _ = std::fs::remove_file(&temp_path);
+                            return Err(SyncError::new(
+                                "sync_collection_write_failed",
+                                format!(
+                                    "Failed to finalize sync collection manifest after replace retry: {retry_err}"
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {}
+                    Err(remove_err) => {
+                        let _ = std::fs::remove_file(&temp_path);
+                        return Err(SyncError::new(
+                            "sync_collection_write_failed",
+                            format!(
+                                "Failed to replace existing sync collection manifest: {remove_err}"
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            let _ = std::fs::remove_file(&temp_path);
+            Err(SyncError::new(
+                "sync_collection_write_failed",
+                format!("Failed to finalize sync collection manifest: {rename_err}"),
+            ))
+        }
+    }
 }
 
 pub fn setup_manifest(
@@ -101,13 +132,14 @@ pub fn setup_manifest(
 ) -> SyncResult<SyncCollectionSetupOutcome> {
     let current = load_manifest(data_dir, provider)?;
     let existing_manifest = current.is_some();
+    let original_key_policy_mode = current.as_ref().map(|m| m.key_policy_mode);
     let now = now_secs();
 
     let mut manifest = match current {
         Some(mut existing) => {
-            existing.key_policy_mode = key_policy_mode;
             existing.has_recovery_key = has_recovery_key;
             existing.updated_at = now;
+            existing.key_policy_mode = key_policy_mode;
             existing
         }
         None => SyncCollectionManifest {
@@ -137,7 +169,11 @@ pub fn setup_manifest(
                 && manifest.key_wrap_nonce.is_some()
                 && manifest.key_wrap_ciphertext.is_some()
             {
-                unwrap_collection_key(&manifest, passphrase)?
+                let mut unwrap_manifest = manifest.clone();
+                if let Some(original_mode) = original_key_policy_mode {
+                    unwrap_manifest.key_policy_mode = original_mode;
+                }
+                unwrap_collection_key(&unwrap_manifest, passphrase)?
             } else if existing_manifest {
                 return Err(SyncError::new(
                     "sync_collection_key_missing",

@@ -58,6 +58,7 @@ pub fn validate_provider_contract(provider: &dyn VaultProviderV1) -> SyncResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::types::EncryptionMode;
 
     fn make_test_capabilities(encryption_mode: EncryptionMode) -> ProviderCapabilities {
         ProviderCapabilities {

@@ -32,6 +32,7 @@ export function SecretField({
         <button
           type="button"
           onClick={onToggleShow}
+          aria-pressed={showSecret}
           aria-label={showSecret ? `Hide ${label}` : `Show ${label}`}
           className="p-1.5 -m-1.5 rounded text-app-muted hover:text-app-text transition-colors"
         >

@@ -1055,12 +1055,15 @@ pub async fn sync_restore_credentials(
                     let decision = decide_restore_action(Some(&existing), &plaintext);
                     match decision {
                         RestoreDecision::UpdateExisting => svc
-                            .item_update(
+                            .item_apply_sync_restore(
                                 &existing.id,
+                                &logical_id,
                                 &plaintext.label,
                                 &plaintext.kind,
                                 &plaintext.secret,
                                 plaintext.notes.as_deref(),
+                                plaintext.revision,
+                                plaintext.updated_at,
                             )
                             .map(|_| decision)
                             .map_err(|e| format!("[vault_update_failed] {e}")),
@@ -1071,12 +1074,15 @@ pub async fn sync_restore_credentials(
                         RestoreDecision::Conflict
                             if resolve_conflict_logical_ids.contains(&logical_id) =>
                         {
-                            svc.item_update(
+                            svc.item_apply_sync_restore(
                                 &existing.id,
+                                &logical_id,
                                 &plaintext.label,
                                 &plaintext.kind,
                                 &plaintext.secret,
                                 plaintext.notes.as_deref(),
+                                plaintext.revision,
+                                plaintext.updated_at,
                             )
                             .map(|_| RestoreDecision::UpdateExisting)
                             .map_err(|e| format!("[vault_update_failed] {e}"))
@@ -1088,12 +1094,14 @@ pub async fn sync_restore_credentials(
                     let decision = decide_restore_action(None, &plaintext);
                     match decision {
                         RestoreDecision::RestoreNew => svc
-                            .item_create_with_logical_id(
+                            .item_create_from_sync(
                                 &plaintext.label,
                                 &plaintext.kind,
                                 &plaintext.secret,
                                 plaintext.notes.as_deref(),
-                                Some(&logical_id),
+                                &logical_id,
+                                plaintext.revision,
+                                plaintext.updated_at,
                             )
                             .map(|_| decision)
                             .map_err(|e| format!("[vault_create_failed] {e}")),

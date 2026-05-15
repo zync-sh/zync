@@ -182,13 +182,38 @@ pub fn save_profiles_store(data_dir: &Path, store: &SyncProfilesStore) -> SyncRe
         })?;
     }
 
-    std::fs::rename(&temp_path, &final_path).map_err(|e| {
-        let _ = std::fs::remove_file(&temp_path);
-        SyncError::new(
-            "sync_profile_write_failed",
-            format!("Failed to finalize sync profiles file: {e}"),
-        )
-    })
+    match std::fs::rename(&temp_path, &final_path) {
+        Ok(()) => Ok(()),
+        Err(rename_err) => {
+            if rename_err.kind() == ErrorKind::AlreadyExists && final_path.exists() {
+                match std::fs::remove_file(&final_path) {
+                    Ok(()) => {
+                        if let Err(retry_err) = std::fs::rename(&temp_path, &final_path) {
+                            let _ = std::fs::remove_file(&temp_path);
+                            return Err(SyncError::new(
+                                "sync_profile_write_failed",
+                                format!("Failed to finalize sync profiles file after replace retry: {retry_err}"),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {}
+                    Err(remove_err) => {
+                        let _ = std::fs::remove_file(&temp_path);
+                        return Err(SyncError::new(
+                            "sync_profile_write_failed",
+                            format!("Failed to replace existing sync profiles file: {remove_err}"),
+                        ));
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&temp_path);
+            Err(SyncError::new(
+                "sync_profile_write_failed",
+                format!("Failed to finalize sync profiles file: {rename_err}"),
+            ))
+        }
+    }
 }
 
 pub fn get_profile(data_dir: &Path, provider: SyncProviderKind) -> SyncResult<Option<SyncProfile>> {

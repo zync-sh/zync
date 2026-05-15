@@ -40,6 +40,7 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
     setPassphrase('');
     setConfirm('');
     setRecoveryKey('');
+    setShowPass(false);
     setUnlockMode('passphrase');
     setLocalError('');
     clearError();
@@ -124,7 +125,7 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
       submitDisabled={
         isLoading ||
         (unlockMode === 'recovery'
-          ? !recoveryKey
+          ? !recoveryKey.trim()
           : !passphrase || (isUninitialized && !confirm))
       }
       submitLabel={

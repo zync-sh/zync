@@ -110,6 +110,18 @@ export interface SyncRestoreConflictItem {
 export const SYNC_STATUS_CHANGED_EVENT = 'zync:sync-status-changed';
 const lastKnownStatusByProvider: Partial<Record<SyncProvider, SyncProviderStatus>> = {};
 
+function normalizeProviderStatus(
+  provider: SyncProvider,
+  status: SyncProviderStatus,
+): SyncProviderStatus {
+  return {
+    ...status,
+    provider: status.provider ?? provider,
+    error: status.lastError ?? status.error,
+    errorCode: status.lastErrorCode ?? status.errorCode,
+  };
+}
+
 export function notifySyncStatusChanged(provider: SyncProvider, status?: SyncProviderStatus): void {
   if (status) {
     lastKnownStatusByProvider[provider] = status;
@@ -191,12 +203,7 @@ export const syncIpc = {
    */
   status: async (provider: SyncProvider): Promise<SyncProviderStatus> => {
     const result = await invoke<SyncProviderStatus>('sync_status', { provider });
-    const normalized: SyncProviderStatus = {
-      ...result,
-      provider: result.provider ?? provider,
-      error: result.lastError ?? result.error,
-      errorCode: result.lastErrorCode ?? result.errorCode,
-    };
+    const normalized = normalizeProviderStatus(provider, result);
     lastKnownStatusByProvider[provider] = normalized;
     return normalized;
   },
@@ -210,7 +217,7 @@ export const syncIpc = {
       const connectStatus = await invoke<SyncProviderStatus>('sync_connect', { provider });
       let latestStatus: SyncProviderStatus;
       if (typeof connectStatus?.connected === 'boolean') {
-        latestStatus = connectStatus;
+        latestStatus = normalizeProviderStatus(provider, connectStatus);
         lastKnownStatusByProvider[provider] = latestStatus;
       } else {
         try {

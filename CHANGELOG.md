@@ -29,6 +29,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Google Provider Status Identity**: Provider status now returns persisted connected-account email from stored tokens.
 - **Sync Error Parsing Consistency**: Unified parsed error object shape (explicit `code`) and improved empty/nullish/multiline parsing behavior.
 - **Parser/Test Reliability**: Improved JSX tag-name resolution in unlock modal consistency tests and expanded sync error parser edge-case coverage.
+- **Restore Reconciliation Convergence**: Restore paths now preserve remote `revision`/`updated_at` metadata when creating or updating vault records from provider sync payloads, preventing repeated re-application of the same remote records. ([2df515d])
+- **Windows Sync File Finalization**: Sync manifest/profile writes now handle replace-on-rename cases on Windows with safer finalize retry/cleanup behavior. ([2df515d])
+- **Sync Expiry Arithmetic Safety**: Google token expiry computation now uses saturating skew subtraction to avoid underflow on short `expires_in` responses. ([2df515d])
+- **Vault/Sync Modal/Input Robustness**: Vault unlock submit gating now trims recovery-key input, reset scripts avoid unsafe path targeting/glob expansion pitfalls, and secret toggle controls expose pressed state for assistive tech. ([2df515d])
 
 ## [2.15.1] - 2026-04-27
 
@@ -800,3 +804,4 @@ All notable changes to Zync are documented in this file. The format is based on 
 [1d865ed]: https://github.com/zync-sh/zync/commit/1d865ed
 [bdbd81b]: https://github.com/zync-sh/zync/commit/bdbd81b
 [bf01457]: https://github.com/zync-sh/zync/commit/bf01457
+[2df515d]: https://github.com/zync-sh/zync/commit/2df515d

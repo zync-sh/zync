@@ -331,7 +331,8 @@ async fn refresh_google_access_token(tokens: &mut StoredTokens) -> SyncResult<()
             .ok_or_else(|| sync_err("oauth_token_refresh_failed", "No access_token in refresh response"))?
             .to_string(),
     );
-    tokens.expires_at = now_secs() + resp["expires_in"].as_u64().unwrap_or(3600) - 60;
+    let expires_in = resp["expires_in"].as_u64().unwrap_or(3600);
+    tokens.expires_at = now_secs() + expires_in.saturating_sub(60);
     Ok(())
 }
 
@@ -742,7 +743,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
             access_token: Some(access_token),
             refresh_token: refresh_token.clone(),
             has_refresh_token: true,
-            expires_at: now_secs() + expires_in - 60,
+            expires_at: now_secs() + expires_in.saturating_sub(60),
             last_sync: None,
             email: email.clone(),
         };

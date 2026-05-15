@@ -142,7 +142,7 @@ for target in "${TARGETS[@]}"; do
   echo " - $target"
 done
 for pattern in "${TARGET_PATTERNS[@]}"; do
-  files=($pattern)
+  mapfile -t files < <(compgen -G "$pattern")
   if [[ ${#files[@]} -eq 0 ]]; then
     echo " - $pattern (no matches)"
     continue
@@ -183,7 +183,7 @@ for target in "${TARGETS[@]}"; do
 done
 
 for pattern in "${TARGET_PATTERNS[@]}"; do
-  matches=($pattern)
+  mapfile -t matches < <(compgen -G "$pattern")
   for target in "${matches[@]}"; do
     [[ -e "$target" ]] || continue
     remove_if_exists "$target"
