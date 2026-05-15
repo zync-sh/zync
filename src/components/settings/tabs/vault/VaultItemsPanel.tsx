@@ -1,4 +1,4 @@
-import { History, Plus, Search, Trash2 } from 'lucide-react';
+import { History, Plus, Search, Trash2, Upload } from 'lucide-react';
 import type { VaultItem } from '../../../../vault/ipc';
 import { Button } from '../../../ui/Button';
 
@@ -15,6 +15,9 @@ interface VaultItemsPanelProps {
   onRotate: (itemId: string) => void;
   onHistory: (itemId: string) => void;
   onDelete: (itemId: string, label: string) => void;
+  onSyncItem: (itemId: string, label: string) => void;
+  canSyncItems: boolean;
+  syncingItemId?: string | null;
 }
 
 export function VaultItemsPanel({
@@ -30,6 +33,9 @@ export function VaultItemsPanel({
   onRotate,
   onHistory,
   onDelete,
+  onSyncItem,
+  canSyncItems,
+  syncingItemId,
 }: VaultItemsPanelProps) {
   return (
     <div className="space-y-2">
@@ -107,6 +113,24 @@ export function VaultItemsPanel({
                         Assign
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onSyncItem(item.id, item.label)}
+                      disabled={!canSyncItems || syncingItemId != null}
+                      className="h-7 gap-1 px-2 text-[11px]"
+                      title={
+                        syncingItemId === item.id
+                          ? 'Syncing to cloud provider'
+                          : canSyncItems
+                            ? 'Sync credential to cloud provider'
+                            : 'Connect provider + set up sync collection first'
+                      }
+                      aria-label={syncingItemId === item.id ? `Syncing ${item.label}` : `Sync ${item.label}`}
+                    >
+                      <Upload size={12} />
+                      {syncingItemId === item.id ? 'Syncing…' : 'Sync'}
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"

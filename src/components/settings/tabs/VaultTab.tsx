@@ -9,7 +9,10 @@ import { DEFAULT_VAULT_PROFILE_ID, type VaultProfileId } from '../../../vault/pr
 import { resolveVaultFocusProfile } from './vaultFocus';
 import { VaultStatusCard } from './vault/VaultStatusCard';
 import { VaultSyncCard } from './vault/VaultSyncCard';
+import { SyncCollectionSetupModal } from './vault/SyncCollectionSetupModal';
+import { SyncCollectionUnlockModal } from './vault/SyncCollectionUnlockModal';
 import { VaultItemsPanel } from './vault/VaultItemsPanel';
+import { RestoreConflictModal } from './vault/RestoreConflictModal';
 import { AddCredentialModal } from './vault/AddCredentialModal';
 import { ManageAssignmentsModal } from './vault/ManageAssignmentsModal';
 import { RotateCredentialModal } from './vault/RotateCredentialModal';
@@ -35,6 +38,8 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   const loadConnections = useAppStore(state => state.loadConnections);
 
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [isSyncCollectionSetupOpen, setIsSyncCollectionSetupOpen] = useState(false);
+  const [isSyncCollectionUnlockOpen, setIsSyncCollectionUnlockOpen] = useState(false);
 
   const localSectionRef = useRef<HTMLDivElement | null>(null);
   const googleSectionRef = useRef<HTMLDivElement | null>(null);
@@ -125,7 +130,13 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   });
 
   // Destructure stable callbacks used in effects so deps are explicit and accurate.
-  const { loadSecurePreview, loadHasRecoveryKey, runBackfillIfNeeded, loadGoogleSync } = panel;
+  const {
+    loadSecurePreview,
+    loadHasRecoveryKey,
+    runBackfillIfNeeded,
+    loadGoogleSync,
+    loadGoogleCollection,
+  } = panel;
 
   // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -133,8 +144,8 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
       console.warn('[Vault] Failed to refresh vault status:', error);
     });
     void loadGoogleSync();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh]);
+    void loadGoogleCollection();
+  }, [refresh, loadGoogleSync, loadGoogleCollection]);
 
   useEffect(() => {
     const targetProfile = resolveVaultFocusProfile(focusedProfileId);
@@ -189,6 +200,11 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
     const q = panel.itemSearch.trim().toLowerCase();
     return q ? items.filter(item => item.label.toLowerCase().includes(q)) : items;
   }, [items, panel.itemSearch]);
+  const canSyncItemsToGoogle = Boolean(
+    panel.googleSync?.connected
+    && panel.googleCollection?.configured
+    && panel.googleCollection?.keyCached,
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -311,10 +327,20 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
       <div ref={googleSectionRef}>
         <VaultSyncCard
           googleSync={panel.googleSync}
+          googleCollection={panel.googleCollection}
           isSyncing={panel.isSyncing}
+          isSettingUpCollection={panel.isSettingUpCollection}
+          isUnlockingCollection={panel.isUnlockingCollection}
+          isLockingCollection={panel.isLockingCollection}
+          isRegeneratingCollectionRecoveryKey={panel.isRegeneratingCollectionRecoveryKey}
           hasVaultConfigured={hasVaultConfigured}
+          isVaultUnlocked={isUnlocked}
           onConnect={panel.handleGoogleConnect}
           onDisconnect={panel.handleGoogleDisconnect}
+          onSetupCollection={() => setIsSyncCollectionSetupOpen(true)}
+          onUnlockCollection={() => setIsSyncCollectionUnlockOpen(true)}
+          onLockCollection={panel.handleLockGoogleCollection}
+          onRegenerateCollectionRecoveryKey={panel.handleRegenerateGoogleCollectionRecoveryKey}
           onUpload={panel.handleSyncUpload}
           onDownload={panel.handleSyncDownload}
         />
@@ -335,6 +361,9 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           onRotate={id => void rotateCredential.open(id)}
           onHistory={id => void history.open(id)}
           onDelete={panel.handleDeleteItem}
+          onSyncItem={panel.handleSyncCredentialItem}
+          canSyncItems={canSyncItemsToGoogle}
+          syncingItemId={panel.syncingItemId}
         />
       )}
 
@@ -343,6 +372,11 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
         isOpen={panel.isRecoveryModalOpen}
         recoveryKey={panel.recoveryKey}
         onClose={panel.closeRecoveryModal}
+        title={panel.recoveryKeyTitle}
+        subtitle={panel.recoveryKeySubtitle}
+        fileTitle={panel.recoveryKeyFileTitle}
+        fileDescription={panel.recoveryKeyFileDescription}
+        downloadFileName={panel.recoveryKeyDownloadFileName}
       />
 
       <ManageAssignmentsModal
@@ -394,6 +428,33 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
             console.warn('[Vault] Failed to refresh vault after unlock modal close:', error);
           });
         }}
+      />
+
+      <SyncCollectionSetupModal
+        isOpen={isSyncCollectionSetupOpen}
+        isSubmitting={panel.isSettingUpCollection}
+        onClose={() => setIsSyncCollectionSetupOpen(false)}
+        onSubmit={panel.handleSetupGoogleCollection}
+      />
+
+      <SyncCollectionUnlockModal
+        isOpen={isSyncCollectionUnlockOpen}
+        isSubmitting={panel.isUnlockingCollection}
+        hasRecoveryKey={Boolean(panel.googleCollection?.hasRecoveryKey)}
+        onClose={() => setIsSyncCollectionUnlockOpen(false)}
+        onSubmit={panel.handleUnlockGoogleCollection}
+      />
+
+      <RestoreConflictModal
+        isOpen={panel.isRestoreConflictModalOpen}
+        isSubmitting={panel.isSyncing}
+        conflicts={panel.restoreConflictItems}
+        selectedLogicalIds={panel.selectedConflictLogicalIds}
+        onClose={panel.closeRestoreConflictModal}
+        onToggleLogicalId={panel.toggleConflictLogicalId}
+        onSelectAll={panel.selectAllConflictLogicalIds}
+        onClearAll={panel.clearConflictLogicalIds}
+        onConfirmRestore={panel.confirmRestoreWithConflictSelection}
       />
 
       <AddCredentialModal

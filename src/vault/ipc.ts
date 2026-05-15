@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type VaultStatus =
   | { status: 'uninitialized' }
-  | { status: 'locked'; vaultId: string }
+  | { status: 'locked'; vaultId: string; itemCount: number }
   | { status: 'unlocked'; vaultId: string; itemCount: number };
 
 export interface VaultItem {

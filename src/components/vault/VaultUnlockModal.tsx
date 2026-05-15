@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
-import { Button } from '../ui/Button';
-import { Shield, Lock, Eye, EyeOff } from 'lucide-react';
+import { KeyRound } from 'lucide-react';
 import { useVaultStore } from '../../vault/useVaultStore';
+import { UnlockModalShell } from './UnlockModalShell';
+import { SecretField } from './SecretField';
 
 /** Minimum passphrase length enforced at vault creation time. */
 export const PASSPHRASE_MIN_LENGTH = 12;
@@ -103,115 +103,75 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
       : 'Enter your vault passphrase to access credentials.';
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={title} subtitle={subtitle} width="max-w-sm">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex justify-center mb-2">
-          <div className="w-12 h-12 rounded-full bg-[var(--color-app-accent)]/10 text-[var(--color-app-accent)] flex items-center justify-center">
-            {isUninitialized ? <Shield size={22} /> : <Lock size={22} />}
+    <UnlockModalShell
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={title}
+      subtitle={subtitle}
+      mode={canUseRecoveryKey ? unlockMode : undefined}
+      modeOptions={canUseRecoveryKey ? [
+        { value: 'passphrase', label: 'Passphrase' },
+        { value: 'recovery', label: 'Recovery Key' },
+      ] : undefined}
+      onModeChange={canUseRecoveryKey ? setUnlockMode : undefined}
+      hintText={
+        canUseRecoveryKey && unlockMode === 'passphrase'
+          ? <>Forgot passphrase? Switch to <span className="text-[var(--color-app-text)] font-medium">Recovery Key</span>.</>
+          : undefined
+      }
+      error={localError}
+      isSubmitting={isLoading}
+      submitDisabled={
+        isLoading ||
+        (unlockMode === 'recovery'
+          ? !recoveryKey
+          : !passphrase || (isUninitialized && !confirm))
+      }
+      submitLabel={
+        isLoading ? 'Please wait…' : isUninitialized ? 'Create Vault' : unlockMode === 'recovery' ? 'Unlock with Key' : 'Unlock'
+      }
+      onSubmit={handleSubmit}
+      details={!isUninitialized ? (
+        <div className="rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-surface)]/20 p-3 text-[11px] text-[var(--color-app-muted)] leading-relaxed">
+          <div className="flex items-center gap-2 text-[var(--color-app-text)] mb-1">
+            <KeyRound size={12} />
+            Security note
           </div>
+          This unlocks your local vault on this device. Your passphrase or recovery key is never uploaded.
         </div>
+      ) : undefined}
+    >
+      {unlockMode === 'recovery' && canUseRecoveryKey ? (
+        <SecretField
+          label="Recovery Key"
+          value={recoveryKey}
+          onChange={setRecoveryKey}
+          showSecret={showPass}
+          onToggleShow={() => setShowPass((v) => !v)}
+          autoFocus
+          placeholder="Enter recovery key"
+        />
+      ) : (
+        <SecretField
+          label="Passphrase"
+          value={passphrase}
+          onChange={setPassphrase}
+          showSecret={showPass}
+          onToggleShow={() => setShowPass((v) => !v)}
+          autoFocus
+          placeholder={isUninitialized ? 'Create a strong passphrase' : 'Enter passphrase'}
+        />
+      )}
 
-        {canUseRecoveryKey && (
-          <div className="flex gap-2 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-surface)]/20 p-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={unlockMode === 'passphrase' ? 'primary' : 'ghost'}
-              className="flex-1"
-              onClick={() => setUnlockMode('passphrase')}
-            >
-              Passphrase
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={unlockMode === 'recovery' ? 'primary' : 'ghost'}
-              className="flex-1"
-              onClick={() => setUnlockMode('recovery')}
-            >
-              Recovery Key
-            </Button>
-          </div>
-        )}
-
-        {canUseRecoveryKey && unlockMode === 'passphrase' && (
-          <p className="text-xs text-[var(--color-app-muted)]">
-            Forgot passphrase? Switch to <span className="text-[var(--color-app-text)] font-medium">Recovery Key</span>.
-          </p>
-        )}
-
-        {unlockMode === 'recovery' && canUseRecoveryKey ? (
-          <Input
-            label="Recovery Key"
-            type={showPass ? 'text' : 'password'}
-            value={recoveryKey}
-            onChange={(e) => setRecoveryKey(e.target.value)}
-            autoFocus
-            placeholder="Enter recovery key"
-            rightElement={
-              <button
-                type="button"
-                onClick={() => setShowPass((v) => !v)}
-                aria-label={showPass ? 'Hide recovery key' : 'Show recovery key'}
-                className="text-app-muted hover:text-app-text transition-colors"
-              >
-                {showPass ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            }
-          />
-        ) : (
-          <Input
-            label="Passphrase"
-            type={showPass ? 'text' : 'password'}
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            autoFocus
-            placeholder={isUninitialized ? 'Create a strong passphrase' : 'Enter passphrase'}
-            rightElement={
-              <button
-                type="button"
-                onClick={() => setShowPass((v) => !v)}
-                aria-label={showPass ? 'Hide password' : 'Show password'}
-                className="text-app-muted hover:text-app-text transition-colors"
-              >
-                {showPass ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            }
-          />
-        )}
-
-        {isUninitialized && unlockMode === 'passphrase' && (
-          <Input
-            label="Confirm Passphrase"
-            type={showPass ? 'text' : 'password'}
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            placeholder="Repeat your passphrase"
-          />
-        )}
-
-        {localError && (
-          <p className="text-xs text-red-400">{localError}</p>
-        )}
-
-        <div className="flex gap-2 pt-1">
-          <Button type="button" variant="ghost" onClick={handleClose} className="flex-1">
-            Cancel
-          </Button>
-          <Button
-            type="submit"
-            disabled={
-              isLoading ||
-              (unlockMode === 'recovery'
-                ? !recoveryKey
-                : !passphrase || (isUninitialized && !confirm))
-            }
-            className="flex-1"
-          >
-            {isLoading ? 'Please wait…' : isUninitialized ? 'Create Vault' : unlockMode === 'recovery' ? 'Unlock with Key' : 'Unlock'}
-          </Button>
-        </div>
-      </form>
-    </Modal>
+      {isUninitialized && unlockMode === 'passphrase' && (
+        <Input
+          label="Confirm Passphrase"
+          type={showPass ? 'text' : 'password'}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder="Repeat your passphrase"
+        />
+      )}
+    </UnlockModalShell>
   );
 }

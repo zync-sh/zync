@@ -1,7 +1,16 @@
 import { useCallback, useRef, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { vaultIpc, type SecureToVaultPreview } from '../../../../../vault/ipc';
-import { notifySyncStatusChanged, syncIpc, type SyncProviderStatus } from '../../../../../vault/syncIpc';
+import {
+  notifySyncStatusChanged,
+  syncIpc,
+  type SyncCollectionSetupArgs,
+  type SyncCollectionStatus,
+  type SyncCollectionUnlockArgs,
+  type SyncRestoreConflictItem,
+  type SyncProviderStatus,
+} from '../../../../../vault/syncIpc';
+import { parseSyncInvokeError } from '../../../../../vault/syncError';
 import { disconnectVaultBackedIpc } from '../../../../../features/connections/infrastructure/connectionIpc';
 import type { VaultItem } from '../../../../../vault/ipc';
 import type { ToastType } from '../../../../../store/toastSlice';
@@ -24,6 +33,24 @@ interface UseVaultPanelActionsOptions {
   onLoadConnections: () => Promise<void>;
   onDisconnectConnection: (id: string) => Promise<void>;
 }
+
+interface RecoveryModalState {
+  key: string;
+  title: string;
+  subtitle: string;
+  fileTitle: string;
+  fileDescription: string;
+  downloadFileName: string;
+}
+
+const DEFAULT_RECOVERY_MODAL_STATE: RecoveryModalState = {
+  key: '',
+  title: 'Vault Recovery Key',
+  subtitle: 'Save this key somewhere safe. It can unlock your vault if you forget your passphrase.',
+  fileTitle: 'Zync Vault Recovery Key',
+  fileDescription: 'This key can unlock your vault if you forget your passphrase.',
+  downloadFileName: 'zync-vault-recovery-key.txt',
+};
 
 const extractErrorMessage = (error: unknown): string => {
   if (error == null) return 'Unknown error';
@@ -168,7 +195,7 @@ export function useVaultPanelActions({
   };
 
   // ── Recovery key ──────────────────────────────────────────────────────────
-  const [recoveryKey, setRecoveryKey] = useState('');
+  const [recoveryState, setRecoveryState] = useState<RecoveryModalState>(DEFAULT_RECOVERY_MODAL_STATE);
   const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
   const [hasRecoveryKey, setHasRecoveryKey] = useState(false);
 
@@ -193,7 +220,10 @@ export function useVaultPanelActions({
     }
     try {
       const key = await vaultIpc.generateRecoveryKey();
-      setRecoveryKey(key);
+      setRecoveryState({
+        ...DEFAULT_RECOVERY_MODAL_STATE,
+        key,
+      });
       setHasRecoveryKey(true);
       setIsRecoveryModalOpen(true);
     } catch (e: unknown) {
@@ -203,7 +233,7 @@ export function useVaultPanelActions({
   };
 
   const closeRecoveryModal = () => {
-    setRecoveryKey('');
+    setRecoveryState(prev => ({ ...prev, key: '' }));
     setIsRecoveryModalOpen(false);
   };
 
@@ -252,7 +282,16 @@ export function useVaultPanelActions({
 
   // ── Google sync ───────────────────────────────────────────────────────────
   const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
+  const [googleCollection, setGoogleCollection] = useState<SyncCollectionStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSettingUpCollection, setIsSettingUpCollection] = useState(false);
+  const [isUnlockingCollection, setIsUnlockingCollection] = useState(false);
+  const [isLockingCollection, setIsLockingCollection] = useState(false);
+  const [isRegeneratingCollectionRecoveryKey, setIsRegeneratingCollectionRecoveryKey] = useState(false);
+  const [syncingItemId, setSyncingItemId] = useState<string | null>(null);
+  const [isRestoreConflictModalOpen, setIsRestoreConflictModalOpen] = useState(false);
+  const [restoreConflictItems, setRestoreConflictItems] = useState<SyncRestoreConflictItem[]>([]);
+  const [selectedConflictLogicalIds, setSelectedConflictLogicalIds] = useState<string[]>([]);
 
   const loadGoogleSync = useCallback(async () => {
     try {
@@ -263,18 +302,121 @@ export function useVaultPanelActions({
     }
   }, []);
 
+  const loadGoogleCollection = useCallback(async () => {
+    try {
+      const status = await syncIpc.collectionStatus('google');
+      setGoogleCollection(status);
+    } catch (error) {
+      console.warn('[Vault] Failed to load Google sync collection status:', error);
+    }
+  }, []);
+
+  const handleSetupGoogleCollection = async (args: SyncCollectionSetupArgs) => {
+    setIsSettingUpCollection(true);
+    try {
+      const result = await syncIpc.collectionSetup('google', args);
+      setGoogleCollection(result.status);
+      if (result.recoveryKey) {
+        setRecoveryState({
+          key: result.recoveryKey,
+          title: 'Google Sync Recovery Key',
+          subtitle: 'Save this key somewhere safe. It can unlock credentials stored in Google Drive if you forget the provider sync passphrase.',
+          fileTitle: 'Zync Google Sync Recovery Key',
+          fileDescription: 'This key can unlock your encrypted Google Drive sync collection if you forget the provider sync passphrase.',
+          downloadFileName: 'zync-google-sync-recovery-key.txt',
+        });
+        setIsRecoveryModalOpen(true);
+      }
+      showToast(
+        'success',
+        args.keyPolicyMode === 'local-passphrase'
+          ? 'Google sync collection configured (Local Vault passphrase policy).'
+          : 'Google sync collection configured (custom provider sync passphrase policy).',
+      );
+    } catch (e: unknown) {
+      const msg = extractErrorMessage(e);
+      showToast('error', `Failed to set up Google sync collection: ${msg}`);
+      throw new Error(msg);
+    } finally {
+      setIsSettingUpCollection(false);
+    }
+  };
+
+  const handleRegenerateGoogleCollectionRecoveryKey = async () => {
+    setIsRegeneratingCollectionRecoveryKey(true);
+    try {
+      const result = await syncIpc.collectionRegenerateRecoveryKey('google');
+      setGoogleCollection(result.status);
+      if (result.recoveryKey) {
+        setRecoveryState({
+          key: result.recoveryKey,
+          title: 'Google Sync Recovery Key',
+          subtitle: 'Recovery key regenerated. Save this new key safely — older Google Sync recovery keys no longer unlock this sync collection.',
+          fileTitle: 'Zync Google Sync Recovery Key',
+          fileDescription: 'This key can unlock your encrypted Google Drive sync collection if you forget the provider sync passphrase.',
+          downloadFileName: 'zync-google-sync-recovery-key.txt',
+        });
+        setIsRecoveryModalOpen(true);
+      }
+      showToast('success', 'Google Sync Recovery Key regenerated.');
+    } catch (e: unknown) {
+      const msg = extractErrorMessage(e);
+      showToast('error', `Failed to regenerate Google Sync Recovery Key: ${msg}`);
+    } finally {
+      setIsRegeneratingCollectionRecoveryKey(false);
+    }
+  };
+
+  const handleLockGoogleCollection = async () => {
+    setIsLockingCollection(true);
+    try {
+      const result = await syncIpc.collectionLock('google');
+      setGoogleCollection(result);
+      showToast('success', 'Google Sync Key locked on this device.');
+    } catch (e: unknown) {
+      const msg = extractErrorMessage(e);
+      showToast('error', `Failed to lock Google Sync Key: ${msg}`);
+    } finally {
+      setIsLockingCollection(false);
+    }
+  };
+
+
+  const handleUnlockGoogleCollection = async (args: SyncCollectionUnlockArgs) => {
+    setIsUnlockingCollection(true);
+    try {
+      const result = await syncIpc.collectionUnlock('google', args);
+      setGoogleCollection(result);
+      showToast('success', 'Google sync key unlocked on this device.');
+    } catch (e: unknown) {
+      const msg = parseSyncInvokeError(e).message;
+      showToast('error', `Failed to unlock Google sync key: ${msg}`);
+      throw new Error(msg);
+    } finally {
+      setIsUnlockingCollection(false);
+    }
+  };
+
   const handleGoogleConnect = async () => {
     setIsSyncing(true);
     try {
       await syncIpc.connect('google');
       const status = await syncIpc.status('google');
       setGoogleSync(status);
+      const collection = await syncIpc.collectionStatus('google');
+      setGoogleCollection(collection);
       showToast(
         'success',
         `Connected to Google Drive${status.email ? ` as ${status.email}` : ''}.`,
       );
+      if (!collection.configured) {
+        showToast(
+          'info',
+          'Set up Google sync collection before using Backup/Restore.',
+        );
+      }
     } catch (e: unknown) {
-      const msg = extractErrorMessage(e);
+      const msg = parseSyncInvokeError(e).message;
       showToast('error', `Google Drive connection failed: ${msg}`);
     } finally {
       setIsSyncing(false);
@@ -294,9 +436,9 @@ export function useVaultPanelActions({
       setGoogleSync({ connected: false });
       showToast('info', 'Disconnected from Google Drive.');
     } catch (e: unknown) {
-      const msg = extractErrorMessage(e);
-      const hasCode = e && typeof e === 'object' && 'code' in e;
-      const code = hasCode ? String((e as { code: unknown }).code) : '';
+      const parsed = parseSyncInvokeError(e);
+      const msg = parsed.message;
+      const code = parsed.code ?? '';
       if (code === 'LOCAL_DISCONNECT_ONLY' || msg.startsWith('Disconnected locally,')) {
         setGoogleSync({ connected: false });
         notifySyncStatusChanged('google', { connected: false });
@@ -314,32 +456,136 @@ export function useVaultPanelActions({
       setGoogleSync(prev => (prev ? { ...prev, lastSync: ts } : prev));
       showToast('success', 'Vault uploaded to Google Drive.');
     } catch (e: unknown) {
-      const msg = extractErrorMessage(e);
+      const msg = parseSyncInvokeError(e).message;
       showToast('error', `Upload failed: ${msg}`);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  const handleSyncDownload = async () => {
-    const confirmed = await showConfirmDialog({
-      title: 'Download Vault from Drive',
-      message:
-        'This replaces your local vault with the Drive backup. A local backup is saved first. You will need to unlock the vault afterwards.',
-      confirmText: 'Download',
-      variant: 'danger',
-    });
-    if (!confirmed) return;
+  const runRestoreCredentials = async (resolveConflictLogicalIds?: string[]) => {
     setIsSyncing(true);
     try {
-      await syncIpc.download('google');
+      const args = resolveConflictLogicalIds && resolveConflictLogicalIds.length > 0
+        ? { resolveConflictLogicalIds }
+        : {};
+      const result = await syncIpc.restoreCredentials('google', args);
+      await onRefreshItems();
       await onRefresh();
-      showToast('success', 'Vault downloaded from Google Drive. Please unlock it.');
+      const restoredTotal = result.restored + result.updated;
+      if (restoredTotal > 0) {
+        showToast(
+          'success',
+          `Restored ${restoredTotal} credential${restoredTotal === 1 ? '' : 's'} from Google (${result.restored} new, ${result.updated} updated, ${result.tombstonesApplied} deleted, ${result.skipped} skipped).`,
+        );
+      } else {
+        showToast(
+          'info',
+          `No credential changes applied from Google (${result.skipped} skipped, ${result.conflicts} conflicts, ${result.failed} failed).`,
+        );
+      }
+      if (result.conflicts > 0) {
+        showToast(
+          'info',
+          `${result.conflicts} conflict${result.conflicts === 1 ? '' : 's'} skipped (same revision/timestamp with different payload).`,
+        );
+      }
+      if (result.failed > 0) {
+        showToast(
+          'error',
+          `${result.failed} provider record${result.failed === 1 ? '' : 's'} failed during restore. Check logs for details.`,
+        );
+      }
     } catch (e: unknown) {
-      const msg = extractErrorMessage(e);
-      showToast('error', `Download failed: ${msg}`);
+      const msg = parseSyncInvokeError(e).message;
+      showToast('error', `Restore failed: ${msg}`);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleSyncDownload = async () => {
+    let previewMessage =
+      'This restores encrypted credentials from Google into your current unlocked local vault. It does not replace the local vault file.';
+    try {
+      const preview = await syncIpc.restorePreview('google');
+      previewMessage =
+        `Google sync preview: ${preview.scanned} record(s) scanned — ${preview.restorable} new, ${preview.updatable} update${preview.updatable === 1 ? '' : 's'}, ${preview.tombstoned} delete${preview.tombstoned === 1 ? '' : 's'}, ${preview.stale} unchanged/stale, ${preview.conflicts} conflict${preview.conflicts === 1 ? '' : 's'}, ${preview.failed} failed parse/decrypt.`;
+
+      if (preview.conflictItems.length > 0) {
+        setRestoreConflictItems(preview.conflictItems);
+        setSelectedConflictLogicalIds([]);
+        setIsRestoreConflictModalOpen(true);
+        return;
+      }
+    } catch (error) {
+      console.warn('[Vault] Failed to load restore preview:', error);
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: 'Restore Credentials from Drive',
+      message: previewMessage,
+      confirmText: 'Restore',
+    });
+    if (!confirmed) return;
+    await runRestoreCredentials();
+  };
+
+  const toggleConflictLogicalId = (logicalId: string) => {
+    setSelectedConflictLogicalIds(prev =>
+      prev.includes(logicalId)
+        ? prev.filter(id => id !== logicalId)
+        : [...prev, logicalId],
+    );
+  };
+
+  const selectAllConflictLogicalIds = () => {
+    setSelectedConflictLogicalIds(restoreConflictItems.map(item => item.logicalId));
+  };
+
+  const clearConflictLogicalIds = () => {
+    setSelectedConflictLogicalIds([]);
+  };
+
+  const closeRestoreConflictModal = () => {
+    if (isSyncing) return;
+    setIsRestoreConflictModalOpen(false);
+    setRestoreConflictItems([]);
+    setSelectedConflictLogicalIds([]);
+  };
+
+  const confirmRestoreWithConflictSelection = async () => {
+    try {
+      await runRestoreCredentials(selectedConflictLogicalIds);
+      closeRestoreConflictModal();
+    } catch {
+      // keep modal + selection open so user can retry
+    }
+  };
+
+  const handleSyncCredentialItem = async (itemId: string, label: string) => {
+    if (!googleSync?.connected) {
+      showToast('error', 'Connect Google Drive before syncing credentials.');
+      return;
+    }
+    if (!googleCollection?.configured) {
+      showToast('error', 'Set up Google sync collection before syncing credentials.');
+      return;
+    }
+    setSyncingItemId(itemId);
+    try {
+      const result = await syncIpc.uploadCredential('google', { itemId });
+      setGoogleSync(prev =>
+        prev
+          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
+          : prev,
+      );
+      showToast('success', `Synced "${label}" to Google (${result.logicalId.slice(0, 8)}).`);
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `Failed to sync "${label}": ${msg}`);
+    } finally {
+      setSyncingItemId(null);
     }
   };
 
@@ -498,7 +744,12 @@ export function useVaultPanelActions({
     // lock
     handleLock,
     // recovery key
-    recoveryKey,
+    recoveryKey: recoveryState.key,
+    recoveryKeyTitle: recoveryState.title,
+    recoveryKeySubtitle: recoveryState.subtitle,
+    recoveryKeyFileTitle: recoveryState.fileTitle,
+    recoveryKeyFileDescription: recoveryState.fileDescription,
+    recoveryKeyDownloadFileName: recoveryState.downloadFileName,
     isRecoveryModalOpen,
     hasRecoveryKey,
     loadHasRecoveryKey,
@@ -509,12 +760,32 @@ export function useVaultPanelActions({
     handleImport,
     // google sync
     googleSync,
+    googleCollection,
     isSyncing,
+    isSettingUpCollection,
+    isUnlockingCollection,
+    isLockingCollection,
+    isRegeneratingCollectionRecoveryKey,
+    syncingItemId,
+    isRestoreConflictModalOpen,
+    restoreConflictItems,
+    selectedConflictLogicalIds,
     loadGoogleSync,
+    loadGoogleCollection,
+    handleSetupGoogleCollection,
+    handleUnlockGoogleCollection,
+    handleLockGoogleCollection,
+    handleRegenerateGoogleCollectionRecoveryKey,
     handleGoogleConnect,
     handleGoogleDisconnect,
     handleSyncUpload,
     handleSyncDownload,
+    toggleConflictLogicalId,
+    selectAllConflictLogicalIds,
+    clearConflictLogicalIds,
+    closeRestoreConflictModal,
+    confirmRestoreWithConflictSelection,
+    handleSyncCredentialItem,
     // repair
     isRepairingRefs,
     handleRepairRefs,

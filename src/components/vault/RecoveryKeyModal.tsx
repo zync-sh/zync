@@ -7,9 +7,23 @@ interface Props {
   isOpen: boolean;
   recoveryKey: string;
   onClose: () => void;
+  title?: string;
+  subtitle?: string;
+  fileTitle?: string;
+  fileDescription?: string;
+  downloadFileName?: string;
 }
 
-export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
+export function RecoveryKeyModal({
+  isOpen,
+  recoveryKey,
+  onClose,
+  title = 'Vault Recovery Key',
+  subtitle = 'Save this key somewhere safe. It can unlock your vault if you forget your passphrase.',
+  fileTitle = 'Zync Vault Recovery Key',
+  fileDescription = 'This key can unlock your vault if you forget your passphrase.',
+  downloadFileName = 'zync-vault-recovery-key.txt',
+}: Props) {
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
 
@@ -46,11 +60,11 @@ export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
 
   const handleDownload = () => {
     const content = [
-      'Zync Vault Recovery Key',
-      '=======================',
+      fileTitle,
+      '='.repeat(fileTitle.length),
       '',
       'Store this file somewhere safe and offline.',
-      'This key can unlock your vault if you forget your passphrase.',
+      fileDescription,
       '',
       recoveryKey,
       '',
@@ -61,7 +75,7 @@ export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'zync-vault-recovery-key.txt';
+    a.download = downloadFileName;
     a.click();
     // Defer revocation so the browser has time to start the download
     // before the object URL is invalidated.
@@ -75,8 +89,8 @@ export function RecoveryKeyModal({ isOpen, recoveryKey, onClose }: Props) {
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Vault Recovery Key"
-      subtitle="Save this key somewhere safe. It can unlock your vault if you forget your passphrase."
+      title={title}
+      subtitle={subtitle}
       width="max-w-lg"
       closeOnEsc={false}
       closeOnOverlayClick={false}
