@@ -4,10 +4,12 @@ import { vaultIpc, type SecureToVaultPreview } from '../../../../../vault/ipc';
 import {
   notifySyncStatusChanged,
   syncIpc,
+  type SyncDomainPolicy,
   type SyncCollectionSetupArgs,
   type SyncCollectionStatus,
   type SyncCollectionUnlockArgs,
   type SyncRestoreConflictItem,
+  type SyncRestorePreviewResult,
   type SyncProviderStatus,
 } from '../../../../../vault/syncIpc';
 import { parseSyncInvokeError } from '../../../../../vault/syncError';
@@ -284,12 +286,23 @@ export function useVaultPanelActions({
   const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
   const [googleCollection, setGoogleCollection] = useState<SyncCollectionStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncingHosts, setIsSyncingHosts] = useState(false);
+  const [isRestoringHosts, setIsRestoringHosts] = useState(false);
+  const [isSyncingTunnels, setIsSyncingTunnels] = useState(false);
+  const [isRestoringTunnels, setIsRestoringTunnels] = useState(false);
+  const [isSyncingSnippets, setIsSyncingSnippets] = useState(false);
+  const [isRestoringSnippets, setIsRestoringSnippets] = useState(false);
+  const [isSyncingSettings, setIsSyncingSettings] = useState(false);
+  const [isRestoringSettings, setIsRestoringSettings] = useState(false);
+  const [domainPolicies, setDomainPolicies] = useState<SyncDomainPolicy[]>([]);
+  const [isUpdatingHostsPolicy, setIsUpdatingHostsPolicy] = useState(false);
   const [isSettingUpCollection, setIsSettingUpCollection] = useState(false);
   const [isUnlockingCollection, setIsUnlockingCollection] = useState(false);
   const [isLockingCollection, setIsLockingCollection] = useState(false);
   const [isRegeneratingCollectionRecoveryKey, setIsRegeneratingCollectionRecoveryKey] = useState(false);
   const [syncingItemId, setSyncingItemId] = useState<string | null>(null);
   const [isRestoreConflictModalOpen, setIsRestoreConflictModalOpen] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<SyncRestorePreviewResult | null>(null);
   const [restoreConflictItems, setRestoreConflictItems] = useState<SyncRestoreConflictItem[]>([]);
   const [selectedConflictLogicalIds, setSelectedConflictLogicalIds] = useState<string[]>([]);
 
@@ -454,6 +467,7 @@ export function useVaultPanelActions({
     try {
       const ts = await syncIpc.upload('google');
       setGoogleSync(prev => (prev ? { ...prev, lastSync: ts } : prev));
+      await loadGoogleSync();
       showToast('success', 'Vault uploaded to Google Drive.');
     } catch (e: unknown) {
       const msg = parseSyncInvokeError(e).message;
@@ -463,7 +477,7 @@ export function useVaultPanelActions({
     }
   };
 
-  const runRestoreCredentials = async (resolveConflictLogicalIds?: string[]) => {
+  const runRestoreCredentials = async (resolveConflictLogicalIds?: string[]): Promise<boolean> => {
     setIsSyncing(true);
     try {
       const args = resolveConflictLogicalIds && resolveConflictLogicalIds.length > 0
@@ -472,6 +486,7 @@ export function useVaultPanelActions({
       const result = await syncIpc.restoreCredentials('google', args);
       await onRefreshItems();
       await onRefresh();
+      await loadGoogleSync();
       const restoredTotal = result.restored + result.updated;
       if (restoredTotal > 0) {
         showToast(
@@ -496,35 +511,32 @@ export function useVaultPanelActions({
           `${result.failed} provider record${result.failed === 1 ? '' : 's'} failed during restore. Check logs for details.`,
         );
       }
+      return true;
     } catch (e: unknown) {
       const msg = parseSyncInvokeError(e).message;
       showToast('error', `Restore failed: ${msg}`);
+      return false;
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleSyncDownload = async () => {
-    let previewMessage =
-      'This restores encrypted credentials from Google into your current unlocked local vault. It does not replace the local vault file.';
     try {
       const preview = await syncIpc.restorePreview('google');
-      previewMessage =
-        `Google sync preview: ${preview.scanned} record(s) scanned — ${preview.restorable} new, ${preview.updatable} update${preview.updatable === 1 ? '' : 's'}, ${preview.tombstoned} delete${preview.tombstoned === 1 ? '' : 's'}, ${preview.stale} unchanged/stale, ${preview.conflicts} conflict${preview.conflicts === 1 ? '' : 's'}, ${preview.failed} failed parse/decrypt.`;
-
-      if (preview.conflictItems.length > 0) {
-        setRestoreConflictItems(preview.conflictItems);
-        setSelectedConflictLogicalIds([]);
-        setIsRestoreConflictModalOpen(true);
-        return;
-      }
+      setRestorePreview(preview);
+      setRestoreConflictItems(preview.conflictItems);
+      setSelectedConflictLogicalIds([]);
+      setIsRestoreConflictModalOpen(true);
+      return;
     } catch (error) {
       console.warn('[Vault] Failed to load restore preview:', error);
     }
 
     const confirmed = await showConfirmDialog({
       title: 'Restore Credentials from Drive',
-      message: previewMessage,
+      message:
+        'Preview was unavailable. Restore encrypted credentials from Google into your current unlocked local vault? This does not replace the local vault file.',
       confirmText: 'Restore',
     });
     if (!confirmed) return;
@@ -550,16 +562,15 @@ export function useVaultPanelActions({
   const closeRestoreConflictModal = () => {
     if (isSyncing) return;
     setIsRestoreConflictModalOpen(false);
+    setRestorePreview(null);
     setRestoreConflictItems([]);
     setSelectedConflictLogicalIds([]);
   };
 
   const confirmRestoreWithConflictSelection = async () => {
-    try {
-      await runRestoreCredentials(selectedConflictLogicalIds);
+    const ok = await runRestoreCredentials(selectedConflictLogicalIds);
+    if (ok) {
       closeRestoreConflictModal();
-    } catch {
-      // keep modal + selection open so user can retry
     }
   };
 
@@ -580,6 +591,7 @@ export function useVaultPanelActions({
           ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
           : prev,
       );
+      await loadGoogleSync();
       showToast('success', `Synced "${label}" to Google (${result.logicalId.slice(0, 8)}).`);
     } catch (error) {
       const msg = parseSyncInvokeError(error).message;
@@ -587,6 +599,247 @@ export function useVaultPanelActions({
     } finally {
       setSyncingItemId(null);
     }
+  };
+
+  const handleSyncHosts = async (includeAll = false) => {
+    if (!hostsSyncEnabled) {
+      showToast('error', 'Hosts sync is disabled. Enable hosts domain sync first.');
+      return;
+    }
+    if (!googleSync?.connected) {
+      showToast('error', 'Connect Google Drive before syncing hosts.');
+      return;
+    }
+    if (!googleCollection?.configured) {
+      showToast('error', 'Set up Google sync collection before syncing hosts.');
+      return;
+    }
+    if (!googleCollection?.keyCached) {
+      showToast('error', 'Unlock Google sync key before syncing hosts.');
+      return;
+    }
+
+    setIsSyncingHosts(true);
+    try {
+      const changes = await syncIpc.hostsChanges('google', { includeAll });
+      if (!includeAll && changes.count === 0) {
+        showToast('info', 'No host changes to sync.');
+        return;
+      }
+      const result = await syncIpc.hostsUpload('google', { includeAll });
+      setGoogleSync(prev =>
+        prev
+          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
+          : prev,
+      );
+      await onLoadConnections();
+      await loadGoogleSync();
+      const syncedCount = result.uploaded;
+      const skippedCount = result.skipped;
+      showToast(
+        'success',
+        `Synced ${syncedCount} host${syncedCount === 1 ? '' : 's'} to Google${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}.`,
+      );
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `Host sync failed: ${msg}`);
+    } finally {
+      setIsSyncingHosts(false);
+    }
+  };
+
+  const handleRestoreHosts = async () => {
+    if (!hostsSyncEnabled) {
+      showToast('error', 'Hosts sync is disabled. Enable hosts domain sync first.');
+      return;
+    }
+    if (!googleSync?.connected) {
+      showToast('error', 'Connect Google Drive before restoring hosts.');
+      return;
+    }
+    if (!googleCollection?.configured) {
+      showToast('error', 'Set up Google sync collection before restoring hosts.');
+      return;
+    }
+    if (!googleCollection?.keyCached) {
+      showToast('error', 'Unlock Google sync key before restoring hosts.');
+      return;
+    }
+
+    const confirmed = await showConfirmDialog({
+      title: 'Restore Hosts from Drive',
+      message:
+        'Restore synced host metadata from Google Drive into local hosts list. Existing matching hosts will be updated.',
+      confirmText: 'Restore Hosts',
+    });
+    if (!confirmed) return;
+
+    setIsRestoringHosts(true);
+    try {
+      const result = await syncIpc.hostsRestore('google');
+      setGoogleSync(prev =>
+        prev
+          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
+          : prev,
+      );
+      await onLoadConnections();
+      await loadGoogleSync();
+      const changed = result.restored + result.updated;
+      showToast(
+        changed > 0 ? 'success' : 'info',
+        changed > 0
+          ? `Restored ${changed} host${changed === 1 ? '' : 's'} from Google (${result.restored} new, ${result.updated} updated).`
+          : 'No host changes restored from Google.',
+      );
+      if (result.failed > 0) {
+        showToast('error', `${result.failed} host record(s) failed to parse/decrypt.`);
+      }
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `Host restore failed: ${msg}`);
+    } finally {
+      setIsRestoringHosts(false);
+    }
+  };
+
+  const runDomainUpload = async (
+    domain: 'tunnels' | 'snippets' | 'settings',
+    setLoading: (v: boolean) => void,
+  ) => {
+    const policy = domainPolicies.find(p => p.domain === domain);
+    if (policy && !policy.enabled) {
+      showToast('error', `${domain} sync is disabled. Enable ${domain} domain sync first.`);
+      return;
+    }
+    if (!googleSync?.connected) {
+      showToast('error', `Connect Google Drive before syncing ${domain}.`);
+      return;
+    }
+    if (!googleCollection?.configured) {
+      showToast('error', `Set up Google sync collection before syncing ${domain}.`);
+      return;
+    }
+    if (!googleCollection?.keyCached) {
+      showToast('error', `Unlock Google sync key before syncing ${domain}.`);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result =
+        domain === 'tunnels'
+          ? await syncIpc.tunnelsUpload('google')
+          : domain === 'snippets'
+            ? await syncIpc.snippetsUpload('google')
+            : await syncIpc.settingsUpload('google');
+      setGoogleSync(prev =>
+        prev
+          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
+          : prev,
+      );
+      await loadGoogleSync();
+      showToast(
+        'success',
+        `Synced ${result.uploaded} ${domain} record${result.uploaded === 1 ? '' : 's'} to Google.`,
+      );
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `${domain} sync failed: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runDomainRestore = async (
+    domain: 'tunnels' | 'snippets' | 'settings',
+    setLoading: (v: boolean) => void,
+  ) => {
+    const policy = domainPolicies.find(p => p.domain === domain);
+    if (policy && !policy.enabled) {
+      showToast('error', `${domain} sync is disabled. Enable ${domain} domain sync first.`);
+      return;
+    }
+    if (!googleSync?.connected) {
+      showToast('error', `Connect Google Drive before restoring ${domain}.`);
+      return;
+    }
+    if (!googleCollection?.configured) {
+      showToast('error', `Set up Google sync collection before restoring ${domain}.`);
+      return;
+    }
+    if (!googleCollection?.keyCached) {
+      showToast('error', `Unlock Google sync key before restoring ${domain}.`);
+      return;
+    }
+    setLoading(true);
+    try {
+      const result =
+        domain === 'tunnels'
+          ? await syncIpc.tunnelsRestore('google')
+          : domain === 'snippets'
+            ? await syncIpc.snippetsRestore('google')
+            : await syncIpc.settingsRestore('google');
+      setGoogleSync(prev =>
+        prev
+          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
+          : prev,
+      );
+      await loadGoogleSync();
+      const changed = result.restored + result.updated;
+      showToast(
+        changed > 0 ? 'success' : 'info',
+        changed > 0
+          ? `Restored ${changed} ${domain} record${changed === 1 ? '' : 's'} (${result.restored} new, ${result.updated} updated).`
+          : `No ${domain} changes restored from Google.`,
+      );
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `${domain} restore failed: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncTunnels = async () => runDomainUpload('tunnels', setIsSyncingTunnels);
+  const handleRestoreTunnels = async () => runDomainRestore('tunnels', setIsRestoringTunnels);
+  const handleSyncSnippets = async () => runDomainUpload('snippets', setIsSyncingSnippets);
+  const handleRestoreSnippets = async () => runDomainRestore('snippets', setIsRestoringSnippets);
+  const handleSyncSettings = async () => runDomainUpload('settings', setIsSyncingSettings);
+  const handleRestoreSettings = async () => runDomainRestore('settings', setIsRestoringSettings);
+
+  const loadDomainPolicies = useCallback(async () => {
+    try {
+      const result = await syncIpc.domainPolicies('google');
+      setDomainPolicies(result.policies);
+    } catch (error) {
+      console.warn('[Vault] Failed to load sync domain policies:', error);
+    }
+  }, []);
+
+  const hostsPolicy = domainPolicies.find(policy => policy.domain === 'hosts');
+  const hostsSyncEnabled = hostsPolicy ? hostsPolicy.enabled : true;
+
+  const handleSetDomainPolicyEnabled = async (domain: SyncDomainPolicy['domain'], enabled: boolean) => {
+    setIsUpdatingHostsPolicy(true);
+    try {
+      const existing = domainPolicies.find(policy => policy.domain === domain);
+      const result = await syncIpc.domainPolicySet('google', {
+        domain,
+        enabled,
+        mode: existing?.mode ?? 'manual',
+      });
+      setDomainPolicies(result.policies);
+      showToast('success', `${domain} sync ${enabled ? 'enabled' : 'disabled'}.`);
+    } catch (error) {
+      const msg = parseSyncInvokeError(error).message;
+      showToast('error', `Failed to update ${domain} sync policy: ${msg}`);
+    } finally {
+      setIsUpdatingHostsPolicy(false);
+    }
+  };
+
+  const handleSetHostsSyncEnabled = async (enabled: boolean) => {
+    await handleSetDomainPolicyEnabled('hosts', enabled);
   };
 
   // ── Repair refs ───────────────────────────────────────────────────────────
@@ -767,11 +1020,21 @@ export function useVaultPanelActions({
     isLockingCollection,
     isRegeneratingCollectionRecoveryKey,
     syncingItemId,
+    isSyncingHosts,
+    isRestoringHosts,
+    isSyncingTunnels,
+    isRestoringTunnels,
+    isSyncingSnippets,
+    isRestoringSnippets,
+    isSyncingSettings,
+    isRestoringSettings,
     isRestoreConflictModalOpen,
+    restorePreview,
     restoreConflictItems,
     selectedConflictLogicalIds,
     loadGoogleSync,
     loadGoogleCollection,
+    loadDomainPolicies,
     handleSetupGoogleCollection,
     handleUnlockGoogleCollection,
     handleLockGoogleCollection,
@@ -786,6 +1049,19 @@ export function useVaultPanelActions({
     closeRestoreConflictModal,
     confirmRestoreWithConflictSelection,
     handleSyncCredentialItem,
+    handleSyncHosts,
+    handleRestoreHosts,
+    handleSyncTunnels,
+    handleRestoreTunnels,
+    handleSyncSnippets,
+    handleRestoreSnippets,
+    handleSyncSettings,
+    handleRestoreSettings,
+    domainPolicies,
+    hostsSyncEnabled,
+    isUpdatingHostsPolicy,
+    handleSetDomainPolicyEnabled,
+    handleSetHostsSyncEnabled,
     // repair
     isRepairingRefs,
     handleRepairRefs,

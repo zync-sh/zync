@@ -10,11 +10,14 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Google Drive Vault Sync Module**: Added sync command module and IPC surface for connect/disconnect/backup/restore flows dedicated to vault data sync. ([8cdb20d])
 - **Vault Credential Identity Model**: Added durable `credentialId`-based vault credential identity, key-first credential creation/assignment flows, self-healing auth-ref relinking/backfill, and dedicated docs for future vault lifecycle work. ([1d865ed], [bdbd81b], [bf01457])
 - **Vault Credential Revision History**: Added credential revision snapshots and restore flow across the vault backend, IPC layer, and Vault workspace UI so rotated credentials can be reviewed and restored safely. ([e0409f4])
+- **Provider App-Data Sync Groundwork**: Added manual Google-backed sync domains for hosts, tunnels, snippets, and settings, including provider domain status, policy metadata, and reusable frontend IPC helpers.
+- **Selective Sync Architecture Docs**: Added Phase 3/Phase 4 sync planning docs and a typed vault credential model covering future credential categories beyond SSH keys/passwords.
 
 ### Changed
 - **Settings Information Architecture**: Removed Vault from Settings navigation; vault management now lives in the dedicated Vault workspace flow. Updated related UX copy from “Settings → Vault” to “Vault tab/workspace” guidance. ([d9d3663])
 - **Sync Status UX Resilience**: Sync IPC status events now use canonical post-operation status refresh and last-known-state fallback behavior to avoid false disconnected states when status refresh fails. ([8cdb20d])
 - **Vault Credential Lifecycle UX**: Refined vault flows around secure-to-vault naming, modular vault panels/modals, bulk host assignment/unassignment, rotation/history prompts, repair actions, and reset tooling for clean vault test states. ([1d865ed], [bdbd81b], [bf01457], [e0409f4])
+- **Profile Sync Discovery**: Extended the top bar/profile entry point with Google account visibility and sync/vault management actions so sync setup is no longer hidden only inside Vault settings.
 - **Vault Sync UI Modularity**: Extracted sync-collection management into a focused `CollectionManagementSection` and reduced inline conditional complexity in `VaultSyncCard`.
 - **Vault Recovery Modal State Model**: Consolidated recovery-key modal metadata into a single structured state object in vault panel actions for safer, atomic updates.
 - **Vault Accessibility Semantics**: Updated mode switch interaction semantics to radiogroup/radio patterns and improved assistive-state signaling across unlock/sync controls.

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { cn } from '../../lib/utils';
 import { Plus, Network, ChevronDown, FileText, Play, Square, Folder, FolderOpen, LayoutGrid, List, ChevronRight, ArrowRight } from 'lucide-react';
 import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
@@ -482,7 +483,11 @@ export function GlobalTunnelList() {
 
                             {/* Preset Dropdown */}
                             {showPresetDropdown && (
-                                <div className="absolute right-0 mt-1 w-56 bg-app-panel border border-app-border rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                <TopbarDropdown
+                                    align="right"
+                                    widthClass="w-56"
+                                    className="mt-1 rounded-lg shadow-xl p-0"
+                                >
                                     {TUNNEL_PRESETS.map((preset) => (
                                         <button
                                             key={preset.id}
@@ -500,7 +505,7 @@ export function GlobalTunnelList() {
                                             </div>
                                         </button>
                                     ))}
-                                </div>
+                                </TopbarDropdown>
                             )}
                         </div>
                     </div>

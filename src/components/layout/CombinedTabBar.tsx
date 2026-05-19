@@ -9,6 +9,7 @@ import type { ShellEntry } from '../../lib/shells/types';
 import { ShellIcon } from '../icons/ShellIcon';
 import { FEATURE_META, formatFeatureShortcut, type FeatureId } from './featureMeta';
 import { Tooltip } from '../ui/Tooltip';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 
 interface CombinedTabBarProps {
     connectionId: string;
@@ -380,10 +381,11 @@ export function CombinedTabBar({
                     </Tooltip>
 
                     {isDropdownOpen && (
-                        <div className={cn(
-                            "absolute top-full mt-2 w-52 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 px-1 py-1 animate-in fade-in zoom-in-95 duration-100 flex flex-col",
-                            dropdownAlign === 'right' ? 'right-0' : 'left-0'
-                        )}>
+                        <TopbarDropdown
+                            widthClass="w-52"
+                            align={dropdownAlign}
+                            className="px-1 py-1 flex flex-col shadow-xl zoom-in-95 duration-100 slide-in-from-top-2"
+                        >
                             {/* Shell picker. Always shown so the user knows shells are
                                 being fetched even when nothing's cached yet. */}
                             {(availableShells.length > 0 || shellsLoading || onRefetchShells) && (
@@ -520,7 +522,7 @@ export function CombinedTabBar({
                                     })}
                                 </>
                             )}
-                        </div>
+                        </TopbarDropdown>
                     )}
                 </div>
             </div>

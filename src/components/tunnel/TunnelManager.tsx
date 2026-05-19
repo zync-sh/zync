@@ -7,6 +7,7 @@ import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { Modal } from '../ui/Modal';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
 
 
@@ -339,7 +340,11 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
 
             {/* Preset Dropdown */}
             {showPresetDropdown && (
-              <div className="absolute right-0 mt-1 w-56 bg-app-panel border border-app-border rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+              <TopbarDropdown
+                align="right"
+                widthClass="w-56"
+                className="mt-1 rounded-lg shadow-xl p-0"
+              >
                 {TUNNEL_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -357,7 +362,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                     </div>
                   </button>
                 ))}
-              </div>
+              </TopbarDropdown>
             )}
           </div>
         </div>

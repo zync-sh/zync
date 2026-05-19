@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Minus, X, Square, Copy } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-export function WindowControls() {
+export function WindowControls({ className }: { className?: string }) {
     const [isMaximized, setIsMaximized] = useState(false);
     const [isFocused, setIsFocused] = useState(true);
     const platform = window.electronUtils?.platform || 'linux';
@@ -53,7 +53,8 @@ export function WindowControls() {
         return (
             <div className={cn(
                 "flex items-center gap-2 px-3 h-full drag-none z-50 transition-all duration-300",
-                isFocused ? 'opacity-100' : 'opacity-40 grayscale-[0.5]'
+                isFocused ? 'opacity-100' : 'opacity-40 grayscale-[0.5]',
+                className
             )}>
                 {/* macOS Close (Red) */}
                 <button
@@ -92,7 +93,8 @@ export function WindowControls() {
     return (
         <div className={cn(
             "flex items-center gap-1.5 px-3 h-full drag-none z-50 transition-all duration-300",
-            isFocused ? 'opacity-100' : 'opacity-40 grayscale-[0.2]'
+            isFocused ? 'opacity-100' : 'opacity-40 grayscale-[0.2]',
+            className
         )}>
             {/* Minimize */}
             <button

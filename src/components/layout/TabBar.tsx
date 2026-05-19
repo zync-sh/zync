@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home, Shield } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home, Shield, UserRound, ChevronDown, LogOut } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -7,9 +7,11 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { matchShortcut } from '../../lib/shortcuts';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
 import { isEditorOverlayOpen } from '../editor/overlayState';
+import { syncIpc, SYNC_STATUS_CHANGED_EVENT, type SyncProviderStatus } from '../../vault/syncIpc';
 import {
     DndContext,
     closestCenter,
@@ -117,9 +119,11 @@ export function TabBar() {
     const settings = useAppStore(state => state.settings);
     const updateSettings = useAppStore(state => state.updateSettings);
     const openSettings = useAppStore(state => state.openSettings);
+    const openVaultTab = useAppStore(state => state.openVaultTab);
     const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
     const toggleAiSidebar = useAppStore(state => state.toggleAiSidebar);
     const isAiSidebarOpen = useAppStore(state => state.isAiSidebarOpen);
+    const showToast = useAppStore(state => state.showToast);
 
 
     const [tabToClose, setTabToClose] = useState<string | null>(null);
@@ -127,19 +131,43 @@ export function TabBar() {
     // Add menu state
     const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
     const addMenuRef = useRef<HTMLDivElement>(null);
+    const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+    const profileMenuRef = useRef<HTMLDivElement>(null);
+    const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
 
     // Click outside to close the Add menu
     useEffect(() => {
-        if (!isAddMenuOpen) return;
+        if (!isAddMenuOpen && !isProfileMenuOpen) return;
 
         const handleClickOutside = (event: MouseEvent) => {
             if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
                 setIsAddMenuOpen(false);
             }
+            if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+                setIsProfileMenuOpen(false);
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [isAddMenuOpen]);
+    }, [isAddMenuOpen, isProfileMenuOpen]);
+
+    useEffect(() => {
+        const refreshGoogleSync = () => {
+            syncIpc.status('google')
+                .then(setGoogleSync)
+                .catch(() => setGoogleSync(null));
+        };
+
+        refreshGoogleSync();
+        const onSyncStatusChanged = (event: Event) => {
+            const detail = (event as CustomEvent<{ provider?: string }>).detail;
+            if (!detail?.provider || detail.provider === 'google') {
+                refreshGoogleSync();
+            }
+        };
+        window.addEventListener(SYNC_STATUS_CHANGED_EVENT, onSyncStatusChanged);
+        return () => window.removeEventListener(SYNC_STATUS_CHANGED_EVENT, onSyncStatusChanged);
+    }, []);
 
     // Window drag hook for Linux compatibility
     const dragRegionRef = useRef<HTMLDivElement>(null);
@@ -225,6 +253,7 @@ export function TabBar() {
 
     const platform = window.electronUtils?.platform || 'linux';
     const isMac = platform === 'darwin';
+    const profileInitial = (googleSync?.email?.trim()?.[0] || 'U').toUpperCase();
 
     return (
         <>
@@ -283,7 +312,7 @@ export function TabBar() {
                         </Tooltip>
 
                         {isAddMenuOpen && (
-                            <div className="absolute top-full left-0 mt-2 w-48 bg-app-panel border border-app-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 p-1">
+                            <TopbarDropdown widthClass="w-48">
                                 <button
                                     onClick={() => { setAddConnectionModalOpen(true); setIsAddMenuOpen(false); }}
                                     className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
@@ -308,7 +337,7 @@ export function TabBar() {
                                     <Network size={13} className="text-app-muted" />
                                     <span>New Tunnel</span>
                                 </button>
-                            </div>
+                            </TopbarDropdown>
                         )}
                     </div>
                 </div>
@@ -380,18 +409,104 @@ export function TabBar() {
                                 </button>
                             </Tooltip>
 
-                            {/* Separator */}
-                            <div className="h-4 w-[1px] bg-app-border/40 mx-0.5" />
+                            {/* Profile / Sync */}
+                            <div className="relative" ref={profileMenuRef}>
+                                <Tooltip content="Profile & Sync" position="bottom" disabled={isProfileMenuOpen}>
+                                    <button
+                                        onClick={() => setIsProfileMenuOpen(open => !open)}
+                                        className={cn(
+                                            "h-7 px-2 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center gap-1.5",
+                                            isProfileMenuOpen && "bg-app-surface text-app-text border-app-border/40"
+                                        )}
+                                        aria-label="Profile and sync menu"
+                                    >
+                                        <span className="relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-app-accent/20 border border-app-accent/40 text-[10px] font-bold text-app-text overflow-hidden shadow-sm">
+                                            {googleSync?.avatarUrl ? (
+                                                <img
+                                                    src={googleSync.avatarUrl}
+                                                    alt="Profile"
+                                                    className="h-full w-full object-cover"
+                                                    referrerPolicy="no-referrer"
+                                                />
+                                            ) : googleSync?.email ? profileInitial : <UserRound size={10} />}
+                                        </span>
+                                        <ChevronDown size={12} />
+                                    </button>
+                                </Tooltip>
 
-                            {/* Settings */}
-                            <Tooltip content="Settings" position="bottom">
-                                <button
-                                    onClick={openSettings}
-                                    className="h-7 w-7 shrink-0 rounded-md text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors drag-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60 focus-visible:ring-offset-0 flex items-center justify-center group"
-                                >
-                                    <SettingsIcon size={14} />
-                                </button>
-                            </Tooltip>
+                                {isProfileMenuOpen && (
+                                    <TopbarDropdown align="right" widthClass="w-72">
+                                        <div className="px-2 py-1.5">
+                                            <p className="text-[10px] uppercase tracking-wider text-app-muted">Account</p>
+                                            <p className="text-xs text-app-text truncate">{googleSync?.email || 'Not connected to Google Drive'}</p>
+                                        </div>
+                                        <div className="h-px bg-app-border/40 my-1 mx-1" />
+                                        <button
+                                            onClick={() => {
+                                                openSettings();
+                                                setIsProfileMenuOpen(false);
+                                            }}
+                                            className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                        >
+                                            <SettingsIcon size={13} className="text-app-muted" />
+                                            <span>Settings</span>
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                openVaultTab('google');
+                                                setIsProfileMenuOpen(false);
+                                            }}
+                                            className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                        >
+                                            <Shield size={13} className="text-app-muted" />
+                                            <span>Manage Vault & Sync</span>
+                                        </button>
+                                        {!googleSync?.connected && (
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        await syncIpc.connect('google');
+                                                        showToast('success', 'Google sync connected');
+                                                    } catch (error) {
+                                                        showToast('error', error instanceof Error ? error.message : String(error));
+                                                    } finally {
+                                                        setIsProfileMenuOpen(false);
+                                                    }
+                                                }}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                            >
+                                                <Network size={13} className="text-app-muted" />
+                                                <span>Connect Google Sync</span>
+                                            </button>
+                                        )}
+                                        {googleSync?.connected && (
+                                            <button
+                                                onClick={async () => {
+                                                    try {
+                                                        await syncIpc.disconnect('google');
+                                                        showToast('success', 'Google sync disconnected');
+                                                    } catch (error) {
+                                                        showToast('error', error instanceof Error ? error.message : String(error));
+                                                    } finally {
+                                                        setIsProfileMenuOpen(false);
+                                                    }
+                                                }}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-red-300 hover:text-red-200 hover:bg-red-500/10 rounded-lg flex items-center gap-2 transition-colors"
+                                            >
+                                                <LogOut size={13} />
+                                                <span>Disconnect Google Sync</span>
+                                            </button>
+                                        )}
+                                    </TopbarDropdown>
+                                )}
+                            </div>
+
+                            {/* Windows/Linux Controls inline with app actions */}
+                            {!isMac && (
+                                <div className="shrink-0 self-stretch flex flex-col justify-center">
+                                    <WindowControls className="px-0" />
+                                </div>
+                            )}
                         </div>
                     </div>
                     <DragOverlay>
@@ -414,13 +529,6 @@ export function TabBar() {
                         ) : null}
                     </DragOverlay>
                 </DndContext>
-
-                {/* Windows/Linux Controls on Right */}
-                {!isMac && (
-                    <div className="shrink-0 pl-1 self-stretch flex flex-col justify-center">
-                        <WindowControls />
-                    </div>
-                )}
 
             </div>
 

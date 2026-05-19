@@ -136,6 +136,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
     runBackfillIfNeeded,
     loadGoogleSync,
     loadGoogleCollection,
+    loadDomainPolicies,
   } = panel;
 
   // ── Effects ───────────────────────────────────────────────────────────────
@@ -145,7 +146,8 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
     });
     void loadGoogleSync();
     void loadGoogleCollection();
-  }, [refresh, loadGoogleSync, loadGoogleCollection]);
+    void loadDomainPolicies();
+  }, [refresh, loadGoogleSync, loadGoogleCollection, loadDomainPolicies]);
 
   useEffect(() => {
     const targetProfile = resolveVaultFocusProfile(focusedProfileId);
@@ -329,6 +331,17 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           googleSync={panel.googleSync}
           googleCollection={panel.googleCollection}
           isSyncing={panel.isSyncing}
+          isSyncingHosts={panel.isSyncingHosts}
+          isRestoringHosts={panel.isRestoringHosts}
+          isSyncingTunnels={panel.isSyncingTunnels}
+          isRestoringTunnels={panel.isRestoringTunnels}
+          isSyncingSnippets={panel.isSyncingSnippets}
+          isRestoringSnippets={panel.isRestoringSnippets}
+          isSyncingSettings={panel.isSyncingSettings}
+          isRestoringSettings={panel.isRestoringSettings}
+          hostsSyncEnabled={panel.hostsSyncEnabled}
+          isUpdatingHostsPolicy={panel.isUpdatingHostsPolicy}
+          domainPolicies={panel.domainPolicies}
           isSettingUpCollection={panel.isSettingUpCollection}
           isUnlockingCollection={panel.isUnlockingCollection}
           isLockingCollection={panel.isLockingCollection}
@@ -343,6 +356,18 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           onRegenerateCollectionRecoveryKey={panel.handleRegenerateGoogleCollectionRecoveryKey}
           onUpload={panel.handleSyncUpload}
           onDownload={panel.handleSyncDownload}
+          onSyncHosts={() => void panel.handleSyncHosts()}
+          onRestoreHosts={() => void panel.handleRestoreHosts()}
+          onSetHostsSyncEnabled={enabled => void panel.handleSetHostsSyncEnabled(enabled)}
+          onSetDomainPolicyEnabled={(domain, enabled) =>
+            void panel.handleSetDomainPolicyEnabled(domain, enabled)
+          }
+          onSyncTunnels={() => void panel.handleSyncTunnels()}
+          onRestoreTunnels={() => void panel.handleRestoreTunnels()}
+          onSyncSnippets={() => void panel.handleSyncSnippets()}
+          onRestoreSnippets={() => void panel.handleRestoreSnippets()}
+          onSyncSettings={() => void panel.handleSyncSettings()}
+          onRestoreSettings={() => void panel.handleRestoreSettings()}
         />
       </div>
 
@@ -433,6 +458,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
       <SyncCollectionSetupModal
         isOpen={isSyncCollectionSetupOpen}
         isSubmitting={panel.isSettingUpCollection}
+        hasLocalVaultConfigured={hasVaultConfigured}
         onClose={() => setIsSyncCollectionSetupOpen(false)}
         onSubmit={panel.handleSetupGoogleCollection}
       />
@@ -448,6 +474,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
       <RestoreConflictModal
         isOpen={panel.isRestoreConflictModalOpen}
         isSubmitting={panel.isSyncing}
+        preview={panel.restorePreview}
         conflicts={panel.restoreConflictItems}
         selectedLogicalIds={panel.selectedConflictLogicalIds}
         onClose={panel.closeRestoreConflictModal}

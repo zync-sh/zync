@@ -11,6 +11,7 @@ const SYNC_PASSPHRASE_MIN_LENGTH = 12;
 interface SyncCollectionSetupModalProps {
   isOpen: boolean;
   isSubmitting: boolean;
+  hasLocalVaultConfigured: boolean;
   onClose: () => void;
   onSubmit: (args: SyncCollectionSetupArgs) => Promise<void>;
 }
@@ -18,10 +19,12 @@ interface SyncCollectionSetupModalProps {
 export function SyncCollectionSetupModal({
   isOpen,
   isSubmitting,
+  hasLocalVaultConfigured,
   onClose,
   onSubmit,
 }: SyncCollectionSetupModalProps) {
-  const [mode, setMode] = useState<SyncKeyPolicyMode>('local-passphrase');
+  const initialMode: SyncKeyPolicyMode = hasLocalVaultConfigured ? 'local-passphrase' : 'custom-passphrase';
+  const [mode, setMode] = useState<SyncKeyPolicyMode>(initialMode);
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [showPassphrase, setShowPassphrase] = useState(false);
@@ -30,22 +33,27 @@ export function SyncCollectionSetupModal({
 
   useEffect(() => {
     if (!isOpen) {
-      setMode('local-passphrase');
+      setMode(initialMode);
       setPassphrase('');
       setConfirmPassphrase('');
       setShowPassphrase(false);
       setHasRecoveryKey(true);
       setError('');
+      return;
     }
-  }, [isOpen]);
+    if (!hasLocalVaultConfigured && mode === 'local-passphrase') {
+      setMode('custom-passphrase');
+    }
+  }, [hasLocalVaultConfigured, initialMode, isOpen, mode]);
 
   const canSubmit = useMemo(() => {
     return (
       !isSubmitting
+      && (mode !== 'local-passphrase' || hasLocalVaultConfigured)
       && passphrase.length >= SYNC_PASSPHRASE_MIN_LENGTH
       && passphrase === confirmPassphrase
     );
-  }, [confirmPassphrase, isSubmitting, passphrase]);
+  }, [confirmPassphrase, hasLocalVaultConfigured, isSubmitting, mode, passphrase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +67,11 @@ export function SyncCollectionSetupModal({
     }
     if (passphrase !== confirmPassphrase) {
       setError('Passphrases do not match.');
+      return;
+    }
+
+    if (mode === 'local-passphrase' && !hasLocalVaultConfigured) {
+      setError('Set up the local vault first, or use a custom sync passphrase for app-data sync.');
       return;
     }
 
@@ -94,7 +107,7 @@ export function SyncCollectionSetupModal({
           value={mode}
           onChange={setMode}
           options={[
-            { value: 'local-passphrase', label: 'Use Local Passphrase' },
+            { value: 'local-passphrase', label: 'Use Local Passphrase', disabled: !hasLocalVaultConfigured },
             { value: 'custom-passphrase', label: 'Use Custom Passphrase' },
           ]}
         />
@@ -102,6 +115,12 @@ export function SyncCollectionSetupModal({
         {mode === 'local-passphrase' && (
           <p className="text-xs text-[var(--color-app-muted)]">
             Recommended: reuses your local vault passphrase for Google sync key unlock.
+          </p>
+        )}
+        {!hasLocalVaultConfigured && (
+          <p className="text-xs text-amber-300/85 leading-relaxed">
+            Local vault is not set up yet, so Google app-data sync will use a separate sync passphrase.
+            You can still sync hosts, tunnels, snippets, and settings. Vault credentials remain disabled until the local vault exists.
           </p>
         )}
 
@@ -159,7 +178,7 @@ export function SyncCollectionSetupModal({
             <Shield size={12} />
             Security note
           </div>
-          Cloud providers only store encrypted credential records and sync metadata. Passphrases are not uploaded.
+          Cloud providers only store encrypted domain records and sync metadata. Passphrases are not uploaded.
         </div>
 
         {error && (

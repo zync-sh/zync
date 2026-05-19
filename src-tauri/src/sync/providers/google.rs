@@ -46,6 +46,14 @@ struct StoredTokens {
     last_sync: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GoogleUserIdentity {
+    email: Option<String>,
+    avatar_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -147,15 +155,17 @@ async fn wait_for_auth_code(listener: std::net::TcpListener) -> SyncResult<(Stri
         .map_err(|e| sync_err("oauth_redirect_parse_failed", e.to_string()))?;
     let request = String::from_utf8_lossy(&buf[..n]);
 
-    let (code, state) = parse_code_and_state(&request)?;
+    let parse_result = parse_code_and_state(&request);
+    let is_success = parse_result.is_ok();
 
-    let html = b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+    let html = if is_success {
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
 <!DOCTYPE html>\
 <html lang=\"en\">\
 <head>\
 <meta charset=\"UTF-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>Zync \xe2\x80\x94 Connected</title>\
+<title>Zync - Connected</title>\
 <style>\
 *{box-sizing:border-box;margin:0;padding:0}\
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:radial-gradient(1100px 700px at 50% -200px,#1a1833 0%,#0c0c0f 45%);color:#e2e2e5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}\
@@ -181,10 +191,36 @@ p{font-size:.88rem;color:rgba(226,226,229,.72);line-height:1.55}\
 <p class=\"muted\">You can close this tab now.</p>\
 </div>\
 </body>\
-</html>";
-    let _ = stream.write_all(html).await;
+</html>"
+    } else {
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+<!DOCTYPE html>\
+<html lang=\"en\">\
+<head>\
+<meta charset=\"UTF-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>Zync - Authorization not completed</title>\
+<style>\
+*{box-sizing:border-box;margin:0;padding:0}\
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:radial-gradient(1100px 700px at 50% -200px,#1a1833 0%,#0c0c0f 45%);color:#e2e2e5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}\
+.card{background:rgba(22,22,26,.9);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:2.2rem 2rem;text-align:center;max-width:420px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,.5)}\
+h1{font-size:1.1rem;font-weight:600;color:#f0f0f3;margin-bottom:.5rem}\
+p{font-size:.88rem;color:rgba(226,226,229,.72);line-height:1.55}\
+.muted{margin-top:.7rem;font-size:.76rem;color:rgba(226,226,229,.5)}\
+</style>\
+</head>\
+<body>\
+<div class=\"card\">\
+<h1>Authorization not completed</h1>\
+<p>Google sign-in was canceled or denied. Return to Zync and click Connect Google Sync again to retry.</p>\
+<p class=\"muted\">You can close this tab now.</p>\
+</div>\
+</body>\
+</html>"
+    };
+    let _ = stream.write_all(html.as_bytes()).await;
 
-    Ok((code, state))
+    parse_result
 }
 
 fn parse_code_and_state(request: &str) -> SyncResult<(String, String)> {
@@ -203,6 +239,12 @@ fn parse_code_and_state(request: &str) -> SyncResult<(String, String)> {
         match key.as_ref() {
             "code" => code = Some(val.into_owned()),
             "state" => state = Some(val.into_owned()),
+            "error" => {
+                return Err(sync_err(
+                    "oauth_access_denied",
+                    format!("Google authorization was not completed: {val}"),
+                ))
+            }
             _ => {}
         }
     }
@@ -603,19 +645,26 @@ async fn download_named_bytes(
     download_vault_bytes(token, &file_id).await
 }
 
-async fn fetch_google_email(token: &str) -> Option<String> {
-    let resp: serde_json::Value = http_client()
-        .ok()?
+async fn fetch_google_identity(token: &str) -> GoogleUserIdentity {
+    let Ok(client) = http_client() else {
+        return GoogleUserIdentity::default();
+    };
+    let Ok(response) = client
         .get("https://www.googleapis.com/oauth2/v3/userinfo")
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
+    else {
+        return GoogleUserIdentity::default();
+    };
+    let Ok(resp) = response.json::<serde_json::Value>().await else {
+        return GoogleUserIdentity::default();
+    };
 
-    resp["email"].as_str().map(str::to_string)
+    GoogleUserIdentity {
+        email: resp["email"].as_str().map(str::to_string),
+        avatar_url: resp["picture"].as_str().map(str::to_string),
+    }
 }
 
 #[derive(Default)]
@@ -737,7 +786,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
             .await;
         }
 
-        let email = fetch_google_email(&access_token).await;
+        let identity = fetch_google_identity(&access_token).await;
 
         let tokens = StoredTokens {
             access_token: Some(access_token),
@@ -745,12 +794,13 @@ impl VaultProviderV1 for GoogleVaultProvider {
             has_refresh_token: true,
             expires_at: now_secs() + expires_in.saturating_sub(60),
             last_sync: None,
-            email: email.clone(),
+            email: identity.email.clone(),
+            avatar_url: identity.avatar_url.clone(),
         };
         let provider_data_dir = data_dir(app);
         save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
 
-        Ok(ProviderIdentity { email })
+        Ok(ProviderIdentity { email: identity.email, avatar_url: identity.avatar_url })
     }
 
     async fn disconnect(&self, app: &tauri::AppHandle) -> SyncResult<()> {
@@ -792,6 +842,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
         Ok(ProviderStatusSnapshot {
             connected,
             email: tokens.as_ref().and_then(|t| t.email.clone()),
+            avatar_url: tokens.as_ref().and_then(|t| t.avatar_url.clone()),
             last_sync: tokens.as_ref().and_then(|t| t.last_sync),
         })
     }
@@ -872,6 +923,7 @@ pub fn legacy_google_token_snapshot(data_dir: &Path) -> Option<ProviderStatusSna
     Some(ProviderStatusSnapshot {
         connected: tokens.refresh_token.is_some() || tokens.has_refresh_token,
         email: tokens.email.clone(),
+        avatar_url: tokens.avatar_url.clone(),
         last_sync: tokens.last_sync,
     })
 }
@@ -890,6 +942,7 @@ mod tests {
             expires_at: 123,
             last_sync: Some(456),
             email: Some("user@example.com".into()),
+            avatar_url: Some("https://example.com/avatar.png".into()),
         };
 
         let safe = tokens_for_disk(&tokens);

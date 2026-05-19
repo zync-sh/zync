@@ -2,6 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 pub const PROVIDER_GOOGLE: &str = "google";
+#[allow(dead_code)]
+pub const DOMAIN_VAULT: &str = "vault";
+#[allow(dead_code)]
+pub const DOMAIN_HOSTS: &str = "hosts";
+#[allow(dead_code)]
+pub const DOMAIN_TUNNELS: &str = "tunnels";
+#[allow(dead_code)]
+pub const DOMAIN_SNIPPETS: &str = "snippets";
+#[allow(dead_code)]
+pub const DOMAIN_SETTINGS: &str = "settings";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -22,6 +32,86 @@ impl SyncProviderKind {
             _ => None,
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncDomain {
+    Vault,
+    Hosts,
+    Tunnels,
+    Snippets,
+    Settings,
+}
+
+#[allow(dead_code)]
+impl SyncDomain {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vault => DOMAIN_VAULT,
+            Self::Hosts => DOMAIN_HOSTS,
+            Self::Tunnels => DOMAIN_TUNNELS,
+            Self::Snippets => DOMAIN_SNIPPETS,
+            Self::Settings => DOMAIN_SETTINGS,
+        }
+    }
+
+    pub fn parse(input: &str) -> Option<Self> {
+        match input.trim().to_ascii_lowercase().as_str() {
+            DOMAIN_VAULT => Some(Self::Vault),
+            DOMAIN_HOSTS => Some(Self::Hosts),
+            DOMAIN_TUNNELS => Some(Self::Tunnels),
+            DOMAIN_SNIPPETS => Some(Self::Snippets),
+            DOMAIN_SETTINGS => Some(Self::Settings),
+            _ => None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncPolicyMode {
+    Manual,
+    OnChange,
+    Interval,
+}
+
+impl Default for SyncPolicyMode {
+    fn default() -> Self {
+        Self::Manual
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainPolicy {
+    pub domain: SyncDomain,
+    #[serde(default = "default_enabled_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: SyncPolicyMode,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainStatus {
+    pub domain: SyncDomain,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_code: Option<String>,
+}
+
+#[allow(dead_code)]
+const fn default_enabled_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,11 +204,15 @@ pub struct SyncProviderStatus {
     // NOTE(PII): kept for current UX (show connected account email in UI).
     // Do not log directly; use redacted Debug impl / safe logging wrappers.
     pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub last_sync: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domain_statuses: Vec<SyncDomainStatus>,
     pub capabilities: ProviderCapabilities,
 }
 
@@ -277,11 +371,17 @@ pub struct SyncProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_sync: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domain_policies: Vec<SyncDomainPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domain_statuses: Vec<SyncDomainStatus>,
     pub updated_at: u64,
 }
 
@@ -305,6 +405,7 @@ impl Default for SyncProfilesStore {
 #[derive(Debug, Clone)]
 pub struct ProviderIdentity {
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -319,6 +420,7 @@ pub struct ProviderCredentialObject {
 pub struct ProviderStatusSnapshot {
     pub connected: bool,
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
     pub last_sync: Option<u64>,
 }
 
@@ -356,6 +458,7 @@ impl std::fmt::Debug for SyncProviderStatus {
                 "email",
                 &self.email.as_ref().map(|_| "<redacted>"),
             )
+            .field("avatar_url", &self.avatar_url.as_ref().map(|_| "<redacted>"))
             .field("last_sync", &self.last_sync)
             .field("last_error", &self.last_error)
             .field("last_error_code", &self.last_error_code)
@@ -370,10 +473,31 @@ impl std::fmt::Debug for SyncProfile {
             .field("provider", &self.provider)
             .field("connected", &self.connected)
             .field("email", &self.email.as_ref().map(|_| "<redacted>"))
+            .field("avatar_url", &self.avatar_url.as_ref().map(|_| "<redacted>"))
             .field("last_sync", &self.last_sync)
             .field("last_error", &self.last_error)
             .field("last_error_code", &self.last_error_code)
             .field("updated_at", &self.updated_at)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_domain_parse_accepts_expected_values() {
+        assert_eq!(SyncDomain::parse("vault"), Some(SyncDomain::Vault));
+        assert_eq!(SyncDomain::parse("hosts"), Some(SyncDomain::Hosts));
+        assert_eq!(SyncDomain::parse("tunnels"), Some(SyncDomain::Tunnels));
+        assert_eq!(SyncDomain::parse("snippets"), Some(SyncDomain::Snippets));
+        assert_eq!(SyncDomain::parse("settings"), Some(SyncDomain::Settings));
+    }
+
+    #[test]
+    fn sync_domain_parse_rejects_unknown_values() {
+        assert_eq!(SyncDomain::parse("unknown"), None);
+        assert_eq!(SyncDomain::parse(""), None);
     }
 }

@@ -4,12 +4,17 @@ use super::collection::{
     save_manifest, set_collection_key_cache_ttl, setup_manifest, SYNC_COLLECTION_KEY_CACHE_TTL_SECS,
     unlock_collection_key_with_passphrase, unlock_collection_key_with_recovery_key,
 };
+use super::domain_hosts::{apply_hosts_restore_records, load_hosts_sync_records, HostSyncRecord};
+use super::domain_settings::{load_allowlisted_settings, SettingsSyncRecord, SETTINGS_ALLOWLIST_KEYS};
+use super::domain_snippets::{apply_snippet_restore_records, load_snippet_sync_records, SnippetSyncRecord};
+use super::domain_tunnels::{apply_tunnel_restore_records, load_tunnel_sync_records, TunnelSyncRecord};
 use super::profiles::{get_profile, now_secs, upsert_profile};
 use super::provider::{validate_provider_contract, VaultProviderV1};
 use super::providers::google::{legacy_google_token_snapshot, GoogleVaultProvider};
 use super::types::{
     ProviderCapabilities, ProviderStatusSnapshot, SyncCollectionSetupArgs, SyncCollectionSetupResult,
-    SyncCollectionStatus, SyncCollectionUnlockArgs, SyncError, SyncKeyPolicyMode, SyncProfile, SyncProviderKind,
+    SyncCollectionStatus, SyncCollectionUnlockArgs, SyncDomain, SyncDomainPolicy, SyncDomainStatus, SyncError,
+    SyncKeyPolicyMode, SyncPolicyMode, SyncProfile, SyncProviderKind,
     SyncProviderStatus, SyncResult, SyncRestoreConflictItem,
     SyncRestoreCredentialsArgs, SyncRestoreCredentialsResult, SyncRestorePreviewResult,
     SyncUploadCredentialArgs, SyncUploadCredentialResult,
@@ -54,25 +59,91 @@ fn default_profile(kind: SyncProviderKind) -> SyncProfile {
         provider: kind.as_str().to_string(),
         connected: false,
         email: None,
+        avatar_url: None,
         last_sync: None,
         last_error: None,
         last_error_code: None,
+        domain_policies: default_domain_policies(),
+        domain_statuses: default_domain_statuses(),
         updated_at: 0,
     }
 }
 
+fn default_domain_policies() -> Vec<SyncDomainPolicy> {
+    vec![
+        SyncDomainPolicy { domain: SyncDomain::Vault, enabled: true, mode: SyncPolicyMode::Manual },
+        SyncDomainPolicy { domain: SyncDomain::Hosts, enabled: true, mode: SyncPolicyMode::Manual },
+        SyncDomainPolicy { domain: SyncDomain::Tunnels, enabled: false, mode: SyncPolicyMode::Manual },
+        SyncDomainPolicy { domain: SyncDomain::Snippets, enabled: false, mode: SyncPolicyMode::Manual },
+        SyncDomainPolicy { domain: SyncDomain::Settings, enabled: false, mode: SyncPolicyMode::Manual },
+    ]
+}
+
+fn default_domain_statuses() -> Vec<SyncDomainStatus> {
+    default_domain_policies()
+        .into_iter()
+        .map(|p| SyncDomainStatus {
+            domain: p.domain,
+            enabled: p.enabled,
+            last_sync: None,
+            last_error: None,
+            last_error_code: None,
+        })
+        .collect()
+}
+
+fn ensure_domain_collections(profile: &mut SyncProfile) {
+    if profile.domain_policies.is_empty() {
+        profile.domain_policies = default_domain_policies();
+    }
+    if profile.domain_statuses.is_empty() {
+        profile.domain_statuses = default_domain_statuses();
+    }
+}
+
+fn is_domain_enabled(profile: &SyncProfile, domain: SyncDomain) -> bool {
+    profile
+        .domain_policies
+        .iter()
+        .find(|p| p.domain == domain)
+        .map(|p| p.enabled)
+        .unwrap_or(true)
+}
+
+fn ensure_domain_enabled_for_provider(
+    data_dir: &Path,
+    provider: SyncProviderKind,
+    domain: SyncDomain,
+) -> Result<(), String> {
+    let mut profile = get_profile(data_dir, provider)
+        .map_err(|e| sync_error_to_string(&e))?
+        .unwrap_or_else(|| default_profile(provider));
+    ensure_domain_collections(&mut profile);
+    if is_domain_enabled(&profile, domain) {
+        Ok(())
+    } else {
+        Err(format!(
+            "[sync_domain_disabled] {} sync is disabled for this provider profile.",
+            domain.as_str()
+        ))
+    }
+}
+
 fn status_from_profile(
-    profile: SyncProfile,
+    mut profile: SyncProfile,
     provider_kind: SyncProviderKind,
     capabilities: ProviderCapabilities,
 ) -> SyncProviderStatus {
+    ensure_domain_collections(&mut profile);
     SyncProviderStatus {
         provider: provider_kind.as_str().to_string(),
         connected: profile.connected,
         email: profile.email,
+        avatar_url: profile.avatar_url,
         last_sync: profile.last_sync,
         last_error: profile.last_error,
         last_error_code: profile.last_error_code,
+        domain_statuses: profile.domain_statuses,
         capabilities,
     }
 }
@@ -83,8 +154,10 @@ fn sync_profile_from_snapshot(
     existing: Option<SyncProfile>,
 ) -> SyncProfile {
     let mut profile = existing.unwrap_or_else(|| default_profile(kind));
+    ensure_domain_collections(&mut profile);
     profile.connected = snapshot.connected;
     profile.email = snapshot.email.or(profile.email);
+    profile.avatar_url = snapshot.avatar_url.or(profile.avatar_url);
     profile.last_sync = snapshot.last_sync.or(profile.last_sync);
     profile.last_error = None;
     profile.last_error_code = None;
@@ -106,15 +179,63 @@ fn record_sync_error(
     let message = message.into();
     let _ = upsert_profile(data_dir, provider, |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
+        ensure_domain_collections(&mut profile);
         profile.last_error_code = Some(code.to_string());
         profile.last_error = Some(message.clone());
         profile
     });
 }
 
+fn record_domain_sync_error(
+    data_dir: &Path,
+    provider: SyncProviderKind,
+    domain: SyncDomain,
+    code: &'static str,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    let _ = upsert_profile(data_dir, provider, |existing| {
+        let mut profile = existing.unwrap_or_else(|| default_profile(provider));
+        ensure_domain_collections(&mut profile);
+        profile.last_error_code = Some(code.to_string());
+        profile.last_error = Some(message.clone());
+        if let Some(status) = profile.domain_statuses.iter_mut().find(|s| s.domain == domain) {
+            status.last_error_code = Some(code.to_string());
+            status.last_error = Some(message.clone());
+        }
+        profile
+    });
+}
+
+fn record_domain_sync_success(
+    data_dir: &Path,
+    provider: SyncProviderKind,
+    domain: SyncDomain,
+    synced_at: u64,
+) -> Result<(), SyncError> {
+    upsert_profile(data_dir, provider, |existing| {
+        let mut profile = existing.unwrap_or_else(|| default_profile(provider));
+        ensure_domain_collections(&mut profile);
+        profile.connected = true;
+        profile.last_sync = Some(synced_at);
+        profile.last_error = None;
+        profile.last_error_code = None;
+        let enabled = is_domain_enabled(&profile, domain);
+        if let Some(status) = profile.domain_statuses.iter_mut().find(|s| s.domain == domain) {
+            status.enabled = enabled;
+            status.last_sync = Some(synced_at);
+            status.last_error = None;
+            status.last_error_code = None;
+        }
+        profile
+    })?;
+    Ok(())
+}
+
 fn clear_sync_error(data_dir: &Path, provider: SyncProviderKind) {
     let _ = upsert_profile(data_dir, provider, |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
+        ensure_domain_collections(&mut profile);
         profile.last_error = None;
         profile.last_error_code = None;
         profile
@@ -149,6 +270,114 @@ fn collection_status_from_manifest(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsSnapshotResult {
+    pub domain: String,
+    pub count: u64,
+    pub records: Vec<HostSyncRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsChangesArgs {
+    #[serde(default)]
+    pub logical_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub include_all: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsChangesResult {
+    pub domain: String,
+    pub count: u64,
+    pub since: Option<u64>,
+    pub records: Vec<HostSyncRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsUploadResult {
+    pub domain: String,
+    pub uploaded: u64,
+    pub skipped: u64,
+    pub synced_at: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsRestoreArgs {
+    #[serde(default)]
+    pub logical_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHostsRestoreResult {
+    pub domain: String,
+    pub scanned: u64,
+    pub restored: u64,
+    pub updated: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    pub synced_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncTunnelsSnapshotResult {
+    pub domain: String,
+    pub count: u64,
+    pub records: Vec<TunnelSyncRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSnippetsSnapshotResult {
+    pub domain: String,
+    pub count: u64,
+    pub records: Vec<SnippetSyncRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainUploadResult {
+    pub domain: String,
+    pub uploaded: u64,
+    pub skipped: u64,
+    pub synced_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainRestoreResult {
+    pub domain: String,
+    pub scanned: u64,
+    pub restored: u64,
+    pub updated: u64,
+    pub skipped: u64,
+    pub failed: u64,
+    pub synced_at: u64,
+}
+
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainPoliciesResult {
+    pub provider: String,
+    pub policies: Vec<SyncDomainPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDomainPolicySetArgs {
+    pub domain: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: Option<SyncPolicyMode>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SyncCredentialPlaintextV1 {
@@ -177,6 +406,21 @@ struct SyncCredentialEncryptedV1 {
     ciphertext: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncHostsEncryptedV1 {
+    version: u32,
+    domain: String,
+    provider: String,
+    sync_collection_id: String,
+    logical_id: String,
+    revision: u64,
+    updated_at: u64,
+    aad: String,
+    nonce: String,
+    ciphertext: String,
+}
+
 fn credential_object_name(sync_collection_id: &str, logical_id: &str) -> String {
     format!(
         "zync-sync-{}-credential-{}.zcred",
@@ -190,6 +434,186 @@ fn credential_aad(sync_collection_id: &str, logical_id: &str, revision: u64) -> 
     )
 }
 
+fn hosts_object_name(sync_collection_id: &str, logical_id: &str) -> String {
+    format!(
+        "zync-sync-{}-hosts-{}.zhost",
+        sync_collection_id, logical_id
+    )
+}
+
+fn hosts_aad(sync_collection_id: &str, logical_id: &str, revision: u64) -> String {
+    format!(
+        "zync:sync-hosts:v1|collection:{sync_collection_id}|logical:{logical_id}|revision:{revision}"
+    )
+}
+
+fn domain_object_name(sync_collection_id: &str, domain: &str, logical_id: &str, ext: &str) -> String {
+    format!("zync-sync-{}-{}-{}.{}", sync_collection_id, domain, logical_id, ext)
+}
+
+fn domain_aad(sync_collection_id: &str, domain: &str, logical_id: &str, revision: u64) -> String {
+    format!(
+        "zync:sync-{domain}:v1|collection:{sync_collection_id}|logical:{logical_id}|revision:{revision}"
+    )
+}
+
+fn default_revision(updated_at: u64) -> u64 {
+    if updated_at == 0 { 1 } else { updated_at }
+}
+
+fn is_domain_object_name(object_name: &str, domain: &str, extension: &str) -> bool {
+    object_name.contains(&format!("-{}-", domain)) && object_name.ends_with(extension)
+}
+
+struct DomainUploadMeta<'a> {
+    domain: &'a str,
+    logical_id: &'a str,
+    revision: u64,
+    updated_at: u64,
+    extension: &'a str,
+}
+
+async fn upload_domain_record<T: serde::Serialize>(
+    provider_impl: &dyn VaultProviderV1,
+    app: &tauri::AppHandle,
+    provider: SyncProviderKind,
+    manifest: &super::types::SyncCollectionManifest,
+    secret_key: &SecretKey,
+    data_dir: &Path,
+    payload: &T,
+    meta: DomainUploadMeta<'_>,
+) -> Result<u64, String> {
+    let plaintext_bytes = serde_json::to_vec(payload)
+        .map_err(|e| format!("[sync_serialize_failed] Failed to serialize {} record: {e}", meta.domain))?;
+    let aad = domain_aad(
+        &manifest.sync_collection_id,
+        meta.domain,
+        meta.logical_id,
+        meta.revision,
+    );
+    let envelope = encrypt_record(secret_key, &plaintext_bytes, aad.as_bytes())
+        .map_err(|e| format!("[sync_encrypt_failed] Failed to encrypt {} record: {e}", meta.domain))?;
+    let encrypted = SyncHostsEncryptedV1 {
+        version: 1,
+        domain: meta.domain.to_string(),
+        provider: provider.as_str().to_string(),
+        sync_collection_id: manifest.sync_collection_id.clone(),
+        logical_id: meta.logical_id.to_string(),
+        revision: meta.revision,
+        updated_at: meta.updated_at,
+        aad,
+        nonce: base64::engine::general_purpose::STANDARD.encode(envelope.nonce),
+        ciphertext: base64::engine::general_purpose::STANDARD.encode(envelope.ciphertext),
+    };
+    let payload_bytes = serde_json::to_vec(&encrypted).map_err(|e| {
+        format!(
+            "[sync_serialize_failed] Failed to serialize encrypted {} record: {e}",
+            meta.domain
+        )
+    })?;
+    let object_name = domain_object_name(
+        &manifest.sync_collection_id,
+        meta.domain,
+        meta.logical_id,
+        meta.extension,
+    );
+    provider_impl
+        .upload_credential_record(app, &object_name, payload_bytes)
+        .await
+        .map_err(|error| {
+            if let Some(domain) = SyncDomain::parse(meta.domain) {
+                record_domain_sync_error(data_dir, provider, domain, error.code, error.message.clone());
+            } else {
+                record_sync_error(data_dir, provider, error.code, error.message.clone());
+            }
+            sync_error_to_string(&error)
+        })
+}
+
+struct DomainCollectResult<T> {
+    scanned: u64,
+    skipped: u64,
+    failed: u64,
+    records: Vec<T>,
+}
+
+async fn collect_domain_records<T>(
+    provider_impl: &dyn VaultProviderV1,
+    app: &tauri::AppHandle,
+    manifest: &super::types::SyncCollectionManifest,
+    secret_key: &SecretKey,
+    domain: &str,
+    extension: &str,
+) -> Result<DomainCollectResult<T>, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let remote_objects = provider_impl
+        .list_credential_records(app, &manifest.sync_collection_id)
+        .await
+        .map_err(|e| sync_error_to_string(&e))?;
+
+    let mut scanned = 0u64;
+    let mut skipped = 0u64;
+    let mut failed = 0u64;
+    let mut records = Vec::<T>::new();
+
+    for object in remote_objects {
+        if !is_domain_object_name(&object.object_name, domain, extension) {
+            continue;
+        }
+        scanned = scanned.saturating_add(1);
+        let payload = match provider_impl.read_credential_record(app, &object).await {
+            Ok(v) => v,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        let encrypted: SyncHostsEncryptedV1 = match serde_json::from_slice(&payload) {
+            Ok(v) => v,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        if encrypted.domain != domain || encrypted.sync_collection_id != manifest.sync_collection_id {
+            skipped += 1;
+            continue;
+        }
+        let envelope = match decode_sync_hosts_envelope(&encrypted) {
+            Ok(v) => v,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        let plaintext = match decrypt_record(secret_key, &envelope, encrypted.aad.as_bytes()) {
+            Ok(v) => v,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        let record: T = match serde_json::from_slice(&plaintext) {
+            Ok(v) => v,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        records.push(record);
+    }
+
+    Ok(DomainCollectResult {
+        scanned,
+        skipped,
+        failed,
+        records,
+    })
+}
+
+
 fn decode_sync_envelope(record: &SyncCredentialEncryptedV1) -> Result<EncryptedEnvelope, String> {
     let nonce_bytes = base64::engine::general_purpose::STANDARD
         .decode(&record.nonce)
@@ -202,6 +626,21 @@ fn decode_sync_envelope(record: &SyncCredentialEncryptedV1) -> Result<EncryptedE
     let ciphertext = base64::engine::general_purpose::STANDARD
         .decode(&record.ciphertext)
         .map_err(|e| format!("[sync_decode_failed] Invalid ciphertext encoding: {e}"))?;
+
+    Ok(EncryptedEnvelope { nonce, ciphertext })
+}
+
+fn decode_sync_hosts_envelope(record: &SyncHostsEncryptedV1) -> Result<EncryptedEnvelope, String> {
+    let nonce_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&record.nonce)
+        .map_err(|e| format!("[sync_decode_failed] Invalid nonce encoding: {e}"))?;
+    let ciphertext = base64::engine::general_purpose::STANDARD
+        .decode(&record.ciphertext)
+        .map_err(|e| format!("[sync_decode_failed] Invalid ciphertext encoding: {e}"))?;
+
+    let nonce: [u8; 24] = nonce_bytes
+        .try_into()
+        .map_err(|_| "[sync_decode_failed] Invalid nonce length".to_string())?;
 
     Ok(EncryptedEnvelope { nonce, ciphertext })
 }
@@ -331,6 +770,525 @@ fn parse_remote_sync_record(
 pub struct SyncDownloadResult {
     pub item_count: u64,
     pub vault_id: Option<String>,
+}
+
+#[tauri::command]
+pub async fn sync_hosts_snapshot(
+    app: tauri::AppHandle,
+) -> Result<SyncHostsSnapshotResult, String> {
+    let data_dir = crate::commands::get_data_dir(&app);
+    let records = load_hosts_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncHostsSnapshotResult {
+        domain: "hosts".to_string(),
+        count: records.len() as u64,
+        records,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_hosts_changes(
+    app: tauri::AppHandle,
+    provider: String,
+    args: SyncHostsChangesArgs,
+) -> Result<SyncHostsChangesResult, String> {
+    let kind = parse_provider(&provider)?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    let mut records = load_hosts_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+
+    let id_filter: Option<HashSet<String>> = args.logical_ids.as_ref().map(|ids| {
+        ids.iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect()
+    });
+    if let Some(filter) = id_filter.as_ref() {
+        records.retain(|record| filter.contains(&record.logical_id));
+    }
+
+    let profile = get_profile(&data_dir, kind).map_err(|e| sync_error_to_string(&e))?;
+    let since = profile.as_ref().and_then(|p| p.last_sync);
+    if !args.include_all {
+        if let Some(watermark) = since {
+            records.retain(|record| record.updated_at > watermark);
+        }
+    }
+
+    Ok(SyncHostsChangesResult {
+        domain: "hosts".to_string(),
+        count: records.len() as u64,
+        since,
+        records,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_hosts_upload(
+    app: tauri::AppHandle,
+    provider: String,
+    args: SyncHostsChangesArgs,
+) -> Result<SyncHostsUploadResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    let manifest = load_manifest(&provider_data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| {
+            "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first."
+                .to_string()
+        })?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+
+    let changes = sync_hosts_changes(app.clone(), provider.clone(), args).await?;
+    let mut uploaded = 0u64;
+    let mut latest_synced_at = 0u64;
+    for record in &changes.records {
+        let revision = if record.updated_at == 0 { 1 } else { record.updated_at };
+        let plaintext_bytes = serde_json::to_vec(record)
+            .map_err(|e| format!("[sync_serialize_failed] Failed to serialize host record: {e}"))?;
+        let aad = hosts_aad(&manifest.sync_collection_id, &record.logical_id, revision);
+        let envelope = encrypt_record(&secret_key, &plaintext_bytes, aad.as_bytes())
+            .map_err(|e| format!("[sync_encrypt_failed] Failed to encrypt host record: {e}"))?;
+
+        let encrypted = SyncHostsEncryptedV1 {
+            version: 1,
+            domain: "hosts".to_string(),
+            provider: kind.as_str().to_string(),
+            sync_collection_id: manifest.sync_collection_id.clone(),
+            logical_id: record.logical_id.clone(),
+            revision,
+            updated_at: record.updated_at,
+            aad,
+            nonce: base64::engine::general_purpose::STANDARD.encode(envelope.nonce),
+            ciphertext: base64::engine::general_purpose::STANDARD.encode(envelope.ciphertext),
+        };
+        let payload = serde_json::to_vec(&encrypted).map_err(|e| {
+            format!("[sync_serialize_failed] Failed to serialize encrypted host record: {e}")
+        })?;
+        let object_name = hosts_object_name(&manifest.sync_collection_id, &record.logical_id);
+        let synced_at = provider_impl
+            .upload_credential_record(&app, &object_name, payload)
+            .await
+            .map_err(|error| {
+                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
+                sync_error_to_string(&error)
+            })?;
+        latest_synced_at = latest_synced_at.max(synced_at);
+        uploaded = uploaded.saturating_add(1);
+    }
+
+    let skipped = changes.count.saturating_sub(uploaded);
+    let profile_sync_at = if uploaded > 0 { latest_synced_at } else { now_secs() };
+    record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Hosts, profile_sync_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+
+    Ok(SyncHostsUploadResult {
+        domain: "hosts".to_string(),
+        uploaded,
+        skipped,
+        synced_at: profile_sync_at,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_hosts_restore(
+    app: tauri::AppHandle,
+    provider: String,
+    args: SyncHostsRestoreArgs,
+) -> Result<SyncHostsRestoreResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    let manifest = load_manifest(&provider_data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| {
+            "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first."
+                .to_string()
+        })?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let logical_id_filter = args.logical_ids.map(|ids| {
+        ids.into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect::<HashSet<_>>()
+    });
+
+    let remote_objects = provider_impl
+        .list_credential_records(&app, &manifest.sync_collection_id)
+        .await
+        .map_err(|error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
+            sync_error_to_string(&error)
+        })?;
+
+    let mut scanned = 0u64;
+    let mut skipped = 0u64;
+    let mut failed = 0u64;
+    let mut records = Vec::<HostSyncRecord>::new();
+
+    for object in remote_objects {
+        if !object.object_name.contains("-hosts-") || !object.object_name.ends_with(".zhost") {
+            continue;
+        }
+        scanned = scanned.saturating_add(1);
+        let payload = match provider_impl.read_credential_record(&app, &object).await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        };
+        let encrypted: SyncHostsEncryptedV1 = match serde_json::from_slice(&payload) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        };
+        if encrypted.sync_collection_id != manifest.sync_collection_id
+            || encrypted.domain != "hosts"
+            || encrypted.provider != kind.as_str()
+        {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
+        if let Some(filter) = logical_id_filter.as_ref() {
+            if !filter.contains(&encrypted.logical_id) {
+                skipped = skipped.saturating_add(1);
+                continue;
+            }
+        }
+        let envelope = match decode_sync_hosts_envelope(&encrypted) {
+            Ok(env) => env,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        };
+        let plaintext = match decrypt_record(&secret_key, &envelope, encrypted.aad.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        };
+        let mut record: HostSyncRecord = match serde_json::from_slice(&plaintext) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+        };
+        if record.logical_id.trim().is_empty() {
+            record.logical_id = encrypted.logical_id;
+        }
+        records.push(record);
+    }
+
+    let (restored, updated) =
+        apply_hosts_restore_records(&provider_data_dir, &records).map_err(|e| sync_error_to_string(&e))?;
+    let synced_at = now_secs();
+    record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Hosts, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+
+    Ok(SyncHostsRestoreResult {
+        domain: "hosts".to_string(),
+        scanned,
+        restored,
+        updated,
+        skipped,
+        failed,
+        synced_at,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_tunnels_snapshot(app: tauri::AppHandle) -> Result<SyncTunnelsSnapshotResult, String> {
+    let data_dir = crate::commands::get_data_dir(&app);
+    let records = load_tunnel_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncTunnelsSnapshotResult {
+        domain: "tunnels".to_string(),
+        count: records.len() as u64,
+        records,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_snippets_snapshot(app: tauri::AppHandle) -> Result<SyncSnippetsSnapshotResult, String> {
+    let data_dir = crate::commands::get_data_dir(&app);
+    let records = load_snippet_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncSnippetsSnapshotResult {
+        domain: "snippets".to_string(),
+        count: records.len() as u64,
+        records,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_tunnels_upload(app: tauri::AppHandle, provider: String) -> Result<SyncDomainUploadResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let records = load_tunnel_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+    let mut uploaded = 0u64;
+    let mut latest_synced_at = 0u64;
+    for record in records {
+        let revision = default_revision(record.updated_at);
+        let synced_at = upload_domain_record(
+            provider_impl.as_ref(),
+            &app,
+            kind,
+            &manifest,
+            &secret_key,
+            &data_dir,
+            &record,
+            DomainUploadMeta {
+                domain: "tunnels",
+                logical_id: &record.logical_id,
+                revision,
+                updated_at: record.updated_at,
+                extension: "ztun",
+            },
+        ).await?;
+        latest_synced_at = latest_synced_at.max(synced_at);
+        uploaded = uploaded.saturating_add(1);
+    }
+    let synced_at = if uploaded > 0 { latest_synced_at } else { now_secs() };
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Tunnels, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainUploadResult { domain: "tunnels".to_string(), uploaded, skipped: 0, synced_at })
+}
+
+#[tauri::command]
+pub async fn sync_snippets_upload(app: tauri::AppHandle, provider: String) -> Result<SyncDomainUploadResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let records = load_snippet_sync_records(&data_dir).map_err(|e| sync_error_to_string(&e))?;
+    let mut uploaded = 0u64;
+    let mut latest_synced_at = 0u64;
+    for record in records {
+        let revision = default_revision(record.updated_at);
+        let synced_at = upload_domain_record(
+            provider_impl.as_ref(),
+            &app,
+            kind,
+            &manifest,
+            &secret_key,
+            &data_dir,
+            &record,
+            DomainUploadMeta {
+                domain: "snippets",
+                logical_id: &record.logical_id,
+                revision,
+                updated_at: record.updated_at,
+                extension: "zsnp",
+            },
+        ).await?;
+        latest_synced_at = latest_synced_at.max(synced_at);
+        uploaded = uploaded.saturating_add(1);
+    }
+    let synced_at = if uploaded > 0 { latest_synced_at } else { now_secs() };
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Snippets, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainUploadResult { domain: "snippets".to_string(), uploaded, skipped: 0, synced_at })
+}
+
+#[tauri::command]
+pub async fn sync_tunnels_restore(app: tauri::AppHandle, provider: String) -> Result<SyncDomainRestoreResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let collected = collect_domain_records::<TunnelSyncRecord>(
+        provider_impl.as_ref(),
+        &app,
+        &manifest,
+        &secret_key,
+        "tunnels",
+        ".ztun",
+    )
+    .await?;
+    let records = collected
+        .records
+        .into_iter()
+        .map(|mut record| {
+            if record.logical_id.trim().is_empty() {
+                record.logical_id = format!(
+                    "{}:{}:{}:{}",
+                    record.connection_id.trim().to_ascii_lowercase(),
+                    record.local_port,
+                    record.remote_host.trim().to_ascii_lowercase(),
+                    record.remote_port
+                );
+            }
+            record
+        })
+        .collect::<Vec<_>>();
+    let (restored, updated) = apply_tunnel_restore_records(&data_dir, &records).map_err(|e| sync_error_to_string(&e))?;
+    let synced_at = now_secs();
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Tunnels, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainRestoreResult {
+        domain: "tunnels".into(),
+        scanned: collected.scanned,
+        restored,
+        updated,
+        skipped: collected.skipped,
+        failed: collected.failed,
+        synced_at,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_snippets_restore(app: tauri::AppHandle, provider: String) -> Result<SyncDomainRestoreResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let collected = collect_domain_records::<SnippetSyncRecord>(
+        provider_impl.as_ref(),
+        &app,
+        &manifest,
+        &secret_key,
+        "snippets",
+        ".zsnp",
+    )
+    .await?;
+    let records = collected
+        .records
+        .into_iter()
+        .map(|mut record| {
+            if record.logical_id.trim().is_empty() {
+                record.logical_id = format!(
+                    "{}:{}",
+                    record.name.trim().to_ascii_lowercase(),
+                    record.command.len()
+                );
+            }
+            record
+        })
+        .collect::<Vec<_>>();
+    let (restored, updated) = apply_snippet_restore_records(&data_dir, &records).map_err(|e| sync_error_to_string(&e))?;
+    let synced_at = now_secs();
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Snippets, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainRestoreResult {
+        domain: "snippets".into(),
+        scanned: collected.scanned,
+        restored,
+        updated,
+        skipped: collected.skipped,
+        failed: collected.failed,
+        synced_at,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_settings_upload(app: tauri::AppHandle, provider: String) -> Result<SyncDomainUploadResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let record = load_allowlisted_settings(&app).await?;
+    let revision = default_revision(record.updated_at);
+    let synced_at = upload_domain_record(
+        provider_impl.as_ref(),
+        &app,
+        kind,
+        &manifest,
+        &secret_key,
+        &data_dir,
+        &record,
+        DomainUploadMeta {
+            domain: "settings",
+            logical_id: &record.logical_id,
+            revision,
+            updated_at: record.updated_at,
+            extension: "zset",
+        },
+    ).await?;
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Settings, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainUploadResult { domain: "settings".to_string(), uploaded: 1, skipped: 0, synced_at })
+}
+
+#[tauri::command]
+pub async fn sync_settings_restore(app: tauri::AppHandle, provider: String) -> Result<SyncDomainRestoreResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
+    let data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings)?;
+    let manifest = load_manifest(&data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
+    let collection_key = load_collection_key(&manifest).map_err(|e| sync_error_to_string(&e))?;
+    let secret_key = SecretKey::from_bytes(collection_key);
+    let collected = collect_domain_records::<SettingsSyncRecord>(
+        provider_impl.as_ref(),
+        &app,
+        &manifest,
+        &secret_key,
+        "settings",
+        ".zset",
+    )
+    .await?;
+    for parsed in collected.records {
+        let settings: serde_json::Value = crate::commands::settings_get(app.clone()).await?;
+        let mut merged = settings.as_object().cloned().unwrap_or_default();
+        if let Some(obj) = parsed.payload.as_object() {
+            for key in SETTINGS_ALLOWLIST_KEYS {
+                if let Some(value) = obj.get(*key) {
+                    merged.insert((*key).to_string(), value.clone());
+                }
+            }
+        }
+        crate::commands::settings_set(app.clone(), serde_json::Value::Object(merged)).await?;
+    }
+
+    let synced_at = now_secs();
+    record_domain_sync_success(&data_dir, kind, SyncDomain::Settings, synced_at)
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainRestoreResult {
+        domain: "settings".to_string(),
+        scanned: collected.scanned,
+        restored: if collected.scanned > 0 { 1 } else { 0 },
+        updated: 0,
+        skipped: collected.skipped,
+        failed: collected.failed,
+        synced_at,
+    })
 }
 
 #[tauri::command]
@@ -565,6 +1523,53 @@ pub async fn sync_status(
 }
 
 #[tauri::command]
+pub async fn sync_domain_policies(
+    app: tauri::AppHandle,
+    provider: String,
+) -> Result<SyncDomainPoliciesResult, String> {
+    let kind = parse_provider(&provider)?;
+    let provider_data_dir = crate::commands::get_data_dir(&app);
+    let mut profile = get_profile(&provider_data_dir, kind)
+        .map_err(|e| sync_error_to_string(&e))?
+        .unwrap_or_else(|| default_profile(kind));
+    ensure_domain_collections(&mut profile);
+    Ok(SyncDomainPoliciesResult {
+        provider: kind.as_str().to_string(),
+        policies: profile.domain_policies,
+    })
+}
+
+#[tauri::command]
+pub async fn sync_domain_policy_set(
+    app: tauri::AppHandle,
+    provider: String,
+    args: SyncDomainPolicySetArgs,
+) -> Result<SyncDomainPoliciesResult, String> {
+    let kind = parse_provider(&provider)?;
+    let domain = SyncDomain::parse(&args.domain)
+        .ok_or_else(|| format!("[invalid_domain] Unknown domain: {}", args.domain))?;
+    let provider_data_dir = crate::commands::get_data_dir(&app);
+    let mode = args.mode.unwrap_or(SyncPolicyMode::Manual);
+    let updated = upsert_profile(&provider_data_dir, kind, |existing| {
+        let mut profile = existing.unwrap_or_else(|| default_profile(kind));
+        ensure_domain_collections(&mut profile);
+        if let Some(policy) = profile.domain_policies.iter_mut().find(|p| p.domain == domain) {
+            policy.enabled = args.enabled;
+            policy.mode = mode;
+        }
+        if let Some(status) = profile.domain_statuses.iter_mut().find(|s| s.domain == domain) {
+            status.enabled = args.enabled;
+        }
+        profile
+    })
+    .map_err(|e| sync_error_to_string(&e))?;
+    Ok(SyncDomainPoliciesResult {
+        provider: kind.as_str().to_string(),
+        policies: updated.domain_policies,
+    })
+}
+
+#[tauri::command]
 pub async fn sync_connect(
     app: tauri::AppHandle,
     provider: String,
@@ -587,6 +1592,7 @@ pub async fn sync_connect(
         .unwrap_or(ProviderStatusSnapshot {
             connected: true,
             email: identity.email.clone(),
+            avatar_url: identity.avatar_url.clone(),
             last_sync: None,
         });
 
@@ -594,6 +1600,7 @@ pub async fn sync_connect(
         let mut profile = sync_profile_from_snapshot(kind, status_snapshot.clone(), existing);
         profile.connected = true;
         profile.email = identity.email.clone().or(profile.email);
+        profile.avatar_url = identity.avatar_url.clone().or(profile.avatar_url);
         profile
     })
     .map_err(|e| sync_error_to_string(&e))?;
@@ -624,6 +1631,7 @@ pub async fn sync_disconnect(app: tauri::AppHandle, provider: String) -> Result<
                 let mut profile = existing.unwrap_or_else(|| default_profile(kind));
                 profile.connected = false;
                 profile.email = None;
+                profile.avatar_url = None;
                 profile
             });
             clear_sync_error(&provider_data_dir, kind);
@@ -634,6 +1642,7 @@ pub async fn sync_disconnect(app: tauri::AppHandle, provider: String) -> Result<
                 let mut profile = existing.unwrap_or_else(|| default_profile(kind));
                 profile.connected = false;
                 profile.email = None;
+                profile.avatar_url = None;
                 profile.last_error = Some(error.message.clone());
                 profile.last_error_code = Some(error.code.to_string());
                 profile
@@ -652,6 +1661,7 @@ pub async fn sync_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
     let tmp_path = provider_data_dir.join("vault.redb.sync-tmp");
 
     {
@@ -702,6 +1712,7 @@ pub async fn sync_upload_credential(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
 
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
@@ -790,6 +1801,7 @@ pub async fn sync_restore_preview(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
 
     {
         let mut svc = vault.lock().await;
@@ -956,6 +1968,7 @@ pub async fn sync_restore_credentials(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
 
     {
         let mut svc = vault.lock().await;
@@ -1171,6 +2184,7 @@ pub async fn sync_download(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
 
     let (bytes, ts) = provider_impl
         .download_vault_blob(&app)
@@ -1259,6 +2273,37 @@ mod tests {
             updated_at,
             deleted,
         }
+    }
+
+    fn test_capabilities() -> ProviderCapabilities {
+        ProviderCapabilities {
+            supports_autosync: false,
+            supports_incremental: true,
+            supports_etag: true,
+            supports_domains: true,
+            max_object_size: None,
+            encryption_mode: super::super::types::EncryptionMode::AppEncryptedOnly,
+        }
+    }
+
+
+    #[test]
+    fn status_from_profile_exposes_default_domain_statuses() {
+        let mut profile = default_profile(SyncProviderKind::Google);
+        profile.domain_policies.clear();
+        profile.domain_statuses.clear();
+
+        let status = status_from_profile(profile, SyncProviderKind::Google, test_capabilities());
+
+        assert_eq!(status.domain_statuses.len(), 5);
+        assert_eq!(
+            status.domain_statuses.iter().find(|s| s.domain == SyncDomain::Hosts).map(|s| s.enabled),
+            Some(true)
+        );
+        assert_eq!(
+            status.domain_statuses.iter().find(|s| s.domain == SyncDomain::Snippets).map(|s| s.enabled),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1361,5 +2406,30 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert!(ids.contains("cred-a"));
         assert!(ids.contains("cred-b"));
+    }
+
+    #[test]
+    fn default_revision_maps_zero_to_one() {
+        assert_eq!(default_revision(0), 1);
+        assert_eq!(default_revision(42), 42);
+    }
+
+    #[test]
+    fn domain_object_matcher_checks_domain_and_extension() {
+        assert!(is_domain_object_name(
+            "zync-sync-col1-snippets-abc.zsnp",
+            "snippets",
+            ".zsnp"
+        ));
+        assert!(!is_domain_object_name(
+            "zync-sync-col1-snippets-abc.zsnp",
+            "tunnels",
+            ".zsnp"
+        ));
+        assert!(!is_domain_object_name(
+            "zync-sync-col1-snippets-abc.json",
+            "snippets",
+            ".zsnp"
+        ));
     }
 }

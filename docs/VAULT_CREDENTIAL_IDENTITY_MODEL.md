@@ -3,7 +3,7 @@
 ## Status
 - **Owner:** Core app team
 - **Document type:** Architecture decision + implementation guide
-- **Last updated:** 2026-05-10
+- **Last updated:** 2026-05-15
 - **Scope:** Stable credential identity, host assignment, key-first vault UX, rotation, sync/relink behavior
 
 ---
@@ -146,6 +146,19 @@ The robust model separates **logical identity** from **physical storage**:
 5. **Credential rotation updates the credential revision, not every host.**
 6. **Fingerprints are helper metadata, never primary identity.**
 7. **Deleting vault data cannot recover secrets without a backup/cloud copy.**
+
+### 3.1 Future-proof reference layering (canonical)
+
+For robust long-term behavior (rotation/import/restore/sync), keep a **3-layer identity model**:
+
+1. `credentialId` (logical, stable) — canonical host link target
+2. `itemId` (physical vault record) — fast-path cache pointer
+3. provider sync metadata (`objectId`/`etag`/`revision`) — transport/sync lineage only
+
+Rules:
+- Host auth must resolve from `credentialId` as source-of-truth.
+- `itemId` can be relinked/repaired automatically when stale.
+- Provider metadata must never become primary host identity.
 
 ---
 

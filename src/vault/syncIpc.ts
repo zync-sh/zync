@@ -2,16 +2,28 @@ import { invoke } from '@tauri-apps/api/core';
 import { parseSyncInvokeError } from './syncError';
 
 export type SyncProvider = 'google';
+export type SyncDomain = 'vault' | 'hosts' | 'tunnels' | 'snippets' | 'settings';
+export type SyncPolicyMode = 'manual' | 'on_change' | 'interval';
+
+export interface SyncDomainStatus {
+  domain: SyncDomain;
+  enabled: boolean;
+  lastSync?: number;
+  lastError?: string;
+  lastErrorCode?: string;
+}
 
 export interface SyncProviderStatus {
   provider?: string;
   connected: boolean;
   email?: string;
+  avatarUrl?: string;
   lastSync?: number;
   error?: string;
   errorCode?: string;
   lastError?: string;
   lastErrorCode?: string;
+  domainStatuses?: SyncDomainStatus[];
   capabilities?: {
     supportsAutosync: boolean;
     supportsIncremental: boolean;
@@ -105,6 +117,103 @@ export interface SyncRestoreConflictItem {
   remoteRevision: number;
   remoteUpdatedAt: number;
   remoteDeleted: boolean;
+}
+
+export interface SyncHostRecord {
+  logicalId: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  folder?: string;
+  tags: string[];
+  isFavorite: boolean;
+  updatedAt: number;
+}
+
+export interface SyncHostsSnapshotResult {
+  domain: string;
+  count: number;
+  records: SyncHostRecord[];
+}
+
+export interface SyncHostsChangesArgs {
+  logicalIds?: string[];
+  includeAll?: boolean;
+}
+
+export interface SyncHostsChangesResult {
+  domain: string;
+  count: number;
+  since?: number;
+  records: SyncHostRecord[];
+}
+
+export interface SyncHostsUploadResult {
+  domain: string;
+  uploaded: number;
+  skipped: number;
+  syncedAt: number;
+}
+
+export interface SyncHostsRestoreArgs {
+  logicalIds?: string[];
+}
+
+export interface SyncHostsRestoreResult {
+  domain: string;
+  scanned: number;
+  restored: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  syncedAt: number;
+}
+
+export interface SyncTunnelsSnapshotResult {
+  domain: string;
+  count: number;
+  records: unknown[];
+}
+
+export interface SyncSnippetsSnapshotResult {
+  domain: string;
+  count: number;
+  records: unknown[];
+}
+
+export interface SyncDomainUploadResult {
+  domain: string;
+  uploaded: number;
+  skipped: number;
+  syncedAt: number;
+}
+
+export interface SyncDomainRestoreResult {
+  domain: string;
+  scanned: number;
+  restored: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  syncedAt: number;
+}
+
+export interface SyncDomainPolicy {
+  domain: SyncDomain;
+  enabled: boolean;
+  mode: SyncPolicyMode;
+}
+
+export interface SyncDomainPoliciesResult {
+  provider: SyncProvider;
+  policies: SyncDomainPolicy[];
+}
+
+export interface SyncDomainPolicySetArgs {
+  domain: SyncDomain;
+  enabled: boolean;
+  mode?: SyncPolicyMode;
 }
 
 export const SYNC_STATUS_CHANGED_EVENT = 'zync:sync-status-changed';
@@ -210,6 +319,60 @@ export const syncIpc = {
     ttlSecs: number,
   ): Promise<SyncCollectionStatus> =>
     invokeCore<SyncCollectionStatus>('sync_collection_set_cache_ttl', { provider, ttlSecs }),
+
+  domainPolicies: async (provider: SyncProvider): Promise<SyncDomainPoliciesResult> =>
+    invokeCore<SyncDomainPoliciesResult>('sync_domain_policies', { provider }),
+
+  domainPolicySet: async (
+    provider: SyncProvider,
+    args: SyncDomainPolicySetArgs,
+  ): Promise<SyncDomainPoliciesResult> =>
+    invokeCore<SyncDomainPoliciesResult>('sync_domain_policy_set', { provider, args }),
+
+  hostsSnapshot: async (): Promise<SyncHostsSnapshotResult> =>
+    invokeCore<SyncHostsSnapshotResult>('sync_hosts_snapshot'),
+
+  hostsChanges: async (
+    provider: SyncProvider,
+    args: SyncHostsChangesArgs = {},
+  ): Promise<SyncHostsChangesResult> =>
+    invokeCore<SyncHostsChangesResult>('sync_hosts_changes', { provider, args }),
+
+  hostsUpload: async (
+    provider: SyncProvider,
+    args: SyncHostsChangesArgs = {},
+  ): Promise<SyncHostsUploadResult> =>
+    invokeCore<SyncHostsUploadResult>('sync_hosts_upload', { provider, args }),
+
+  hostsRestore: async (
+    provider: SyncProvider,
+    args: SyncHostsRestoreArgs = {},
+  ): Promise<SyncHostsRestoreResult> =>
+    invokeCore<SyncHostsRestoreResult>('sync_hosts_restore', { provider, args }),
+
+  tunnelsSnapshot: async (): Promise<SyncTunnelsSnapshotResult> =>
+    invokeCore<SyncTunnelsSnapshotResult>('sync_tunnels_snapshot'),
+
+  tunnelsUpload: async (provider: SyncProvider): Promise<SyncDomainUploadResult> =>
+    invokeCore<SyncDomainUploadResult>('sync_tunnels_upload', { provider }),
+
+  tunnelsRestore: async (provider: SyncProvider): Promise<SyncDomainRestoreResult> =>
+    invokeCore<SyncDomainRestoreResult>('sync_tunnels_restore', { provider }),
+
+  snippetsSnapshot: async (): Promise<SyncSnippetsSnapshotResult> =>
+    invokeCore<SyncSnippetsSnapshotResult>('sync_snippets_snapshot'),
+
+  snippetsUpload: async (provider: SyncProvider): Promise<SyncDomainUploadResult> =>
+    invokeCore<SyncDomainUploadResult>('sync_snippets_upload', { provider }),
+
+  snippetsRestore: async (provider: SyncProvider): Promise<SyncDomainRestoreResult> =>
+    invokeCore<SyncDomainRestoreResult>('sync_snippets_restore', { provider }),
+
+  settingsUpload: async (provider: SyncProvider): Promise<SyncDomainUploadResult> =>
+    invokeCore<SyncDomainUploadResult>('sync_settings_upload', { provider }),
+
+  settingsRestore: async (provider: SyncProvider): Promise<SyncDomainRestoreResult> =>
+    invokeCore<SyncDomainRestoreResult>('sync_settings_restore', { provider }),
 
   /** Get connection status for a sync provider.
    * @param provider Cloud sync provider.

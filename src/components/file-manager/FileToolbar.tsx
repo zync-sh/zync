@@ -2,6 +2,7 @@ import { ChevronRight, Home, LayoutGrid, LayoutList, Plus, RefreshCw, Search, Up
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 
 interface FileToolbarProps {
@@ -371,7 +372,11 @@ export function FileToolbar({
           </Button>
 
           {isMenuOpen && (
-            <div className="absolute top-full right-0 mt-2 w-48 bg-app-panel/95 backdrop-blur-xl border border-app-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1 animate-in fade-in zoom-in-95 duration-200">
+            <TopbarDropdown
+              align="right"
+              widthClass="w-48"
+              className="bg-app-panel/95 backdrop-blur-xl border-app-border/40 flex flex-col p-1 zoom-in-95 duration-200"
+            >
                 <button
                   onClick={() => {
                     onNewFile();
@@ -414,7 +419,7 @@ export function FileToolbar({
                   <FolderInput size={16} />
                   <span>Upload Folder</span>
                 </button>
-              </div>
+              </TopbarDropdown>
           )}
         </div>
       </div>

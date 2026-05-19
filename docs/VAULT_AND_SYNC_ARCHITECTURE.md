@@ -245,6 +245,8 @@ Provider contract notes:
 - Add autosync policies (manual, periodic, on-change, on-exit).
 - Replace normal cloud sync with per-credential encrypted provider records; keep full-file
   `vault.redb` backup/restore only as legacy disaster recovery.
+- App-data sync expansion and top-bar profile UX rollout are tracked in
+  [`PHASE3_APPDATA_SYNC_PLAN.md`](./PHASE3_APPDATA_SYNC_PLAN.md).
 
 ### Phase 4 — Multi-provider & future domains
 - Add second provider (e.g., GitHub blob store) to validate abstraction.

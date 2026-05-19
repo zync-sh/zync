@@ -289,9 +289,12 @@ mod tests {
                 provider: "google".into(),
                 connected: true,
                 email: Some("first@example.com".into()),
+                avatar_url: Some("https://example.com/avatar.png".into()),
                 last_sync: Some(10),
                 last_error: None,
                 last_error_code: None,
+                domain_policies: Vec::new(),
+                domain_statuses: Vec::new(),
                 updated_at: 0,
             }
         })
