@@ -479,21 +479,74 @@ fn save_saved_connections(path: &std::path::Path, saved: &SavedData) -> Result<(
     f.sync_all()
         .map_err(|e| VaultError::InvalidData(format!("connections tmp sync: {e}")))?;
     drop(f);
-    std::fs::rename(&tmp, path)
-        .map_err(|e| {
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let kind = error.kind();
+            #[cfg(windows)]
+            let raw = error.raw_os_error();
+            #[cfg(not(windows))]
+            let raw: Option<i32> = error.raw_os_error();
+
+            if kind == std::io::ErrorKind::PermissionDenied {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(VaultError::InvalidData(format!(
+                    "connections file is locked or permission denied during replace: {error}"
+                )));
+            }
+            if path.is_dir() {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(VaultError::InvalidData(
+                    "connections save target is a directory, not a file".into(),
+                ));
+            }
+            if raw == Some(18) {
+                std::fs::copy(&tmp, path).map_err(|copy_error| {
+                    let _ = std::fs::remove_file(&tmp);
+                    VaultError::InvalidData(format!(
+                        "connections save cross-device fallback copy failed: {copy_error}"
+                    ))
+                })?;
+                std::fs::remove_file(&tmp).map_err(|cleanup_error| {
+                    VaultError::InvalidData(format!(
+                        "connections save fallback cleanup failed: {cleanup_error}"
+                    ))
+                })?;
+                return Ok(());
+            }
+            if path.is_file() {
+                match std::fs::remove_file(path) {
+                    Ok(()) => {
+                        return std::fs::rename(&tmp, path).map_err(|retry_error| {
+                            let _ = std::fs::remove_file(&tmp);
+                            VaultError::InvalidData(format!(
+                                "connections atomic replace retry failed: {retry_error}"
+                            ))
+                        });
+                    }
+                    Err(remove_error) => {
+                        let _ = std::fs::remove_file(&tmp);
+                        return Err(VaultError::InvalidData(format!(
+                            "connections atomic rename failed and destination could not be removed: {remove_error}"
+                        )));
+                    }
+                }
+            }
             let _ = std::fs::remove_file(&tmp);
-            VaultError::InvalidData(format!("connections atomic rename: {e}"))
-        })
+            Err(VaultError::InvalidData(format!(
+                "connections atomic rename failed: {error}"
+            )))
+        }
+    }
 }
 
 pub fn repair_connection_refs(
     data_dir: &std::path::Path,
     vault: &VaultService,
 ) -> Result<VaultBackfillResult, VaultError> {
-    // Lock ordering invariant: callers must hold the vault-level Mutex<VaultService>
-    // BEFORE acquiring CONNECTIONS_MUTATION_LOCK. Reversing this order risks deadlock
-    // because other code paths (e.g. ssh_connect relink persistence) acquire the
-    // connections lock first and then call vault methods. Always: vault lock → connections lock.
+    // Lock ordering invariant: hold the vault-level Mutex<VaultService> before
+    // taking CONNECTIONS_MUTATION_LOCK so vault-backed connection repair and
+    // persistence paths do not invert file/vault mutation order in the future.
     let path = data_dir.join("connections.json");
     let _connections_guard = crate::commands::CONNECTIONS_MUTATION_LOCK
         .lock()

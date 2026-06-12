@@ -57,7 +57,7 @@ impl SnippetsManager {
         } else {
             snippets.push(Snippet {
                 created_at: snippet.created_at.or(Some(now)),
-                updated_at: snippet.updated_at.or(Some(now)),
+                updated_at: Some(now),
                 ..snippet
             });
         }

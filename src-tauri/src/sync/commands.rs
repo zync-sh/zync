@@ -2882,6 +2882,7 @@ pub async fn sync_download(
 mod tests {
     use super::*;
     use crate::types::{CredentialItemKind, CredentialPurpose, CredentialRef};
+    use crate::vault::credential::secret_values_from_legacy;
     use crate::vault::types::PlaintextRecord;
 
     fn local_record(

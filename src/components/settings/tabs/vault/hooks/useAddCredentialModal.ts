@@ -48,8 +48,8 @@ export function useAddCredentialModal({
     }
 
     const trimmedLabel = label.trim();
-    const trimmedSecret = secret.trim();
-    const trimmedPassphrase = passphrase.trim();
+    const rawSecret = secret;
+    const rawPassphrase = passphrase;
 
     if (!isSupportedCreateCredentialKind(kind)) {
       showToast('error', 'This credential type is not ready yet.');
@@ -60,7 +60,7 @@ export function useAddCredentialModal({
       showToast('error', 'Credential label is required.');
       return;
     }
-    if (!trimmedSecret) {
+    if (!rawSecret.trim()) {
       showToast('error', 'Credential secret is required.');
       return;
     }
@@ -68,10 +68,10 @@ export function useAddCredentialModal({
     const secretValues: Record<string, string> =
       kind === 'ssh-private-key'
         ? {
-            privateKey: trimmedSecret,
-            ...(trimmedPassphrase ? { passphrase: trimmedPassphrase } : {}),
+            privateKey: rawSecret,
+            ...(rawPassphrase.length > 0 ? { passphrase: rawPassphrase } : {}),
           }
-        : { password: trimmedSecret };
+        : { password: rawSecret };
 
     setIsCreating(true);
     try {
@@ -81,10 +81,17 @@ export function useAddCredentialModal({
         secretValues,
         notes.trim() || undefined,
       );
-      await onCreated();
       setIsOpen(false);
       reset();
       showToast('success', `Added "${item.label}" to Vault. You can now assign it to hosts.`);
+      try {
+        await onCreated();
+      } catch (refreshError) {
+        console.warn('[Vault] Post-create refresh failed:', refreshError);
+        const refreshMessage =
+          refreshError instanceof Error ? refreshError.message : String(refreshError);
+        showToast('info', `Credential added, but refresh did not complete: ${refreshMessage}`);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       showToast('error', `Failed to add credential: ${msg}`);

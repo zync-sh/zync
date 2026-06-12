@@ -43,5 +43,5 @@ jobs:
           # The vault crypto known-answer tests do not use Google OAuth.
           GOOGLE_CLIENT_ID: ci-known-answer-test-client-id
         run: |
-          rustup run stable cargo test vault::crypto::tests::known_answer_kdf_is_reproducible -- --exact
-          rustup run stable cargo test vault::crypto::tests::known_answer_aead_is_reproducible -- --exact
+          cargo test vault::crypto::tests::known_answer_kdf_is_reproducible -- --exact
+          cargo test vault::crypto::tests::known_answer_aead_is_reproducible -- --exact

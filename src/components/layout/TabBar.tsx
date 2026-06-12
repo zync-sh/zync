@@ -1,4 +1,4 @@
-import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home, Shield, UserRound, ChevronDown, LogOut, Cloud } from 'lucide-react';
+import { X, Settings as SettingsIcon, PanelLeft, Network, Gift, Plus, Laptop, FolderPlus, Sparkles, Home, Shield, UserRound, ChevronDown, LogOut, Cloud, RefreshCw } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
 import { cn } from '../../lib/utils';
@@ -59,6 +59,15 @@ function googleConnectErrorMessage(error: unknown): string {
     }
 
     return raw;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+            window.setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        }),
+    ]);
 }
 
 // Extract SortableTab component
@@ -157,6 +166,8 @@ export function TabBar() {
     const profileMenuRef = useRef<HTMLDivElement>(null);
     const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
     const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+    const [isGoogleSyncConnecting, setIsGoogleSyncConnecting] = useState(false);
+    const [isGoogleSyncDisconnecting, setIsGoogleSyncDisconnecting] = useState(false);
 
     // Click outside to close the Add menu
     useEffect(() => {
@@ -502,37 +513,61 @@ export function TabBar() {
                                         {!googleSync?.connected && (
                                             <button
                                                 onClick={async () => {
+                                                    if (isGoogleSyncConnecting) return;
+                                                    setIsGoogleSyncConnecting(true);
                                                     try {
-                                                        await syncIpc.connect('google');
+                                                        await withTimeout(
+                                                            syncIpc.connect('google'),
+                                                            30000,
+                                                            'Google sync connection timed out'
+                                                        );
                                                         showToast('success', 'Google sync connected');
                                                     } catch (error) {
                                                         showToast('error', googleConnectErrorMessage(error));
                                                     } finally {
+                                                        setIsGoogleSyncConnecting(false);
                                                         setIsProfileMenuOpen(false);
                                                     }
                                                 }}
-                                                className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors"
+                                                disabled={isGoogleSyncConnecting}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-app-text hover:bg-black/5 dark:hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
                                             >
-                                                <Network size={13} className="text-app-muted" />
-                                                <span>Connect Google Sync</span>
+                                                {isGoogleSyncConnecting ? (
+                                                    <RefreshCw size={13} className="text-app-muted animate-spin" />
+                                                ) : (
+                                                    <Network size={13} className="text-app-muted" />
+                                                )}
+                                                <span>{isGoogleSyncConnecting ? 'Connecting Google Sync…' : 'Connect Google Sync'}</span>
                                             </button>
                                         )}
                                         {googleSync?.connected && (
                                             <button
                                                 onClick={async () => {
+                                                    if (isGoogleSyncDisconnecting) return;
+                                                    setIsGoogleSyncDisconnecting(true);
                                                     try {
-                                                        await syncIpc.disconnect('google');
+                                                        await withTimeout(
+                                                            syncIpc.disconnect('google'),
+                                                            15000,
+                                                            'Google sync disconnect timed out'
+                                                        );
                                                         showToast('success', 'Google sync disconnected');
                                                     } catch (error) {
                                                         showToast('error', googleConnectErrorMessage(error));
                                                     } finally {
+                                                        setIsGoogleSyncDisconnecting(false);
                                                         setIsProfileMenuOpen(false);
                                                     }
                                                 }}
-                                                className="w-full text-left px-3 py-2 text-xs font-medium text-red-300 hover:text-red-200 hover:bg-red-500/10 rounded-lg flex items-center gap-2 transition-colors"
+                                                disabled={isGoogleSyncDisconnecting}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-red-300 hover:text-red-200 hover:bg-red-500/10 rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60"
                                             >
-                                                <LogOut size={13} />
-                                                <span>Disconnect Google Sync</span>
+                                                {isGoogleSyncDisconnecting ? (
+                                                    <RefreshCw size={13} className="animate-spin" />
+                                                ) : (
+                                                    <LogOut size={13} />
+                                                )}
+                                                <span>{isGoogleSyncDisconnecting ? 'Disconnecting Google Sync…' : 'Disconnect Google Sync'}</span>
                                             </button>
                                         )}
                                     </TopbarDropdown>

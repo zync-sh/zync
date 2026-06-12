@@ -289,8 +289,7 @@ fn delete_refresh_token(key: &str) {
 
 fn tokens_for_disk(tokens: &StoredTokens) -> StoredTokens {
     let mut safe = tokens.clone();
-    // Keep the short-lived access token so a fresh connect can sync immediately
-    // without forcing an unnecessary refresh-token round trip.
+    safe.access_token = None;
     safe.refresh_token = None;
     if tokens.refresh_token.is_some() {
         safe.has_refresh_token = true;
@@ -1086,7 +1085,7 @@ mod tests {
     use crate::sync::provider::validate_provider_contract;
 
     #[test]
-    fn tokens_for_disk_keeps_access_token_but_strips_refresh_token() {
+    fn tokens_for_disk_strips_access_and_refresh_tokens() {
         let tokens = StoredTokens {
             access_token: Some("access-abc".into()),
             refresh_token: Some("refresh-xyz".into()),
@@ -1099,13 +1098,16 @@ mod tests {
 
         let safe = tokens_for_disk(&tokens);
         let on_disk = serde_json::to_string(&safe).expect("token file json should serialize");
-        assert!(on_disk.contains("access-abc"), "access_token should remain available for immediate sync");
+        assert!(
+            !on_disk.contains("access-abc"),
+            "access_token must not be persisted to disk"
+        );
         assert!(
             !on_disk.contains("refresh-xyz"),
             "refresh_token must not be persisted in plaintext"
         );
 
-        assert_eq!(safe.access_token.as_deref(), Some("access-abc"));
+        assert!(safe.access_token.is_none());
         assert!(safe.refresh_token.is_none());
         assert!(safe.has_refresh_token);
         assert_eq!(safe.expires_at, 123);

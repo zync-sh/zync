@@ -259,11 +259,28 @@ pub(crate) fn write_saved_tunnels_atomic(path: &Path, data: &SavedTunnelsData) -
     match std::fs::rename(&temp_path, path) {
         Ok(()) => Ok(()),
         Err(rename_err) if rename_err.kind() == ErrorKind::AlreadyExists && path.exists() => {
-            let _ = std::fs::remove_file(path);
-            std::fs::rename(&temp_path, path).map_err(|e| {
+            let backup_path = path.with_extension("bak");
+            std::fs::rename(path, &backup_path).map_err(|e| {
                 let _ = std::fs::remove_file(&temp_path);
-                SyncError::new("sync_tunnels_write_failed", format!("Failed to finalize tunnels file: {e}"))
-            })
+                SyncError::new(
+                    "sync_tunnels_write_failed",
+                    format!("Failed to stage tunnels backup before replace: {e}"),
+                )
+            })?;
+            match std::fs::rename(&temp_path, path) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&backup_path);
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = std::fs::rename(&backup_path, path);
+                    let _ = std::fs::remove_file(&temp_path);
+                    Err(SyncError::new(
+                        "sync_tunnels_write_failed",
+                        format!("Failed to finalize tunnels file: {e}"),
+                    ))
+                }
+            }
         }
         Err(rename_err) => {
             let _ = std::fs::remove_file(&temp_path);

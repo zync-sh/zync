@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::types::PlaintextRecord;
 
@@ -47,13 +48,18 @@ impl CredentialKind {
             "ssh-private-key" | "ssh-key-with-passphrase" => Self::SshPrivateKey,
             "ssh-password" => Self::SshPassword,
             "ssh-agent-key" => Self::ExternalKeychainReference,
+            "ssh-certificate" => Self::SshCertificate,
             "api-token" | "api-key" => Self::ApiToken,
             "secret-text" | "secure-note" => Self::SecretText,
             "username-password" => Self::UsernamePassword,
             "certificate" => Self::Certificate,
             "certificate-key-pair" => Self::CertificateKeyPair,
+            "certificate-chain" => Self::CertificateChain,
             "jenkins-credential" => Self::JenkinsCredential,
             "git-credential" => Self::GitCredential,
+            "container-registry-credential" => Self::ContainerRegistryCredential,
+            "cloud-provider-credential" => Self::CloudProviderCredential,
+            "external-keychain-reference" => Self::ExternalKeychainReference,
             "plugin-defined" => Self::PluginDefined,
             _ => Self::GenericSecret,
         }
@@ -122,6 +128,19 @@ pub struct CredentialField {
     pub encoding: Option<CredentialFieldEncoding>,
 }
 
+impl Zeroize for CredentialField {
+    fn zeroize(&mut self) {
+        self.name.zeroize();
+        self.label.zeroize();
+        self.format = None;
+        self.value.zeroize();
+        self.value_ref.zeroize();
+        self.encoding = None;
+        self.required = false;
+        self.secret = false;
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialMetadata {
@@ -147,6 +166,21 @@ pub struct CredentialMetadata {
     pub notes: Option<String>,
 }
 
+impl Zeroize for CredentialMetadata {
+    fn zeroize(&mut self) {
+        self.service.zeroize();
+        self.url.zeroize();
+        self.username.zeroize();
+        self.plugin_id.zeroize();
+        self.external_ref_kind.zeroize();
+        self.external_ref.zeroize();
+        self.schema_name.zeroize();
+        self.schema_version.zeroize();
+        self.legacy_kind.zeroize();
+        self.notes.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialEnvelope {
@@ -162,6 +196,28 @@ pub struct CredentialEnvelope {
     pub revision: u64,
     pub schema_version: u32,
 }
+
+impl Zeroize for CredentialEnvelope {
+    fn zeroize(&mut self) {
+        self.credential_id.zeroize();
+        self.label.zeroize();
+        for field in &mut self.fields {
+            field.zeroize();
+        }
+        self.fields.clear();
+        self.metadata.zeroize();
+        for tag in &mut self.tags {
+            tag.zeroize();
+        }
+        self.tags.clear();
+        self.created_at.zeroize();
+        self.updated_at.zeroize();
+        self.revision.zeroize();
+        self.schema_version.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for CredentialEnvelope {}
 
 pub fn secret_values_from_legacy(kind: &str, secret: &str) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();

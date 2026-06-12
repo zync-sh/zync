@@ -178,6 +178,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   // `unlockedKey` is non-null, guaranteeing status is 'unlocked'. `backfilledVaultIdsRef`
   // lives inside `useVaultPanelActions` and is a ref — intentionally excluded.
   }, [unlockedKey, refreshItems, loadSecurePreview, loadHasRecoveryKey, runBackfillIfNeeded]);
+
   // ── Derived values ────────────────────────────────────────────────────────
   const securableCandidates = useMemo(
     () =>
@@ -251,6 +252,25 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
     setDetailItem(null);
     setIsDetailLoading(false);
   }, []);
+
+  useEffect(() => {
+    if (isUnlocked) return;
+    panel.closeRecoveryModal();
+    assignCredential.close();
+    rotateCredential.close();
+    history.close();
+    addCredential.close();
+    closeCredentialDetails();
+    setIsUnlockModalOpen(false);
+  }, [
+    addCredential,
+    assignCredential,
+    closeCredentialDetails,
+    history,
+    isUnlocked,
+    panel,
+    rotateCredential,
+  ]);
   const canSyncItemsToGoogle = Boolean(
     panel.googleSync?.connected
     && panel.googleCollection?.configured

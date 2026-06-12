@@ -73,6 +73,9 @@ impl Zeroize for PlaintextRecord {
             value.zeroize();
         }
         self.notes.zeroize();
+        if let Some(credential) = self.credential.as_mut() {
+            credential.zeroize();
+        }
         self.credential = None;
         self.revision.zeroize();
         self.created_at.zeroize();

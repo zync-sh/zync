@@ -58,7 +58,7 @@ function SyncSummaryCard({
 }
 
 function formatUpdatedAt(value: number): string {
-  if (!value) return 'Unknown';
+  if (!Number.isFinite(value) || value <= 0) return 'Unknown';
   return new Date(value * 1000).toLocaleString();
 }
 

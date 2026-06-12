@@ -251,7 +251,11 @@ impl VaultService {
 
         // Idempotent compatibility migration: persist typed envelopes, named
         // secret values, canonical kinds, and the current credential schema.
-        self.migrate_live_records_to_current_schema()?;
+        if let Err(error) = self.migrate_live_records_to_current_schema() {
+            self.vek = None;
+            self.meta = None;
+            return Err(error);
+        }
 
         // Count existing records for the returned status
         let read_txn = db.begin_read()?;
@@ -686,7 +690,15 @@ impl VaultService {
             secret: String::new(),
             secret_values: secret_values.clone(),
             notes: notes.map(str::to_string),
-            credential: credential.cloned().or_else(|| existing.credential.clone()),
+            credential: match credential.cloned() {
+                Some(value) => Some(value),
+                None => existing
+                    .credential
+                    .clone()
+                    .filter(|existing_credential| {
+                        existing_credential.kind.canonical_storage_kind() == kind
+                    }),
+            },
             revision,
             created_at: existing.created_at,
             updated_at: now,
@@ -785,7 +797,15 @@ impl VaultService {
             secret: String::new(),
             secret_values: secret_values.clone(),
             notes: notes.map(str::to_string),
-            credential: credential.cloned().or_else(|| existing.credential.clone()),
+            credential: match credential.cloned() {
+                Some(value) => Some(value),
+                None => existing
+                    .credential
+                    .clone()
+                    .filter(|existing_credential| {
+                        existing_credential.kind.canonical_storage_kind() == kind
+                    }),
+            },
             revision,
             created_at: existing.created_at,
             updated_at,

@@ -751,7 +751,7 @@ fn persist_relinked_vault_refs(
                     changed = true;
                 }
                 if let Some(vault_id) = update.vault_id.as_deref() {
-                    if auth_ref.vault_id != vault_id {
+                    if credential_matches && auth_ref.vault_id != vault_id {
                         auth_ref.vault_id = vault_id.to_string();
                         changed = true;
                     }
@@ -780,24 +780,18 @@ pub async fn ssh_connect(
     let relinked = resolve_vault_refs(&mut config, &vault).await?;
     if !relinked.is_empty() {
         let app_handle = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let persist_result = tokio::task::spawn_blocking(move || {
-                persist_relinked_vault_refs(&app_handle, &relinked)
-            })
-            .await;
-
-            match persist_result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    eprintln!("[VaultAuth] Failed to persist relinked vault refs: {error}");
-                }
-                Err(join_error) => {
-                    eprintln!(
-                        "[VaultAuth] Failed to persist relinked vault refs: task join error: {join_error}"
-                    );
-                }
+        let persist_result =
+            tokio::task::spawn_blocking(move || persist_relinked_vault_refs(&app_handle, &relinked))
+                .await;
+        match persist_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(format!("Failed to persist relinked vault refs: {error}")),
+            Err(join_error) => {
+                return Err(format!(
+                    "Failed to persist relinked vault refs: task join error: {join_error}"
+                ))
             }
-        });
+        }
     }
     match reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await {
         Ok(mut handle) => {

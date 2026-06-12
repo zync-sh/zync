@@ -181,11 +181,19 @@ export function isHostAssignableCredentialKind(kind: string): boolean {
 
 export function vaultItemToCredentialEnvelope(item: VaultItem | VaultItemDetail): CredentialEnvelope {
   const kind = normalizeCredentialKind(item.kind);
+  const fields = [vaultItemSecretReferenceField(item, kind)];
+  const hasPassphraseField =
+    ('hasPassphraseField' in item && item.hasPassphraseField)
+    || ('credential' in item
+      && item.credential?.fields?.some((field: CredentialField) => field.name === 'passphrase') === true);
+  if (hasPassphraseField && kind === 'ssh-private-key') {
+    fields.push(vaultItemPassphraseReferenceField());
+  }
   return {
     credentialId: item.logicalId || item.id,
     kind,
     label: item.label,
-    fields: [vaultItemSecretReferenceField(item, kind)],
+    fields,
     metadata: {
       legacyKind: item.kind,
       notes: 'notes' in item ? item.notes : undefined,
@@ -195,6 +203,17 @@ export function vaultItemToCredentialEnvelope(item: VaultItem | VaultItemDetail)
     updatedAt: item.updatedAt,
     revision: item.revision,
     schemaVersion: CURRENT_CREDENTIAL_SCHEMA_VERSION,
+  };
+}
+
+export function vaultItemPassphraseReferenceField(): CredentialField {
+  return {
+    name: 'passphrase',
+    label: 'Passphrase',
+    secret: true,
+    required: false,
+    format: 'password',
+    valueRef: 'secret:passphrase',
   };
 }
 
