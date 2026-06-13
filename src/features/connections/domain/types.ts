@@ -27,6 +27,7 @@ export interface Connection {
     /** Vault credential reference — when set, password/privateKeyPath are ignored for SSH auth. */
     authRef?: CredentialRef;
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
+    lastError?: string;
     jumpServerId?: string;
     lastConnected?: number;
     icon?: string;
@@ -46,7 +47,7 @@ export interface Folder {
 
 export interface Tab {
     id: string;
-    type: 'connection' | 'settings' | 'port-forwarding' | 'release-notes' | 'vault';
+    type: 'connection' | 'settings' | 'port-forwarding' | 'release-notes' | 'vault' | 'sync';
     title: string;
     connectionId?: string;
     vaultProfileId?: VaultProfileId;

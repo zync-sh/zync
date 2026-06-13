@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+shopt -s nullglob
 
 # Usage:
 #   ./scripts/reset-vault-test-data.sh --mode clear-vault --force
@@ -125,6 +126,11 @@ TARGETS=(
   "$RESOLVED_DATA_DIR/vault.redb.download-tmp"
   "$RESOLVED_DATA_DIR/sync-google.json"
   "$RESOLVED_DATA_DIR/sync-google-tokens.json"
+  "$RESOLVED_DATA_DIR/sync-profiles.json"
+)
+
+TARGET_PATTERNS=(
+  "$RESOLVED_DATA_DIR"/sync-collection-*.json
 )
 
 echo "Target data dir: $RESOLVED_DATA_DIR"
@@ -134,6 +140,16 @@ echo
 echo "This script will remove vault-related local test data:"
 for target in "${TARGETS[@]}"; do
   echo " - $target"
+done
+for pattern in "${TARGET_PATTERNS[@]}"; do
+  mapfile -t files < <(compgen -G "$pattern")
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo " - $pattern (no matches)"
+    continue
+  fi
+  for file in "${files[@]}"; do
+    echo " - $file"
+  done
 done
 if [[ "$DELETE_CONNECTIONS_BACKUP" -eq 1 ]]; then
   echo " - $CONNECTIONS_BACKUP"
@@ -164,6 +180,14 @@ fi
 
 for target in "${TARGETS[@]}"; do
   remove_if_exists "$target"
+done
+
+for pattern in "${TARGET_PATTERNS[@]}"; do
+  mapfile -t matches < <(compgen -G "$pattern")
+  for target in "${matches[@]}"; do
+    [[ -e "$target" ]] || continue
+    remove_if_exists "$target"
+  done
 done
 
 if [[ "$MODE" == "restore-pre-vault" ]]; then

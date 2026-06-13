@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import type { CredentialEnvelope } from './credentialTypes';
+
 export type VaultStatus =
   | { status: 'uninitialized' }
-  | { status: 'locked'; vaultId: string }
+  | { status: 'locked'; vaultId: string; itemCount: number }
   | { status: 'unlocked'; vaultId: string; itemCount: number };
 
 export interface VaultItem {
@@ -11,18 +13,21 @@ export interface VaultItem {
   kind: string;
   label: string;
   secretFingerprint: string;
+  schemaVersion: number;
+  secretFieldCount: number;
+  hasPassphraseField: boolean;
   revision: number;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface VaultItemSecret {
+export interface VaultItemDetail {
   id: string;
-  logicalId?: string;
+  logicalId: string;
   kind: string;
   label: string;
-  secret: string;
   notes?: string;
+  credential?: CredentialEnvelope;
   revision: number;
   createdAt: number;
   updatedAt: number;
@@ -32,6 +37,16 @@ export interface VaultBackfillResult {
   updated: number;
   relinkedItemIds: number;
   skippedMissingItems: number;
+}
+
+export interface RevisionMeta {
+  itemId: string;
+  revision: number;
+  label: string;
+  kind: string;
+  secretFingerprint: string;
+  createdAt: number;
+  rotatedAt: number;
 }
 
 export interface SecureToVaultCandidate {
@@ -70,29 +85,29 @@ export const vaultIpc = {
   itemList: (): Promise<VaultItem[]> =>
     invoke('vault_item_list'),
 
-  itemGet: (itemId: string): Promise<VaultItemSecret> =>
+  itemGet: (itemId: string): Promise<VaultItemDetail> =>
     invoke('vault_item_get', { args: { item_id: itemId } }),
 
   itemUpdate: (
     itemId: string,
     label: string,
     kind: string,
-    secret: string,
+    secretValues: Record<string, string>,
     notes?: string,
   ): Promise<VaultItem> => {
     const args: {
       item_id: string;
       label: string;
       kind: string;
-      secret: string;
+      secret_values: Record<string, string>;
       notes?: string;
-    } = { item_id: itemId, label, kind, secret };
+    } = { item_id: itemId, label, kind, secret_values: secretValues };
     if (notes !== undefined) args.notes = notes;
     return invoke('vault_item_update', { args });
   },
 
-  itemCreate: (label: string, kind: string, secret: string, notes?: string, credentialId?: string): Promise<VaultItem> => {
-    const args: { label: string; kind: string; secret: string; notes?: string; credential_id?: string } = { label, kind, secret };
+  itemCreate: (label: string, kind: string, secretValues: Record<string, string>, notes?: string, credentialId?: string): Promise<VaultItem> => {
+    const args: { label: string; kind: string; secret_values: Record<string, string>; notes?: string; credential_id?: string } = { label, kind, secret_values: secretValues };
     if (notes !== undefined) args.notes = notes;
     if (credentialId !== undefined) args.credential_id = credentialId;
     return invoke('vault_item_create', { args });
@@ -124,4 +139,10 @@ export const vaultIpc = {
 
   importVault: (srcPath: string): Promise<VaultStatus> =>
     invoke('vault_import', { args: { src_path: srcPath } }),
+
+  itemRevisionHistory: (itemId: string): Promise<RevisionMeta[]> =>
+    invoke('vault_item_revision_history', { args: { item_id: itemId } }),
+
+  itemRestoreRevision: (itemId: string, revision: number): Promise<VaultItem> =>
+    invoke('vault_item_restore_revision', { args: { item_id: itemId, revision } }),
 };

@@ -7,6 +7,7 @@
 //! should stay in backend memory only and be zeroized where practical.
 
 pub mod commands;
+pub mod credential;
 pub(crate) mod crypto;
 pub mod error;
 pub(crate) mod secure_to_vault;

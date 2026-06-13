@@ -32,6 +32,9 @@ import {
   normalizePort,
   normalizeTags,
 } from '../.tmp-agent-tests/src/features/connections/domain/normalization.js';
+import {
+  connectionErrorMessage,
+} from '../.tmp-agent-tests/src/features/connections/domain/errorSanitization.js';
 
 function runTest(name, fn) {
   try {
@@ -48,6 +51,17 @@ function runTest(name, fn) {
     throw error;
   }
 }
+
+runTest('connection error sanitization redacts JSON and quoted secret values', () => {
+  const message = connectionErrorMessage(
+    'failed {"password":"json secret"} token="quoted token" passphrase=\'single quoted secret\'',
+  );
+
+  assert.equal(message.includes('json secret'), false);
+  assert.equal(message.includes('quoted token'), false);
+  assert.equal(message.includes('single quoted secret'), false);
+  assert.match(message, /"password":"\[redacted\]"/);
+});
 
 runTest('normalize helpers keep expected defaults', () => {
   assert.equal(normalizePort('abc'), 22);
@@ -434,6 +448,64 @@ runTest('buildConnectConfig includes stable credential id for vault auth', () =>
   assert.equal(config?.auth_method.type, 'VaultRef');
   assert.equal(config?.auth_method.item_id, 'item-1');
   assert.equal(config?.auth_method.credential_id, 'cred-1');
+});
+
+runTest('buildConnectConfig rejects missing auth instead of sending empty password', () => {
+  const connections = [{
+    id: 'empty-auth',
+    name: 'Empty Auth',
+    host: 'prod',
+    port: 22,
+    username: 'root',
+    status: 'disconnected',
+    password: '',
+  }];
+
+  assert.equal(buildConnectConfig(connections, 'empty-auth'), null);
+});
+
+runTest('buildConnectConfig preserves password and key passphrase whitespace', () => {
+  const passwordConfig = buildConnectConfig([{
+    id: 'password-whitespace',
+    name: 'Password whitespace',
+    host: 'prod',
+    port: 22,
+    username: 'root',
+    status: 'disconnected',
+    password: '  valid password  ',
+  }], 'password-whitespace');
+  assert.equal(passwordConfig?.auth_method.type, 'Password');
+  assert.equal(passwordConfig?.auth_method.password, '  valid password  ');
+
+  const keyConfig = buildConnectConfig([{
+    id: 'passphrase-whitespace',
+    name: 'Passphrase whitespace',
+    host: 'prod',
+    port: 22,
+    username: 'root',
+    status: 'disconnected',
+    privateKeyPath: '/tmp/id_rsa',
+    password: '  valid passphrase  ',
+  }], 'passphrase-whitespace');
+  assert.equal(keyConfig?.auth_method.type, 'PrivateKey');
+  assert.equal(keyConfig?.auth_method.passphrase, '  valid passphrase  ');
+});
+
+runTest('buildConnectConfig accepts legacy snake_case private key records', () => {
+  const connections = [{
+    id: 'legacy-key',
+    name: 'Legacy Key',
+    host: 'prod',
+    port: 22,
+    username: 'root',
+    status: 'disconnected',
+    private_key_path: '/tmp/id_rsa',
+  }];
+
+  const config = buildConnectConfig(connections, 'legacy-key');
+
+  assert.equal(config?.auth_method.type, 'PrivateKey');
+  assert.equal(config?.auth_method.key_path, '/tmp/id_rsa');
 });
 
 runTest('assignCredentialToConnections clears plaintext fields and preserves untouched hosts', () => {

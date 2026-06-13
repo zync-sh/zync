@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { GLOBAL_SNIPPETS_CONNECTION_ID, LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
 import { Button } from '../ui/Button';
+import { ConfirmModal } from '../ui/ConfirmModal';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import type { Snippet } from '../../store/useAppStore';
@@ -27,6 +28,8 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deletingSnippet, setDeletingSnippet] = useState<Snippet | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [editingSnippet, setEditingSnippet] = useState<Partial<Snippet>>({
     name: '',
     command: '',
@@ -66,13 +69,23 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
 
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteClick = (snippet: Snippet, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Delete this snippet?')) return;
+    e.preventDefault();
+    setDeletingSnippet(snippet);
+  };
 
-    await deleteSnippet(id);
-    showToast('success', 'Snippet deleted');
+  const handleConfirmDelete = async () => {
+    if (!deletingSnippet) return;
 
+    setIsDeleting(true);
+    try {
+      await deleteSnippet(deletingSnippet.id);
+      showToast('success', 'Snippet deleted');
+      setDeletingSnippet(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleEdit = (snippet: Snippet, e: React.MouseEvent) => {
@@ -179,7 +192,8 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
                         <Edit2 size={14} />
                       </button>
                       <button
-                        onClick={(e) => handleDelete(snippet.id, e)}
+                        type="button"
+                        onClick={(e) => handleDeleteClick(snippet, e)}
                         className="text-app-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
                         title="Delete"
                       >
@@ -200,6 +214,26 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
           </div>
         ))}
       </div>
+
+      <ConfirmModal
+        isOpen={!!deletingSnippet}
+        onClose={() => {
+          if (isDeleting) return;
+          setDeletingSnippet(null);
+        }}
+        onConfirm={handleConfirmDelete}
+        title="Delete Snippet"
+        message={
+          <span className="text-app-text/90">
+            Are you sure you want to delete snippet{' '}
+            <span className="text-app-accent font-bold">&quot;{deletingSnippet?.name}&quot;</span>?
+            This action cannot be undone.
+          </span>
+        }
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={isDeleting}
+      />
 
       <Modal
         isOpen={isModalOpen}

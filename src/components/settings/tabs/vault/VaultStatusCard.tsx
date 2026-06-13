@@ -21,6 +21,7 @@ export function VaultStatusCard({
   onOpenUnlock,
 }: VaultStatusCardProps) {
   const unlockedStatus = status?.status === 'unlocked' ? status : null;
+  const lockedStatus = status?.status === 'locked' ? status : null;
 
   return (
     <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/25 p-4">
@@ -46,7 +47,7 @@ export function VaultStatusCard({
               {isUnlocked
                 ? `${unlockedStatus?.itemCount ?? 0} item(s) · XChaCha20-Poly1305 encrypted`
                 : status?.status === 'locked'
-                  ? 'Unlock to access and manage credentials'
+                  ? `${lockedStatus?.itemCount ?? 0} item(s) in vault backup · unlock to access`
                   : 'Create a vault to store SSH credentials securely'}
             </p>
           </div>

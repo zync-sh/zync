@@ -14,6 +14,18 @@ const generateUniqueId = (usedIds: Set<string>): string => {
     return next;
 };
 
+/**
+ * Preserves an existing vault credential reference when updating a connection.
+ *
+ * Intentional stickiness: if `existing` has an `authRef`, it wins over any
+ * plaintext `password` or `privateKeyPath` on `incoming`. This prevents an
+ * import or edit from silently downgrading a vault-backed connection back to
+ * plaintext credentials.
+ *
+ * If you need to allow incoming plaintext to override and clear an existing
+ * vault ref (e.g. an explicit "unlink from vault" action), do that at the
+ * call site before invoking this function.
+ */
 export const preserveVaultCredentialOnUpdate = (
     existing: Connection,
     incoming: Connection,

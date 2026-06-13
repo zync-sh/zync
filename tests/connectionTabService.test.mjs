@@ -5,6 +5,7 @@ import {
   createLocalTerminalTabState,
   ensureGlobalSnippetsTab,
   ensureSingleTabByType,
+  ensureSyncBackupTabState,
   ensureVaultTabState,
   findConnectionTab,
 } from '../.tmp-agent-tests/src/features/connections/application/tabService.js';
@@ -108,6 +109,28 @@ runTest('ensureVaultTabState does not duplicate vault tab when other tabs exist'
   assert.equal(state.tabs.filter((tab) => tab.type === 'vault').length, 1);
   assert.equal(state.tabs.find((tab) => tab.type === 'vault')?.vaultProfileId, 'google');
   assert.equal(state.activeTabId, 'vault-1');
+});
+
+runTest('ensureSyncBackupTabState removes duplicate sync tabs', () => {
+  const tabs = [
+    { id: 'sync-1', type: 'sync', title: 'Sync & Backup', view: 'terminal' },
+    { id: 'conn-1', type: 'connection', title: 'Prod', connectionId: 'c1', view: 'terminal' },
+    { id: 'sync-2', type: 'sync', title: 'Legacy Sync', view: 'terminal' },
+  ];
+  const state = ensureSyncBackupTabState(tabs);
+  assert.equal(state.tabs?.filter((tab) => tab.type === 'sync').length, 1);
+  assert.equal(state.tabs?.find((tab) => tab.type === 'sync')?.id, 'sync-1');
+  assert.equal(state.activeTabId, 'sync-1');
+});
+
+runTest('ensureSyncBackupTabState omits unchanged tabs', () => {
+  const tabs = [
+    { id: 'sync-1', type: 'sync', title: 'Sync & Backup', view: 'terminal' },
+    { id: 'conn-1', type: 'connection', title: 'Prod', connectionId: 'c1', view: 'terminal' },
+  ];
+  const state = ensureSyncBackupTabState(tabs);
+  assert.equal(Object.hasOwn(state, 'tabs'), false);
+  assert.equal(state.activeTabId, 'sync-1');
 });
 
 console.log('Connection tab service tests passed.');

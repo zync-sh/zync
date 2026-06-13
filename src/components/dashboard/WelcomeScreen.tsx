@@ -7,6 +7,7 @@ import { DashboardClock } from './welcome/DashboardClock';
 import { QuickConnectBar } from './welcome/QuickConnectBar';
 import { ConnectionCard } from './welcome/ConnectionCard';
 import { ContextMenu } from '../ui/ContextMenu';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import type { ContextMenuItem } from '../ui/ContextMenu';
 import type { Connection } from '../../store/connectionSlice';
 
@@ -321,7 +322,11 @@ export function WelcomeScreen() {
             {/* Subtle radial dot grid */}
             <div
                 aria-hidden="true"
-                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(var(--color-app-border)_1px,transparent_1px)] bg-size-[18px_18px] mask-[radial-gradient(ellipse_70%_60%_at_50%_50%,black_30%,transparent_100%)] opacity-40"
+                className="absolute inset-0 -z-10 bg-app-bg bg-[radial-gradient(circle_at_center,var(--color-app-border)_1px,transparent_1px)] [background-size:18px_18px] opacity-40"
+                style={{
+                    maskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 100%)',
+                    WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 100%)',
+                }}
             />
 
             {/* Scrollable centered column */}
@@ -386,11 +391,12 @@ export function WelcomeScreen() {
                             </button>
 
                             {isNewMenuOpen && (
-                                <div
+                                <TopbarDropdown
                                     role="menu"
                                     aria-labelledby="welcome-new-menu-toggle"
                                     onKeyDown={handleNewMenuKeyDown}
-                                    className="absolute top-full left-0 mt-1.5 w-44 bg-app-panel border border-app-border rounded-xl shadow-xl z-50 overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-100"
+                                    widthClass="w-44"
+                                    className="mt-1.5 py-1 shadow-xl zoom-in-95 duration-100"
                                 >
                                     <button
                                         ref={el => { newMenuItemRefs.current[0] = el; }}
@@ -429,7 +435,7 @@ export function WelcomeScreen() {
                                         <Network size={13} className="text-app-muted shrink-0" />
                                         New Tunnel
                                     </button>
-                                </div>
+                                </TopbarDropdown>
                             )}
                         </div>
 

@@ -1,4 +1,5 @@
 mod ai;
+mod atomic_io;
 mod commands;
 mod fs;
 mod ghost;
@@ -208,6 +209,8 @@ pub fn run() {
             vault::commands::vault_item_get,
             vault::commands::vault_item_update,
             vault::commands::vault_item_delete,
+            vault::commands::vault_item_revision_history,
+            vault::commands::vault_item_restore_revision,
             vault::commands::vault_secure_to_vault_preview,
             vault::commands::vault_secure_to_vault,
             vault::commands::vault_backfill_connection_refs,
@@ -217,9 +220,35 @@ pub fn run() {
             vault::commands::vault_export,
             vault::commands::vault_import,
             sync::commands::sync_status,
+            sync::commands::sync_collection_status,
+            sync::commands::sync_collection_setup,
+            sync::commands::sync_collection_unlock,
+            sync::commands::sync_collection_regenerate_recovery_key,
+            sync::commands::sync_collection_lock,
+            sync::commands::sync_collection_forget_key,
+            sync::commands::sync_collection_set_cache_ttl,
+            sync::commands::sync_domain_policies,
+            sync::commands::sync_domain_policy_set,
+            sync::commands::sync_hosts_snapshot,
+            sync::commands::sync_hosts_changes,
+            sync::commands::sync_hosts_upload,
+            sync::commands::sync_hosts_remote_inventory,
+            sync::commands::sync_hosts_restore,
+            sync::commands::sync_tunnels_snapshot,
+            sync::commands::sync_tunnels_upload,
+            sync::commands::sync_tunnels_restore,
+            sync::commands::sync_snippets_snapshot,
+            sync::commands::sync_snippets_upload,
+            sync::commands::sync_snippets_restore,
+            sync::commands::sync_settings_upload,
+            sync::commands::sync_settings_restore,
             sync::commands::sync_connect,
             sync::commands::sync_disconnect,
             sync::commands::sync_upload,
+            sync::commands::sync_upload_credential,
+            sync::commands::sync_upload_credentials,
+            sync::commands::sync_restore_preview,
+            sync::commands::sync_restore_credentials,
             sync::commands::sync_download,
         ])
         .run(tauri::generate_context!())

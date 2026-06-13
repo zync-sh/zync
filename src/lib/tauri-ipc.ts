@@ -171,6 +171,7 @@ const ipcRenderer = {
       'ssh:importConfigBySource': 'ssh_import_config_by_source',
       'ssh:readConfig': 'ssh_import_config',
       'ssh:internalize-connections': 'ssh_internalize_connections',
+      'ssh:disconnectVaultBacked': 'ssh_disconnect_vault_backed',
       'sftp:put': 'sftp_put',
       'sftp:get': 'sftp_get',
       'sftp:copyToServer': 'sftp_copy_to_server',
@@ -450,6 +451,8 @@ const ipcRenderer = {
       } else if (tauriCommand === 'ssh_import_config_by_source') {
         payload = { request: args[0] };
       } else if (tauriCommand === 'ssh_migrate_all_keys') {
+        payload = {};
+      } else if (tauriCommand === 'ssh_disconnect_vault_backed') {
         payload = {};
       } else if (tauriCommand === 'connections_export_to_file' || tauriCommand === 'connections_import_from_file') {
         payload = { request: args[0] };

@@ -4,8 +4,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{CredentialItemKind, CredentialPurpose, CredentialRef, SavedData};
+use crate::vault::credential::secret_values_from_legacy;
 use crate::vault::error::VaultError;
 use crate::vault::store::VaultService;
+use crate::vault::types::PlaintextRecord;
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 
@@ -65,7 +67,11 @@ pub fn preview(data_dir: &Path) -> Result<SecureToVaultPreview, VaultError> {
             });
             continue;
         }
-        if conn.password.is_some() {
+        if conn
+            .password
+            .as_deref()
+            .is_some_and(|password| !password.trim().is_empty())
+        {
             candidates.push(SecureToVaultCandidate {
                 connection_id: conn.id.clone(),
                 connection_name: conn.name.clone(),
@@ -130,15 +136,18 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
                 }
             };
             let label = format!("{} key ({}@{})", conn.name, conn.username, conn.host);
+            let passphrase = conn
+                .password
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .map(|p| p.to_string());
+            let secret =
+                serde_json::json!({ "key": key_content, "passphrase": passphrase }).to_string();
             prepared.push(PreparedSecureItem {
                 index,
                 label,
                 kind: CredentialItemKind::SshPrivateKey,
-                secret: serde_json::json!({
-                    "key": key_content,
-                    "passphrase": conn.password.as_ref(),
-                })
-                .to_string(),
+                secret,
             });
             continue;
         }
@@ -147,6 +156,10 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
         let Some(password) = conn.password.clone() else {
             continue;
         };
+        if password.trim().is_empty() {
+            skipped = skipped.saturating_add(1);
+            continue;
+        }
         let label = format!("{} ({}@{})", conn.name, conn.username, conn.host);
         prepared.push(PreparedSecureItem {
             index,
@@ -181,7 +194,7 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
     let mut existing_by_fingerprint: HashMap<(String, String, String), (String, String, u64)> =
         HashMap::new();
     for record in existing_records {
-        let fingerprint = vault.secret_fingerprint(&record.secret)?;
+        let fingerprint = vault.record_secret_fingerprint(&record)?;
         let key = (record.kind.clone(), record.label.clone(), fingerprint);
         let credential_id = VaultService::record_logical_id(&record);
         existing_by_fingerprint
@@ -200,7 +213,7 @@ pub fn secure(data_dir: &Path, vault: &VaultService) -> Result<SecureToVaultResu
     let mut created_for_cleanup = Vec::new();
     for secure_item in &prepared {
         let kind = secure_item.kind.as_str();
-        let fingerprint = vault.secret_fingerprint(&secure_item.secret)?;
+        let fingerprint = prepared_secret_fingerprint(vault, secure_item)?;
         let lookup_key = (kind.to_string(), secure_item.label.clone(), fingerprint);
         if let Some((existing_id, credential_id, _)) = existing_by_fingerprint.get(&lookup_key) {
             linked.push((
@@ -278,6 +291,26 @@ struct PreparedSecureItem {
     label: String,
     kind: CredentialItemKind,
     secret: String,
+}
+
+fn prepared_secret_fingerprint(
+    vault: &VaultService,
+    item: &PreparedSecureItem,
+) -> Result<String, VaultError> {
+    let record = PlaintextRecord {
+        id: String::new(),
+        logical_id: None,
+        kind: item.kind.as_str().to_string(),
+        label: item.label.clone(),
+        secret: String::new(),
+        secret_values: secret_values_from_legacy(item.kind.as_str(), &item.secret),
+        notes: None,
+        credential: None,
+        revision: 0,
+        created_at: 0,
+        updated_at: 0,
+    };
+    vault.record_secret_fingerprint(&record)
 }
 
 fn cleanup_created_items(

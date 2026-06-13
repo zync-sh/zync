@@ -78,7 +78,6 @@ export const disconnectIpc = async (connectionId: string): Promise<void> =>
     window.ipcRenderer.invoke('ssh:disconnect', connectionId);
 
 export const disconnectVaultBackedIpc = async (): Promise<string[]> =>
-    window.ipcRenderer.invoke('ssh_disconnect_vault_backed');
-
+    window.ipcRenderer.invoke('ssh:disconnectVaultBacked');
 export const getRemoteCwdIpc = async (connectionId: string): Promise<string> =>
     window.ipcRenderer.invoke('fs:cwd', connectionId);

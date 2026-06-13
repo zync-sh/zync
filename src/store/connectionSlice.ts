@@ -14,6 +14,7 @@ import {
     createConnectionTabState,
     createLocalTerminalTabState,
     ensureVaultTabState,
+    ensureSyncBackupTabState,
     ensureGlobalSnippetsTab,
     ensureSingleTabByType,
     findConnectionTab,
@@ -31,7 +32,13 @@ import {
     pinFeatureOnConnectionIfNeeded,
     startAutoStartTunnels,
 } from '../features/connections/application/tunnelAutoStartService';
-import { buildConnectConfig, normalizeFolderPath, preserveVaultCredentialOnUpdate, type ImportPlanItem } from '../features/connections/domain';
+import {
+    buildConnectConfigResult,
+    normalizeFolderPath,
+    preserveVaultCredentialOnUpdate,
+    type ImportPlanItem,
+} from '../features/connections/domain';
+import { connectionErrorMessage } from '../features/connections/domain/errorSanitization';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc, type LoadConnectionsIpcResult } from '../features/connections/infrastructure/connectionPersistence';
 import { clearRemoteShellCache } from '../lib/shells/cache';
@@ -56,8 +63,8 @@ export interface ConnectionSlice {
     openConnectionModal: (id?: string | null) => void;
 
     // Actions
-    addConnection: (conn: Connection, isTemp?: boolean) => void;
-    editConnection: (conn: Connection) => void;
+    addConnection: (conn: Connection, isTemp?: boolean) => Promise<void>;
+    editConnection: (conn: Connection) => Promise<void>;
     deleteConnection: (id: string) => void;
     importConnections: (conns: Connection[] | ImportPlanItem[], importedFolders?: Folder[]) => void;
     clearConnections: () => void;
@@ -73,6 +80,7 @@ export interface ConnectionSlice {
     openReleaseNotesTab: () => void;
     openSettingsJsonTab: () => void;
     openVaultTab: (profileId?: VaultProfileId) => void;
+    openSyncBackupTab: () => void;
     closeTab: (tabId: string) => void;
     activateTab: (tabId: string) => void;
     /** Deactivate all tabs and show the welcome screen without closing anything. */
@@ -111,7 +119,7 @@ export interface ConnectionSlice {
 }
 
 const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard']);
-const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings', 'vault']);
+const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings', 'vault', 'sync']);
 
 type PersistedConnection = Omit<Connection, 'status'> & Partial<Pick<Connection, 'status'>>;
 
@@ -170,26 +178,24 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
-    addConnection: (conn, isTemp = false) => {
-        set(state => {
-            const next = upsertConnectionInState(state, conn);
-            if (!isTemp) {
-                saveToMain(next.connections, next.folders);
-            }
-            return { connections: next.connections, folders: next.folders };
-        });
+    addConnection: async (conn, isTemp = false) => {
+        const preSave = upsertConnectionInState(get(), conn);
+        if (!isTemp) {
+            await saveToMain(preSave.connections, preSave.folders);
+        }
+        const merged = upsertConnectionInState(get(), conn);
+        set({ connections: merged.connections, folders: merged.folders });
     },
 
-    editConnection: (updatedConn) => {
-        const existing = get().connections.find(connection => connection.id === updatedConn.id);
-        if (existing && hasRemoteTargetChanged(existing, updatedConn)) {
+    editConnection: async (updatedConn) => {
+        const preSave = upsertConnectionInState(get(), updatedConn);
+        await saveToMain(preSave.connections, preSave.folders);
+        const latestExisting = get().connections.find(connection => connection.id === updatedConn.id);
+        const merged = upsertConnectionInState(get(), updatedConn);
+        if (latestExisting && hasRemoteTargetChanged(latestExisting, updatedConn)) {
             clearRemoteShellCache(updatedConn.id);
         }
-        set(state => {
-            const next = upsertConnectionInState(state, updatedConn);
-            saveToMain(next.connections, next.folders);
-            return { connections: next.connections, folders: next.folders };
-        });
+        set({ connections: merged.connections, folders: merged.folders });
     },
 
     deleteConnection: (id) => {
@@ -385,12 +391,20 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const conn = connections.find(c => c.id === id);
             if (!conn) throw new Error('Connection not found');
 
-            const fullConfig = buildConnectConfig(connections, id);
-            if (!fullConfig) {
-                set(state => ({ connections: markConnectionStatus(state.connections, id, 'error') }));
-                get().showToast('error', `Couldn't build connection config for "${conn.name}". If this uses a jump host, re-import your SSH config to repair the reference.`, 8000);
+            const configResult = buildConnectConfigResult(connections, id);
+            if (configResult.status === 'error') {
+                const message = configResult.reason === 'missing-auth'
+                    ? `Connection "${conn.name}" has no authentication configured. Add a password, private key, or vault credential.`
+                    : configResult.reason === 'jump-host-failure'
+                        ? `Couldn't build connection config for "${conn.name}". If this uses a jump host, re-import your SSH config to repair the reference.`
+                        : `Couldn't build connection config for "${conn.name}".`;
+                set(state => ({
+                    connections: markConnectionErrorIfNeeded(state.connections, id, message),
+                }));
+                get().showToast('error', message, 8000);
                 return;
             }
+            const fullConfig = configResult.config;
 
             console.log('[CONNECT] Connecting with config:', fullConfig);
 
@@ -441,10 +455,12 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 console.error('Failed to load/start tunnels:', err);
             }
         } catch (error) {
-            console.error('Connection failed:', error);
+            const message = connectionErrorMessage(error);
+            console.error('Connection failed:', message);
+            get().showToast('error', `Connection failed: ${message}`, 10000);
             // Only update to error state if not already in error to prevent loops
             set(state => {
-                const nextConnections = markConnectionErrorIfNeeded(state.connections, id);
+                const nextConnections = markConnectionErrorIfNeeded(state.connections, id, message);
                 if (nextConnections === state.connections) return state;
                 return { connections: nextConnections };
             });
@@ -550,6 +566,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 showWelcomeScreen: false,
             };
         });
+        get().saveSession();
+    },
+
+    openSyncBackupTab: () => {
+        set(state => ({
+            ...ensureSyncBackupTabState(state.tabs),
+            showWelcomeScreen: false,
+        }));
         get().saveSession();
     },
 
@@ -682,17 +706,24 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     return true;
                 })
                 .map(s => {
+                    const isLegacySnippetsTab = s.tabType === 'snippets';
                     const isPluginView = typeof s.view === 'string' && s.view.startsWith('plugin:');
-                    const view: Tab['view'] = VALID_RESTORABLE_VIEWS.has(s.view as CoreTabView) || isPluginView
-                        ? (s.view as Tab['view'])
-                        : 'terminal';
+                    const view: Tab['view'] = isLegacySnippetsTab
+                        ? 'snippets'
+                        : VALID_RESTORABLE_VIEWS.has(s.view as CoreTabView) || isPluginView
+                            ? (s.view as Tab['view'])
+                            : 'terminal';
                     return {
                         id: s.id,
-                        type: s.tabType as Tab['type'],
+                        type: isLegacySnippetsTab ? 'connection' : s.tabType as Tab['type'],
                         title: s.title,
-                        connectionId: s.connectionId,
-                        vaultProfileId: isVaultProfileId(s.vaultProfileId)
-                            ? s.vaultProfileId
+                        connectionId: isLegacySnippetsTab
+                            ? GLOBAL_SNIPPETS_CONNECTION_ID
+                            : s.connectionId,
+                        vaultProfileId: s.tabType === 'vault'
+                            ? (isVaultProfileId(s.vaultProfileId)
+                                ? s.vaultProfileId
+                                : DEFAULT_VAULT_PROFILE_ID)
                             : undefined,
                         view,
                     };
@@ -788,10 +819,9 @@ function hasRemoteTargetChanged(previous: Connection, next: Connection): boolean
 }
 
 const saveToMain = (connections: Connection[], folders: Folder[]): Promise<void> => {
-    pendingSave = pendingSave
-        .then(() => saveConnectionsIpc(connections, folders))
-        .catch((error) => {
-            console.error('Failed to save connections:', error);
-        });
-    return pendingSave;
+    const save = pendingSave.then(() => saveConnectionsIpc(connections, folders));
+    pendingSave = save.catch((error) => {
+        console.error('Failed to save connections:', connectionErrorMessage(error));
+    });
+    return save;
 };

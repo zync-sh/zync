@@ -370,6 +370,14 @@ impl SshManager {
     ) -> Result<()> {
         let auth_res = match &config.auth_method {
             AuthMethod::Password { password } => {
+                if password.trim().is_empty() {
+                    return Err(anyhow!(
+                        "No SSH authentication configured for {}@{}. Add a password, private key, or vault credential before connecting.",
+                        config.username,
+                        config.host
+                    ));
+                }
+
                 #[cfg(debug_assertions)]
                 eprintln!(
                     "[SSH Auth] connection='{}' using PASSWORD auth for {}@{} (length={})",

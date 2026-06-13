@@ -3,7 +3,7 @@
 ## Status
 - **Owner:** Core app team
 - **Document type:** Architecture decision + implementation guide
-- **Last updated:** 2026-05-10
+- **Last updated:** 2026-05-15
 - **Scope:** Stable credential identity, host assignment, key-first vault UX, rotation, sync/relink behavior
 
 ---
@@ -19,6 +19,11 @@ Host -> credentialId -> Vault credential record -> encrypted secret
 ```
 
 Hosts must not own secrets. Hosts should reference a stable credential identity. Vault providers should only store encrypted credential records and sync metadata.
+
+Credential kinds describe runtime behavior, not every combination of optional
+secret fields. A passphrase-protected key remains an `ssh-private-key`
+credential containing `privateKey` and optional `passphrase` named secret
+values.
 
 This supports both product flows:
 
@@ -43,6 +48,8 @@ Current phase-1 vault work already has:
 - Google Drive vault backup/restore
 - keyed secret fingerprint for duplicate detection
 - migration from plaintext host credentials into vault items
+- credential record schema v2 with named secret fields and idempotent
+  legacy-record migration on unlock
 
 Current phase-1 work does **not yet** fully implement:
 
@@ -146,6 +153,19 @@ The robust model separates **logical identity** from **physical storage**:
 5. **Credential rotation updates the credential revision, not every host.**
 6. **Fingerprints are helper metadata, never primary identity.**
 7. **Deleting vault data cannot recover secrets without a backup/cloud copy.**
+
+### 3.1 Future-proof reference layering (canonical)
+
+For robust long-term behavior (rotation/import/restore/sync), keep a **3-layer identity model**:
+
+1. `credentialId` (logical, stable) — canonical host link target
+2. `itemId` (physical vault record) — fast-path cache pointer
+3. provider sync metadata (`objectId`/`etag`/`revision`) — transport/sync lineage only
+
+Rules:
+- Host auth must resolve from `credentialId` as source-of-truth.
+- `itemId` can be relinked/repaired automatically when stale.
+- Provider metadata must never become primary host identity.
 
 ---
 
@@ -331,6 +351,8 @@ flowchart TD
 ## 8) Sync and Provider Behavior
 
 Providers store encrypted objects. They should not decide credential identity.
+Provider sync key policy, passphrase choices, and per-provider restore semantics are defined in
+[`VAULT_PROVIDER_SYNC_KEY_MODEL.md`](./VAULT_PROVIDER_SYNC_KEY_MODEL.md).
 
 Provider records should include encrypted payload plus safe metadata:
 
@@ -354,6 +376,8 @@ Sync conflict rules:
 - Same `logicalId`, divergent same revision: conflict.
 - Same keyed fingerprint, different `logicalId`: duplicate warning, not automatic merge.
 - Missing physical `itemId`, present `logicalId`: relink if matching vault item exists.
+- Remote per-provider records use `logicalId` / `credentialId` as stable identity so credentials
+  can be restored into a new local vault without preserving old physical `itemId`s.
 
 ---
 

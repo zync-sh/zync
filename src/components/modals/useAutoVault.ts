@@ -16,6 +16,11 @@ interface UseAutoVaultOptions {
     showToast: (type: ToastType, message: string) => void;
 }
 
+const PRIVATE_KEY_BEGIN_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+const PRIVATE_KEY_END_PATTERN = /-----END [A-Z ]*PRIVATE KEY-----/;
+const isValidPrivateKeyFormat = (keyContent: string): boolean =>
+    PRIVATE_KEY_BEGIN_PATTERN.test(keyContent) && PRIVATE_KEY_END_PATTERN.test(keyContent);
+
 export function useAutoVault({
     isOpen,
     formData,
@@ -56,20 +61,38 @@ export function useAutoVault({
     );
     const keyVaultLabelConflict = vaultStatus?.status === 'unlocked' && hasKeyInput
         && vaultItems.some(i => i.label === effectiveKeyVaultLabel);
+    const replacedAuthItemId = activeEditingConnectionId
+        ? useAppStore.getState().connections.find(c => c.id === activeEditingConnectionId)?.authRef?.itemId
+        : undefined;
 
-    const deleteOldAuthItem = () => {
-        if (!activeEditingConnectionId) return;
+    const finalizeVaultReplacement = async () => {
+        setPastedKeyText('');
+        setPastedPassphrase('');
+        if (!replacedAuthItemId) return;
+
         const { connections } = useAppStore.getState();
-        const existing = connections.find(c => c.id === activeEditingConnectionId);
-        if (!existing?.authRef?.itemId) return;
-        vaultIpc.itemDelete(existing.authRef.itemId).catch(() => {
+        const sharedReferenceCount = connections.filter(connection =>
+            connection.id !== activeEditingConnectionId
+            && connection.authRef?.itemId === replacedAuthItemId,
+        ).length;
+        if (sharedReferenceCount > 0) {
+            showToast(
+                'info',
+                'Previous vault credential was left in place because other hosts still use it.',
+            );
+            return;
+        }
+
+        try {
+            await vaultIpc.itemDelete(replacedAuthItemId);
+        } catch {
             showToast('error', 'Old vault credential could not be deleted — remove it manually in Vault tab.');
-        });
+        }
     };
 
     const savePastedKey = async (): Promise<Partial<Connection> | null> => {
-        const keyText = pastedKeyText.trim();
-        if (!keyText) {
+        const keyText = pastedKeyText;
+        if (!keyText.trim()) {
             showToast('error', 'Please paste a private key.');
             setPastedKeyError('Please paste a private key.');
             return null;
@@ -86,13 +109,10 @@ export function useAutoVault({
             return null;
         }
         setPastedKeyError('');
-        const secret = pastedPassphrase.trim()
-            ? JSON.stringify({ key: keyText, passphrase: pastedPassphrase })
-            : keyText;
-        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', secret);
-        deleteOldAuthItem();
-        setPastedKeyText('');
-        setPastedPassphrase('');
+        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', {
+            privateKey: keyText,
+            ...(pastedPassphrase.length > 0 ? { passphrase: pastedPassphrase } : {}),
+        });
         return {
             ...formData,
             authRef: {
@@ -107,10 +127,9 @@ export function useAutoVault({
 
     const autoVaultPassword = async (): Promise<Partial<Connection> | null> => {
         if (vaultStatus?.status !== 'unlocked' || authMethod !== 'password') return null;
-        const password = (formData.password || '').trim();
-        if (!password) return null;
-        const item = await vaultIpc.itemCreate(effectiveVaultLabel, 'ssh-password', password);
-        deleteOldAuthItem();
+        const password = formData.password || '';
+        if (!password.trim()) return null;
+        const item = await vaultIpc.itemCreate(effectiveVaultLabel, 'ssh-password', { password });
         return {
             ...formData,
             password: '',
@@ -137,8 +156,9 @@ export function useAutoVault({
         if (!isValidPrivateKeyFormat(keyContent)) {
             throw new Error('Selected file does not appear to be a valid private key.');
         }
-        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', keyContent);
-        deleteOldAuthItem();
+        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', {
+            privateKey: keyContent,
+        });
         return {
             ...formData,
             privateKeyPath: '',
@@ -181,9 +201,6 @@ export function useAutoVault({
         defaultVaultLabel, effectiveVaultLabel, vaultLabelConflict,
         defaultKeyVaultLabel, effectiveKeyVaultLabel, keyVaultLabelConflict,
         savePastedKey, autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
+        finalizeVaultReplacement,
     };
 }
-    const PRIVATE_KEY_BEGIN_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
-    const PRIVATE_KEY_END_PATTERN = /-----END [A-Z ]*PRIVATE KEY-----/;
-    const isValidPrivateKeyFormat = (keyContent: string): boolean =>
-        PRIVATE_KEY_BEGIN_PATTERN.test(keyContent) && PRIVATE_KEY_END_PATTERN.test(keyContent);

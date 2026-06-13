@@ -114,6 +114,7 @@ export function Modal({
                     variant="ghost"
                     size="icon"
                     onClick={onClose}
+                    aria-label="Close"
                     className="h-8 w-8 rounded-full text-app-muted hover:bg-app-accent hover:text-white transition-all hover:scale-110 active:scale-95 hover:shadow-lg hover:shadow-app-accent/20"
                   >
                     <X className="h-4 w-4" />

@@ -74,6 +74,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         defaultVaultLabel, effectiveVaultLabel: _effectiveVaultLabel, vaultLabelConflict,
         defaultKeyVaultLabel, effectiveKeyVaultLabel: _effectiveKeyVaultLabel, keyVaultLabelConflict,
         autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
+        finalizeVaultReplacement,
     } = useAutoVault({
         isOpen,
         formData,
@@ -120,7 +121,8 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             if (authMethod === 'key' && keyInputMode === 'paste') {
                 const connectionData = await buildPastedKeyConnection();
                 if (!connectionData) return null;
-                activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
+                await finalizeVaultReplacement();
                 return connectionData;
             }
             if (authMethod === 'key' && keyInputMode === 'file' && vaultStatus?.status === 'unlocked' && formData.privateKeyPath) {
@@ -133,7 +135,8 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                             editingConnectionId: activeEditingConnectionId,
                             connections: useAppStore.getState().connections,
                         });
-                        activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                        await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
+                        await finalizeVaultReplacement();
                         await refreshItems();
                         return connectionData;
                     }
@@ -152,7 +155,8 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                             editingConnectionId: activeEditingConnectionId,
                             connections: useAppStore.getState().connections,
                         });
-                        activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+                        await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
+                        await finalizeVaultReplacement();
                         await refreshItems();
                         return connectionData;
                     }

@@ -3,12 +3,14 @@ Usage:
   .\scripts\reset-vault-test-data.ps1 -Mode clear-vault -Force
   .\scripts\reset-vault-test-data.ps1 -Mode restore-pre-vault -Force
   .\scripts\reset-vault-test-data.ps1 -Mode hard-auth-reset -Force
+  .\scripts\reset-vault-test-data.ps1 -Mode full-local-reset -Force
   .\scripts\reset-vault-test-data.ps1 -DataDir "D:\path\to\zync\data" -Mode hard-auth-reset -Force
 
 Modes:
   clear-vault        Remove vault/sync files only. Safe default for vault-only cleanup.
   restore-pre-vault  Remove vault files and restore connections.json from the pre-secure backup.
   hard-auth-reset    Remove vault files and strip authRef/privateKeyPath/password from live connections.json.
+  full-local-reset   Remove vault files and replace connections/folders with empty arrays.
 
 Notes:
   - This script does not remove Google refresh tokens from the OS keychain.
@@ -17,7 +19,7 @@ Notes:
 
 param(
     [string]$DataDir,
-    [ValidateSet('clear-vault', 'restore-pre-vault', 'hard-auth-reset')]
+    [ValidateSet('clear-vault', 'restore-pre-vault', 'hard-auth-reset', 'full-local-reset')]
     [string]$Mode = 'clear-vault',
     [switch]$DeleteConnectionsBackup,
     [switch]$Force
@@ -104,7 +106,7 @@ function Rewrite-ConnectionsJson {
 
     $raw = Get-Content -LiteralPath $ConnectionsFile -Raw
     $json = $raw | ConvertFrom-Json
-    if (-not $json.connections) {
+    if ($null -eq $json.connections) {
         Write-Warning "Connections file does not contain a connections array: $ConnectionsFile"
         return
     }
@@ -131,7 +133,12 @@ $targets = @(
     'vault.redb.sync-tmp',
     'vault.redb.download-tmp',
     'sync-google.json',
-    'sync-google-tokens.json'
+    'sync-google-tokens.json',
+    'sync-profiles.json'
+)
+
+$targetPatterns = @(
+    'sync-collection-*.json'
 )
 
 $connectionsBackup = Join-Path $resolvedDataDir 'connections.json.pre-secure-to-vault'
@@ -146,6 +153,16 @@ Write-Host 'This script will remove vault-related local test data:'
 foreach ($name in $targets) {
     Write-Host " - $(Join-Path $resolvedDataDir $name)"
 }
+foreach ($pattern in $targetPatterns) {
+    $matchedFiles = Get-ChildItem -LiteralPath $resolvedDataDir -Filter $pattern -File -ErrorAction SilentlyContinue
+    if ($matchedFiles) {
+        foreach ($match in $matchedFiles) {
+            Write-Host " - $($match.FullName)"
+        }
+    } else {
+        Write-Host " - $(Join-Path $resolvedDataDir $pattern) (no matches)"
+    }
+}
 if ($DeleteConnectionsBackup) {
     Write-Host " - $connectionsBackup"
     if ($legacyConnectionsBackup -ne $connectionsBackup) {
@@ -159,6 +176,9 @@ switch ($Mode) {
     'hard-auth-reset' {
         Write-Host " - clear authRef/privateKeyPath/password inside $connectionsPath"
     }
+    'full-local-reset' {
+        Write-Host " - replace $connectionsPath with empty connections/folders arrays"
+    }
 }
 Write-Host ''
 Write-Host 'Note: This does NOT remove Google refresh tokens from the OS keychain.'
@@ -167,6 +187,7 @@ Write-Host 'Modes:'
 Write-Host ' - clear-vault: remove vault/sync files only (default; does not change live connection auth fields)'
 Write-Host ' - restore-pre-vault: remove vault files and restore connections.json from pre-secure backup'
 Write-Host ' - hard-auth-reset: remove vault files and strip authRef/privateKeyPath/password from live connections.json'
+Write-Host ' - full-local-reset: remove vault files and empty local hosts/folders for full restore testing'
 Write-Host ''
 
 if (-not $Force) {
@@ -179,6 +200,11 @@ if (-not $Force) {
 
 foreach ($name in $targets) {
     Remove-IfExists -PathToDelete (Join-Path $resolvedDataDir $name)
+}
+
+foreach ($pattern in $targetPatterns) {
+    Get-ChildItem -LiteralPath $resolvedDataDir -Filter $pattern -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-IfExists -PathToDelete $_.FullName }
 }
 
 switch ($Mode) {
@@ -198,10 +224,23 @@ switch ($Mode) {
         # cannot silently keep connecting through an old PEM path or password.
         Rewrite-ConnectionsJson -ConnectionsFile $connectionsPath -SuccessMessage 'Stripped authRef/privateKeyPath/password from live connections.json.' -Transform {
             param($connection)
-            $connection.authRef = $null
-            $connection.privateKeyPath = $null
-            $connection.password = $null
+            foreach ($name in @('authRef', 'privateKeyPath', 'password')) {
+                if ($connection.PSObject.Properties.Name -contains $name) {
+                    $connection.$name = $null
+                } else {
+                    Add-Member -InputObject $connection -NotePropertyName $name -NotePropertyValue $null
+                }
+            }
         }
+    }
+    'full-local-reset' {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        $emptyPayload = @{
+            connections = @()
+            folders = @()
+        } | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($connectionsPath, $emptyPayload, $utf8NoBom)
+        Write-Host "Reset local hosts/folders: $connectionsPath"
     }
 }
 

@@ -61,6 +61,8 @@ UI (Sidebar Vaults + Vault tabs + Sync status)
 ### Mandatory Boundary
 - Vault Core never imports provider-specific code.
 - Provider adapters never access plaintext keys directly unless explicitly required by domain contract.
+- Provider sync encryption policy is defined separately in
+  [`VAULT_PROVIDER_SYNC_KEY_MODEL.md`](./VAULT_PROVIDER_SYNC_KEY_MODEL.md).
 
 ---
 
@@ -93,6 +95,8 @@ UI (Sidebar Vaults + Vault tabs + Sync status)
 For the detailed durable credential identity model that supports key-first vault UX,
 host assignment, rotation, and stale-reference repair, see
 [`VAULT_CREDENTIAL_IDENTITY_MODEL.md`](./VAULT_CREDENTIAL_IDENTITY_MODEL.md).
+For canonical credential kinds, named secret fields, and schema migration rules,
+see [`VAULT_CREDENTIAL_TYPES_MODEL.md`](./VAULT_CREDENTIAL_TYPES_MODEL.md).
 
 ### Core entities
 - `Vault`
@@ -175,14 +179,17 @@ Provider contract notes:
 
 ## 8) Sync Strategy
 
-## 8.1 Local-first semantics
+### 8.1 Local-first semantics
 - Local store is immediately updated.
 - Sync engine asynchronously reconciles with each enabled profile.
+- Future normal sync is per-credential provider records, not full `vault.redb` replacement.
+- Provider-backed domains may be browsed as remote inventory before local materialization.
+  Current example: Google host records can be listed without restoring them into local host storage.
 
-## 8.2 Per-profile state machine
+### 8.2 Per-profile state machine
 - `idle -> syncing -> success|conflict|retrying|error`
 
-## 8.3 Conflict policy (phase 1)
+### 8.3 Conflict policy (phase 1)
 - No cross-provider merge.
 - Conflict resolution is **local vs specific provider**.
 - User choices:
@@ -190,7 +197,7 @@ Provider contract notes:
   - Keep Remote
   - Duplicate as new item (optional safety path)
 
-## 8.4 Retry policy
+### 8.4 Retry policy
 - Exponential backoff with jitter.
 - Bounded retry budget per run.
 - Persist retry reason and last failure code.
@@ -230,10 +237,20 @@ Provider contract notes:
 - Introduce `VaultProviderV1` interface.
 - Wrap existing Google Drive implementation as first provider adapter.
 - Introduce `SyncProfile` persistence.
+- Define provider sync key policy and manifest/object shape in
+  [`VAULT_PROVIDER_SYNC_KEY_MODEL.md`](./VAULT_PROVIDER_SYNC_KEY_MODEL.md).
+- Current implementation includes a provider contract validator and Google adapter conformance
+  coverage for capability invariants. New providers must pass the same `VaultProviderV1` gate.
+- Phase 2 closure snapshot and handoff notes are tracked in
+  [`VAULT_PHASE2_CLOSURE_STATUS.md`](./VAULT_PHASE2_CLOSURE_STATUS.md).
 
 ### Phase 3 — Robust sync behavior
 - Add state machine, retries, conflict objects, conflict badge center.
 - Add autosync policies (manual, periodic, on-change, on-exit).
+- Replace normal cloud sync with per-credential encrypted provider records; keep full-file
+  `vault.redb` backup/restore only as legacy disaster recovery.
+- App-data sync expansion and top-bar profile UX rollout are tracked in
+  [`PHASE3_APPDATA_SYNC_PLAN.md`](./PHASE3_APPDATA_SYNC_PLAN.md).
 
 ### Phase 4 — Multi-provider & future domains
 - Add second provider (e.g., GitHub blob store) to validate abstraction.

@@ -8,16 +8,40 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Global Vault Workspace**: Introduced Vault as a first-class sidebar/workspace surface with profile-based navigation for Local Vault and Google Vault Sync. Added dedicated vault workspace UI, unlock/recovery flows, and vault-focused panels. ([6e8dd42], [d9d3663])
 - **Vault Core Backend Foundation**: Added backend vault modules for crypto, schema, storage, lifecycle commands, and migration scaffolding to support encrypted credential storage and recovery workflows. ([6e8dd42])
 - **Google Drive Vault Sync Module**: Added sync command module and IPC surface for connect/disconnect/backup/restore flows dedicated to vault data sync. ([8cdb20d])
-- **Vault Credential Identity Model**: Added durable `credentialId`-based vault credential identity, key-first credential creation/assignment flows, self-healing auth-ref relinking/backfill, and dedicated docs for future rotation/history work. ([1d865ed], [bdbd81b], [bf01457])
+- **Vault Credential Identity Model**: Added durable `credentialId`-based vault credential identity, key-first credential creation/assignment flows, self-healing auth-ref relinking/backfill, and dedicated docs for future vault lifecycle work. ([1d865ed], [bdbd81b], [bf01457])
+- **Vault Credential Revision History**: Added credential revision snapshots and restore flow across the vault backend, IPC layer, and Vault workspace UI so rotated credentials can be reviewed and restored safely. ([e0409f4])
+- **Provider App-Data Sync Groundwork**: Added manual Google-backed sync domains for hosts, tunnels, snippets, and settings, including provider domain status, policy metadata, and reusable frontend IPC helpers.
+- **Selective Sync Architecture Docs**: Added Phase 3/Phase 4 sync planning docs and a typed vault credential model covering future credential categories beyond SSH keys/passwords.
+- **Provider Host Inventory**: Added read-only Google host inventory in Sync & Backup so remote provider hosts can be inspected before local restore/materialization. ([22256fb])
+- **Full Local Reset Test Mode**: Added `full-local-reset` reset-script mode to wipe local hosts/folders plus vault/sync state for true restore-path validation. ([22256fb])
 
 ### Changed
 - **Settings Information Architecture**: Removed Vault from Settings navigation; vault management now lives in the dedicated Vault workspace flow. Updated related UX copy from “Settings → Vault” to “Vault tab/workspace” guidance. ([d9d3663])
 - **Sync Status UX Resilience**: Sync IPC status events now use canonical post-operation status refresh and last-known-state fallback behavior to avoid false disconnected states when status refresh fails. ([8cdb20d])
-- **Vault Credential Lifecycle UX**: Refined vault flows around secure-to-vault naming, modular vault panels/modals, bulk host assignment/unassignment, rotation prompts, repair actions, and reset tooling for clean vault test states. ([1d865ed], [bdbd81b], [bf01457])
+- **Vault Credential Lifecycle UX**: Refined vault flows around secure-to-vault naming, modular vault panels/modals, bulk host assignment/unassignment, rotation/history prompts, repair actions, and reset tooling for clean vault test states. ([1d865ed], [bdbd81b], [bf01457], [e0409f4])
+- **Profile Sync Discovery**: Extended the top bar/profile entry point with Google account visibility and sync/vault management actions so sync setup is no longer hidden only inside Vault settings.
+- **Vault Sync UI Modularity**: Extracted sync-collection management into a focused `CollectionManagementSection` and reduced inline conditional complexity in `VaultSyncCard`.
+- **Vault Recovery Modal State Model**: Consolidated recovery-key modal metadata into a single structured state object in vault panel actions for safer, atomic updates.
+- **Vault Accessibility Semantics**: Updated mode switch interaction semantics to radiogroup/radio patterns and improved assistive-state signaling across unlock/sync controls.
+- **Reset Script Preview Clarity**: Reset scripts now show expanded file matches (or explicit no-match output) for pattern-based vault/sync cleanup previews.
+- **Selective Provider Sync Direction**: Documented provider inventory vs explicit local restore/materialization more explicitly, including Google host inventory status and deferred provider-performance follow-up. ([22256fb], [7b8e5a6])
 
 ### Fixed
 - **Command Palette Vault Icon Semantics**: Corrected icon mapping so Local Vault and Google Vault Sync entries use appropriate visual semantics. ([d9d3663])
 - **Pasted Key Vaulting Consistency**: Converted pasted private-key flow to controlled state handling and centralized private-key marker validation logic to keep save/validation behavior consistent. ([d9d3663])
+- **Sync Profile Lock Robustness**: Added stale-lock metadata/recovery behavior and safer lock cleanup/documented race handling in profile lock lifecycle.
+- **Sync Temp Artifact Cleanup**: Added temp-file cleanup on manifest/profile finalize failure paths to avoid leftover sync artifacts.
+- **Sync Unlock Timestamp Consistency**: Collection unlock flows now use a single timestamp value for both cache-unlock and updated-at fields.
+- **Google Provider Status Identity**: Provider status now returns persisted connected-account email from stored tokens.
+- **Sync Error Parsing Consistency**: Unified parsed error object shape (explicit `code`) and improved empty/nullish/multiline parsing behavior.
+- **Parser/Test Reliability**: Improved JSX tag-name resolution in unlock modal consistency tests and expanded sync error parser edge-case coverage.
+- **Restore Reconciliation Convergence**: Restore paths now preserve remote `revision`/`updated_at` metadata when creating or updating vault records from provider sync payloads, preventing repeated re-application of the same remote records. ([2df515d])
+- **Windows Sync File Finalization**: Sync manifest/profile writes now handle replace-on-rename cases on Windows with safer finalize retry/cleanup behavior. ([2df515d])
+- **Sync Expiry Arithmetic Safety**: Google token expiry computation now uses saturating skew subtraction to avoid underflow on short `expires_in` responses. ([2df515d])
+- **Vault/Sync Modal/Input Robustness**: Vault unlock submit gating now trims recovery-key input, reset scripts avoid unsafe path targeting/glob expansion pitfalls, and secret toggle controls expose pressed state for assistive tech. ([2df515d])
+- **Host Restore and Vault-Backed Reconnect Reliability**: Improved host restore/relink flow, added runtime connection diagnostics, and made vault-ref relink persistence non-fatal during SSH connect so successful auth is not blocked by local metadata writes. ([22256fb], [7b8e5a6])
+- **Sync Metadata Integrity**: Snippet and tunnel sync records now preserve real timestamps and stable fallback IDs so restore/sync convergence no longer depends on placeholder values or unrelated fields. ([7b8e5a6])
+- **Sync/Profile UI Resilience**: Fixed restore timestamp display for missing values, added Google avatar fallback handling, improved Google connect error messaging, and removed fragile tunnel reload timeout chains in favor of direct refresh after operations. ([7b8e5a6])
 
 ## [2.15.1] - 2026-04-27
 
@@ -782,3 +806,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 [2.3.0]: https://github.com/zync-sh/zync/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/zync-sh/zync/releases/tag/v2.2.1
 
+
+[6e8dd42]: https://github.com/zync-sh/zync/commit/6e8dd42
+[d9d3663]: https://github.com/zync-sh/zync/commit/d9d3663
+[8cdb20d]: https://github.com/zync-sh/zync/commit/8cdb20d
+[1d865ed]: https://github.com/zync-sh/zync/commit/1d865ed
+[bdbd81b]: https://github.com/zync-sh/zync/commit/bdbd81b
+[bf01457]: https://github.com/zync-sh/zync/commit/bf01457
+[2df515d]: https://github.com/zync-sh/zync/commit/2df515d
+[22256fb]: https://github.com/zync-sh/zync/commit/22256fb
+[7b8e5a6]: https://github.com/zync-sh/zync/commit/7b8e5a6

@@ -211,7 +211,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                 {!editingTunnel && (
                     <div className="relative overflow-hidden rounded-xl bg-app-surface border border-app-border p-5 backdrop-blur-xl group">
                         {/* Background Grid with Scanlines & Noise */}
-                        <div className="absolute inset-0 bg-[linear-gradient(currentColor_1px,transparent_1px),linear-gradient(90deg,currentColor_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_80%)] text-app-border/20 pointer-events-none" />
+                        <div className="absolute inset-0 bg-[linear-gradient(currentColor_1px,transparent_1px),linear-gradient(90deg,currentColor_1px,transparent_1px)] bg-[size:16px_16px] [mask-image:radial-gradient(closest-side_at_center,black,transparent_80%)] text-app-border/20 pointer-events-none" />
                         <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_50%,rgba(0,0,0,0.1)_50%)] bg-[size:100%_4px] opacity-10 pointer-events-none" />
                         <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3F%3E%3Cfilter id='noiseFilter'%3F%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} />
 

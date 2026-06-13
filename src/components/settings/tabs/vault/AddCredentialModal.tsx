@@ -2,17 +2,22 @@ import { Input } from '../../../ui/Input';
 import { Modal } from '../../../ui/Modal';
 import { Button } from '../../../ui/Button';
 import { cn } from '../../../../lib/utils';
+import {
+  CREDENTIAL_KIND_OPTIONS,
+  isSupportedCreateCredentialKind,
+  type SupportedCreateCredentialKind,
+} from '../../../../vault/credentialTypes';
 
 interface AddCredentialModalProps {
   isOpen: boolean;
-  kind: 'ssh-private-key' | 'ssh-password';
+  kind: SupportedCreateCredentialKind;
   label: string;
   secret: string;
   passphrase: string;
   notes: string;
   isCreating: boolean;
   onClose: () => void;
-  onKindChange: (kind: 'ssh-private-key' | 'ssh-password') => void;
+  onKindChange: (kind: SupportedCreateCredentialKind) => void;
   onLabelChange: (value: string) => void;
   onSecretChange: (value: string) => void;
   onPassphraseChange: (value: string) => void;
@@ -36,42 +41,78 @@ export function AddCredentialModal({
   onNotesChange,
   onSubmit,
 }: AddCredentialModalProps) {
+  const selectedKind = CREDENTIAL_KIND_OPTIONS.find(option => option.kind === kind);
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Add Vault Credential"
-      subtitle="Create a credential first, then assign it to one or more hosts from the connection editor."
-      width="max-w-lg"
+      title="Add Credential"
+      subtitle="Choose a credential type. SSH credentials are available now; more typed credentials will use the same vault model."
+      width="max-w-2xl"
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-2 rounded-lg border border-app-border/60 bg-app-surface/25 p-1">
-          {(['ssh-private-key', 'ssh-password'] as const).map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              onClick={() => {
-                if (!isCreating) onKindChange(candidate);
-              }}
-              disabled={isCreating}
-              aria-disabled={isCreating}
-              className={cn(
-                'rounded-md px-3 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                kind === candidate
-                  ? 'bg-app-accent text-white shadow-sm'
-                  : 'text-app-muted hover:bg-app-surface hover:text-app-text'
-              )}
-            >
-              {candidate === 'ssh-private-key' ? 'SSH Private Key' : 'Password'}
-            </button>
-          ))}
+        <div className="space-y-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-app-muted/60">
+              Credential Type
+            </p>
+            <p className="mt-1 text-xs text-app-muted">
+              The vault stores typed credentials. Unsupported types are shown now so the
+              direction stays clear without pretending they are ready.
+            </p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CREDENTIAL_KIND_OPTIONS.map((option) => {
+              const isSelected = kind === option.kind;
+              const selectableKind = isSupportedCreateCredentialKind(option.kind)
+                ? option.kind
+                : null;
+              const isSelectable = option.enabled && selectableKind !== null;
+              return (
+                <button
+                  key={option.kind}
+                  type="button"
+                  onClick={() => {
+                    if (!isCreating && isSelectable && selectableKind) {
+                      onKindChange(selectableKind);
+                    }
+                  }}
+                  disabled={isCreating || !isSelectable}
+                  aria-disabled={isCreating || !isSelectable}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    'rounded-xl border p-3 text-left transition-colors',
+                    'disabled:cursor-not-allowed disabled:opacity-55',
+                    isSelected
+                      ? 'border-app-accent/45 bg-app-accent/12 text-app-text'
+                      : 'border-app-border/50 bg-app-surface/20 text-app-muted hover:border-app-border hover:bg-app-surface/40 hover:text-app-text',
+                    !option.enabled && 'hover:border-app-border/50 hover:bg-app-surface/20 hover:text-app-muted',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-semibold">{option.label}</span>
+                    {option.badge && (
+                      <span className="rounded-md border border-app-border/50 bg-app-bg/35 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-app-muted">
+                        {option.badge}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] leading-relaxed text-app-muted">
+                    {option.description}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <Input
           label="Label"
           value={label}
           onChange={(event) => onLabelChange(event.target.value)}
-          placeholder="Production deploy key"
+          placeholder={kind === 'ssh-password' ? 'Production SSH password' : 'Production deploy key'}
           disabled={isCreating}
         />
 
@@ -81,7 +122,7 @@ export function AddCredentialModal({
             type="password"
             value={secret}
             onChange={(event) => onSecretChange(event.target.value)}
-            placeholder="Enter password"
+            placeholder="Enter SSH password"
             disabled={isCreating}
           />
         ) : (
@@ -89,7 +130,7 @@ export function AddCredentialModal({
             <div className="space-y-1">
               <label
                 htmlFor="vault-add-private-key"
-                className="text-[10px] font-bold text-app-muted uppercase tracking-[0.15em] opacity-40 mb-2 block px-1"
+                className="mb-2 block px-1 text-[10px] font-bold uppercase tracking-[0.15em] text-app-muted/40"
               >
                 Private Key
               </label>
@@ -123,10 +164,10 @@ export function AddCredentialModal({
         />
 
         <div className="rounded-lg border border-app-border/50 bg-app-bg/35 px-3 py-2">
-          <p className="text-xs text-app-muted leading-relaxed">
-            Zync will create a stable credential identity for this item. Hosts assigned later
-            reference that identity, so future restores can relink even if the physical vault
-            item id changes.
+          <p className="text-xs leading-relaxed text-app-muted">
+            {selectedKind?.label ?? 'Credential'} will receive a stable credential identity.
+            Hosts assigned later reference that identity, so future restores can relink even
+            if the physical vault item id changes.
           </p>
         </div>
 

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -5,10 +7,11 @@ use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
 use crate::types::SavedData;
+use crate::vault::credential::validate_secret_values_for_kind;
 use crate::vault::error::VaultError;
 use crate::vault::secure_to_vault::{SecureToVaultPreview, SecureToVaultResult};
 use crate::vault::store::VaultService;
-use crate::vault::types::{PlaintextRecord, VaultItemMeta, VaultStatus};
+use crate::vault::types::{RevisionMeta, VaultItemDetail, VaultItemMeta, VaultStatus};
 
 // ── Error wrapper (serializable for IPC) ─────────────────────────────────────
 
@@ -25,6 +28,9 @@ impl From<VaultError> for VaultCommandError {
             VaultError::AlreadyInitialized => ("already_initialized", e.to_string()),
             VaultError::Locked => ("locked", e.to_string()),
             VaultError::WrongPassphrase => ("wrong_passphrase", e.to_string()),
+            VaultError::InvalidPassphraseLength { .. } => {
+                ("invalid_passphrase_length", e.to_string())
+            }
             VaultError::RecordNotFound(_) => ("not_found", e.to_string()),
             _ => ("error", e.to_string()),
         };
@@ -88,7 +94,10 @@ pub async fn vault_lock(vault: State<'_, Mutex<VaultService>>) -> VaultResult<()
 pub struct ItemCreateArgs {
     pub label: String,
     pub kind: String,
-    pub secret: SecretString,
+    #[serde(default)]
+    pub secret: Option<SecretString>,
+    #[serde(default)]
+    pub secret_values: Option<BTreeMap<String, SecretString>>,
     pub notes: Option<String>,
     pub credential_id: Option<String>,
 }
@@ -107,23 +116,33 @@ pub async fn vault_item_create(
     args: ItemCreateArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = if let Some(credential_id) = args.credential_id.as_deref() {
+    let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
+        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
+        let result = vault.item_create_with_secret_values(
+            &args.label,
+            &args.kind,
+            &sanitized,
+            args.notes.as_deref(),
+            args.credential_id.as_deref(),
+        );
+        zeroize_secret_values(&mut sanitized);
+        result.map_err(VaultCommandError::from)?
+    } else {
+        let secret = args
+            .secret
+            .as_ref()
+            .filter(|secret| !secret.expose_secret().trim().is_empty())
+            .ok_or_else(|| VaultCommandError {
+                code: "invalid_secret_values".into(),
+                message: "Credential requires at least one non-empty secret value".into(),
+            })?;
         vault
             .item_create_with_logical_id(
                 &args.label,
                 &args.kind,
-                args.secret.expose_secret(),
+                secret.expose_secret(),
                 args.notes.as_deref(),
-                Some(credential_id),
-            )
-            .map_err(VaultCommandError::from)?
-    } else {
-        vault
-            .item_create(
-                &args.label,
-                &args.kind,
-                args.secret.expose_secret(),
-                args.notes.as_deref(),
+                args.credential_id.as_deref(),
             )
             .map_err(VaultCommandError::from)?
     };
@@ -151,12 +170,23 @@ pub struct ItemGetArgs {
 pub async fn vault_item_get(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemGetArgs,
-) -> VaultResult<PlaintextRecord> {
-    vault
+) -> VaultResult<VaultItemDetail> {
+    let record = vault
         .lock()
         .await
         .item_get(&args.item_id)
-        .map_err(Into::into)
+        .map_err(VaultCommandError::from)?;
+    Ok(VaultItemDetail {
+        logical_id: VaultService::record_logical_id(&record),
+        id: record.id.clone(),
+        kind: record.kind.clone(),
+        label: record.label.clone(),
+        notes: record.notes.clone(),
+        credential: record.credential.clone(),
+        revision: record.revision,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    })
 }
 
 #[derive(Deserialize)]
@@ -181,7 +211,10 @@ pub struct ItemUpdateArgs {
     pub item_id: String,
     pub label: String,
     pub kind: String,
-    pub secret: SecretString,
+    #[serde(default)]
+    pub secret: Option<SecretString>,
+    #[serde(default)]
+    pub secret_values: Option<BTreeMap<String, SecretString>>,
     pub notes: Option<String>,
 }
 
@@ -199,14 +232,98 @@ pub async fn vault_item_update(
     args: ItemUpdateArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = vault
-        .item_update(
+    let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
+        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
+        let result = vault.item_update_with_secret_values(
             &args.item_id,
             &args.label,
             &args.kind,
-            args.secret.expose_secret(),
+            &sanitized,
             args.notes.as_deref(),
-        )
+            None,
+        );
+        zeroize_secret_values(&mut sanitized);
+        result.map_err(VaultCommandError::from)?
+    } else {
+        let secret = args
+            .secret
+            .as_ref()
+            .filter(|secret| !secret.expose_secret().trim().is_empty())
+            .ok_or_else(|| VaultCommandError {
+                code: "invalid_secret_values".into(),
+                message: "Credential requires at least one non-empty secret value".into(),
+            })?;
+        vault
+            .item_update(
+                &args.item_id,
+                &args.label,
+                &args.kind,
+                secret.expose_secret(),
+                args.notes.as_deref(),
+            )
+            .map_err(VaultCommandError::from)?
+    };
+    vault.item_meta(&record).map_err(Into::into)
+}
+
+fn sanitize_secret_values(
+    kind: &str,
+    values: &BTreeMap<String, SecretString>,
+) -> Result<BTreeMap<String, String>, VaultCommandError> {
+    let mut sanitized = BTreeMap::new();
+    for (name, value) in values {
+        let trimmed = value.expose_secret().trim();
+        if !trimmed.is_empty() {
+            sanitized.insert(name.clone(), trimmed.to_string());
+        }
+    }
+    validate_secret_values_for_kind(kind, &sanitized).map_err(|message| VaultCommandError {
+        code: "invalid_secret_values".into(),
+        message,
+    })?;
+    Ok(sanitized)
+}
+
+fn zeroize_secret_values(values: &mut BTreeMap<String, String>) {
+    for value in values.values_mut() {
+        value.zeroize();
+    }
+    values.clear();
+}
+
+// ── Revision history commands ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ItemRevisionHistoryArgs {
+    pub item_id: String,
+}
+
+#[tauri::command]
+pub async fn vault_item_revision_history(
+    vault: State<'_, Mutex<VaultService>>,
+    args: ItemRevisionHistoryArgs,
+) -> VaultResult<Vec<RevisionMeta>> {
+    vault
+        .lock()
+        .await
+        .item_revision_history(&args.item_id)
+        .map_err(Into::into)
+}
+
+#[derive(Deserialize)]
+pub struct ItemRestoreRevisionArgs {
+    pub item_id: String,
+    pub revision: u64,
+}
+
+#[tauri::command]
+pub async fn vault_item_restore_revision(
+    vault: State<'_, Mutex<VaultService>>,
+    args: ItemRestoreRevisionArgs,
+) -> VaultResult<VaultItemMeta> {
+    let vault = vault.lock().await;
+    let record = vault
+        .item_restore_revision(&args.item_id, args.revision)
         .map_err(VaultCommandError::from)?;
     vault.item_meta(&record).map_err(Into::into)
 }
@@ -369,15 +486,96 @@ fn load_saved_connections(path: &std::path::Path) -> Result<SavedData, VaultErro
 }
 
 fn save_saved_connections(path: &std::path::Path, saved: &SavedData) -> Result<(), VaultError> {
+    use std::io::Write;
     let json = serde_json::to_string_pretty(saved).map_err(VaultError::Serde)?;
-    std::fs::write(path, json)
-        .map_err(|e| VaultError::InvalidData(format!("write connections file: {e}")))
+    let unique_suffix = uuid::Uuid::new_v4();
+    let tmp = path.with_extension(format!("json.tmp.{unique_suffix}"));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&tmp)
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp write open: {e}")))?;
+    f.write_all(json.as_bytes())
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp write: {e}")))?;
+    f.sync_all()
+        .map_err(|e| VaultError::InvalidData(format!("connections tmp sync: {e}")))?;
+    drop(f);
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let kind = error.kind();
+            #[cfg(windows)]
+            let raw = error.raw_os_error();
+            #[cfg(not(windows))]
+            let raw: Option<i32> = error.raw_os_error();
+
+            if kind == std::io::ErrorKind::PermissionDenied {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(VaultError::InvalidData(format!(
+                    "connections file is locked or permission denied during replace: {error}"
+                )));
+            }
+            if path.is_dir() {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(VaultError::InvalidData(
+                    "connections save target is a directory, not a file".into(),
+                ));
+            }
+            if raw == Some(18) {
+                std::fs::copy(&tmp, path).map_err(|copy_error| {
+                    let _ = std::fs::remove_file(&tmp);
+                    VaultError::InvalidData(format!(
+                        "connections save cross-device fallback copy failed: {copy_error}"
+                    ))
+                })?;
+                std::fs::remove_file(&tmp).map_err(|cleanup_error| {
+                    VaultError::InvalidData(format!(
+                        "connections save fallback cleanup failed: {cleanup_error}"
+                    ))
+                })?;
+                return Ok(());
+            }
+            if path.is_file() {
+                let backup = path.with_extension(format!("json.bak.{unique_suffix}"));
+                if let Err(backup_error) = std::fs::rename(path, &backup) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(VaultError::InvalidData(format!(
+                        "connections atomic rename failed and destination could not be staged: {backup_error}"
+                    )));
+                }
+                match std::fs::rename(&tmp, path) {
+                    Ok(()) => {
+                        let _ = std::fs::remove_file(&backup);
+                        return Ok(());
+                    }
+                    Err(retry_error) => {
+                        let restore_error = std::fs::rename(&backup, path).err();
+                        let _ = std::fs::remove_file(&tmp);
+                        return Err(VaultError::InvalidData(format!(
+                            "connections atomic replace retry failed: {retry_error}; backup restore: {}",
+                            restore_error
+                                .map(|error| error.to_string())
+                                .unwrap_or_else(|| "succeeded".to_string())
+                        )));
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&tmp);
+            Err(VaultError::InvalidData(format!(
+                "connections atomic rename failed: {error}"
+            )))
+        }
+    }
 }
 
 pub fn repair_connection_refs(
     data_dir: &std::path::Path,
     vault: &VaultService,
 ) -> Result<VaultBackfillResult, VaultError> {
+    // Lock ordering invariant: hold the vault-level Mutex<VaultService> before
+    // taking CONNECTIONS_MUTATION_LOCK so vault-backed connection repair and
+    // persistence paths do not invert file/vault mutation order in the future.
     let path = data_dir.join("connections.json");
     let _connections_guard = crate::commands::CONNECTIONS_MUTATION_LOCK
         .lock()
@@ -393,14 +591,17 @@ pub fn repair_connection_refs(
         let Some(auth_ref) = connection.auth_ref.as_mut() else {
             continue;
         };
-        if auth_ref.vault_id != active_vault_id {
-            skipped_missing_items = skipped_missing_items.saturating_add(1);
-            continue;
-        }
 
-        match vault.item_get(&auth_ref.item_id) {
+        let item_lookup = vault.item_get(&auth_ref.item_id);
+
+        match item_lookup {
             Ok(record) => {
                 let logical_id = VaultService::record_logical_id(&record);
+                if auth_ref.vault_id != active_vault_id {
+                    auth_ref.vault_id = active_vault_id.clone();
+                    updated = updated.saturating_add(1);
+                    changed = true;
+                }
                 if auth_ref.credential_id.as_deref() != Some(logical_id.as_str()) {
                     auth_ref.credential_id = Some(logical_id);
                     updated = updated.saturating_add(1);
@@ -414,6 +615,11 @@ pub fn repair_connection_refs(
                 };
                 match vault.item_get_by_logical_id(credential_id) {
                     Ok(record) => {
+                        if auth_ref.vault_id != active_vault_id {
+                            auth_ref.vault_id = active_vault_id.clone();
+                            updated = updated.saturating_add(1);
+                            changed = true;
+                        }
                         if auth_ref.item_id != record.id {
                             auth_ref.item_id = record.id.clone();
                             relinked_item_ids = relinked_item_ids.saturating_add(1);

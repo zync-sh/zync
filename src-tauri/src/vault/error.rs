@@ -6,6 +6,7 @@ pub enum VaultError {
     AlreadyInitialized,
     Locked,
     WrongPassphrase,
+    InvalidPassphraseLength { min: usize },
     RecordNotFound(String),
     InvalidData(String),
     Crypto(VaultCryptoError),
@@ -20,6 +21,9 @@ impl std::fmt::Display for VaultError {
             Self::AlreadyInitialized => write!(f, "Vault is already initialized"),
             Self::Locked => write!(f, "Vault is locked"),
             Self::WrongPassphrase => write!(f, "Incorrect passphrase"),
+            Self::InvalidPassphraseLength { min } => {
+                write!(f, "Passphrase must be at least {min} characters")
+            }
             Self::RecordNotFound(id) => write!(f, "Record not found: {id}"),
             Self::InvalidData(msg) => write!(f, "Invalid vault data: {msg}"),
             Self::Crypto(e) => write!(f, "Crypto error: {e}"),

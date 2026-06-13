@@ -568,18 +568,16 @@ export function Sidebar({ className }: { className?: string }) {
                             </SidebarSection>
                         </>
                     ) : (
-                        <>
-                            <SidebarSection
-                                title="All Hosts"
-                                compactMode={compactMode}
-                                onContextMenu={(event) => {
-                                    event.preventDefault();
-                                    setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
-                                }}
-                            >
-                                {allHostsContent}
-                            </SidebarSection>
-                        </>
+                        <SidebarSection
+                            title="All Hosts"
+                            compactMode={compactMode}
+                            onContextMenu={(event) => {
+                                event.preventDefault();
+                                setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
+                            }}
+                        >
+                            {allHostsContent}
+                        </SidebarSection>
                     )}
                 </div>
             </div>

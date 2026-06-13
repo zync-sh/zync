@@ -56,6 +56,9 @@ const SettingsJsonEditorPanel = lazy(() =>
 const VaultWorkspacePanel = lazy(() =>
     import('../vault/VaultWorkspacePanel').then(module => ({ default: module.default }))
 );
+const SyncBackupWorkspacePanel = lazy(() =>
+    import('../sync/SyncBackupWorkspacePanel').then(module => ({ default: module.default }))
+);
 
 // Loading Component
 const TabLoading = () => (
@@ -300,6 +303,20 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         );
     }
 
+    if (tab.type === 'sync') {
+        return (
+            <div className={cn(
+                "absolute inset-0 z-10 bg-app-bg",
+                !isActive && "hidden",
+                isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
+            )}>
+                <Suspense fallback={<TabLoading />}>
+                    <SyncBackupWorkspacePanel />
+                </Suspense>
+            </div>
+        );
+    }
+
     if (!tab.connectionId) {
         return null;
     }
@@ -401,6 +418,16 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                     <div className="text-[var(--color-app-muted)] text-sm max-w-md text-center">
                         Could not establish a connection to <span className="font-mono text-[var(--color-app-text)]">{connection?.host}</span>.
                     </div>
+                    {connection?.lastError && (
+                        <div className="max-w-xl rounded-lg border border-[var(--color-app-border)]/70 bg-[var(--color-app-surface)]/45 px-3 py-2 text-center text-xs leading-relaxed text-[var(--color-app-muted)]">
+                            {connection.lastError}
+                        </div>
+                    )}
+                    {connection?.authRef && (
+                        <div className="text-[11px] text-[var(--color-app-muted)]">
+                            Vault credential: {connection.authRef.credentialId?.slice(0, 8) ?? connection.authRef.itemId?.slice(0, 8) ?? '<no-id>'}
+                        </div>
+                    )}
                     <button
                         onClick={() => connection && connect(connection.id)}
                         className="px-4 py-2 bg-[var(--color-app-accent)] text-white rounded-lg hover:brightness-110 transition-all font-medium text-sm mt-4"

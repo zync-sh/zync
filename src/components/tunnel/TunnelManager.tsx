@@ -7,6 +7,7 @@ import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { Modal } from '../ui/Modal';
+import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
 
 
@@ -125,7 +126,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
             };
             await window.ipcRenderer.invoke('tunnel:save', revertedTunnel);
             showToast('success', `Port reverted to ${tunnel.originalPort}`);
-            setTimeout(() => loadTunnels(), 200); // Refresh UI
           } catch (revertError: any) {
             showToast('error', `Failed to revert port: ${revertError.message || revertError}`);
           }
@@ -149,7 +149,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         showToast('success', 'Forwarding started');
       }
       // Optimistic update or wait for event? Event will handle it.
-      loadTunnels(); // Refresh to be safe
+      await loadTunnels();
     } catch (error: any) {
       const errorMsg = error.message || error.toString();
 
@@ -208,11 +208,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         );
       }
       showToast('success', `Switched to port ${port}`);
-
-      // Force reload to show the new tunnel - use multiple attempts
-      setTimeout(() => loadTunnels(), 100);
-      setTimeout(() => loadTunnels(), 500);
-      setTimeout(() => loadTunnels(), 1000);
+      await loadTunnels();
     } catch (error: any) {
       showToast('error', `Failed to start on port ${port}: ${error.message || error}`);
     }
@@ -226,7 +222,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     try {
       await window.ipcRenderer.invoke('tunnel:delete', id);
       showToast('success', 'Forward deleted');
-      loadTunnels();
+      await loadTunnels();
     } catch (error: any) {
       showToast('error', `Failed to delete: ${error.message || error}`);
     }
@@ -339,7 +335,11 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
 
             {/* Preset Dropdown */}
             {showPresetDropdown && (
-              <div className="absolute right-0 mt-1 w-56 bg-app-panel border border-app-border rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+              <TopbarDropdown
+                align="right"
+                widthClass="w-56"
+                className="mt-1 rounded-lg shadow-xl p-0"
+              >
                 {TUNNEL_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -357,7 +357,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                     </div>
                   </button>
                 ))}
-              </div>
+              </TopbarDropdown>
             )}
           </div>
         </div>
@@ -574,7 +574,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         onClose={() => {
           setIsAddModalOpen(false);
           setEditingTunnel(null);
-          loadTunnels();
+          void loadTunnels();
         }}
       />
 
@@ -584,7 +584,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         connectionId={activeConnectionId} // Pass the active connection ID
         onImport={() => {
           // Refresh list after import
-          setTimeout(() => loadTunnels(), 500);
+          void loadTunnels();
         }}
       />
     </div>

@@ -10,7 +10,13 @@ export const markConnectionStatus = (
         if (connection.id !== connectionId) return connection;
         if (connection.status === status) return connection;
         updated = true;
-        return { ...connection, status };
+        return {
+            ...connection,
+            status,
+            ...(status === 'connecting' || status === 'connected' || status === 'disconnected'
+                ? { lastError: undefined }
+                : {}),
+        };
     });
 
     return updated ? next : connections;
@@ -31,6 +37,7 @@ export const markConnectionConnected = (
         const nextConnection: Connection = {
             ...connection,
             status: 'connected',
+            lastError: undefined,
             lastConnected: Date.now(),
             homePath,
         };
@@ -57,12 +64,17 @@ export const markConnectionConnected = (
 export const markConnectionErrorIfNeeded = (
     connections: Connection[],
     connectionId: string,
+    error?: string,
 ): Connection[] => {
     const current = connections.find((connection) => connection.id === connectionId);
     if (!current) return connections;
-    if (current?.status === 'error') return connections;
+    if (current.status === 'error' && current.lastError === error) return connections;
 
-    return markConnectionStatus(connections, connectionId, 'error');
+    return connections.map((connection) =>
+        connection.id === connectionId
+            ? { ...connection, status: 'error', lastError: error }
+            : connection,
+    );
 };
 
 export interface CloseTabStateResult {

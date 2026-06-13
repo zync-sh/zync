@@ -22,26 +22,35 @@ export function VaultNavSection() {
     const settings = useAppStore(state => state.settings);
     const updateSidebarSectionsSettings = useAppStore(state => state.updateSidebarSectionsSettings);
     const openVaultTab = useAppStore(state => state.openVaultTab);
-    const activeVaultProfileId = useAppStore(state => {
+    const openSyncBackupTab = useAppStore(state => state.openSyncBackupTab);
+    const activeVaultSurface = useAppStore(state => {
         const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+        if (activeTab?.type === 'sync') return 'google';
         if (activeTab?.type === 'vault') return activeTab.vaultProfileId ?? DEFAULT_VAULT_PROFILE_ID;
 
-        return state.tabs.find(tab => tab.type === 'vault')?.vaultProfileId ?? DEFAULT_VAULT_PROFILE_ID;
+        return null;
     });
     const vaultStatus = useVaultStore(state => state.status);
     const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
+    const [googleSyncError, setGoogleSyncError] = useState<string | null>(null);
 
     const expanded = resolveVaultExpanded(settings);
 
     const refreshGoogleSync = useCallback(() => {
         syncIpc.status('google')
-            .then(setGoogleSync)
-            .catch(error => console.warn('[VaultNavSection] Failed to load Google sync status:', error));
+            .then(result => {
+                setGoogleSync(result);
+                setGoogleSyncError(null);
+            })
+            .catch(error => {
+                setGoogleSyncError(error instanceof Error ? error.message : String(error));
+                console.error('[VaultNavSection] Failed to load Google sync status:', error);
+            });
     }, []);
 
     useEffect(() => {
         refreshGoogleSync();
-        const interval = window.setInterval(refreshGoogleSync, 10_000);
+        const interval = window.setInterval(refreshGoogleSync, 30_000);
         const handleSyncChanged = (event: Event) => {
             const detail = (event as CustomEvent<{ provider?: string }>).detail;
             if (!detail?.provider || detail.provider === 'google') {
@@ -68,10 +77,12 @@ export function VaultNavSection() {
             : vaultStatus?.status === 'locked'
                 ? { className: 'bg-amber-400/80', title: 'Local vault locked' }
                 : { className: 'bg-app-muted/40', title: 'Local vault not set up' },
-        google: googleSync?.connected
-            ? { className: 'bg-blue-400/80', title: 'Google sync connected' }
-            : { className: 'bg-app-muted/40', title: 'Google sync not connected' },
-    }), [googleSync?.connected, vaultStatus?.status]);
+        google: googleSyncError
+            ? { className: 'bg-red-400/70', title: 'Google sync status unavailable' }
+            : googleSync?.connected
+                ? { className: 'bg-blue-400/80', title: 'Google sync connected' }
+                : { className: 'bg-app-muted/40', title: 'Google sync not connected' },
+    }), [googleSync?.connected, googleSyncError, vaultStatus?.status]);
 
     return (
         <>
@@ -104,10 +115,16 @@ export function VaultNavSection() {
                             <SidebarActionButton
                                 key={item.id}
                                 nested
-                                active={activeVaultProfileId === item.id}
+                                active={activeVaultSurface === item.id}
                                 icon={<Icon size={12} />}
                                 label={item.label}
-                                onClick={() => openVaultTab(item.id)}
+                                onClick={() => {
+                                    if (item.id === 'google') {
+                                        openSyncBackupTab();
+                                        return;
+                                    }
+                                    openVaultTab(item.id);
+                                }}
                                 trailing={<StatusDot className={resolvedStatus.className} title={resolvedStatus.title} />}
                             />
                         );

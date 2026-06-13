@@ -360,12 +360,12 @@ export function CommandPalette() {
                                     </Command.Item>
 
                                     <Command.Item
-                                        value="Google Vault Sync"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openVaultTab('google'))}
+                                        value="Sync & Backup vault google drive"
+                                        onSelect={() => runCommand(() => useAppStore.getState().openSyncBackupTab())}
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Cloud className="mr-2 h-4 w-4 opacity-70" />
-                                        <span>Google Vault Sync</span>
+                                        <span>Sync & Backup</span>
                                     </Command.Item>
 
                                     <Command.Item

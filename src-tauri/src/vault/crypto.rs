@@ -146,7 +146,22 @@ pub fn derive_secret_fingerprint(
     let fingerprint_key = derive_record_key(vek, b"zync:vault:fingerprint:v1")?;
     let mut mac = <SimpleHmac<Sha256> as HmacKeyInit>::new_from_slice(fingerprint_key.as_bytes())
         .map_err(|_| VaultCryptoError::InvalidHmacKeyLength)?;
-    mac.update(secret.as_bytes());
+    // Canonicalize private-key JSON payloads:
+    // - new shape: {"key":"...","passphrase":"...|null"}
+    // - legacy raw shape: "<pem>"
+    // Fingerprint only the canonical key bytes so dedupe remains stable across
+    // legacy/raw and JSON-encoded representations.
+    let fingerprint_material = serde_json::from_str::<serde_json::Value>(secret)
+        .ok()
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|obj| obj.get("key"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| secret.to_string());
+    mac.update(fingerprint_material.as_bytes());
     let digest = mac.finalize().into_bytes();
     Ok(base64::engine::general_purpose::STANDARD.encode(digest))
 }
@@ -402,6 +417,20 @@ mod tests {
         let other_key = derive_secret_fingerprint(&vek_b, "hunter2").unwrap();
         assert_ne!(base, other_secret);
         assert_ne!(base, other_key);
+    }
+
+    #[test]
+    fn fingerprint_normalizes_legacy_raw_and_json_private_key_secret() {
+        let vek = SecretKey::from_bytes([0x66u8; 32]);
+        let raw = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
+        let json = serde_json::json!({
+            "key": raw,
+            "passphrase": "secret-passphrase"
+        })
+        .to_string();
+        let fp_raw = derive_secret_fingerprint(&vek, raw).unwrap();
+        let fp_json = derive_secret_fingerprint(&vek, &json).unwrap();
+        assert_eq!(fp_raw, fp_json);
     }
 
     // ── Zeroize compiles ──────────────────────────────────────────────────────

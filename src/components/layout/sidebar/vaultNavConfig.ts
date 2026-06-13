@@ -15,7 +15,7 @@ export const VAULT_NAV_ITEMS: ReadonlyArray<VaultNavItemConfig> = [
   },
   {
     id: 'google',
-    label: 'Google Sync',
+    label: 'Sync & Backup',
     icon: Cloud,
   },
 ];

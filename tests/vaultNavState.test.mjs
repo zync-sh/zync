@@ -4,13 +4,15 @@ import {
   resolveVaultExpanded,
 } from '../.tmp-agent-tests/src/components/layout/sidebar/vaultNavState.js';
 
+const failures = [];
+
 function runTest(name, fn) {
   try {
     fn();
     console.log(`PASS ${name}`);
   } catch (error) {
-    console.error(`FAIL ${name}`);
-    throw error;
+    console.error(`FAIL ${name}:`, error.message);
+    failures.push({ name, error });
   }
 }
 
@@ -47,4 +49,8 @@ runTest('nextSidebarSectionsForVaultToggle flips current value', () => {
   assert.deepEqual(expanded, { vaultExpanded: true });
 });
 
+if (failures.length > 0) {
+  console.error(`\n${failures.length} test(s) failed.`);
+  process.exit(1);
+}
 console.log('Vault nav state tests passed.');

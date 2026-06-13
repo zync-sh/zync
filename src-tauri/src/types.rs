@@ -46,7 +46,7 @@ pub struct ConnectionResponse {
 }
 
 /// A reference to a vault item used as SSH credentials.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialRef {
     pub vault_id: String,
@@ -59,7 +59,7 @@ pub struct CredentialRef {
     pub purpose: CredentialPurpose,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialItemKind {
     SshPassword,
@@ -77,7 +77,7 @@ impl CredentialItemKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum CredentialPurpose {
@@ -139,6 +139,10 @@ pub struct SavedTunnel {
     pub original_port: Option<u16>, // Tracks original port when auto-switched
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
