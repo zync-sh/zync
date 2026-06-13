@@ -5,5 +5,6 @@ export * from './merge.js';
 export * from './formTransforms.js';
 export * from './connectionConfig.js';
 export * from './credentialAssignments.js';
+export * from './credentialRef.js';
 export * from './importPlan.js';
 export * from './types.js';

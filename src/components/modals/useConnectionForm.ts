@@ -95,7 +95,7 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
         return false;
     }, [formData.jumpServerId, activeEditingConnectionId, connections]);
 
-    const saveForm = (canSave: boolean): Connection | null => {
+    const saveForm = async (canSave: boolean): Promise<Connection | null> => {
         if (!canSave || !validation.ok) return null;
         const connectionData = buildConnectionSavePayload({
             formData,
@@ -103,7 +103,11 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
             editingConnectionId: activeEditingConnectionId,
             connections,
         });
-        activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData);
+        if (activeEditingConnectionId) {
+            await editConnection(connectionData);
+        } else {
+            await addConnection(connectionData);
+        }
         return connectionData;
     };
 

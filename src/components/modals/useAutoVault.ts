@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useAppStore, Connection } from '../../store/useAppStore';
 import { useVaultStore } from '../../vault/useVaultStore';
 import { vaultIpc } from '../../vault/ipc';
@@ -35,7 +34,6 @@ export function useAutoVault({
     const [pastedKeyText, setPastedKeyText] = useState('');
     const [pastedPassphrase, setPastedPassphrase] = useState('');
     const [pastedKeyError, setPastedKeyError] = useState('');
-    const [vaultLabel, setVaultLabel] = useState('');
     const [keyVaultLabel, setKeyVaultLabel] = useState('');
 
     useEffect(() => {
@@ -43,27 +41,31 @@ export function useAutoVault({
         setPastedKeyText('');
         setPastedPassphrase('');
         setPastedKeyError('');
-        setVaultLabel('');
         setKeyVaultLabel('');
     }, [isOpen]);
 
-    const defaultVaultLabel = `${formData.name || formData.host || 'credential'} (${formData.username || 'user'}@${formData.host || 'host'})`;
-    const effectiveVaultLabel = vaultLabel.trim() || defaultVaultLabel;
-    const vaultLabelConflict = vaultStatus?.status === 'unlocked' && authMethod === 'password' && !!formData.password
-        && vaultItems.some(i => i.label === effectiveVaultLabel);
-
     const defaultKeyVaultLabel = `${formData.name || formData.host || 'credential'} key (${formData.username || 'user'}@${formData.host || 'host'})`;
     const effectiveKeyVaultLabel = keyVaultLabel.trim() || defaultKeyVaultLabel;
-    const hasKeyInput = authMethod === 'key' && (
-        keyInputMode === 'file'
-            ? !!formData.privateKeyPath?.trim()
-            : !!pastedKeyText.trim()
-    );
-    const keyVaultLabelConflict = vaultStatus?.status === 'unlocked' && hasKeyInput
+    const keyVaultLabelConflict = vaultStatus?.status === 'unlocked'
+        && authMethod === 'key'
+        && keyInputMode === 'paste'
+        && !!pastedKeyText.trim()
         && vaultItems.some(i => i.label === effectiveKeyVaultLabel);
+
     const replacedAuthItemId = activeEditingConnectionId
         ? useAppStore.getState().connections.find(c => c.id === activeEditingConnectionId)?.authRef?.itemId
         : undefined;
+
+    const resolveVaultId = async (): Promise<string> => {
+        if (vaultStatus?.status === 'unlocked' && vaultStatus.vaultId) {
+            return vaultStatus.vaultId;
+        }
+        const status = await vaultIpc.status();
+        if (status.status !== 'unlocked' || !status.vaultId) {
+            throw new Error('Vault must be unlocked to store credentials.');
+        }
+        return status.vaultId;
+    };
 
     const finalizeVaultReplacement = async () => {
         setPastedKeyText('');
@@ -109,6 +111,7 @@ export function useAutoVault({
             return null;
         }
         setPastedKeyError('');
+        const vaultId = await resolveVaultId();
         const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', {
             privateKey: keyText,
             ...(pastedPassphrase.length > 0 ? { passphrase: pastedPassphrase } : {}),
@@ -116,54 +119,7 @@ export function useAutoVault({
         return {
             ...formData,
             authRef: {
-                vaultId: unlockedVault.vaultId,
-                credentialId: item.logicalId,
-                itemId: item.id,
-                itemKind: 'ssh-private-key',
-                purpose: 'ssh-auth',
-            },
-        };
-    };
-
-    const autoVaultPassword = async (): Promise<Partial<Connection> | null> => {
-        if (vaultStatus?.status !== 'unlocked' || authMethod !== 'password') return null;
-        const password = formData.password || '';
-        if (!password.trim()) return null;
-        const item = await vaultIpc.itemCreate(effectiveVaultLabel, 'ssh-password', { password });
-        return {
-            ...formData,
-            password: '',
-            authRef: {
-                vaultId: vaultStatus.vaultId,
-                credentialId: item.logicalId,
-                itemId: item.id,
-                itemKind: 'ssh-password',
-                purpose: 'ssh-auth',
-            },
-        };
-    };
-
-    const autoVaultKeyFile = async (): Promise<Partial<Connection> | null> => {
-        if (vaultStatus?.status !== 'unlocked' || authMethod !== 'key' || keyInputMode !== 'file') return null;
-        const keyPath = (formData.privateKeyPath || '').trim();
-        if (!keyPath) return null;
-        let keyContent: string;
-        try {
-            keyContent = await invoke<string>('plugin_fs_read', { path: keyPath });
-        } catch (e) {
-            throw new Error(`Could not read key file: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        if (!isValidPrivateKeyFormat(keyContent)) {
-            throw new Error('Selected file does not appear to be a valid private key.');
-        }
-        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', {
-            privateKey: keyContent,
-        });
-        return {
-            ...formData,
-            privateKeyPath: '',
-            authRef: {
-                vaultId: vaultStatus.vaultId,
+                vaultId,
                 credentialId: item.logicalId,
                 itemId: item.id,
                 itemKind: 'ssh-private-key',
@@ -177,7 +133,6 @@ export function useAutoVault({
         try {
             const updatedData = await savePastedKey();
             if (!updatedData) return null;
-            // Re-read connections fresh after the await to avoid stale closure.
             const { connections } = useAppStore.getState();
             return buildConnectionSavePayload({
                 formData: updatedData,
@@ -196,11 +151,9 @@ export function useAutoVault({
         pastedKeyText, setPastedKeyText,
         pastedPassphrase, setPastedPassphrase,
         pastedKeyError, setPastedKeyError,
-        vaultLabel, setVaultLabel,
         keyVaultLabel, setKeyVaultLabel,
-        defaultVaultLabel, effectiveVaultLabel, vaultLabelConflict,
-        defaultKeyVaultLabel, effectiveKeyVaultLabel, keyVaultLabelConflict,
-        savePastedKey, autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
+        defaultKeyVaultLabel, keyVaultLabelConflict,
+        buildPastedKeyConnection,
         finalizeVaultReplacement,
     };
 }

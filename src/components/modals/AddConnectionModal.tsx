@@ -9,7 +9,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { cn } from '../../lib/utils';
 import { ShieldCheck, CheckCircle2, AlertCircle, Loader2, FileText, Laptop, Files, ChevronDown, ChevronRight, Shield, KeyRound } from 'lucide-react';
 import { testConnectionIpc, type ConnectionConfigPayload } from '../../features/connections/infrastructure/connectionIpc';
-import { buildConnectionSavePayload, buildConnectionTestPayload } from '../../features/connections/domain';
+import { buildConnectionTestPayload } from '../../features/connections/domain';
 import {
     importConnectionsFromFileIpc,
     type ConnectionExchangeImportFormat,
@@ -69,11 +69,9 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         setPastedKeyText,
         pastedPassphrase, setPastedPassphrase,
         pastedKeyError, setPastedKeyError,
-        vaultLabel, setVaultLabel,
         keyVaultLabel, setKeyVaultLabel,
-        defaultVaultLabel, effectiveVaultLabel: _effectiveVaultLabel, vaultLabelConflict,
-        defaultKeyVaultLabel, effectiveKeyVaultLabel: _effectiveKeyVaultLabel, keyVaultLabelConflict,
-        autoVaultPassword, autoVaultKeyFile, buildPastedKeyConnection,
+        defaultKeyVaultLabel, keyVaultLabelConflict,
+        buildPastedKeyConnection,
         finalizeVaultReplacement,
     } = useAutoVault({
         isOpen,
@@ -87,6 +85,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
 
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testMessage, setTestMessage] = useState('');
+    const [isAppearanceOpen, setIsAppearanceOpen] = useState(false);
     const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
     const [showAllIcons, setShowAllIcons] = useState(false);
     const [entryMode, setEntryMode] = useState<'chooser' | 'manual'>('manual');
@@ -98,13 +97,15 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         if (!isOpen) return;
         setTestStatus('idle');
         setTestMessage('');
+        setIsAppearanceOpen(false);
         setIsAdvancedOpen(!!activeEditingConnectionId);
         setShowAllIcons(false);
         setEntryMode(activeEditingConnectionId ? 'manual' : 'chooser');
         setIsSaving(false);
     }, [activeEditingConnectionId, isOpen]);
 
-    const canSave = (!duplicateConnection || allowDuplicateEndpoint) && !vaultLabelConflict && !keyVaultLabelConflict;
+    const canSave = (!duplicateConnection || allowDuplicateEndpoint) && !keyVaultLabelConflict;
+    const canTest = validation.ok && testStatus !== 'testing' && !(authMethod === 'key' && keyInputMode === 'paste');
     const selectedIcon = formData.icon || 'Server';
     const compactIcons = ICONS.slice(0, 12);
     const visibleIcons = showAllIcons
@@ -123,49 +124,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                 if (!connectionData) return null;
                 await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
                 await finalizeVaultReplacement();
+                await refreshItems();
                 return connectionData;
             }
-            if (authMethod === 'key' && keyInputMode === 'file' && vaultStatus?.status === 'unlocked' && formData.privateKeyPath) {
-                try {
-                    const vaultedData = await autoVaultKeyFile();
-                    if (vaultedData) {
-                        const connectionData = buildConnectionSavePayload({
-                            formData: vaultedData,
-                            authMethod: 'vault',
-                            editingConnectionId: activeEditingConnectionId,
-                            connections: useAppStore.getState().connections,
-                        });
-                        await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
-                        await finalizeVaultReplacement();
-                        await refreshItems();
-                        return connectionData;
-                    }
-                } catch (e: unknown) {
-                    showToast('error', `Failed to encrypt key: ${e instanceof Error ? e.message : String(e)}`);
-                    return null;
-                }
-            }
-            if (authMethod === 'password' && vaultStatus?.status === 'unlocked') {
-                try {
-                    const vaultedData = await autoVaultPassword();
-                    if (vaultedData) {
-                        const connectionData = buildConnectionSavePayload({
-                            formData: vaultedData,
-                            authMethod: 'vault',
-                            editingConnectionId: activeEditingConnectionId,
-                            connections: useAppStore.getState().connections,
-                        });
-                        await (activeEditingConnectionId ? editConnection(connectionData) : addConnection(connectionData));
-                        await finalizeVaultReplacement();
-                        await refreshItems();
-                        return connectionData;
-                    }
-                } catch (e: unknown) {
-                    showToast('error', `Failed to encrypt credential: ${e instanceof Error ? e.message : String(e)}`);
-                    return null;
-                }
-            }
-            return saveForm(canSave);
+            return await saveForm(canSave);
         } finally {
             setIsSaving(false);
         }
@@ -262,7 +224,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             isOpen={isOpen}
             onClose={onClose}
             title={activeEditingConnectionId ? "Edit Connection" : "New Connection"}
-            subtitle={entryMode === 'manual' ? 'Basic details, authentication, then optional advanced settings.' : undefined}
+            subtitle={entryMode === 'manual' ? 'Identity, authentication, appearance, then optional advanced settings.' : undefined}
             className="w-full max-w-2xl"
             headerClassName="p-2.5"
             contentClassName="p-0 overflow-hidden"
@@ -318,7 +280,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         </div>
                                         <div className="flex min-w-0 flex-1 flex-col">
                                             <span className="text-sm font-semibold text-app-text">Add Manually</span>
-                                            <span className="mt-0.5 text-xs text-app-muted leading-relaxed">Enter host, auth, and optional jump settings</span>
+                                            <span className="mt-0.5 text-xs text-app-muted leading-relaxed">Enter identity, auth, and optional jump settings</span>
                                             <span className="mt-2 text-[11px] font-medium text-app-accent/90">Best for one-off quick entries</span>
                                         </div>
                                     </div>
@@ -328,11 +290,17 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                     </div>
                 ) : (
                     <>
-                        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+                        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
                             <section className="rounded-xl border border-app-border/60 bg-app-surface/25 p-4 space-y-4">
-                                <h4 className="text-xs font-semibold uppercase tracking-wider text-app-muted">Basics</h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input label="Name" placeholder="Production DB" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} autoFocus />
+                                <h4 className="text-xs font-semibold uppercase tracking-wider text-app-muted">Identity</h4>
+                                <Input
+                                    label="Name"
+                                    placeholder="Production DB"
+                                    value={formData.name}
+                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    autoFocus
+                                />
+                                <div className="grid grid-cols-[1fr_7rem] gap-4">
                                     <Input
                                         label="Host"
                                         placeholder="192.168.1.1"
@@ -342,84 +310,6 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                             setFormData({ ...formData, host: e.target.value });
                                         }}
                                         error={visibleHostError}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <Input
-                                            label="Folder (Optional)"
-                                            placeholder="e.g. Production"
-                                            value={formData.folder || ''}
-                                            onChange={e => setFormData({ ...formData, folder: e.target.value })}
-                                            list="folder-suggestions"
-                                        />
-                                        <datalist id="folder-suggestions">
-                                            {folders.map(f => <option key={f.name} value={f.name} />)}
-                                        </datalist>
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-2">Color Label</label>
-                                        <div className="flex gap-2">
-                                            {THEMES.map(theme => (
-                                                <button
-                                                    key={theme.id}
-                                                    onClick={() => setFormData({ ...formData, theme: theme.id })}
-                                                    className={cn(
-                                                        "h-9 w-9 rounded-full border-2 transition-all flex items-center justify-center",
-                                                        theme.color,
-                                                        formData.theme === theme.id ? "ring-2 ring-white scale-110" : "opacity-70 hover:opacity-100 hover:scale-105"
-                                                    )}
-                                                    title={theme.label}
-                                                >
-                                                    {formData.theme === theme.id && <div className="w-2.5 h-2.5 rounded-full bg-white/80" />}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">Icon</label>
-                                        <button
-                                            type="button"
-                                            className="text-[11px] text-app-accent hover:underline"
-                                            onClick={() => setShowAllIcons((prev) => !prev)}
-                                        >
-                                            {showAllIcons ? 'Show less' : 'Show more'}
-                                        </button>
-                                    </div>
-                                    <div className="grid grid-cols-9 gap-2">
-                                        {visibleIcons.map(iconName => (
-                                            <button
-                                                key={iconName}
-                                                onClick={() => setFormData({ ...formData, icon: iconName })}
-                                                className={cn(
-                                                    "p-2 rounded-lg border transition-all hover:bg-app-surface flex items-center justify-center aspect-square",
-                                                    (formData.icon || 'Server').toLowerCase() === iconName.toLowerCase()
-                                                        ? "bg-app-accent/20 border-app-accent text-app-accent"
-                                                        : "bg-app-bg border-app-border text-app-muted"
-                                                )}
-                                                title={iconName}
-                                            >
-                                                <OSIcon icon={iconName} className="w-5 h-5" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </section>
-
-                            <section className="rounded-xl border border-app-border/60 bg-app-surface/25 p-4 space-y-4">
-                                <h4 className="text-xs font-semibold uppercase tracking-wider text-app-muted">Authentication</h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input
-                                        label="Username"
-                                        placeholder="root"
-                                        value={formData.username}
-                                        onChange={e => {
-                                            setTouched((prev) => ({ ...prev, username: true }));
-                                            setFormData({ ...formData, username: e.target.value });
-                                        }}
-                                        error={visibleUsernameError}
                                     />
                                     <Input
                                         label="Port"
@@ -438,8 +328,22 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         error={visiblePortError}
                                     />
                                 </div>
+                                <Input
+                                    label="Username"
+                                    placeholder="root"
+                                    value={formData.username}
+                                    onChange={e => {
+                                        setTouched((prev) => ({ ...prev, username: true }));
+                                        setFormData({ ...formData, username: e.target.value });
+                                    }}
+                                    error={visibleUsernameError}
+                                />
+                            </section>
+
+                            <section className="rounded-xl border border-app-border/60 bg-app-surface/25 p-4 space-y-4">
+                                <h4 className="text-xs font-semibold uppercase tracking-wider text-app-muted">Authentication</h4>
                                 <div>
-                                    <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-3">Authentication Method</label>
+                                    <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-3">Method</label>
                                     <div className="flex gap-4 p-1 bg-app-surface/50 rounded-lg w-fit border border-app-border">
                                         <button
                                             onClick={() => setAuthMethod('password')}
@@ -477,32 +381,9 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                 {authMethod === 'password' ? (
                                     <div className="space-y-2">
                                         <Input label="Password" type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
-                                        {vaultStatus?.status === 'unlocked' && formData.password && (
-                                            <div className="space-y-1.5">
-                                                <div className="flex items-center gap-2">
-                                                    <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
-                                                    <input
-                                                        type="text"
-                                                        value={vaultLabel}
-                                                        onChange={e => setVaultLabel(e.target.value)}
-                                                        placeholder={defaultVaultLabel}
-                                                        className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
-                                                    />
-                                                </div>
-                                                {vaultLabelConflict ? (
-                                                    <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
-                                                        <Shield size={10} /> A vault item with this label already exists — rename to avoid a duplicate.
-                                                    </p>
-                                                ) : (
-                                                    <p className="text-[10px] text-emerald-400/70 flex items-center gap-1">
-                                                        <Shield size={10} /> Password will be encrypted in vault on save.
-                                                    </p>
-                                                )}
-                                            </div>
-                                        )}
-                                        {vaultStatus?.status === 'locked' && formData.password && (
-                                            <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
-                                                <Shield size={10} /> Vault is locked — password will be saved as plaintext.
+                                        {formData.password && vaultStatus?.status !== 'uninitialized' && (
+                                            <p className="text-[10px] text-app-muted/70">
+                                                Password is saved locally. Open Vault tab to secure it later.
                                             </p>
                                         )}
                                     </div>
@@ -540,7 +421,16 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                                     />
                                                     <Button variant="secondary" onClick={handleBrowseKey}>Browse</Button>
                                                 </div>
-                                                {vaultStatus?.status === 'unlocked' && formData.privateKeyPath ? (
+                                                {formData.privateKeyPath && (
+                                                    <p className="text-[10px] text-app-muted/70">
+                                                        Key file path is stored and read at connect time.
+                                                        {vaultStatus?.status !== 'uninitialized' ? ' Open Vault tab to secure it later.' : ''}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {vaultStatus?.status === 'unlocked' && (
                                                     <div className="space-y-1.5">
                                                         <div className="flex items-center gap-2">
                                                             <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
@@ -552,37 +442,11 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                                                 className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
                                                             />
                                                         </div>
-                                                        {keyVaultLabelConflict ? (
+                                                        {keyVaultLabelConflict && (
                                                             <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
                                                                 <Shield size={10} /> A vault item with this label already exists — rename to avoid a duplicate.
                                                             </p>
-                                                        ) : (
-                                                            <p className="text-[10px] text-emerald-400/70 flex items-center gap-1">
-                                                                <Shield size={10} /> Key will be read and encrypted in vault on save.
-                                                            </p>
                                                         )}
-                                                    </div>
-                                                ) : (
-                                                    <p className="text-[10px] text-app-muted/70">Key file path is stored and read at connect time.</p>
-                                                )}
-                                                {vaultStatus?.status === 'locked' && formData.privateKeyPath && (
-                                                    <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
-                                                        <Shield size={10} /> Vault is locked — key path will be saved as plaintext. Use &quot;Paste to Vault&quot; to encrypt.
-                                                    </p>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-2">
-                                                {vaultStatus?.status === 'unlocked' && (
-                                                    <div className="flex items-center gap-2">
-                                                        <label className="text-[10px] text-app-muted shrink-0">Vault label</label>
-                                                        <input
-                                                            type="text"
-                                                            value={keyVaultLabel}
-                                                            onChange={e => setKeyVaultLabel(e.target.value)}
-                                                            placeholder={defaultKeyVaultLabel}
-                                                            className="flex-1 rounded-md border border-app-border/60 bg-app-bg px-2 py-1 text-[11px] text-app-text placeholder:text-app-muted/40 focus:outline-none focus:ring-1 focus:ring-app-accent/50"
-                                                        />
                                                     </div>
                                                 )}
                                                 <textarea
@@ -662,38 +526,6 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                     </div>
                                 )}
 
-                                <div className="flex items-center justify-between gap-2">
-                                    <div>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={handleTestConnection}
-                                            disabled={!validation.ok || testStatus === 'testing' || (authMethod === 'key' && keyInputMode === 'paste')}
-                                            className={cn(
-                                                "text-xs gap-2 min-w-fit",
-                                                testStatus === 'success' && "text-green-500 hover:text-green-600 hover:bg-green-500/10",
-                                                testStatus === 'error' && "text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                                            )}
-                                        >
-                                            {testStatus === 'testing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
-                                                testStatus === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> :
-                                                    testStatus === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> :
-                                                        <ShieldCheck className="w-3.5 h-3.5" />}
-                                            <span>{testStatus === 'testing' ? 'Testing...' : 'Test Connection'}</span>
-                                        </Button>
-                                        {authMethod === 'key' && keyInputMode === 'paste' && (
-                                            <p className="mt-1 text-[10px] text-app-muted">Save first so the pasted key is encrypted in the vault before testing.</p>
-                                        )}
-                                    </div>
-                                    <span className={cn(
-                                        "text-xs",
-                                        testStatus === 'success' ? 'text-green-400' :
-                                            testStatus === 'error' ? 'text-red-400' : 'text-app-muted'
-                                    )}>
-                                        {testMessage}
-                                    </span>
-                                </div>
-
                                 {credentialHealthChecks.length > 0 && (
                                     <div className="rounded-md border border-app-border bg-app-bg/50 px-3 py-2 text-[11px] space-y-1">
                                         {credentialHealthChecks.map((check, index) => (
@@ -733,6 +565,86 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                             />
                                             Allow duplicate endpoint anyway
                                         </label>
+                                    </div>
+                                )}
+                            </section>
+
+                            <section className="rounded-xl border border-app-border/60 bg-app-surface/25">
+                                <button
+                                    type="button"
+                                    className="w-full flex items-center justify-between px-4 py-3 text-left"
+                                    onClick={() => setIsAppearanceOpen((prev) => !prev)}
+                                >
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-app-muted">Appearance (Optional)</h4>
+                                        <p className="mt-1 text-[11px] text-app-muted">Folder, color label, and icon.</p>
+                                    </div>
+                                    {isAppearanceOpen ? <ChevronDown size={14} className="text-app-muted" /> : <ChevronRight size={14} className="text-app-muted" />}
+                                </button>
+                                {isAppearanceOpen && (
+                                    <div className="space-y-4 px-4 pb-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <Input
+                                                    label="Folder (Optional)"
+                                                    placeholder="e.g. Production"
+                                                    value={formData.folder || ''}
+                                                    onChange={e => setFormData({ ...formData, folder: e.target.value })}
+                                                    list="folder-suggestions"
+                                                />
+                                                <datalist id="folder-suggestions">
+                                                    {folders.map(f => <option key={f.name} value={f.name} />)}
+                                                </datalist>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-2">Color Label</label>
+                                                <div className="flex gap-2">
+                                                    {THEMES.map(theme => (
+                                                        <button
+                                                            key={theme.id}
+                                                            onClick={() => setFormData({ ...formData, theme: theme.id })}
+                                                            className={cn(
+                                                                "h-9 w-9 rounded-full border-2 transition-all flex items-center justify-center",
+                                                                theme.color,
+                                                                formData.theme === theme.id ? "ring-2 ring-white scale-110" : "opacity-70 hover:opacity-100 hover:scale-105"
+                                                            )}
+                                                            title={theme.label}
+                                                        >
+                                                            {formData.theme === theme.id && <div className="w-2.5 h-2.5 rounded-full bg-white/80" />}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">Icon</label>
+                                                <button
+                                                    type="button"
+                                                    className="text-[11px] text-app-accent hover:underline"
+                                                    onClick={() => setShowAllIcons((prev) => !prev)}
+                                                >
+                                                    {showAllIcons ? 'Show less' : 'Show more'}
+                                                </button>
+                                            </div>
+                                            <div className="grid grid-cols-9 gap-2">
+                                                {visibleIcons.map(iconName => (
+                                                    <button
+                                                        key={iconName}
+                                                        onClick={() => setFormData({ ...formData, icon: iconName })}
+                                                        className={cn(
+                                                            "p-2 rounded-lg border transition-all hover:bg-app-surface flex items-center justify-center aspect-square",
+                                                            (formData.icon || 'Server').toLowerCase() === iconName.toLowerCase()
+                                                                ? "bg-app-accent/20 border-app-accent text-app-accent"
+                                                                : "bg-app-bg border-app-border text-app-muted"
+                                                        )}
+                                                        title={iconName}
+                                                    >
+                                                        <OSIcon icon={iconName} className="w-5 h-5" />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                             </section>
@@ -790,19 +702,66 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                             </section>
                         </div>
 
-                        <div className="px-4 py-2.5 border-t border-app-border bg-app-bg/90 backdrop-blur-sm flex items-center justify-between gap-3">
-                            {!activeEditingConnectionId ? (
-                                <Button variant="ghost" size="sm" onClick={() => setEntryMode('chooser')}>
-                                    Change Mode
-                                </Button>
-                            ) : <div />}
-                            <div className="flex items-center gap-2">
-                                <Button disabled={!canSave || isSaving} onClick={handleSave}>
-                                    {activeEditingConnectionId ? 'Save Changes' : 'Create Connection'}
-                                </Button>
-                                <Button disabled={!canSave || isSaving} onClick={handleSaveAndConnect}>
-                                    {activeEditingConnectionId ? 'Save & Open' : 'Save & Connect'}
-                                </Button>
+                        <div className="shrink-0 border-t border-app-border bg-app-bg/95 backdrop-blur-sm">
+                            {(testMessage || (authMethod === 'key' && keyInputMode === 'paste')) && (
+                                <div className="px-4 pt-2.5 pb-0 space-y-1">
+                                    {testMessage && (
+                                        <p className={cn(
+                                            "text-xs",
+                                            testStatus === 'success' ? 'text-green-400' :
+                                                testStatus === 'error' ? 'text-red-400' : 'text-app-muted'
+                                        )}>
+                                            {testMessage}
+                                        </p>
+                                    )}
+                                    {authMethod === 'key' && keyInputMode === 'paste' && (
+                                        <p className="text-[10px] text-app-muted">Save first so the pasted key is encrypted in the vault before testing.</p>
+                                    )}
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {!activeEditingConnectionId && (
+                                        <Button variant="ghost" size="sm" onClick={() => setEntryMode('chooser')}>
+                                            Change Mode
+                                        </Button>
+                                    )}
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={handleTestConnection}
+                                        disabled={!canTest}
+                                        className={cn(
+                                            "gap-2 min-w-fit",
+                                            testStatus === 'success' && "text-green-500 hover:text-green-600 hover:bg-green-500/10",
+                                            testStatus === 'error' && "text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                                        )}
+                                    >
+                                        {testStatus === 'testing' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> :
+                                            testStatus === 'success' ? <CheckCircle2 className="w-3.5 h-3.5" /> :
+                                                testStatus === 'error' ? <AlertCircle className="w-3.5 h-3.5" /> :
+                                                    <ShieldCheck className="w-3.5 h-3.5" />}
+                                        <span>{testStatus === 'testing' ? 'Testing...' : 'Test'}</span>
+                                    </Button>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={!canSave || isSaving}
+                                        onClick={handleSave}
+                                    >
+                                        {activeEditingConnectionId ? 'Save' : 'Create'}
+                                    </Button>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        disabled={!canSave || isSaving}
+                                        onClick={handleSaveAndConnect}
+                                    >
+                                        {activeEditingConnectionId ? 'Save & Open' : 'Save & Connect'}
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     </>
