@@ -27,13 +27,13 @@ test('vaultItemToCredentialEnvelope maps SSH private key metadata without secret
   assert.equal(envelope.kind, 'ssh-private-key');
   assert.equal(envelope.label, 'Prod SSH key');
   assert.equal(envelope.revision, 4);
-  assert.equal(envelope.schemaVersion, 1);
+  assert.equal(envelope.schemaVersion, 2);
   assert.equal(envelope.metadata.legacyKind, 'ssh-private-key');
   assert.equal(envelope.fields.length, 1);
   assert.equal(envelope.fields[0].name, 'privateKey');
   assert.equal(envelope.fields[0].format, 'private-key');
   assert.equal(envelope.fields[0].encoding, 'pem');
-  assert.equal(envelope.fields[0].valueRef, 'legacy:item-1:secret');
+  assert.equal(envelope.fields[0].valueRef, 'secret:privateKey');
   assert.equal(envelope.fields[0].value, undefined);
 });
 
@@ -92,7 +92,7 @@ test('vaultItemSecretReferenceField maps SSH password to password field', () => 
   assert.equal(field.label, 'Password');
   assert.equal(field.secret, true);
   assert.equal(field.format, 'password');
-  assert.equal(field.valueRef, 'legacy:item-2:secret');
+  assert.equal(field.valueRef, 'secret:password');
 });
 
 test('vaultItemToCredentialEnvelope accepts secret-bearing records without copying plaintext', () => {

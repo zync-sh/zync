@@ -69,6 +69,20 @@ export function useAutoVault({
         setPastedKeyText('');
         setPastedPassphrase('');
         if (!replacedAuthItemId) return;
+
+        const { connections } = useAppStore.getState();
+        const sharedReferenceCount = connections.filter(connection =>
+            connection.id !== activeEditingConnectionId
+            && connection.authRef?.itemId === replacedAuthItemId,
+        ).length;
+        if (sharedReferenceCount > 0) {
+            showToast(
+                'info',
+                'Previous vault credential was left in place because other hosts still use it.',
+            );
+            return;
+        }
+
         try {
             await vaultIpc.itemDelete(replacedAuthItemId);
         } catch {

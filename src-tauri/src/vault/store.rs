@@ -328,7 +328,7 @@ impl VaultService {
                     item_id.clone(),
                     StoredEnvelope {
                         id: stored.id.clone(),
-                        kind: stored.kind.clone(),
+                        kind: record.kind.clone(),
                         revision: stored.revision,
                         deleted: stored.deleted,
                         crypto_suite: CRYPTO_SUITE.into(),
@@ -499,7 +499,7 @@ impl VaultService {
 
         let stored = StoredEnvelope {
             id: id.clone(),
-            kind: kind.to_string(),
+            kind: record.kind.clone(),
             revision,
             deleted: false,
             crypto_suite: CRYPTO_SUITE.into(),
@@ -593,7 +593,7 @@ impl VaultService {
 
         let stored = StoredEnvelope {
             id: id.clone(),
-            kind: kind.to_string(),
+            kind: record.kind.clone(),
             revision,
             deleted: false,
             crypto_suite: CRYPTO_SUITE.into(),
@@ -740,7 +740,7 @@ impl VaultService {
         let envelope = encrypt_record(&record_key, &plaintext, aad.as_bytes())?;
         let stored = StoredEnvelope {
             id: item_id.to_string(),
-            kind: kind.to_string(),
+            kind: record.kind.clone(),
             revision,
             deleted: false,
             crypto_suite: CRYPTO_SUITE.into(),
@@ -865,7 +865,7 @@ impl VaultService {
         let envelope = encrypt_record(&record_key, &plaintext, aad.as_bytes())?;
         let stored = StoredEnvelope {
             id: item_id.to_string(),
-            kind: kind.to_string(),
+            kind: record.kind.clone(),
             revision,
             deleted: false,
             crypto_suite: CRYPTO_SUITE.into(),

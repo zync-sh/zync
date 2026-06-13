@@ -46,7 +46,7 @@ export function SyncCollectionSetupModal({
     if (!hasLocalVaultConfigured && mode === 'local-passphrase') {
       setMode('custom-passphrase');
     }
-  }, [hasLocalVaultConfigured, isOpen]);
+  }, [hasLocalVaultConfigured, isOpen, mode]);
 
   const canSubmit = useMemo(() => {
     return (

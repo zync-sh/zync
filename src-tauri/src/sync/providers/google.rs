@@ -561,18 +561,22 @@ async fn find_files_by_name_prefix(
 }
 
 fn provider_collection_prefix_from_object_name(object_name: &str) -> Option<String> {
-    for marker in [
+    let markers = [
         "-credential-",
         "-hosts-",
         "-tunnels-",
         "-snippets-",
         "-settings-",
-    ] {
-        if let Some(idx) = object_name.find(marker) {
-            return Some(object_name[..idx + 1].to_string());
+    ];
+    let mut best_idx: Option<usize> = None;
+    for marker in markers {
+        if let Some(idx) = object_name.rfind(marker) {
+            if best_idx.map_or(true, |current| idx > current) {
+                best_idx = Some(idx);
+            }
         }
     }
-    None
+    best_idx.map(|idx| object_name[..idx + 1].to_string())
 }
 
 fn provider_collection_id_from_object_name(object_name: &str) -> Option<String> {
@@ -1028,7 +1032,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
     ) -> SyncResult<Vec<ProviderCredentialObject>> {
         let provider_data_dir = data_dir(app);
         let token = get_valid_google_token(&provider_data_dir).await?;
-        let prefix = format!("zync-sync-{sync_collection_id}-");
+        let prefix = format!("zync-sync-{sync_collection_id}-credential-");
         #[cfg(debug_assertions)]
         eprintln!(
             "[sync][google] list_credential_records collection_id='{}' prefix='{}'",

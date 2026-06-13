@@ -30,21 +30,10 @@ pub struct TunnelSyncRecord {
 
 pub fn load_tunnel_sync_records(data_dir: &Path) -> SyncResult<Vec<TunnelSyncRecord>> {
     let path = data_dir.join(TUNNELS_FILE);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = std::fs::read_to_string(&path).map_err(|e| {
-        SyncError::new(
-            "sync_tunnels_read_failed",
-            format!("Failed to read tunnels source file: {e}"),
-        )
-    })?;
-    let data = serde_json::from_str::<SavedTunnelsData>(&raw).map_err(|e| {
-        SyncError::new(
-            "sync_tunnels_parse_failed",
-            format!("Failed to parse tunnels source file: {e}"),
-        )
-    })?;
+    let _guard = TUNNELS_MUTATION_LOCK
+        .lock()
+        .map_err(|error| SyncError::new("sync_tunnels_lock_failed", error.to_string()))?;
+    let data = load_saved_tunnels(path.as_path())?;
     let mut dedup: BTreeMap<String, TunnelSyncRecord> = BTreeMap::new();
     for tunnel in data.tunnels {
         let logical_id = tunnel_logical_id(&tunnel);

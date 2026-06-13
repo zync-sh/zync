@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
 use crate::types::SavedData;
+use crate::vault::credential::validate_secret_values_for_kind;
 use crate::vault::error::VaultError;
 use crate::vault::secure_to_vault::{SecureToVaultPreview, SecureToVaultResult};
 use crate::vault::store::VaultService;
@@ -116,15 +117,15 @@ pub async fn vault_item_create(
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
     let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
-        let mut exposed = expose_secret_values(secret_values);
+        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
         let result = vault.item_create_with_secret_values(
             &args.label,
             &args.kind,
-            &exposed,
+            &sanitized,
             args.notes.as_deref(),
             args.credential_id.as_deref(),
         );
-        zeroize_secret_values(&mut exposed);
+        zeroize_secret_values(&mut sanitized);
         result.map_err(VaultCommandError::from)?
     } else {
         let secret = args
@@ -232,16 +233,16 @@ pub async fn vault_item_update(
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
     let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
-        let mut exposed = expose_secret_values(secret_values);
+        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
         let result = vault.item_update_with_secret_values(
             &args.item_id,
             &args.label,
             &args.kind,
-            &exposed,
+            &sanitized,
             args.notes.as_deref(),
             None,
         );
-        zeroize_secret_values(&mut exposed);
+        zeroize_secret_values(&mut sanitized);
         result.map_err(VaultCommandError::from)?
     } else {
         let secret = args
@@ -265,11 +266,22 @@ pub async fn vault_item_update(
     vault.item_meta(&record).map_err(Into::into)
 }
 
-fn expose_secret_values(values: &BTreeMap<String, SecretString>) -> BTreeMap<String, String> {
-    values
-        .iter()
-        .map(|(name, value)| (name.clone(), value.expose_secret().to_string()))
-        .collect()
+fn sanitize_secret_values(
+    kind: &str,
+    values: &BTreeMap<String, SecretString>,
+) -> Result<BTreeMap<String, String>, VaultCommandError> {
+    let mut sanitized = BTreeMap::new();
+    for (name, value) in values {
+        let trimmed = value.expose_secret().trim();
+        if !trimmed.is_empty() {
+            sanitized.insert(name.clone(), trimmed.to_string());
+        }
+    }
+    validate_secret_values_for_kind(kind, &sanitized).map_err(|message| VaultCommandError {
+        code: "invalid_secret_values".into(),
+        message,
+    })?;
+    Ok(sanitized)
 }
 
 fn zeroize_secret_values(values: &mut BTreeMap<String, String>) {

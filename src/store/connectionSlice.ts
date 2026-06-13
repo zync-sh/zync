@@ -32,7 +32,12 @@ import {
     pinFeatureOnConnectionIfNeeded,
     startAutoStartTunnels,
 } from '../features/connections/application/tunnelAutoStartService';
-import { buildConnectConfig, normalizeFolderPath, preserveVaultCredentialOnUpdate, type ImportPlanItem } from '../features/connections/domain';
+import {
+    buildConnectConfigResult,
+    normalizeFolderPath,
+    preserveVaultCredentialOnUpdate,
+    type ImportPlanItem,
+} from '../features/connections/domain';
 import { connectionErrorMessage } from '../features/connections/domain/errorSanitization';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc, type LoadConnectionsIpcResult } from '../features/connections/infrastructure/connectionPersistence';
@@ -174,21 +179,23 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     addConnection: async (conn, isTemp = false) => {
-        const next = upsertConnectionInState(get(), conn);
+        const preSave = upsertConnectionInState(get(), conn);
         if (!isTemp) {
-            await saveToMain(next.connections, next.folders);
+            await saveToMain(preSave.connections, preSave.folders);
         }
-        set({ connections: next.connections, folders: next.folders });
+        const merged = upsertConnectionInState(get(), conn);
+        set({ connections: merged.connections, folders: merged.folders });
     },
 
     editConnection: async (updatedConn) => {
-        const existing = get().connections.find(connection => connection.id === updatedConn.id);
-        const next = upsertConnectionInState(get(), updatedConn);
-        await saveToMain(next.connections, next.folders);
-        if (existing && hasRemoteTargetChanged(existing, updatedConn)) {
+        const preSave = upsertConnectionInState(get(), updatedConn);
+        await saveToMain(preSave.connections, preSave.folders);
+        const latestExisting = get().connections.find(connection => connection.id === updatedConn.id);
+        const merged = upsertConnectionInState(get(), updatedConn);
+        if (latestExisting && hasRemoteTargetChanged(latestExisting, updatedConn)) {
             clearRemoteShellCache(updatedConn.id);
         }
-        set({ connections: next.connections, folders: next.folders });
+        set({ connections: merged.connections, folders: merged.folders });
     },
 
     deleteConnection: (id) => {
@@ -384,15 +391,20 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const conn = connections.find(c => c.id === id);
             if (!conn) throw new Error('Connection not found');
 
-            const fullConfig = buildConnectConfig(connections, id);
-            if (!fullConfig) {
-                const message = `Couldn't build connection config for "${conn.name}". If this uses a jump host, re-import your SSH config to repair the reference.`;
+            const configResult = buildConnectConfigResult(connections, id);
+            if (configResult.status === 'error') {
+                const message = configResult.reason === 'missing-auth'
+                    ? `Connection "${conn.name}" has no authentication configured. Add a password, private key, or vault credential.`
+                    : configResult.reason === 'jump-host-failure'
+                        ? `Couldn't build connection config for "${conn.name}". If this uses a jump host, re-import your SSH config to repair the reference.`
+                        : `Couldn't build connection config for "${conn.name}".`;
                 set(state => ({
                     connections: markConnectionErrorIfNeeded(state.connections, id, message),
                 }));
                 get().showToast('error', message, 8000);
                 return;
             }
+            const fullConfig = configResult.config;
 
             console.log('[CONNECT] Connecting with config:', fullConfig);
 

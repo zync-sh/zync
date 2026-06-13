@@ -86,34 +86,33 @@ pub fn save_manifest(data_dir: &Path, manifest: &SyncCollectionManifest) -> Sync
 
     match std::fs::rename(&temp_path, &final_path) {
         Ok(()) => Ok(()),
-        Err(rename_err) => {
-            if rename_err.kind() == ErrorKind::AlreadyExists && final_path.exists() {
-                match std::fs::remove_file(&final_path) {
-                    Ok(()) => {
-                        if let Err(retry_err) = std::fs::rename(&temp_path, &final_path) {
-                            let _ = std::fs::remove_file(&temp_path);
-                            return Err(SyncError::new(
-                                "sync_collection_write_failed",
-                                format!(
-                                    "Failed to finalize sync collection manifest after replace retry: {retry_err}"
-                                ),
-                            ));
-                        }
-                        return Ok(());
-                    }
-                    Err(remove_err) if remove_err.kind() == ErrorKind::NotFound => {}
-                    Err(remove_err) => {
-                        let _ = std::fs::remove_file(&temp_path);
-                        return Err(SyncError::new(
-                            "sync_collection_write_failed",
-                            format!(
-                                "Failed to replace existing sync collection manifest: {remove_err}"
-                            ),
-                        ));
-                    }
+        Err(rename_err) if rename_err.kind() == ErrorKind::AlreadyExists && final_path.exists() => {
+            let backup_path = final_path.with_extension("bak");
+            std::fs::rename(&final_path, &backup_path).map_err(|backup_err| {
+                let _ = std::fs::remove_file(&temp_path);
+                SyncError::new(
+                    "sync_collection_write_failed",
+                    format!("Failed to stage sync collection manifest backup before replace: {backup_err}"),
+                )
+            })?;
+            match std::fs::rename(&temp_path, &final_path) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&backup_path);
+                    Ok(())
+                }
+                Err(retry_err) => {
+                    let _ = std::fs::rename(&backup_path, &final_path);
+                    let _ = std::fs::remove_file(&temp_path);
+                    Err(SyncError::new(
+                        "sync_collection_write_failed",
+                        format!(
+                            "Failed to finalize sync collection manifest after replace retry: {retry_err}"
+                        ),
+                    ))
                 }
             }
-
+        }
+        Err(rename_err) => {
             let _ = std::fs::remove_file(&temp_path);
             Err(SyncError::new(
                 "sync_collection_write_failed",
