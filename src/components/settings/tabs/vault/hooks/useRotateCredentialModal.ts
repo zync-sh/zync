@@ -27,7 +27,7 @@ export function useRotateCredentialModal({
   const [passphrase, setPassphrase] = useState('');
   const [notes, setNotes] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const currentOpenRequestIdRef = useRef<string | null>(null);
+  const currentOpenRequestTokenRef = useRef<symbol | null>(null);
 
   const item = useMemo(
     () => items.find(i => i.id === itemId) ?? null,
@@ -37,31 +37,32 @@ export function useRotateCredentialModal({
   const open = async (id: string) => {
     const found = items.find(i => i.id === id);
     if (!found) return;
+    const requestToken = Symbol('rotate-credential-open');
     setItemId(found.id);
     setLabel(found.label);
     setSecret('');
     setPassphrase('');
     setNotes('');
-    currentOpenRequestIdRef.current = found.id;
+    currentOpenRequestTokenRef.current = requestToken;
     try {
       const full = await vaultIpc.itemGet(found.id);
-      if (currentOpenRequestIdRef.current !== found.id) return;
+      if (currentOpenRequestTokenRef.current !== requestToken) return;
       setNotes(full.notes || '');
     } catch (error: unknown) {
-      if (currentOpenRequestIdRef.current !== found.id) return;
+      if (currentOpenRequestTokenRef.current !== requestToken) return;
       console.warn('[Vault] Failed to load item for rotation:', error);
       const msg = extractErrorMessage(error);
       showToast('error', `Failed to load vault item notes: ${msg}`);
     } finally {
-      if (currentOpenRequestIdRef.current === found.id) {
-        currentOpenRequestIdRef.current = null;
+      if (currentOpenRequestTokenRef.current === requestToken) {
+        currentOpenRequestTokenRef.current = null;
       }
     }
   };
 
   const close = () => {
     if (isLoading) return;
-    currentOpenRequestIdRef.current = null;
+    currentOpenRequestTokenRef.current = null;
     setItemId(null);
     setLabel('');
     setSecret('');

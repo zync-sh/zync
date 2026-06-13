@@ -173,30 +173,22 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
-    addConnection: (conn, isTemp = false) => {
-        let savePromise = Promise.resolve();
-        set(state => {
-            const next = upsertConnectionInState(state, conn);
-            if (!isTemp) {
-                savePromise = saveToMain(next.connections, next.folders);
-            }
-            return { connections: next.connections, folders: next.folders };
-        });
-        return savePromise;
+    addConnection: async (conn, isTemp = false) => {
+        const next = upsertConnectionInState(get(), conn);
+        if (!isTemp) {
+            await saveToMain(next.connections, next.folders);
+        }
+        set({ connections: next.connections, folders: next.folders });
     },
 
-    editConnection: (updatedConn) => {
+    editConnection: async (updatedConn) => {
         const existing = get().connections.find(connection => connection.id === updatedConn.id);
+        const next = upsertConnectionInState(get(), updatedConn);
+        await saveToMain(next.connections, next.folders);
         if (existing && hasRemoteTargetChanged(existing, updatedConn)) {
             clearRemoteShellCache(updatedConn.id);
         }
-        let savePromise = Promise.resolve();
-        set(state => {
-            const next = upsertConnectionInState(state, updatedConn);
-            savePromise = saveToMain(next.connections, next.folders);
-            return { connections: next.connections, folders: next.folders };
-        });
-        return savePromise;
+        set({ connections: next.connections, folders: next.folders });
     },
 
     deleteConnection: (id) => {

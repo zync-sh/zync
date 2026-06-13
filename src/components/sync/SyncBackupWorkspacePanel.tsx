@@ -78,6 +78,10 @@ export default function SyncBackupWorkspacePanel() {
   const isVaultUnlocked = status?.status === 'unlocked';
   const hasVaultConfigured = status?.status === 'locked' || status?.status === 'unlocked';
 
+  const loadAllTunnels = useAppStore(state => state.loadAllTunnels);
+  const loadSnippets = useAppStore(state => state.loadSnippets);
+  const loadSettings = useAppStore(state => state.loadSettings);
+
   const panel = useVaultPanelActions({
     connections,
     tabs,
@@ -89,6 +93,9 @@ export default function SyncBackupWorkspacePanel() {
     onRefreshItems: refreshItems,
     onLoadConnections: loadConnections,
     onDisconnectConnection: disconnectConnection,
+    onReloadTunnels: loadAllTunnels,
+    onReloadSnippets: loadSnippets,
+    onReloadSettings: loadSettings,
   });
 
   const {

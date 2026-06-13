@@ -5,9 +5,12 @@ use crate::types::{CredentialRef, SavedConnection, SavedData};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::Path;
-use uuid::Uuid;
+use std::sync::{LazyLock, Mutex};
 
 const CONNECTIONS_FILE: &str = "connections.json";
+
+pub(crate) static CONNECTIONS_MUTATION_LOCK: LazyLock<Mutex<()>> =
+    LazyLock::new(|| Mutex::new(()));
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -40,23 +43,10 @@ impl HostSyncRecord {
 
 pub fn load_hosts_sync_records(data_dir: &Path) -> SyncResult<Vec<HostSyncRecord>> {
     let path = data_dir.join(CONNECTIONS_FILE);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let raw = std::fs::read_to_string(&path).map_err(|e| {
-        SyncError::new(
-            "sync_hosts_read_failed",
-            format!("Failed to read hosts source file: {e}"),
-        )
-    })?;
-
-    let data = serde_json::from_str::<SavedData>(&raw).map_err(|e| {
-        SyncError::new(
-            "sync_hosts_parse_failed",
-            format!("Failed to parse hosts source file: {e}"),
-        )
-    })?;
+    let _guard = CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|error| SyncError::new("sync_hosts_lock_failed", error.to_string()))?;
+    let data = load_saved_data(&path)?;
 
     let mut dedup: BTreeMap<String, HostSyncRecord> = BTreeMap::new();
     for conn in data.connections {
@@ -119,6 +109,9 @@ pub fn apply_hosts_restore_records(
         return Ok((0, 0));
     }
     let path = data_dir.join(CONNECTIONS_FILE);
+    let _guard = CONNECTIONS_MUTATION_LOCK
+        .lock()
+        .map_err(|error| SyncError::new("sync_hosts_lock_failed", error.to_string()))?;
     let mut data = load_saved_data(&path)?;
     let mut restored = 0u64;
     let mut updated = 0u64;
@@ -183,11 +176,32 @@ pub fn apply_hosts_restore_records(
 
 fn load_saved_data(path: &Path) -> SyncResult<SavedData> {
     if !path.exists() {
+        let temp_path = path.with_extension("tmp");
+        let backup_path = path.with_extension("bak");
+        for candidate in [&temp_path, &backup_path] {
+            if let Some(data) = parse_saved_candidate(candidate) {
+                std::fs::rename(candidate, path).map_err(|e| {
+                    SyncError::new(
+                        "sync_hosts_read_failed",
+                        format!("Failed to promote recovered hosts file: {e}"),
+                    )
+                })?;
+                return Ok(data);
+            }
+        }
         return Ok(SavedData {
             connections: Vec::new(),
             folders: Vec::new(),
         });
     }
+    parse_saved_file(path)
+}
+
+fn parse_saved_candidate(path: &Path) -> Option<SavedData> {
+    parse_saved_file(path).ok()
+}
+
+fn parse_saved_file(path: &Path) -> SyncResult<SavedData> {
     let raw = std::fs::read_to_string(path).map_err(|e| {
         SyncError::new(
             "sync_hosts_read_failed",
@@ -212,9 +226,7 @@ fn save_saved_data_atomic(path: &Path, data: &SavedData) -> SyncResult<()> {
             format!("Failed to create hosts directory: {e}"),
         )
     })?;
-    let write_id = Uuid::new_v4();
-    let temp_path = path.with_extension(format!("{write_id}.tmp"));
-    let backup_path = path.with_extension(format!("{write_id}.bak"));
+    let temp_path = path.with_extension("tmp");
     let json = serde_json::to_string_pretty(data).map_err(|e| {
         SyncError::new(
             "sync_hosts_write_failed",
@@ -230,6 +242,7 @@ fn save_saved_data_atomic(path: &Path, data: &SavedData) -> SyncResult<()> {
     match std::fs::rename(&temp_path, path) {
         Ok(()) => Ok(()),
         Err(rename_err) if rename_err.kind() == ErrorKind::AlreadyExists && path.exists() => {
+            let backup_path = path.with_extension("bak");
             std::fs::rename(path, &backup_path).map_err(|backup_err| {
                 let _ = std::fs::remove_file(&temp_path);
                 SyncError::new(

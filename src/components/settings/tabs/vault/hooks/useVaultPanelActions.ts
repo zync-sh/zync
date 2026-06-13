@@ -35,6 +35,9 @@ interface UseVaultPanelActionsOptions {
   onRefreshItems: () => Promise<void>;
   onLoadConnections: () => Promise<void>;
   onDisconnectConnection: (id: string) => Promise<void>;
+  onReloadTunnels?: () => Promise<void>;
+  onReloadSnippets?: () => Promise<void>;
+  onReloadSettings?: () => Promise<void>;
 }
 
 interface RecoveryModalState {
@@ -89,6 +92,9 @@ export function useVaultPanelActions({
   onRefreshItems,
   onLoadConnections,
   onDisconnectConnection,
+  onReloadTunnels,
+  onReloadSnippets,
+  onReloadSettings,
 }: UseVaultPanelActionsOptions) {
   // ── Secure-to-vault ───────────────────────────────────────────────────────
   const [securePreview, setSecurePreview] = useState<SecureToVaultPreview | null>(null);
@@ -838,6 +844,13 @@ export function useVaultPanelActions({
           : prev,
       );
       await loadGoogleSync();
+      if (domain === 'tunnels') {
+        await onReloadTunnels?.();
+      } else if (domain === 'snippets') {
+        await onReloadSnippets?.();
+      } else {
+        await onReloadSettings?.();
+      }
       const changed = result.restored + result.updated;
       showToast(
         changed > 0 ? 'success' : 'info',

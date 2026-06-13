@@ -255,6 +255,24 @@ pub fn primary_secret_field_name(kind: &CredentialKind) -> &'static str {
     }
 }
 
+pub fn validate_secret_values_for_kind(
+    kind: &str,
+    secret_values: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let normalized_kind = CredentialKind::from_legacy_kind(kind);
+    let required_field = primary_secret_field_name(&normalized_kind);
+    let required_present = secret_values
+        .get(required_field)
+        .is_some_and(|value| !value.trim().is_empty());
+    if required_present {
+        return Ok(());
+    }
+
+    Err(format!(
+        "credential kind '{kind}' requires a non-empty '{required_field}' value"
+    ))
+}
+
 pub fn primary_secret_value(record: &PlaintextRecord) -> Option<&str> {
     let kind = CredentialKind::from_legacy_kind(&record.kind);
     record
@@ -270,7 +288,8 @@ pub fn private_key_auth_values(record: &PlaintextRecord) -> Option<(&str, Option
         .secret_values
         .get(PRIVATE_KEY_FIELD)
         .map(String::as_str)
-        .or_else(|| primary_secret_value(record))?;
+        .filter(|value| !value.is_empty())
+        .or_else(|| (!record.secret.is_empty()).then_some(record.secret.as_str()))?;
     let passphrase = record
         .secret_values
         .get(PASSPHRASE_FIELD)

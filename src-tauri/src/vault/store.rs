@@ -9,7 +9,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::vault::credential::{
     normalize_record_credential, primary_secret_value, secret_values_from_legacy,
-    CredentialEnvelope, CURRENT_CREDENTIAL_SCHEMA_VERSION,
+    validate_secret_values_for_kind, CredentialEnvelope, CURRENT_CREDENTIAL_SCHEMA_VERSION,
 };
 use crate::vault::crypto::{
     decrypt_record, derive_kek, derive_record_key, derive_secret_fingerprint, encrypt_record,
@@ -28,17 +28,11 @@ const AAD_VERSION: u32 = 1;
 const SCHEMA_VERSION: u32 = 1;
 pub const PASSPHRASE_MIN_LENGTH: usize = 12;
 
-fn validate_secret_values(secret_values: &BTreeMap<String, String>) -> Result<(), VaultError> {
-    if secret_values
-        .values()
-        .any(|value| !value.trim().is_empty())
-    {
-        Ok(())
-    } else {
-        Err(VaultError::InvalidData(
-            "credential requires at least one non-empty secret value".into(),
-        ))
-    }
+fn validate_secret_values(
+    kind: &str,
+    secret_values: &BTreeMap<String, String>,
+) -> Result<(), VaultError> {
+    validate_secret_values_for_kind(kind, secret_values).map_err(VaultError::InvalidData)
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -468,7 +462,7 @@ impl VaultService {
         notes: Option<&str>,
         logical_id: Option<&str>,
     ) -> Result<PlaintextRecord, VaultError> {
-        validate_secret_values(secret_values)?;
+        validate_secret_values(kind, secret_values)?;
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
@@ -565,7 +559,7 @@ impl VaultService {
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
-        validate_secret_values(secret_values)?;
+        validate_secret_values(kind, secret_values)?;
 
         let id = Uuid::new_v4().to_string();
         let logical_id = logical_id.trim();
@@ -709,7 +703,7 @@ impl VaultService {
         notes: Option<&str>,
         credential: Option<&CredentialEnvelope>,
     ) -> Result<PlaintextRecord, VaultError> {
-        validate_secret_values(secret_values)?;
+        validate_secret_values(kind, secret_values)?;
         let existing = self.item_get(item_id)?;
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
@@ -811,7 +805,7 @@ impl VaultService {
         revision: u64,
         updated_at: u64,
     ) -> Result<PlaintextRecord, VaultError> {
-        validate_secret_values(secret_values)?;
+        validate_secret_values(kind, secret_values)?;
         let existing = self.item_get(item_id)?;
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
@@ -822,6 +816,13 @@ impl VaultService {
             return Err(VaultError::InvalidData(
                 "logical_id is required for sync restore update".to_string(),
             ));
+        }
+
+        if revision < existing.revision {
+            return Err(VaultError::InvalidData(format!(
+                "sync restore revision {revision} is older than local revision {}",
+                existing.revision
+            )));
         }
 
         let revision = revision.max(1);
@@ -847,6 +848,16 @@ impl VaultService {
             updated_at,
         };
         normalize_record_credential(&mut record);
+
+        if revision == existing.revision
+            && existing.kind == record.kind
+            && existing.label == record.label
+            && existing.secret_values == record.secret_values
+            && existing.notes == record.notes
+            && existing.credential == record.credential
+        {
+            return Ok(existing);
+        }
 
         let plaintext = serde_json::to_vec(&record)?;
         let record_key = derive_record_key(vek, record_info_bytes(item_id, revision).as_bytes())?;

@@ -45,8 +45,26 @@ pub fn load_snippet_sync_records(data_dir: &Path) -> SyncResult<Vec<SnippetSyncR
     Ok(dedup.into_values().collect())
 }
 
+fn normalize_snippet_timestamp(timestamp: u64) -> u64 {
+    // Local snippet timestamps may be persisted in ms while sync watermarks use seconds.
+    if timestamp >= 1_000_000_000_000 {
+        timestamp / 1000
+    } else {
+        timestamp
+    }
+}
+
+fn snippet_timestamp_from_sync(updated_at: u64) -> u64 {
+    if updated_at >= 1_000_000_000_000 {
+        updated_at
+    } else {
+        updated_at.saturating_mul(1000)
+    }
+}
+
 fn map_snippet(snip: Snippet, logical_id: String) -> SnippetSyncRecord {
-    let updated_at = snip.updated_at.or(snip.created_at).unwrap_or(0);
+    let updated_at =
+        normalize_snippet_timestamp(snip.updated_at.or(snip.created_at).unwrap_or(0));
     SnippetSyncRecord {
         logical_id,
         name: snip.name,
@@ -115,10 +133,12 @@ pub fn apply_snippet_restore_records(data_dir: &Path, records: &[SnippetSyncReco
             existing.category = record.category.clone();
             existing.tags = if record.tags.is_empty() { None } else { Some(record.tags.clone()) };
             existing.connection_id = record.connection_id.clone();
-            existing.updated_at = Some(record.updated_at);
+            let restored_at = snippet_timestamp_from_sync(record.updated_at);
+            existing.updated_at = Some(restored_at);
             updated = updated.saturating_add(1);
             continue;
         }
+        let restored_at = snippet_timestamp_from_sync(record.updated_at);
         saved.snippets.push(Snippet {
             id: logical_id,
             name: record.name.clone(),
@@ -126,8 +146,8 @@ pub fn apply_snippet_restore_records(data_dir: &Path, records: &[SnippetSyncReco
             category: record.category.clone(),
             tags: if record.tags.is_empty() { None } else { Some(record.tags.clone()) },
             connection_id: record.connection_id.clone(),
-            created_at: Some(record.updated_at),
-            updated_at: Some(record.updated_at),
+            created_at: Some(restored_at),
+            updated_at: Some(restored_at),
         });
         restored = restored.saturating_add(1);
     }
@@ -502,7 +522,7 @@ mod tests {
         let saved = load_saved(&dir.join(SNIPPETS_FILE)).expect("read");
         assert_eq!(saved.snippets.len(), 1);
         assert_eq!(saved.snippets[0].id, fallback_id);
-        assert_eq!(saved.snippets[0].updated_at, Some(9));
+        assert_eq!(saved.snippets[0].updated_at, Some(9_000));
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

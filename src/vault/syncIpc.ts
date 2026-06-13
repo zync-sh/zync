@@ -353,7 +353,12 @@ async function runStatusRefreshingMutation<T>(
     notifySyncStatusChanged(provider, providerStatus);
     return result;
   } catch (error) {
-    notifySyncStatusChanged(provider, fallbackStatus(provider, { connected: true }, error));
+    try {
+      const providerStatus = await syncIpc.status(provider);
+      notifySyncStatusChanged(provider, providerStatus);
+    } catch {
+      notifySyncStatusChanged(provider, fallbackStatus(provider, { connected: false }, error));
+    }
     throw error;
   }
 }

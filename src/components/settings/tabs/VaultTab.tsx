@@ -34,6 +34,9 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   const tabs = useAppStore(state => state.tabs);
   const disconnectConnection = useAppStore(state => state.disconnect);
   const loadConnections = useAppStore(state => state.loadConnections);
+  const loadAllTunnels = useAppStore(state => state.loadAllTunnels);
+  const loadSnippets = useAppStore(state => state.loadSnippets);
+  const loadSettings = useAppStore(state => state.loadSettings);
   const openSyncBackupTab = useAppStore(state => state.openSyncBackupTab);
 
   const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
@@ -128,6 +131,9 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
     onRefreshItems: refreshItems,
     onLoadConnections: loadConnections,
     onDisconnectConnection: disconnectConnection,
+    onReloadTunnels: loadAllTunnels,
+    onReloadSnippets: loadSnippets,
+    onReloadSettings: loadSettings,
   });
 
   // Destructure stable callbacks used in effects so deps are explicit and accurate.

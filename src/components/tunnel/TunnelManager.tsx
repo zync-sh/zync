@@ -126,7 +126,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
             };
             await window.ipcRenderer.invoke('tunnel:save', revertedTunnel);
             showToast('success', `Port reverted to ${tunnel.originalPort}`);
-            await loadTunnels();
           } catch (revertError: any) {
             showToast('error', `Failed to revert port: ${revertError.message || revertError}`);
           }

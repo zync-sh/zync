@@ -28,7 +28,7 @@ export function VaultNavSection() {
         if (activeTab?.type === 'sync') return 'google';
         if (activeTab?.type === 'vault') return activeTab.vaultProfileId ?? DEFAULT_VAULT_PROFILE_ID;
 
-        return state.tabs.find(tab => tab.type === 'vault')?.vaultProfileId ?? DEFAULT_VAULT_PROFILE_ID;
+        return null;
     });
     const vaultStatus = useVaultStore(state => state.status);
     const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);

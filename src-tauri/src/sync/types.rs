@@ -411,7 +411,7 @@ impl Default for SyncProfilesStore {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderIdentity {
     pub email: Option<String>,
     pub avatar_url: Option<String>,
@@ -425,7 +425,7 @@ pub struct ProviderCredentialObject {
     pub object_id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderStatusSnapshot {
     pub connected: bool,
     pub email: Option<String>,
@@ -457,6 +457,26 @@ impl std::fmt::Display for SyncError {
 impl std::error::Error for SyncError {}
 
 pub type SyncResult<T> = Result<T, SyncError>;
+
+impl std::fmt::Debug for ProviderIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderIdentity")
+            .field("email", &self.email.as_ref().map(|_| "<redacted>"))
+            .field("avatar_url", &self.avatar_url.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ProviderStatusSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderStatusSnapshot")
+            .field("connected", &self.connected)
+            .field("email", &self.email.as_ref().map(|_| "<redacted>"))
+            .field("avatar_url", &self.avatar_url.as_ref().map(|_| "<redacted>"))
+            .field("last_sync", &self.last_sync)
+            .finish()
+    }
+}
 
 impl std::fmt::Debug for SyncProviderStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

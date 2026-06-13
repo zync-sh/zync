@@ -26,8 +26,7 @@ static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::Pa
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
-pub(crate) static CONNECTIONS_MUTATION_LOCK: LazyLock<StdMutex<()>> =
-    LazyLock::new(|| StdMutex::new(()));
+pub(crate) use crate::sync::domain_hosts::CONNECTIONS_MUTATION_LOCK;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
