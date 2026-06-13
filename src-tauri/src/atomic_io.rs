@@ -2,16 +2,24 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
-const TEMP_EXTENSION: &str = "tmp";
-const BACKUP_EXTENSION: &str = "bak";
+const LEGACY_BACKUP_EXTENSION: &str = "bak";
+
+fn unique_temp_path(path: &Path, unique_suffix: &Uuid) -> PathBuf {
+    path.with_extension(format!("json.tmp.{unique_suffix}"))
+}
+
+fn unique_backup_path(path: &Path, unique_suffix: &Uuid) -> PathBuf {
+    path.with_extension(format!("json.bak.{unique_suffix}"))
+}
 
 /// Replace `path` with `content` using a durable temp-write + rename flow.
 ///
-/// - Writes to `path.with_extension("tmp")`, flushes with `sync_all`
-/// - Renames into place; on `AlreadyExists`, stages `path` to `.bak` and retries
-/// - Removes a stale `.bak` before staging when needed
+/// - Writes to a per-invocation temp file (`*.json.tmp.<uuid>`), flushes with `sync_all`
+/// - Renames into place; on `AlreadyExists`, stages `path` to a unique backup and retries
+/// - Clears legacy fixed `.tmp`/`.bak` siblings from older writers before rename
 /// - Flushes the final file and parent directory metadata (parent sync skipped on Windows)
 pub fn durable_replace(path: &Path, content: &[u8]) -> io::Result<()> {
     let parent = path
@@ -19,17 +27,19 @@ pub fn durable_replace(path: &Path, content: &[u8]) -> io::Result<()> {
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "invalid file path"))?;
     fs::create_dir_all(parent)?;
 
-    let temp_path = path.with_extension(TEMP_EXTENSION);
+    let unique_suffix = Uuid::new_v4();
+    let temp_path = unique_temp_path(path, &unique_suffix);
     write_temp_durable(&temp_path, content)?;
 
-    // Windows may replace an existing destination on rename without staging; clear stale backups first.
-    let backup_path = path.with_extension(BACKUP_EXTENSION);
-    remove_stale_backup_file(&backup_path)?;
+    // Windows may replace an existing destination on rename without staging; clear legacy backups first.
+    remove_stale_backup_file(&path.with_extension(LEGACY_BACKUP_EXTENSION))?;
+
+    let backup_path = unique_backup_path(path, &unique_suffix);
 
     match fs::rename(&temp_path, path) {
         Ok(()) => finalize_durable(path),
         Err(rename_err) if rename_err.kind() == ErrorKind::AlreadyExists && path.exists() => {
-            replace_with_backup(path, &temp_path, rename_err)
+            replace_with_backup(path, &temp_path, &backup_path)
         }
         Err(rename_err) => {
             let _ = fs::remove_file(&temp_path);
@@ -49,9 +59,8 @@ fn write_temp_durable(temp_path: &Path, content: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn replace_with_backup(path: &Path, temp_path: &Path, _initial_rename_err: io::Error) -> io::Result<()> {
-    let backup_path = path.with_extension(BACKUP_EXTENSION);
-    remove_stale_backup(&backup_path, temp_path)?;
+fn replace_with_backup(path: &Path, temp_path: &Path, backup_path: &Path) -> io::Result<()> {
+    remove_stale_backup(backup_path, temp_path)?;
 
     if let Err(stage_err) = fs::rename(path, &backup_path) {
         let _ = fs::remove_file(temp_path);
@@ -160,15 +169,15 @@ mod tests {
         let dir = temp_dir("stale-backup");
         fs::create_dir_all(&dir).expect("create dir");
         let path = dir.join("data.json");
-        let backup_path = path.with_extension(BACKUP_EXTENSION);
+        let legacy_backup_path = path.with_extension(LEGACY_BACKUP_EXTENSION);
 
         fs::write(&path, r#"{"version":1}"#).expect("seed primary");
-        fs::write(&backup_path, r#"{"version":"backup"}"#).expect("seed stale backup");
+        fs::write(&legacy_backup_path, r#"{"version":"backup"}"#).expect("seed stale backup");
 
         durable_replace(&path, br#"{"version":2}"#).expect("replace with stale backup present");
         let updated = fs::read_to_string(&path).expect("read updated");
         assert_eq!(updated, r#"{"version":2}"#);
-        assert!(!backup_path.exists());
+        assert!(!legacy_backup_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
     }

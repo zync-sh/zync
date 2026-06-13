@@ -301,7 +301,7 @@ export function notifySyncStatusChanged(provider: SyncProvider, status?: SyncPro
 
 function fallbackStatus(
   provider: SyncProvider,
-  fallback: SyncProviderStatus,
+  fallback: Partial<SyncProviderStatus>,
   error: unknown,
 ): SyncProviderStatus {
   const normalized = parseSyncInvokeError(error);
@@ -309,7 +309,7 @@ function fallbackStatus(
   const normalizedMessage = normalized.message;
   const lastKnown = lastKnownStatusByProvider[provider];
   // Merge order: lastKnown supplies supplementary fields (email, lastSync),
-  // fallback overrides connection state (connected), error is always set.
+  // fallback overrides only the fields it provides, error is always set.
   return lastKnown
     ? {
       ...lastKnown,
@@ -320,6 +320,7 @@ function fallbackStatus(
       lastErrorCode: errorCode,
     }
     : {
+      connected: fallback.connected ?? false,
       ...fallback,
       error: normalizedMessage,
       errorCode,
@@ -348,7 +349,7 @@ async function notifySyncStatusOnMutationError(
   try {
     notifySyncStatusChanged(provider, await refreshProviderStatus(provider));
   } catch {
-    notifySyncStatusChanged(provider, fallbackStatus(provider, { connected: false }, error));
+    notifySyncStatusChanged(provider, fallbackStatus(provider, {}, error));
   }
 }
 
