@@ -58,7 +58,10 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
   },
 
   refresh: async () => {
-    set({ isLoading: true, error: null });
+    const isInitialLoad = get().status === null;
+    if (isInitialLoad) {
+      set({ isLoading: true, error: null });
+    }
     try {
       const status = await vaultIpc.status();
       set({ status });

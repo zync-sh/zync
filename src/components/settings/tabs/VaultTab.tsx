@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, ArrowRight, KeyRound, Download, Upload, Cloud } from 'lucide-react';
 import { useVaultStore } from '../../../vault/useVaultStore';
+import { isVaultStatusPending } from '../../../vault/vaultLoading';
 import { vaultIpc, type VaultItemDetail } from '../../../vault/ipc';
 
 import { RecoveryKeyModal } from '../../vault/RecoveryKeyModal';
@@ -9,6 +10,8 @@ import { useAppStore } from '../../../store/useAppStore';
 import { DEFAULT_VAULT_PROFILE_ID, type VaultProfileId } from '../../../vault/profileTypes';
 import { didVaultTransitionToLocked, resolveVaultFocusProfile } from './vaultFocus';
 import { VaultStatusCard } from './vault/VaultStatusCard';
+import { VaultSectionSkeleton } from './vault/VaultSectionSkeleton';
+import { VaultLockedPanel } from './vault/VaultLockedPanel';
 import { VaultItemsPanel } from './vault/VaultItemsPanel';
 import { VaultCredentialDetailModal } from './vault/VaultCredentialDetailModal';
 import { AddCredentialModal } from './vault/AddCredentialModal';
@@ -26,7 +29,7 @@ interface VaultTabProps {
 }
 
 export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultTabProps) {
-  const { status, items, refresh, lock, refreshItems, openUnlockModal, forgetDevice } = useVaultStore();
+  const { status, items, isLoading, refresh, lock, refreshItems, openUnlockModal, forgetDevice } = useVaultStore();
   const showToast = useAppStore(state => state.showToast);
   const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
   const connections = useAppStore(state => state.connections);
@@ -47,7 +50,10 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   const localSectionRef = useRef<HTMLDivElement | null>(null);
   const syncHandoffRef = useRef<HTMLDivElement | null>(null);
 
+  const isStatusPending = isVaultStatusPending(status, isLoading);
   const isUnlocked = status?.status === 'unlocked';
+  const isLocked = status?.status === 'locked';
+  const lockedItemCount = isLocked ? status.itemCount : 0;
   const wasUnlockedRef = useRef(isUnlocked);
   const vaultId = status?.status === 'unlocked' ? status.vaultId : null;
 
@@ -311,9 +317,8 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
       <div ref={localSectionRef}>
         <VaultStatusCard
           status={status}
+          isLoading={isLoading}
           isUnlocked={isUnlocked}
-          isRepairingRefs={panel.isRepairingRefs}
-          onRepairRefs={panel.handleRepairRefs}
           onLock={panel.handleLock}
           onOpenUnlock={openUnlockModal}
           onForgetDevice={handleForgetDevice}
@@ -352,19 +357,49 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
               ) : (
                 <ArrowRight size={13} />
               )}
-              Secure Keys
+              Secure Credentials
             </Button>
           </div>
         </div>
       )}
 
       {/* Security actions */}
-      {isUnlocked && (
+      {isStatusPending ? (
+        <VaultSectionSkeleton title="Security" />
+      ) : isLocked ? (
+        <VaultLockedPanel
+          title="Security"
+          message="Unlock to manage recovery keys, export backups, or repair host credential references."
+          onUnlock={openUnlockModal}
+        />
+      ) : isUnlocked ? (
         <div className="space-y-2">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-app-muted)] px-1">
             Security
           </h4>
           <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/25 divide-y divide-[var(--color-app-border)]/30">
+            <div className="flex items-center justify-between px-4 py-3">
+              <div>
+                <p className="text-sm text-[var(--color-app-text)] font-medium">Repair Host References</p>
+                <p className="text-xs text-[var(--color-app-muted)] mt-0.5">
+                  Fix stale vault links on saved hosts after restore or sync
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={panel.handleRepairRefs}
+                disabled={panel.isRepairingRefs}
+                className="gap-1.5 shrink-0"
+              >
+                {panel.isRepairingRefs ? (
+                  <RefreshCw size={13} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={13} />
+                )}
+                Repair Refs
+              </Button>
+            </div>
             <div className="flex items-center justify-between px-4 py-3">
               <div>
                 <p className="text-sm text-[var(--color-app-text)] font-medium">Recovery Key</p>
@@ -420,7 +455,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Sync handoff */}
       <div ref={syncHandoffRef} className="space-y-2">
@@ -428,42 +463,50 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           Sync & Backup
         </h4>
         <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/25 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
-                <Cloud size={16} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-[var(--color-app-text)]">
-                  Provider sync lives in Sync & Backup
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-[var(--color-app-muted)]">
-                  {syncStatusLabel}. Use the dedicated sync workspace to connect providers,
-                  set up Google encryption, and sync hosts, tunnels, snippets, settings,
-                  or vault credential backups.
-                </p>
-                {canSyncItemsToGoogle && (
-                  <p className="mt-1 text-[11px] text-emerald-300/80">
-                    Individual credential backup is available from the credential list below.
-                  </p>
-                )}
-              </div>
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
+              <Cloud size={16} />
             </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={openSyncBackupTab}
-              className="gap-1.5 shrink-0"
-            >
-              <Cloud size={13} />
-              Open Sync & Backup
-            </Button>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--color-app-text)]">
+                Google sync is separate from Local Vault
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-app-muted)]">
+                {syncStatusLabel}. Connect Google Drive, set up sync encryption, and back up
+                hosts, tunnels, snippets, settings, or individual credentials from the
+                Sync & Backup workspace.
+              </p>
+              {canSyncItemsToGoogle && isUnlocked && (
+                <p className="mt-1 text-[11px] text-emerald-300/80">
+                  Per-credential backup is available from the stored items list below.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={openSyncBackupTab}
+                className="mt-2 text-xs font-medium text-app-accent transition-colors hover:text-app-accent/80"
+              >
+                Open Sync & Backup workspace
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Items list */}
-      {isUnlocked && (
+      {isStatusPending ? (
+        <VaultSectionSkeleton title="Stored Items" />
+      ) : isLocked ? (
+        <VaultLockedPanel
+          title="Stored Items"
+          message={
+            lockedItemCount > 0
+              ? `Unlock to view and manage ${lockedItemCount} stored credential${lockedItemCount === 1 ? '' : 's'}.`
+              : 'Unlock to add credentials or secure existing connection secrets.'
+          }
+          onUnlock={openUnlockModal}
+        />
+      ) : isUnlocked ? (
         <VaultItemsPanel
           items={items}
           filteredItems={filteredItems}
@@ -482,6 +525,13 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           canSyncItems={canSyncItemsToGoogle}
           syncingItemId={panel.syncingItemId}
           assignedHostCounts={assignedHostCounts}
+        />
+      ) : (
+        <VaultLockedPanel
+          title="Stored Items"
+          message="Set up a vault to add credentials or secure existing connection secrets."
+          onUnlock={openUnlockModal}
+          actionLabel="Set Up Vault"
         />
       )}
 

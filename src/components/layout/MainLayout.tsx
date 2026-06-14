@@ -53,6 +53,8 @@ const PluginPanel = lazy(() => import('../plugins/PluginPanel').then(module => (
 const SettingsJsonEditorPanel = lazy(() =>
     import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
 );
+import { VaultWorkspaceLoading } from '../vault/VaultWorkspaceLoading';
+
 const VaultWorkspacePanel = lazy(() =>
     import('../vault/VaultWorkspacePanel').then(module => ({ default: module.default }))
 );
@@ -296,7 +298,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 !isActive && "hidden",
                 isActive && "animate-in fade-in slide-in-from-bottom-2 duration-200"
             )}>
-                <Suspense fallback={<TabLoading />}>
+                <Suspense fallback={<VaultWorkspaceLoading />}>
                     <VaultWorkspacePanel profileId={tab.vaultProfileId} />
                 </Suspense>
             </div>

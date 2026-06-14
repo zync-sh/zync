@@ -118,7 +118,7 @@ export function useVaultPanelActions({
     const confirmed = await showConfirmDialog({
       title: 'Secure Credentials in Vault',
       message: `Secure ${securableCount} connection credential(s) in the encrypted vault. A backup will be saved first.`,
-      confirmText: 'Secure Keys',
+      confirmText: 'Secure Credentials',
     });
     if (!confirmed) return;
 

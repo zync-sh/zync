@@ -141,7 +141,7 @@ export function VaultItemsPanel({
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     {isHostAssignableCredentialKind(item.kind) && (
                       <Button
                         variant="ghost"

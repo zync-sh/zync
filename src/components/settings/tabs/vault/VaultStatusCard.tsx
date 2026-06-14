@@ -1,13 +1,14 @@
-import { Lock, RefreshCw, Shield, Unlock } from 'lucide-react';
+import { Lock, Shield, Unlock } from 'lucide-react';
 import type { VaultStatus } from '../../../../vault/ipc';
+import { isVaultStatusPending } from '../../../../vault/vaultLoading';
 import { Button } from '../../../ui/Button';
 import { cn } from '../../../../lib/utils';
+import { VaultStatusCardSkeleton } from './VaultStatusCardSkeleton';
 
 interface VaultStatusCardProps {
   status: VaultStatus | null;
+  isLoading: boolean;
   isUnlocked: boolean;
-  isRepairingRefs: boolean;
-  onRepairRefs: () => void;
   onLock: () => void;
   onOpenUnlock: () => void;
   onForgetDevice?: () => void;
@@ -15,9 +16,8 @@ interface VaultStatusCardProps {
 
 export function VaultStatusCard({
   status,
+  isLoading,
   isUnlocked,
-  isRepairingRefs,
-  onRepairRefs,
   onLock,
   onOpenUnlock,
   onForgetDevice,
@@ -25,63 +25,67 @@ export function VaultStatusCard({
   const unlockedStatus = status?.status === 'unlocked' ? status : null;
   const lockedStatus = status?.status === 'locked' ? status : null;
 
+  if (isVaultStatusPending(status, isLoading)) {
+    return <VaultStatusCardSkeleton />;
+  }
+
+  const statusSubtitle = (() => {
+    if (isUnlocked) {
+      const count = unlockedStatus?.itemCount ?? 0;
+      return `${count} credential${count === 1 ? '' : 's'} · encrypted on this device`;
+    }
+    if (status?.status === 'locked') {
+      const count = lockedStatus?.itemCount ?? 0;
+      const countLabel = `${count} credential${count === 1 ? '' : 's'}`;
+      if (lockedStatus?.rememberedOnDevice) {
+        return `${countLabel} · remembered on this device · unlock to access`;
+      }
+      return `${countLabel} · unlock to access`;
+    }
+    return 'Create a vault to store SSH credentials securely';
+  })();
+
   return (
     <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/25 p-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className={cn(
-            'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
-            isUnlocked
-              ? 'bg-emerald-500/15 text-emerald-400'
-              : status?.status === 'locked'
-                ? 'bg-amber-500/15 text-amber-400'
-                : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)]'
-          )}>
+          <div
+            className={cn(
+              'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+              isUnlocked
+                ? 'bg-emerald-500/15 text-emerald-400'
+                : status?.status === 'locked'
+                  ? 'bg-amber-500/15 text-amber-400'
+                  : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)]',
+            )}
+          >
             <Shield size={18} />
           </div>
           <div>
             <p className="text-sm font-semibold text-[var(--color-app-text)]">
-              {isUnlocked ? 'Vault Unlocked'
-                : status?.status === 'locked' ? 'Vault Locked'
+              {isUnlocked
+                ? 'Vault Unlocked'
+                : status?.status === 'locked'
+                  ? 'Vault Locked'
                   : 'Vault Not Set Up'}
             </p>
-            <p className="text-xs text-[var(--color-app-muted)] mt-0.5">
-              {isUnlocked
-                ? `${unlockedStatus?.itemCount ?? 0} item(s) · XChaCha20-Poly1305 encrypted`
-                : status?.status === 'locked'
-                  ? lockedStatus?.rememberedOnDevice
-                    ? `${lockedStatus?.itemCount ?? 0} item(s) · remembered on this device`
-                    : `${lockedStatus?.itemCount ?? 0} item(s) in vault backup · unlock to access`
-                  : 'Create a vault to store SSH credentials securely'}
-            </p>
+            <p className="mt-0.5 text-xs text-[var(--color-app-muted)]">{statusSubtitle}</p>
           </div>
         </div>
 
         {isUnlocked ? (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={onRepairRefs}
-              disabled={isRepairingRefs}
-              className="gap-1.5 shrink-0"
-            >
-              {isRepairingRefs ? <RefreshCw size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              Repair Refs
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onLock} className="gap-1.5 shrink-0">
-              <Lock size={13} />
-              Lock
-            </Button>
-          </div>
+          <Button variant="secondary" size="sm" onClick={onLock} className="shrink-0 gap-1.5">
+            <Lock size={13} />
+            Lock
+          </Button>
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {status?.status === 'locked' && lockedStatus?.rememberedOnDevice && onForgetDevice && (
-              <Button variant="secondary" size="sm" onClick={onForgetDevice} className="shrink-0">
+              <Button variant="secondary" size="sm" onClick={onForgetDevice}>
                 Forget Device
               </Button>
             )}
-            <Button size="sm" onClick={onOpenUnlock} className="gap-1.5 shrink-0">
+            <Button size="sm" onClick={onOpenUnlock} className="gap-1.5">
               {status?.status === 'locked' ? <Unlock size={13} /> : <Shield size={13} />}
               {status?.status === 'locked' ? 'Unlock' : 'Set Up Vault'}
             </Button>
