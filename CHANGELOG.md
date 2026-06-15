@@ -4,6 +4,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+- **CodeQL CI Alerts**: Add explicit `permissions: contents: read` to the CI workflow and document/suppress intentional vault crypto known-answer test fixtures.
+
 ### Added
 - **Single-Instance Local Vault Docs**: Documented why only one Zync process can open `vault.redb` at a time, expected `vault_in_use` behavior, workarounds, and deferred vault-broker direction. ([f83b09d])
 

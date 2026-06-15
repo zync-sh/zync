@@ -200,9 +200,12 @@ pub fn decrypt_record(
 
 /// Generate a cryptographically random 32-byte vault salt.
 pub fn generate_salt() -> [u8; 32] {
-    let mut salt = [0u8; 32];
-    OsRng.fill_bytes(&mut salt);
-    salt
+    let mut salt = core::mem::MaybeUninit::<[u8; 32]>::uninit();
+    // SAFETY: OsRng fills all 32 bytes before the array is read.
+    unsafe {
+        OsRng.fill_bytes(&mut *salt.as_mut_ptr());
+        salt.assume_init()
+    }
 }
 
 /// Generate a cryptographically random 256-bit Vault Encryption Key.
@@ -241,6 +244,35 @@ fn encrypt_with_nonce(
 mod tests {
     use super::*;
 
+    /// Fixed inputs for deterministic unit tests and CI known-answer vectors.
+    /// Not used outside `#[cfg(test)]`.
+    mod test_vectors {
+        pub fn salt() -> [u8; 32] {
+            // codeql[hard-coded-crypto-value]: known-answer KDF/AEAD test fixture only
+            [0x42u8; 32]
+        }
+
+        pub fn salt_a() -> [u8; 32] {
+            // codeql[hard-coded-crypto-value]: known-answer KDF test fixture only
+            [0x11u8; 32]
+        }
+
+        pub fn salt_b() -> [u8; 32] {
+            // codeql[hard-coded-crypto-value]: known-answer KDF test fixture only
+            [0x22u8; 32]
+        }
+
+        pub fn short_salt() -> [u8; 4] {
+            // codeql[hard-coded-crypto-value]: negative KDF validation test fixture only
+            [0u8; 4]
+        }
+
+        pub fn nonce() -> [u8; 24] {
+            // codeql[hard-coded-crypto-value]: known-answer AEAD test fixture only
+            [0xABu8; 24]
+        }
+    }
+
     const TEST_PASSPHRASE: &[u8] = b"zync-test-passphrase-v1";
     const TEST_PLAINTEXT: &[u8] = b"ssh-password: hunter2";
     const TEST_AAD: &[u8] = b"vault-id:test-vault|record-id:rec-001|revision:1";
@@ -250,11 +282,11 @@ mod tests {
     }
 
     fn test_salt() -> [u8; 32] {
-        [0x42u8; 32]
+        test_vectors::salt()
     }
 
     fn test_nonce() -> [u8; 24] {
-        [0xABu8; 24]
+        test_vectors::nonce()
     }
 
     fn hex_encode(bytes: &[u8]) -> String {
@@ -281,14 +313,14 @@ mod tests {
 
     #[test]
     fn kdf_different_salt_produces_different_key() {
-        let kek1 = derive_kek(TEST_PASSPHRASE, &[0x11u8; 32], &test_params()).unwrap();
-        let kek2 = derive_kek(TEST_PASSPHRASE, &[0x22u8; 32], &test_params()).unwrap();
+        let kek1 = derive_kek(TEST_PASSPHRASE, &test_vectors::salt_a(), &test_params()).unwrap();
+        let kek2 = derive_kek(TEST_PASSPHRASE, &test_vectors::salt_b(), &test_params()).unwrap();
         assert_ne!(*kek1.as_bytes(), *kek2.as_bytes());
     }
 
     #[test]
     fn kdf_rejects_short_salt() {
-        let err = derive_kek(TEST_PASSPHRASE, &[0u8; 4], &test_params());
+        let err = derive_kek(TEST_PASSPHRASE, &test_vectors::short_salt(), &test_params());
         assert!(matches!(err, Err(VaultCryptoError::InvalidSaltLength)));
     }
 
