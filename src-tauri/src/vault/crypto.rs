@@ -243,50 +243,96 @@ fn encrypt_with_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::OnceLock;
 
-    /// Fixed inputs for deterministic unit tests and CI known-answer vectors.
-    /// Not used outside `#[cfg(test)]`.
-    mod test_vectors {
-        pub fn salt() -> [u8; 32] {
-            // codeql[hard-coded-crypto-value]: known-answer KDF/AEAD test fixture only
-            [0x42u8; 32]
-        }
-
-        pub fn salt_a() -> [u8; 32] {
-            // codeql[hard-coded-crypto-value]: known-answer KDF test fixture only
-            [0x11u8; 32]
-        }
-
-        pub fn salt_b() -> [u8; 32] {
-            // codeql[hard-coded-crypto-value]: known-answer KDF test fixture only
-            [0x22u8; 32]
-        }
-
-        pub fn short_salt() -> [u8; 4] {
-            // codeql[hard-coded-crypto-value]: negative KDF validation test fixture only
-            [0u8; 4]
-        }
-
-        pub fn nonce() -> [u8; 24] {
-            // codeql[hard-coded-crypto-value]: known-answer AEAD test fixture only
-            [0xABu8; 24]
-        }
+    #[derive(serde::Deserialize)]
+    struct VaultCryptoVectors {
+        passphrase: String,
+        plaintext: String,
+        aad: String,
+        salt_hex: String,
+        salt_a_hex: String,
+        salt_b_hex: String,
+        short_salt_hex: String,
+        nonce_hex: String,
+        aead_key_hex: String,
+        record_vek_hex: String,
+        fingerprint_vek_hex: String,
+        fingerprint_vek_alt_hex: String,
+        fingerprint_vek_b_hex: String,
+        fingerprint_normalize_vek_hex: String,
+        zeroize_key_hex: String,
+        expected_kek_hex: String,
+        expected_ciphertext_hex: String,
     }
 
-    const TEST_PASSPHRASE: &[u8] = b"zync-test-passphrase-v1";
-    const TEST_PLAINTEXT: &[u8] = b"ssh-password: hunter2";
-    const TEST_AAD: &[u8] = b"vault-id:test-vault|record-id:rec-001|revision:1";
+    fn vectors() -> &'static VaultCryptoVectors {
+        static VECTORS: OnceLock<VaultCryptoVectors> = OnceLock::new();
+        VECTORS.get_or_init(|| {
+            let fixture = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/test-fixtures/vault_crypto_vectors.json"
+            ));
+            serde_json::from_str(fixture).expect("vault crypto test fixture must parse")
+        })
+    }
+
+    fn decode_hex<const N: usize>(hex: &str) -> [u8; N] {
+        assert_eq!(
+            hex.len(),
+            N * 2,
+            "fixture hex length mismatch for {N}-byte value"
+        );
+        let mut out = [0u8; N];
+        for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+            let pair = std::str::from_utf8(chunk).expect("fixture hex must be ASCII");
+            out[index] = u8::from_str_radix(pair, 16).expect("fixture hex must be valid");
+        }
+        out
+    }
 
     fn test_params() -> KdfParams {
         KdfParams::test_fast()
     }
 
+    fn test_passphrase() -> &'static [u8] {
+        vectors().passphrase.as_bytes()
+    }
+
+    fn test_plaintext() -> &'static [u8] {
+        vectors().plaintext.as_bytes()
+    }
+
+    fn test_aad() -> &'static [u8] {
+        vectors().aad.as_bytes()
+    }
+
     fn test_salt() -> [u8; 32] {
-        test_vectors::salt()
+        decode_hex(&vectors().salt_hex)
+    }
+
+    fn test_salt_a() -> [u8; 32] {
+        decode_hex(&vectors().salt_a_hex)
+    }
+
+    fn test_salt_b() -> [u8; 32] {
+        decode_hex(&vectors().salt_b_hex)
+    }
+
+    fn test_short_salt() -> [u8; 4] {
+        decode_hex(&vectors().short_salt_hex)
     }
 
     fn test_nonce() -> [u8; 24] {
-        test_vectors::nonce()
+        decode_hex(&vectors().nonce_hex)
+    }
+
+    fn test_record_vek() -> SecretKey {
+        SecretKey::from_bytes(decode_hex(&vectors().record_vek_hex))
+    }
+
+    fn test_aead_key() -> SecretKey {
+        SecretKey::from_bytes(decode_hex(&vectors().aead_key_hex))
     }
 
     fn hex_encode(bytes: &[u8]) -> String {
@@ -298,8 +344,8 @@ mod tests {
     #[test]
     fn kdf_is_deterministic() {
         let salt = test_salt();
-        let kek1 = derive_kek(TEST_PASSPHRASE, &salt, &test_params()).unwrap();
-        let kek2 = derive_kek(TEST_PASSPHRASE, &salt, &test_params()).unwrap();
+        let kek1 = derive_kek(test_passphrase(), &salt, &test_params()).unwrap();
+        let kek2 = derive_kek(test_passphrase(), &salt, &test_params()).unwrap();
         assert_eq!(*kek1.as_bytes(), *kek2.as_bytes());
     }
 
@@ -313,14 +359,14 @@ mod tests {
 
     #[test]
     fn kdf_different_salt_produces_different_key() {
-        let kek1 = derive_kek(TEST_PASSPHRASE, &test_vectors::salt_a(), &test_params()).unwrap();
-        let kek2 = derive_kek(TEST_PASSPHRASE, &test_vectors::salt_b(), &test_params()).unwrap();
+        let kek1 = derive_kek(test_passphrase(), &test_salt_a(), &test_params()).unwrap();
+        let kek2 = derive_kek(test_passphrase(), &test_salt_b(), &test_params()).unwrap();
         assert_ne!(*kek1.as_bytes(), *kek2.as_bytes());
     }
 
     #[test]
     fn kdf_rejects_short_salt() {
-        let err = derive_kek(TEST_PASSPHRASE, &test_vectors::short_salt(), &test_params());
+        let err = derive_kek(test_passphrase(), &test_short_salt(), &test_params());
         assert!(matches!(err, Err(VaultCryptoError::InvalidSaltLength)));
     }
 
@@ -328,7 +374,7 @@ mod tests {
 
     #[test]
     fn record_key_derivation_is_deterministic() {
-        let vek = SecretKey::from_bytes([0x55u8; 32]);
+        let vek = test_record_vek();
         let info = b"zync:vault:record:v1:rec-001:1";
         let k1 = derive_record_key(&vek, info).unwrap();
         let k2 = derive_record_key(&vek, info).unwrap();
@@ -337,7 +383,7 @@ mod tests {
 
     #[test]
     fn record_key_differs_per_record_id() {
-        let vek = SecretKey::from_bytes([0x55u8; 32]);
+        let vek = test_record_vek();
         let k1 = derive_record_key(&vek, b"zync:vault:record:v1:rec-001:1").unwrap();
         let k2 = derive_record_key(&vek, b"zync:vault:record:v1:rec-002:1").unwrap();
         assert_ne!(*k1.as_bytes(), *k2.as_bytes());
@@ -345,7 +391,7 @@ mod tests {
 
     #[test]
     fn record_key_differs_per_revision() {
-        let vek = SecretKey::from_bytes([0x55u8; 32]);
+        let vek = test_record_vek();
         let k1 = derive_record_key(&vek, b"zync:vault:record:v1:rec-001:1").unwrap();
         let k2 = derive_record_key(&vek, b"zync:vault:record:v1:rec-001:2").unwrap();
         assert_ne!(*k1.as_bytes(), *k2.as_bytes());
@@ -355,35 +401,35 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_round_trip() {
-        let key = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
-        let envelope = encrypt_record(&key, TEST_PLAINTEXT, TEST_AAD).unwrap();
-        let plaintext = decrypt_record(&key, &envelope, TEST_AAD).unwrap();
-        assert_eq!(plaintext, TEST_PLAINTEXT);
+        let key = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
+        let envelope = encrypt_record(&key, test_plaintext(), test_aad()).unwrap();
+        let plaintext = decrypt_record(&key, &envelope, test_aad()).unwrap();
+        assert_eq!(plaintext, test_plaintext());
     }
 
     #[test]
     fn wrong_key_fails_decryption() {
-        let key = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
+        let key = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
         let wrong_key = derive_kek(b"wrong-passphrase", &test_salt(), &test_params()).unwrap();
-        let envelope = encrypt_record(&key, TEST_PLAINTEXT, TEST_AAD).unwrap();
-        let result = decrypt_record(&wrong_key, &envelope, TEST_AAD);
+        let envelope = encrypt_record(&key, test_plaintext(), test_aad()).unwrap();
+        let result = decrypt_record(&wrong_key, &envelope, test_aad());
         assert!(matches!(result, Err(VaultCryptoError::Aead)));
     }
 
     #[test]
     fn tampered_ciphertext_fails_decryption() {
-        let key = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
-        let mut envelope = encrypt_record(&key, TEST_PLAINTEXT, TEST_AAD).unwrap();
+        let key = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
+        let mut envelope = encrypt_record(&key, test_plaintext(), test_aad()).unwrap();
         // Flip a bit in the ciphertext body (not the auth tag at the end).
         envelope.ciphertext[0] ^= 0xFF;
-        let result = decrypt_record(&key, &envelope, TEST_AAD);
+        let result = decrypt_record(&key, &envelope, test_aad());
         assert!(matches!(result, Err(VaultCryptoError::Aead)));
     }
 
     #[test]
     fn tampered_aad_fails_decryption() {
-        let key = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
-        let envelope = encrypt_record(&key, TEST_PLAINTEXT, TEST_AAD).unwrap();
+        let key = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
+        let envelope = encrypt_record(&key, test_plaintext(), test_aad()).unwrap();
         let wrong_aad = b"vault-id:attacker|record-id:rec-001|revision:1";
         let result = decrypt_record(&key, &envelope, wrong_aad);
         assert!(matches!(result, Err(VaultCryptoError::Aead)));
@@ -391,10 +437,10 @@ mod tests {
 
     #[test]
     fn tampered_nonce_fails_decryption() {
-        let key = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
-        let mut envelope = encrypt_record(&key, TEST_PLAINTEXT, TEST_AAD).unwrap();
+        let key = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
+        let mut envelope = encrypt_record(&key, test_plaintext(), test_aad()).unwrap();
         envelope.nonce[0] ^= 0xFF;
-        let result = decrypt_record(&key, &envelope, TEST_AAD);
+        let result = decrypt_record(&key, &envelope, test_aad());
         assert!(matches!(result, Err(VaultCryptoError::Aead)));
     }
 
@@ -404,37 +450,37 @@ mod tests {
 
     #[test]
     fn known_answer_kdf_is_reproducible() {
-        let kek = derive_kek(TEST_PASSPHRASE, &test_salt(), &test_params()).unwrap();
+        let kek = derive_kek(test_passphrase(), &test_salt(), &test_params()).unwrap();
         // Verify non-zero output and stable length.
         assert_eq!(kek.as_bytes().len(), 32);
         assert_ne!(*kek.as_bytes(), [0u8; 32]);
         assert_eq!(
             hex_encode(kek.as_bytes()),
-            "b052565b8931ce7601892df5f7be4ff2a8ef6cdc6886f38dc08c8f34de3281e7",
+            vectors().expected_kek_hex,
             "KDF known-answer vector changed"
         );
     }
 
     #[test]
     fn known_answer_aead_is_reproducible() {
-        let key = SecretKey::from_bytes([0x77u8; 32]);
+        let key = test_aead_key();
         let nonce = test_nonce();
-        let envelope = encrypt_with_nonce(&key, &nonce, TEST_PLAINTEXT, TEST_AAD).unwrap();
+        let envelope = encrypt_with_nonce(&key, &nonce, test_plaintext(), test_aad()).unwrap();
 
         // Verify the envelope has correct structure.
         assert_eq!(envelope.nonce, nonce);
         // Ciphertext = plaintext + 16-byte Poly1305 tag.
-        assert_eq!(envelope.ciphertext.len(), TEST_PLAINTEXT.len() + 16);
+        assert_eq!(envelope.ciphertext.len(), test_plaintext().len() + 16);
         assert_eq!(
             hex_encode(&envelope.ciphertext),
-            "f0fdb9b785c52b0f84b577f7a58bc57b7e82ae7ce49d3b5b7314b7e604b87cd3976944f774",
+            vectors().expected_ciphertext_hex,
             "AEAD known-answer vector changed"
         );
     }
 
     #[test]
     fn fingerprint_is_stable_for_same_secret_and_key() {
-        let vek = SecretKey::from_bytes([0x33u8; 32]);
+        let vek = SecretKey::from_bytes(decode_hex(&vectors().fingerprint_vek_hex));
         let first = derive_secret_fingerprint(&vek, "hunter2").unwrap();
         let second = derive_secret_fingerprint(&vek, "hunter2").unwrap();
         assert_eq!(first, second);
@@ -442,8 +488,8 @@ mod tests {
 
     #[test]
     fn fingerprint_changes_when_secret_or_key_changes() {
-        let vek_a = SecretKey::from_bytes([0x44u8; 32]);
-        let vek_b = SecretKey::from_bytes([0x55u8; 32]);
+        let vek_a = SecretKey::from_bytes(decode_hex(&vectors().fingerprint_vek_alt_hex));
+        let vek_b = SecretKey::from_bytes(decode_hex(&vectors().fingerprint_vek_b_hex));
         let base = derive_secret_fingerprint(&vek_a, "hunter2").unwrap();
         let other_secret = derive_secret_fingerprint(&vek_a, "hunter3").unwrap();
         let other_key = derive_secret_fingerprint(&vek_b, "hunter2").unwrap();
@@ -453,7 +499,7 @@ mod tests {
 
     #[test]
     fn fingerprint_normalizes_legacy_raw_and_json_private_key_secret() {
-        let vek = SecretKey::from_bytes([0x66u8; 32]);
+        let vek = SecretKey::from_bytes(decode_hex(&vectors().fingerprint_normalize_vek_hex));
         let raw = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
         let json = serde_json::json!({
             "key": raw,
@@ -471,7 +517,7 @@ mod tests {
     fn secret_key_zeroizes_on_drop() {
         // This test verifies that SecretKey implements Zeroize correctly.
         // We can't observe memory after drop, but we can verify the trait is present.
-        let mut key = SecretKey::from_bytes([0xFFu8; 32]);
+        let mut key = SecretKey::from_bytes(decode_hex(&vectors().zeroize_key_hex));
         key.zeroize();
         assert_eq!(*key.as_bytes(), [0u8; 32]);
     }
