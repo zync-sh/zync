@@ -39,7 +39,7 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             let data_dir = commands::get_data_dir(&app_handle);
-            let app_state = AppState::new(data_dir.clone());
+            let app_state = AppState::new(data_dir.clone(), app_handle.clone());
             app.manage(app_state);
             app.manage(tokio::sync::Mutex::new(vault::store::VaultService::new(
                 data_dir,

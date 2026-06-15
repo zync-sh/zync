@@ -413,6 +413,7 @@ pub struct CopyOperation {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub app_handle: tauri::AppHandle,
     pub connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
     pub pty_manager: Arc<PtyManager>,
     pub file_system: Arc<FileSystem>,
@@ -433,8 +434,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(data_dir: std::path::PathBuf) -> Self {
+    pub fn new(data_dir: std::path::PathBuf, app_handle: tauri::AppHandle) -> Self {
         Self {
+            app_handle,
             connections: Arc::new(Mutex::new(HashMap::new())),
             pty_manager: Arc::new(PtyManager::new()),
             file_system: Arc::new(FileSystem::new()),
@@ -1821,6 +1823,57 @@ pub async fn terminal_create(
     }
 }
 
+async fn reconnect_stored_connection(
+    connection_id: &str,
+    original_config: ConnectionConfig,
+    state: &State<'_, AppState>,
+) -> Result<(), String> {
+    let uses_vault_auth = config_uses_vault_auth(&original_config);
+    let mut connect_config = original_config.clone();
+
+    if uses_vault_auth {
+        let vault = state
+            .app_handle
+            .try_state::<tokio::sync::Mutex<crate::vault::store::VaultService>>()
+            .ok_or("Vault service unavailable")?;
+        let relinked = resolve_vault_refs(&mut connect_config, &vault).await?;
+        if !relinked.is_empty() {
+            let app_handle = state.app_handle.clone();
+            let persist_result =
+                tokio::task::spawn_blocking(move || persist_relinked_vault_refs(&app_handle, &relinked))
+                    .await;
+            match persist_result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return Err(format!("Failed to persist relinked vault refs: {error}"))
+                }
+                Err(join_error) => {
+                    return Err(format!(
+                        "Failed to persist relinked vault refs: task join error: {join_error}"
+                    ))
+                }
+            }
+        }
+    }
+
+    let mut new_handle = reconnect_connection(
+        &connect_config,
+        &state.ssh_manager,
+        &state.tunnel_manager,
+    )
+    .await?;
+    new_handle.config = original_config;
+    new_handle.uses_vault_auth = uses_vault_auth;
+    let mut connections = state.connections.lock().await;
+    if !connections.contains_key(connection_id) {
+        return Err(format!(
+            "Connection {connection_id} was disconnected during reconnect"
+        ));
+    }
+    connections.insert(connection_id.to_string(), new_handle);
+    Ok(())
+}
+
 async fn get_live_ssh_session(
     connection_id: &str,
     state: &State<'_, AppState>,
@@ -1842,25 +1895,15 @@ async fn get_live_ssh_session(
             .map(|c| c.config.clone())
             .ok_or_else(|| format!("Connection config for {} not found", connection_id))?
     };
-    if config_uses_vault_auth(&config) {
-        return Err(
-            "Vault-backed connection needs an unlocked vault. Unlock Vault, then reconnect."
-                .to_string(),
-        );
-    }
-    let mut new_handle =
-        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager).await?;
-    let new_session = new_handle
-        .session
-        .take()
-        .ok_or("Reconnection did not produce a session")?;
-    new_handle.session = Some(new_session.clone());
-    state
-        .connections
-        .lock()
-        .await
-        .insert(connection_id.to_string(), new_handle);
-    Ok(new_session)
+
+    reconnect_stored_connection(connection_id, config, state).await?;
+    let session = {
+        let connections = state.connections.lock().await;
+        connections
+            .get(connection_id)
+            .and_then(|c| c.session.clone())
+    };
+    session.ok_or_else(|| "Reconnection did not produce a session".to_string())
 }
 
 async fn open_ssh_channel_with_single_reconnect(
@@ -1926,21 +1969,14 @@ async fn get_sftp_or_reconnect(
         id
     );
 
-    if config_uses_vault_auth(&config) {
-        return Err(
-            "DISCONNECTED: Vault-backed connection needs an unlocked vault. Unlock Vault, then reconnect."
-                .to_string(),
-        );
-    }
-
     let timeout_duration = std::time::Duration::from_secs(12);
-    let new_handle = match tokio::time::timeout(
+    match tokio::time::timeout(
         timeout_duration,
-        reconnect_connection(&config, &state.ssh_manager, &state.tunnel_manager),
+        reconnect_stored_connection(id, config, state),
     )
     .await
     {
-        Ok(Ok(h)) => h,
+        Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(format!("DISCONNECTED: Auto-reconnect failed: {}", e)),
         Err(_) => {
             return Err(format!(
@@ -1949,13 +1985,13 @@ async fn get_sftp_or_reconnect(
             ))
         }
     };
-    let sftp = new_handle
-        .sftp_session
-        .clone()
-        .ok_or_else(|| "Reconnection succeeded but SFTP initialization failed".to_string())?;
-
-    let mut connections = state.connections.lock().await;
-    connections.insert(id.to_string(), new_handle);
+    let sftp = {
+        let connections = state.connections.lock().await;
+        connections
+            .get(id)
+            .and_then(|c| c.sftp_session.clone())
+    }
+    .ok_or_else(|| "Reconnection succeeded but SFTP initialization failed".to_string())?;
 
     println!("[SFTP] Reconnected successfully for '{}'", id);
     Ok(sftp)
