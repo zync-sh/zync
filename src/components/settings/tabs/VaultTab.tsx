@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, ArrowRight, KeyRound, Download, Upload } from 'lucide-react';
 import { useVaultStore } from '../../../vault/useVaultStore';
-import { isVaultStatusPending } from '../../../vault/vaultLoading';
+import { isVaultInUseError, isVaultStatusPending } from '../../../vault/vaultLoading';
 import { vaultIpc, type VaultItemDetail } from '../../../vault/ipc';
 
 import { RecoveryKeyModal } from '../../vault/RecoveryKeyModal';
@@ -29,7 +29,7 @@ interface VaultTabProps {
 }
 
 export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultTabProps) {
-  const { status, items, isLoading, refresh, lock, refreshItems, openUnlockModal, forgetDevice } = useVaultStore();
+  const { status, items, isLoading, error, refresh, lock, refreshItems, openUnlockModal, forgetDevice } = useVaultStore();
   const showToast = useAppStore(state => state.showToast);
   const showConfirmDialog = useAppStore(state => state.showConfirmDialog);
   const connections = useAppStore(state => state.connections);
@@ -48,6 +48,7 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
   const localSectionRef = useRef<HTMLDivElement | null>(null);
 
   const isStatusPending = isVaultStatusPending(status, isLoading);
+  const vaultInUse = isVaultInUseError(error);
   const isUnlocked = status?.status === 'unlocked';
   const isLocked = status?.status === 'locked';
   const lockedItemCount = isLocked ? status.itemCount : 0;
@@ -306,8 +307,10 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           status={status}
           isLoading={isLoading}
           isUnlocked={isUnlocked}
+          error={error}
           onLock={panel.handleLock}
           onOpenUnlock={openUnlockModal}
+          onRefresh={() => void refresh()}
           onForgetDevice={handleForgetDevice}
         />
       </div>
@@ -358,6 +361,13 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
           title="Security"
           message="Unlock to manage recovery keys, export backups, or repair host credential references."
           onUnlock={openUnlockModal}
+        />
+      ) : vaultInUse ? (
+        <VaultLockedPanel
+          title="Security"
+          message="Close the other Zync window to manage recovery keys, export backups, or repair host credential references."
+          onUnlock={() => void refresh()}
+          actionLabel="Refresh"
         />
       ) : isUnlocked ? (
         <div className="space-y-2">
@@ -456,6 +466,13 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
               : 'Unlock to add credentials or secure existing connection secrets.'
           }
           onUnlock={openUnlockModal}
+        />
+      ) : vaultInUse ? (
+        <VaultLockedPanel
+          title="Stored Items"
+          message="This window cannot read vault credentials while another Zync instance has the vault file open."
+          onUnlock={() => void refresh()}
+          actionLabel="Refresh"
         />
       ) : isUnlocked ? (
         <VaultItemsPanel

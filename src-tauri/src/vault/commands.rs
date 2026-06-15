@@ -26,6 +26,7 @@ impl From<VaultError> for VaultCommandError {
         let (code, message) = match &e {
             VaultError::NotInitialized => ("not_initialized", e.to_string()),
             VaultError::AlreadyInitialized => ("already_initialized", e.to_string()),
+            VaultError::InUseByAnotherInstance => ("vault_in_use", e.to_string()),
             VaultError::Locked => ("locked", e.to_string()),
             VaultError::WrongPassphrase => ("wrong_passphrase", e.to_string()),
             VaultError::InvalidPassphraseLength { .. } => {

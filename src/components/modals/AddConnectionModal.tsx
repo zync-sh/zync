@@ -17,6 +17,7 @@ import {
 import { useConnectionForm } from './useConnectionForm';
 import { useAutoVault } from './useAutoVault';
 import { useVaultStore } from '../../vault/useVaultStore';
+import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../../vault/vaultLoading';
 import { isVaultLockedError } from '../../vault/vaultUnlockPrompt';
 
 const ImportSshModal = lazy(async () => {
@@ -119,6 +120,12 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
 
     const needsVaultUnlock = authMethod === 'vault' || Boolean(formData.authRef?.itemId);
 
+    const notifyVaultBlocked = () => {
+        if (isVaultInUseError(useVaultStore.getState().error)) {
+            showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
+        }
+    };
+
     const performSave = async (retryAfterUnlock = false): Promise<Connection | null> => {
         if (isSaving && !retryAfterUnlock) return null;
         setIsSaving(true);
@@ -126,7 +133,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
         try {
             if (needsVaultUnlock) {
                 const unlocked = await requestVaultUnlock();
-                if (!unlocked) return null;
+                if (!unlocked) {
+                    notifyVaultBlocked();
+                    return null;
+                }
             }
             if (authMethod === 'key' && keyInputMode === 'paste') {
                 const connectionData = await buildPastedKeyConnection();
@@ -175,6 +185,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
             if (authMethod === 'vault' || formData.authRef?.itemId) {
                 const unlocked = await requestVaultUnlock();
                 if (!unlocked) {
+                    notifyVaultBlocked();
                     setTestStatus('idle');
                     return;
                 }

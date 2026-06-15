@@ -4,6 +4,7 @@ import { useAppStore } from '../../../store/useAppStore';
 import { cn } from '../../../lib/utils';
 import { DEFAULT_VAULT_PROFILE_ID } from '../../../vault/profileTypes';
 import { useVaultStore } from '../../../vault/useVaultStore';
+import { isVaultInUseError } from '../../../vault/vaultLoading';
 import { SidebarActionButton } from './SidebarActionButton';
 import { SplitSidebarActionButton } from './SplitSidebarActionButton';
 import { VAULT_NAV_ITEMS } from './vaultNavConfig';
@@ -18,7 +19,13 @@ function StatusDot({ className, title }: { className: string; title: string }) {
     );
 }
 
-function resolveLocalVaultStatusDot(status: ReturnType<typeof useVaultStore.getState>['status']) {
+function resolveLocalVaultStatusDot(
+    status: ReturnType<typeof useVaultStore.getState>['status'],
+    error: ReturnType<typeof useVaultStore.getState>['error'],
+) {
+    if (isVaultInUseError(error)) {
+        return { className: 'bg-orange-400/80', title: 'Vault open in another Zync window' };
+    }
     if (status?.status === 'unlocked') {
         return { className: 'bg-emerald-400/80', title: 'Local vault unlocked' };
     }
@@ -38,11 +45,12 @@ export function VaultNavSection() {
         return activeTab.vaultProfileId ?? DEFAULT_VAULT_PROFILE_ID;
     });
     const vaultStatus = useVaultStore(state => state.status);
+    const vaultError = useVaultStore(state => state.error);
 
     const expanded = resolveVaultExpanded(settings);
     const localVaultStatus = useMemo(
-        () => resolveLocalVaultStatusDot(vaultStatus),
-        [vaultStatus],
+        () => resolveLocalVaultStatusDot(vaultStatus, vaultError),
+        [vaultStatus, vaultError],
     );
 
     const toggleExpanded = useCallback(() => {

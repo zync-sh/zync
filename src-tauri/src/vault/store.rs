@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand_core::{OsRng, RngCore};
-use redb::{Database, ReadTransaction, ReadableTable};
+use redb::{Database, DatabaseError, ReadTransaction, ReadableTable};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -67,6 +67,13 @@ impl VaultService {
         self.data_dir.join("vault.redb")
     }
 
+    fn map_database_open_error(err: DatabaseError) -> VaultError {
+        match err {
+            DatabaseError::DatabaseAlreadyOpen => VaultError::InUseByAnotherInstance,
+            other => VaultError::from(other),
+        }
+    }
+
     /// Opens an existing vault.redb without unlocking. No-op if already open.
     /// Also ensures that tables added in later schema versions exist in
     /// already-deployed databases (forward-compatible migration).
@@ -76,7 +83,7 @@ impl VaultService {
         }
         let path = self.vault_path();
         if path.exists() {
-            let db = Database::open(&path)?;
+            let db = Database::open(&path).map_err(Self::map_database_open_error)?;
             // Ensure tables introduced after the initial schema exist.
             // This is a no-op for new databases (initialize() already creates them)
             // and a safe migration for existing databases that predate these tables.

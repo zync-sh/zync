@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Input } from '../ui/Input';
-import { KeyRound } from 'lucide-react';
+import { KeyRound, RefreshCw, Shield } from 'lucide-react';
 import { useVaultStore } from '../../vault/useVaultStore';
+import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../../vault/vaultLoading';
 import { UnlockModalShell } from './UnlockModalShell';
 import { SecretField } from './SecretField';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
 
 /** Minimum passphrase length enforced at vault creation time. */
 export const PASSPHRASE_MIN_LENGTH = 12;
@@ -27,9 +30,19 @@ interface Props {
 }
 
 export function VaultUnlockModal({ isOpen, onClose }: Props) {
-  const { status, initialize, unlock, unlockWithRecoveryKey, isLoading, clearError } = useVaultStore();
-  const isUninitialized = !status || status.status === 'uninitialized';
-  const canUseRecoveryKey = !isUninitialized;
+  const {
+    status,
+    error,
+    refresh,
+    initialize,
+    unlock,
+    unlockWithRecoveryKey,
+    isLoading,
+    clearError,
+  } = useVaultStore();
+  const vaultInUse = isVaultInUseError(error);
+  const isUninitialized = !vaultInUse && (!status || status.status === 'uninitialized');
+  const canUseRecoveryKey = !isUninitialized && !vaultInUse;
 
   const [passphrase, setPassphrase] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -121,6 +134,61 @@ export function VaultUnlockModal({ isOpen, onClose }: Props) {
       }
     }
   };
+
+  const handleRefreshAfterInUse = async () => {
+    setLocalError('');
+    clearError();
+    try {
+      await refresh();
+      if (useVaultStore.getState().status?.status === 'unlocked') {
+        handleUnlocked();
+      }
+    } catch (e: unknown) {
+      const { message } = extractError(e);
+      setLocalError(message || 'Still unable to access the vault.');
+    }
+  };
+
+  if (vaultInUse) {
+    return (
+      <Modal
+        isOpen={isOpen}
+        onClose={handleClose}
+        title="Vault In Use"
+        subtitle="Another Zync window already has your vault open."
+        width="max-w-sm"
+        contentClassName="min-h-[280px]"
+      >
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-500/10 text-orange-400">
+              <Shield size={22} />
+            </div>
+          </div>
+          <p className="text-sm leading-relaxed text-[var(--color-app-muted)] text-center">
+            {VAULT_IN_USE_USER_MESSAGE}
+          </p>
+          {localError && (
+            <p className="text-xs text-red-400 text-center" role="alert">{localError}</p>
+          )}
+          <div className="flex gap-2 pt-1">
+            <Button type="button" variant="ghost" onClick={handleClose} className="flex-1" disabled={isLoading}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleRefreshAfterInUse()}
+              className="flex-1 gap-1.5"
+              disabled={isLoading}
+            >
+              <RefreshCw size={13} className={isLoading ? 'animate-spin' : undefined} />
+              {isLoading ? 'Checking…' : 'Refresh'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
 
   const title = isUninitialized ? 'Create Vault' : 'Unlock Vault';
   const subtitle = isUninitialized

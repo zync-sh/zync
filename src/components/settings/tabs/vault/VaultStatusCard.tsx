@@ -1,6 +1,6 @@
-import { Lock, Shield, Unlock } from 'lucide-react';
+import { Lock, RefreshCw, Shield, Unlock } from 'lucide-react';
 import type { VaultStatus } from '../../../../vault/ipc';
-import { isVaultStatusPending } from '../../../../vault/vaultLoading';
+import { isVaultInUseError, isVaultStatusPending } from '../../../../vault/vaultLoading';
 import { Button } from '../../../ui/Button';
 import { cn } from '../../../../lib/utils';
 import { VaultStatusCardSkeleton } from './VaultStatusCardSkeleton';
@@ -9,8 +9,10 @@ interface VaultStatusCardProps {
   status: VaultStatus | null;
   isLoading: boolean;
   isUnlocked: boolean;
+  error?: string | null;
   onLock: () => void;
   onOpenUnlock: () => void;
+  onRefresh: () => void;
   onForgetDevice?: () => void;
 }
 
@@ -18,18 +20,24 @@ export function VaultStatusCard({
   status,
   isLoading,
   isUnlocked,
+  error = null,
   onLock,
   onOpenUnlock,
+  onRefresh,
   onForgetDevice,
 }: VaultStatusCardProps) {
   const unlockedStatus = status?.status === 'unlocked' ? status : null;
   const lockedStatus = status?.status === 'locked' ? status : null;
+  const vaultInUse = isVaultInUseError(error);
 
   if (isVaultStatusPending(status, isLoading)) {
     return <VaultStatusCardSkeleton />;
   }
 
   const statusSubtitle = (() => {
+    if (vaultInUse) {
+      return 'Close the other Zync window, then refresh this page.';
+    }
     if (isUnlocked) {
       const count = unlockedStatus?.itemCount ?? 0;
       return `${count} credential${count === 1 ? '' : 's'} · encrypted on this device`;
@@ -65,6 +73,8 @@ export function VaultStatusCard({
             <p className="text-sm font-semibold text-[var(--color-app-text)]">
               {isUnlocked
                 ? 'Vault Unlocked'
+                : vaultInUse
+                  ? 'Vault In Use'
                 : status?.status === 'locked'
                   ? 'Vault Locked'
                   : 'Vault Not Set Up'}
@@ -77,6 +87,16 @@ export function VaultStatusCard({
           <Button variant="secondary" size="sm" onClick={onLock} className="shrink-0 gap-1.5">
             <Lock size={13} />
             Lock
+          </Button>
+        ) : vaultInUse ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onRefresh}
+            className="shrink-0 gap-1.5"
+          >
+            <RefreshCw size={13} />
+            Refresh
           </Button>
         ) : (
           <div className="flex shrink-0 items-center gap-2">

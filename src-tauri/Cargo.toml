@@ -54,5 +54,8 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 redb = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", default-features = false }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.56"

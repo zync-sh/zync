@@ -4,6 +4,8 @@ use crate::vault::crypto::VaultCryptoError;
 pub enum VaultError {
     NotInitialized,
     AlreadyInitialized,
+    /// vault.redb exists but this process cannot open it (usually another Zync instance).
+    InUseByAnotherInstance,
     Locked,
     WrongPassphrase,
     InvalidPassphraseLength { min: usize },
@@ -19,6 +21,10 @@ impl std::fmt::Display for VaultError {
         match self {
             Self::NotInitialized => write!(f, "Vault is not initialized"),
             Self::AlreadyInitialized => write!(f, "Vault is already initialized"),
+            Self::InUseByAnotherInstance => write!(
+                f,
+                "Vault is open in another Zync window. Close the other instance and try again."
+            ),
             Self::Locked => write!(f, "Vault is locked"),
             Self::WrongPassphrase => write!(f, "Incorrect passphrase"),
             Self::InvalidPassphraseLength { min } => {

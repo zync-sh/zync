@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { vaultIpc, type VaultStatus, type VaultItem } from './ipc';
+import { isVaultInUseError } from './vaultLoading';
 
 interface VaultStore {
   status: VaultStatus | null;
@@ -39,9 +40,10 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     try {
       await get().refresh();
     } catch {
-      // Status refresh failed; still offer unlock UI.
+      // Status refresh failed; vault-in-use is handled below, otherwise offer unlock UI.
     }
     if (get().status?.status === 'unlocked') return true;
+    if (isVaultInUseError(get().error)) return false;
 
     return new Promise<boolean>((resolve) => {
       set((state) => ({
@@ -183,8 +185,11 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
 function extractErrorMessage(e: unknown): string {
   if (e && typeof e === 'object') {
     const obj = e as Record<string, unknown>;
-    if (typeof obj.message === 'string') return obj.message;
-    if (typeof obj.code === 'string') return obj.code;
+    const code = typeof obj.code === 'string' ? obj.code : null;
+    const message = typeof obj.message === 'string' ? obj.message : null;
+    if (code && message) return `${code}: ${message}`;
+    if (message) return message;
+    if (code) return code;
   }
   return String(e);
 }

@@ -42,6 +42,7 @@ import {
 } from '../features/connections/domain';
 import { connectionErrorMessage } from '../features/connections/domain/errorSanitization';
 import { useVaultStore } from '../vault/useVaultStore';
+import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../vault/vaultLoading';
 import { isVaultLockedError } from '../vault/vaultUnlockPrompt';
 import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
 import { loadConnectionsIpc, saveConnectionsIpc, type LoadConnectionsIpcResult } from '../features/connections/infrastructure/connectionPersistence';
@@ -415,6 +416,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (!skipVaultPrompt && connectConfigUsesVaultAuth(fullConfig)) {
                 const unlocked = await useVaultStore.getState().requestUnlock();
                 if (!unlocked) {
+                    if (isVaultInUseError(useVaultStore.getState().error)) {
+                        get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
+                    }
                     set(state => ({
                         connections: markConnectionStatus(state.connections, id, 'disconnected'),
                     }));
