@@ -31,6 +31,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 - **Terminal Module Layout**: Moved `Terminal.tsx` to `src/components/terminal/`; extracted `terminalCache`, ligatures, renderer setup, and instance lifecycle (`destroyTerminalInstance`, `getTerminalRecentLines`) into `src/lib/terminal/`. Store and AI context now import from `lib/terminal` instead of the React component. ([b0cfd5f], [d15f536])
+- **CodeRabbit review**: addressed all remaining findings (duplicate headings, reconnect lock ordering, child cleanup, input/queue races, listener error handling, renderer reconciliation, etc.). ([579efb4])
 
 ## [2.16.1] - 2026-06-15
 
