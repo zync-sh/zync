@@ -18,6 +18,7 @@ import {
 } from '../.tmp-agent-tests/src/features/connections/domain/importPlan.js';
 import {
   buildConnectConfig,
+  shouldAutoConnectOnOpenTab,
 } from '../.tmp-agent-tests/src/features/connections/domain/connectionConfig.js';
 import {
   assignCredentialToConnections,
@@ -506,6 +507,30 @@ runTest('buildConnectConfig accepts legacy snake_case private key records', () =
 
   assert.equal(config?.auth_method.type, 'PrivateKey');
   assert.equal(config?.auth_method.key_path, '/tmp/id_rsa');
+});
+
+runTest('shouldAutoConnectOnOpenTab connects disconnected hosts including vault-backed', () => {
+  const vaultHost = {
+    id: 'vaulted',
+    name: 'Vault Host',
+    host: '10.0.0.1',
+    username: 'root',
+    port: 22,
+    status: 'disconnected',
+    authRef: {
+      vaultId: 'vault-1',
+      credentialId: 'cred-1',
+      itemId: 'item-1',
+      itemKind: 'ssh-password',
+      purpose: 'ssh-auth',
+    },
+  };
+
+  assert.equal(shouldAutoConnectOnOpenTab([vaultHost], vaultHost), true);
+  assert.equal(
+    shouldAutoConnectOnOpenTab([vaultHost], { ...vaultHost, status: 'connected' }),
+    false,
+  );
 });
 
 runTest('assignCredentialToConnections clears plaintext fields and preserves untouched hosts', () => {

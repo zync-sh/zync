@@ -38,7 +38,7 @@
     "test:ghost-helpers": "npm run compile:agent-tests && node tests/ghostSuggestionsHelpers.test.mjs",
     "test:session-persistence": "npm run compile:agent-tests && node tests/sessionPersistence.test.mjs",
     "test:terminal-renderer-policy": "npm run compile:agent-tests && node tests/terminalRendererPolicy.test.mjs",
-    "test:terminal-renderer": "npm run compile:agent-tests && node tests/terminalRendererPolicy.test.mjs && node tests/terminalWebglCapability.test.mjs && node tests/terminalRendererSession.test.mjs && node tests/terminalRendererController.test.mjs && node tests/terminalRendererDiagnostics.test.mjs",
+    "test:terminal-renderer": "npm run compile:agent-tests && node tests/runTerminalRendererTests.mjs",
     "test:update-notification": "node tests/updateNotificationAutoUpdateFlow.test.mjs",
     "test:all-agent": "npm run compile:agent-tests && node tests/runAllAgentTests.mjs",
     "test": "npm run test:all-agent"
