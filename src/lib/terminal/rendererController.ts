@@ -10,7 +10,6 @@ import {
   type TerminalRendererPreferences,
 } from './rendererPolicy.js';
 import { getTerminalRendererState } from './rendererSession.js';
-import { traceTerminalScreenMutation } from './terminalClearTrace.js';
 import type { TerminalRendererKind, TerminalRendererState } from './types.js';
 import { isWebgl2Available } from './webglCapability.js';
 
@@ -55,11 +54,6 @@ async function loadWebglRenderer(
 
     addon.onContextLoss(() => {
       console.warn('[terminal] WebGL context lost — falling back to canvas for this session');
-      traceTerminalScreenMutation('webgl_context_loss', {
-        sessionId,
-        source: 'WebglAddon.onContextLoss',
-        domMeasurable: isTerminalDomMeasurable(term),
-      }, term);
       state.contextLossCount += 1;
       state.webglContextLossBlocked = true;
       state.lastError = 'webgl_context_lost';

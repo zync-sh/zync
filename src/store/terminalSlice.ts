@@ -1,7 +1,6 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
 import { destroyTerminalInstance } from '../lib/terminal';
-import { traceTerminalScreenMutation } from '../lib/terminal/terminalClearTrace.js';
 import type { TerminalTabSnapshot } from './sessionPersistence';
 import { scheduleSaveSession } from './sessionSlice';
 
@@ -163,12 +162,6 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
 
     /** @inheritdoc */
     closeTerminal: (connectionId, termId) => {
-        traceTerminalScreenMutation('close_terminal_store', {
-            sessionId: termId,
-            connectionId,
-            source: 'terminalSlice.closeTerminal',
-        });
-
         // Kill backend process first
         ipc.send('terminal:kill', { termId });
 
@@ -233,11 +226,6 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
             if (!options.preservePendingRestore) {
                 // Kill/destroy only when not preserving (for reconnect/restore flow).
                 tabs.forEach(t => {
-                    traceTerminalScreenMutation('clear_terminals_store', {
-                        sessionId: t.id,
-                        connectionId,
-                        source: 'terminalSlice.clearTerminals',
-                    });
                     ipc.send('terminal:kill', { termId: t.id });
                     destroyTerminalInstance(t.id);
                 });

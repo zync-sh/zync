@@ -88,13 +88,6 @@ export {
   createResizeScheduler,
 } from './terminalFit.js';
 export { restoreTerminalDisplay } from './terminalPanelRestore.js';
-
-export type { TerminalClearTraceReason, TerminalClearTraceDetails } from './terminalClearTrace.js';
-export {
-  getTerminalBufferSnapshot,
-  traceTerminalBufferClear,
-  traceTerminalScreenMutation,
-} from './terminalClearTrace.js';
 export type { ResizeScheduler, ResizeScheduleOptions } from './terminalFit.js';
 
 export type { TerminalSpawnTabState } from './spawnContext.js';

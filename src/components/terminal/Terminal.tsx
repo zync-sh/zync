@@ -48,8 +48,6 @@ import {
   TERMINAL_CONNECTION_WAKEUP_EVENT,
   terminalCache,
   tryWakeTerminalOnReconnect,
-  traceTerminalBufferClear,
-  traceTerminalScreenMutation,
 } from '../../lib/terminal';
 
 const THEME_PRESETS: Record<string, Record<string, string>> = {
@@ -517,11 +515,6 @@ export function TerminalComponent({
     );
 
     if (rendererInitialized && !settingsChanged) {
-      traceTerminalScreenMutation('visibility_renderer_refit', {
-        sessionId,
-        rendererKind: rendererState.kind,
-        source: 'Terminal.tsx.gpuEffect',
-      }, term);
       if (rendererState.webglContextLossBlocked && !rendererState.canvasAddon) {
         void activateCanvasRenderer(term, rendererState).then(() => {
           restoreTerminalDisplay(term, fitAddonRef.current);
@@ -603,17 +596,6 @@ export function TerminalComponent({
     };
   }, [isTerminalView, isConnected, sessionId, isVisible]);
 
-  useEffect(() => {
-    traceTerminalScreenMutation('visibility_state', {
-      sessionId,
-      isVisible,
-      isTerminalView,
-      isWorkspaceActive,
-      isActiveTab,
-      source: 'Terminal.tsx.visibility',
-    }, termRef.current);
-  }, [sessionId, isVisible, isTerminalView, isWorkspaceActive, isActiveTab]);
-
   // Lazy PTY: defer spawn until a shell tab is first selected. Keep PTYs alive when
   // switching hosts or internal shell tabs; suspend only when leaving terminal view
   // (Files/Dashboard) within the active workspace.
@@ -647,13 +629,6 @@ export function TerminalComponent({
           }
           return;
         }
-        traceTerminalScreenMutation('lazy_spawn', {
-          sessionId,
-          connectionId: spawnConnectionId,
-          clearBuffer: false,
-          source: 'Terminal.tsx.lazyPtyEffect',
-        }, term);
-
         spawnTerminalFromStoreContext({
           sessionId,
           connectionId: spawnConnectionId,
@@ -751,17 +726,9 @@ export function TerminalComponent({
       if (containerRef.current) {
         if (term.element) {
           if (!containerRef.current.contains(term.element)) {
-            traceTerminalScreenMutation('term_open_reattach', {
-              sessionId,
-              source: 'Terminal.tsx.mountEffect',
-            }, term);
             containerRef.current.appendChild(term.element);
           }
         } else {
-          traceTerminalScreenMutation('term_open_reattach', {
-            sessionId,
-            source: 'Terminal.tsx.mountEffect.open',
-          }, term);
           term.open(containerRef.current);
         }
         if (isVisible) {
@@ -830,11 +797,6 @@ export function TerminalComponent({
         } catch { /* ignore malformed OSC 7 */ }
         return true; // consumed — do not pass to xterm default handler
       });
-
-      traceTerminalScreenMutation('term_open_new', {
-        sessionId,
-        source: 'Terminal.tsx.mountEffect',
-      }, term);
 
       term.open(containerRef.current);
 
@@ -1083,12 +1045,6 @@ export function TerminalComponent({
             return;
           }
           console.log('[Terminal] Session ended, restarting on Enter');
-          traceTerminalScreenMutation('enter_restart', {
-            sessionId,
-            connectionId: spawnConnectionId,
-            clearBuffer: true,
-            source: 'Terminal.tsx.onData',
-          }, term);
           clearTerminalPendingInput(sessionId);
           cached.lastResize = null;
           cached.spawnBlocked = false;
@@ -1148,13 +1104,6 @@ export function TerminalComponent({
       && isActiveTabRef.current
     ) {
       const store = useAppStore.getState();
-      traceTerminalScreenMutation('mount_spawn', {
-        sessionId,
-        connectionId: spawnConnectionId,
-        clearBuffer: isNewTerminal,
-        isNewTerminal,
-        source: 'Terminal.tsx.mountEffect',
-      }, term);
       spawnTerminalFromStoreContext({
         sessionId,
         connectionId: spawnConnectionId,
@@ -1521,14 +1470,7 @@ export function TerminalComponent({
               label: 'Clear Terminal',
               icon: <Trash2 className="w-4 h-4" />,
               variant: 'danger',
-              action: () => {
-                const term = termRef.current;
-                if (!term) return;
-                traceTerminalBufferClear('context_menu_clear', term, {
-                  sessionId,
-                  source: 'Terminal.tsx.contextMenu',
-                });
-              }
+              action: () => termRef.current?.clear()
             }
           ]}
         />

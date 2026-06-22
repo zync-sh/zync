@@ -3,7 +3,6 @@ import { listen } from '@tauri-apps/api/event';
 import { clearTerminalInputQueue } from './inputQueue.js';
 import { handleTerminalReady } from './inputPipeline.js';
 import { clearTerminalPendingInput, terminalCache } from './terminalCache.js';
-import { traceTerminalScreenMutation } from './terminalClearTrace.js';
 import { decodeTerminalOutputData, type TerminalOutputData } from './terminalOutputPayload.js';
 
 export interface TerminalLifecycleEvent {
@@ -66,17 +65,6 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
     clearTerminalPendingInput(sessionId);
     clearTerminalInputQueue(sessionId);
     entry.lastResize = null;
-
-    traceTerminalScreenMutation(
-      suspendedForPanel ? 'pty_exit_panel_suspend' : 'pty_exit_session_end',
-      {
-        sessionId,
-        suspendedForPanel,
-        exitCode: event.payload.exit_code,
-        source: 'terminal-exit listener',
-      },
-      term,
-    );
 
     if (!suspendedForPanel) {
       term.write('\r\n\x1b[33m[Terminal session ended. Press Enter to restart.]\x1b[0m\r\n');

@@ -1,6 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
 import type { TerminalRendererState } from './types.js';
-import { traceTerminalScreenMutation } from './terminalClearTrace.js';
 
 let canvasAddonImport: Promise<typeof import('@xterm/addon-canvas')> | null = null;
 
@@ -29,11 +28,6 @@ export function disposeWebglAddonInternal(
   const addon = state.webglAddon;
   if (!addon) return;
 
-  traceTerminalScreenMutation('dispose_webgl_addon', {
-    source: 'disposeWebglAddonInternal',
-    contextAlreadyLost: options?.contextAlreadyLost ?? false,
-  }, term);
-
   state.webglAddon = undefined;
   state.kind = 'canvas';
   state.webglLigaturesStamp = undefined;
@@ -57,14 +51,10 @@ export function disposeWebglAddonInternal(
 
 export function disposeCanvasAddonInternal(
   state: TerminalRendererState,
-  term?: Terminal,
+  _term?: Terminal,
 ): void {
   const addon = state.canvasAddon;
   if (!addon) return;
-
-  traceTerminalScreenMutation('dispose_canvas_addon', {
-    source: 'disposeCanvasAddonInternal',
-  }, term);
 
   state.canvasAddon = undefined;
   disposeAddonSafely(addon);
@@ -100,11 +90,6 @@ export async function activateCanvasRenderer(
   term: Terminal,
   state: TerminalRendererState,
 ): Promise<void> {
-  traceTerminalScreenMutation('activate_canvas_renderer', {
-    source: 'activateCanvasRenderer',
-    hadWebgl: Boolean(state.webglAddon),
-  }, term);
-
   const hadWebgl = Boolean(state.webglAddon);
   disposeWebglAddonInternal(state, term);
   state.desiredKind = 'canvas';

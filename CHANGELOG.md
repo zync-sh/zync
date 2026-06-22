@@ -7,7 +7,6 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Added
 - **Terminal P2 Output IPC**: PTY output events encode payload as base64 instead of JSON `number[]`; frontend `decodeTerminalOutputData()` accepts base64 and legacy array payloads. ([5e87642])
 - **Terminal Panel Restore**: `restoreTerminalDisplay` and `isTerminalDomMeasurable` refit/redraw xterm after Files/Dashboard overlay; agent tests for panel restore and scrollback preserve. ([5e87642])
-- **Terminal Clear Trace (dev)**: `[terminal-clear-trace]` logging at buffer/renderer mutation paths for debugging blank-terminal issues. ([5e87642])
 - **Terminal Phase 2 Lifecycle Extraction**: `spawnTerminalFromStoreContext`, `resolveLazyPtyAction`, `attachTerminalLifecycleListeners`, `syncTerminalResize`, and `terminalConnectionWakeup` modules; `connection-wakeup` dispatched on SSH reconnect; integration tests for spawn → ready → resize → suspend → respawn generation chain. ([d15f536], [a684bb5])
 - **Terminal Phase 1 Hardening**: Serialized async `onData` via per-session input queue; input gated on `terminal-ready` and suspended PTY state; hidden-tab `ResizeObserver` skips fit/IPC; local PTY output batching (8ms / 4KB) mirroring remote path. ([d15f536], [a684bb5])
 - **Lazy PTY Spawn**: PTYs spawn when a shell tab is first selected. Switching hosts, local terminal, internal shell tabs, or Files/Dashboard overlays keeps shells and scrollback alive. ([d15f536], [5e87642])

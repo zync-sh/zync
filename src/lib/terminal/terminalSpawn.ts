@@ -1,6 +1,5 @@
 import type { Terminal as XTerm } from '@xterm/xterm';
 import { spawnTerminalSession } from './ptyLifecycle.js';
-import { traceTerminalScreenMutation } from './terminalClearTrace.js';
 import { resolveTerminalSpawnParams, type TerminalSpawnTabState } from './spawnContext.js';
 
 export interface SpawnTerminalFromStoreOptions {
@@ -27,17 +26,6 @@ export function spawnTerminalFromStoreContext(options: SpawnTerminalFromStoreOpt
     windowsShell,
     remoteReady = true,
   } = options;
-  traceTerminalScreenMutation(
-    clearBuffer ? 'spawn_clear_buffer' : 'spawn_no_clear_buffer',
-    {
-      sessionId,
-      connectionId,
-      clearBuffer,
-      source: 'spawnTerminalFromStoreContext',
-    },
-    term,
-  );
-
   const { cwd, shell } = resolveTerminalSpawnParams(
     terminalKey,
     sessionId,
