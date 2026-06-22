@@ -35,10 +35,17 @@ runTest('none when background workspace host is selected', () => {
   );
 });
 
-runTest('suspend_panel when leaving terminal view with live PTY', () => {
+runTest('none when leaving terminal view with live PTY (keep PTY alive under Files overlay)', () => {
   assert.equal(
     resolveLazyPtyAction({ ...activeWorkspace, isTerminalView: false }, true),
-    'suspend_panel',
+    'none',
+  );
+});
+
+runTest('none for inactive shell when leaving terminal view', () => {
+  assert.equal(
+    resolveLazyPtyAction({ ...activeWorkspace, isTerminalView: false, isActiveTab: false }, true),
+    'none',
   );
 });
 

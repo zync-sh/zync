@@ -1,6 +1,16 @@
 import type { FitAddon } from '@xterm/addon-fit';
 import type { Terminal as XTerm } from '@xterm/xterm';
 
+/** True when the xterm host element is connected and has non-zero layout size. */
+export function isTerminalDomMeasurable(term: XTerm | null | undefined): boolean {
+  const element = term?.element;
+  if (!element?.isConnected) {
+    return false;
+  }
+
+  return element.clientWidth > 0 && element.clientHeight > 0;
+}
+
 /** True when xterm has a live DOM host and render service (safe to call FitAddon.fit). */
 export function isTerminalFitReady(
   term: XTerm | null | undefined,
@@ -10,7 +20,7 @@ export function isTerminalFitReady(
     return false;
   }
 
-  if (!term.element?.isConnected) {
+  if (!isTerminalDomMeasurable(term)) {
     return false;
   }
 

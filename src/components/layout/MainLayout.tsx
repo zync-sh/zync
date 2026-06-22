@@ -468,10 +468,10 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                     {/* Content Area */}
                     <div className="flex-1 overflow-hidden relative flex flex-col">
                         <Suspense fallback={<TabLoading />}>
-                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'files' ? "block" : "hidden")}>
+                            <div className={cn("absolute inset-0 z-30 bg-app-bg", tab.view === 'files' ? "block" : "hidden")}>
                                 <FileManager connectionId={tab.connectionId} isVisible={isActive && tab.view === 'files'} />
                             </div>
-                            <div className={cn("absolute inset-0 z-10 bg-app-bg", tab.view === 'dashboard' ? "block" : "hidden")}>
+                            <div className={cn("absolute inset-0 z-30 bg-app-bg", tab.view === 'dashboard' ? "block" : "hidden")}>
                                 <Dashboard connectionId={tab.connectionId} isVisible={isActive && tab.view === 'dashboard'} />
                             </div>
                             {/* Tunnels & Snippets */}
@@ -509,8 +509,8 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                             */}
                             <div
                                 className={cn(
-                                    "absolute inset-0 z-10",
-                                    tab.view === 'terminal' ? "block" : "hidden",
+                                    "absolute inset-0",
+                                    tab.view === 'terminal' ? "z-20" : "z-0 invisible pointer-events-none",
                                     terminalTransparencyEnabled && !forceOpaqueShell ? "bg-transparent" : "bg-app-bg"
                                 )}
                             >

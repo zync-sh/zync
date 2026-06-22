@@ -20,6 +20,8 @@ export interface TerminalRendererState {
   contextLossCount: number;
   initFailureCount: number;
   lastError?: string;
+  /** Tracks font/ligature config baked into the current WebGL atlas. */
+  webglLigaturesStamp?: string;
 }
 
 export function createInitialRendererState(): TerminalRendererState {

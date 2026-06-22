@@ -8,8 +8,10 @@ export type LazyPtyAction = 'none' | 'suspend_panel' | 'spawn';
 
 /**
  * Lazy PTY policy: defer spawn until a shell tab is first selected; keep PTYs alive
- * when switching hosts or internal shell tabs; suspend only when leaving terminal view
- * (Files/Dashboard) within the active workspace.
+ * when switching hosts, internal shell tabs, or Files/Dashboard overlays.
+ *
+ * Do not suspend on Files/Dashboard — killing the active PTY and respawning on return
+ * blanked the renderer for that shell while scrollback stayed in memory.
  *
  * Background workspace hosts intentionally stay alive (no idle-timer suspend).
  */
@@ -22,7 +24,7 @@ export function resolveLazyPtyAction(
   }
 
   if (!visibility.isTerminalView) {
-    return visibility.isActiveTab && spawned ? 'suspend_panel' : 'none';
+    return 'none';
   }
 
   if (!visibility.isActiveTab) {

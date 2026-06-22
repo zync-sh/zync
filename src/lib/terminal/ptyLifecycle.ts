@@ -2,6 +2,7 @@ import type { Terminal as XTerm } from '@xterm/xterm';
 import { isConnectionBackendLive } from './connectionBackend.js';
 import { clearTerminalInputQueue } from './inputQueue.js';
 import { clearTerminalPendingInput, terminalCache } from './terminalCache.js';
+import { traceTerminalBufferClear, traceTerminalScreenMutation } from './terminalClearTrace.js';
 import {
   formatTerminalSpawnError,
   isTerminalSpawnConnectionNotReadyError,
@@ -41,8 +42,17 @@ export function spawnTerminalSession(options: SpawnTerminalSessionOptions): bool
   cached.suspendedByPanel = false;
 
   if (clearBuffer) {
-    term.clear();
-    term.reset();
+    traceTerminalBufferClear('spawn_clear_buffer', term, {
+      sessionId: termId,
+      connectionId,
+      source: 'spawnTerminalSession',
+    });
+  } else {
+    traceTerminalScreenMutation('spawn_no_clear_buffer', {
+      sessionId: termId,
+      connectionId,
+      source: 'spawnTerminalSession',
+    }, term);
   }
 
   window.ipcRenderer
@@ -92,6 +102,11 @@ export function resetTerminalPtyForReconnect(termId: string): void {
     return;
   }
 
+  traceTerminalScreenMutation('reset_pty_reconnect', {
+    sessionId: termId,
+    source: 'resetTerminalPtyForReconnect',
+  }, cached.term);
+
   if (cached.spawned) {
     window.ipcRenderer.send('terminal:kill', { termId });
   }
@@ -112,6 +127,12 @@ export function suspendTerminalPty(termId: string, options?: SuspendTerminalPtyO
   if (!cached?.spawned) {
     return;
   }
+
+  traceTerminalScreenMutation('suspend_pty', {
+    sessionId: termId,
+    panelHide: options?.panelHide ?? false,
+    source: 'suspendTerminalPty',
+  }, cached.term);
 
   clearTerminalPendingInput(termId);
   clearTerminalInputQueue(termId);

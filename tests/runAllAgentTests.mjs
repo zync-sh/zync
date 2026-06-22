@@ -31,6 +31,8 @@ const tests = [
   'tests/terminalLazyPty.test.mjs',
   'tests/terminalConnectionWakeup.test.mjs',
   'tests/terminalLifecycleIntegration.test.mjs',
+  'tests/terminalOutputPayload.test.mjs',
+  'tests/terminalPanelRestore.test.mjs',
   'tests/terminalResizeSync.test.mjs',
   'tests/terminalReconnectReset.test.mjs',
   'tests/sidebarSubmit.test.mjs',

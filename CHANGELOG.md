@@ -5,9 +5,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 ## [Unreleased]
 
 ### Added
+- **Terminal P2 Output IPC**: PTY output events encode payload as base64 instead of JSON `number[]`; frontend `decodeTerminalOutputData()` accepts base64 and legacy array payloads. ([5e87642])
+- **Terminal Panel Restore**: `restoreTerminalDisplay` and `isTerminalDomMeasurable` refit/redraw xterm after Files/Dashboard overlay; agent tests for panel restore and scrollback preserve. ([5e87642])
+- **Terminal Clear Trace (dev)**: `[terminal-clear-trace]` logging at buffer/renderer mutation paths for debugging blank-terminal issues. ([5e87642])
 - **Terminal Phase 2 Lifecycle Extraction**: `spawnTerminalFromStoreContext`, `resolveLazyPtyAction`, `attachTerminalLifecycleListeners`, `syncTerminalResize`, and `terminalConnectionWakeup` modules; `connection-wakeup` dispatched on SSH reconnect; integration tests for spawn → ready → resize → suspend → respawn generation chain. ([d15f536], [a684bb5])
 - **Terminal Phase 1 Hardening**: Serialized async `onData` via per-session input queue; input gated on `terminal-ready` and suspended PTY state; hidden-tab `ResizeObserver` skips fit/IPC; local PTY output batching (8ms / 4KB) mirroring remote path. ([d15f536], [a684bb5])
-- **Lazy PTY Spawn**: PTYs spawn when a shell tab is first selected. Switching hosts, local terminal, or internal shell tabs keeps shells and scrollback alive. PTYs suspend only when switching to Files/Dashboard within the same workspace. ([d15f536])
+- **Lazy PTY Spawn**: PTYs spawn when a shell tab is first selected. Switching hosts, local terminal, internal shell tabs, or Files/Dashboard overlays keeps shells and scrollback alive. ([d15f536], [5e87642])
 - **Terminal PTY Lifecycle Module**: `spawnTerminalSession` / `suspendTerminalPty` in `src/lib/terminal/ptyLifecycle.ts` with agent tests for spawn, suspend, and input-pipeline buffering. ([d15f536], [a684bb5])
 - **Terminal Resize Unification (roadmap 5.2)**: `createResizeScheduler` (60ms trailing edge) + `safeFitTerminal`/`syncTerminalResize` primitives in `src/lib/terminal/terminalFit.ts`; all fit/sync triggers now funnel through the scheduler. ([d15f536])
 - **Terminal GPU Acceleration (WebGL)**: Modular `src/lib/terminal/` renderer stack — policy, WebGL2 probe, lazy `@xterm/addon-webgl` load, session-scoped state, context-loss handling, and canvas fallback via `@xterm/addon-canvas`. Settings → Terminal adds a **GPU Acceleration** toggle (default on). ([15576ab])
@@ -17,6 +20,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Terminal Roadmap**: `docs/TERMINAL_ROADMAP.md` — optimization/robustness audit, P0/P1 priorities, and GPU implementation notes. ([15576ab])
 
 ### Fixed
+- **Terminal Files Scrollback**: Returning from Files/Dashboard no longer blanks the active shell — PTYs stay alive under the overlay, display restore runs only for the visible tab, and GPU refit avoids tearing down WebGL on panel return. ([5e87642])
+- **Terminal Ghost IPC (P2)**: Ghost suggestion handlers skip IPC when the shell tab is hidden. ([47cfc18])
 - **Connecting Screen Transparency**: Host connection loading no longer flashes fully transparent when vibrancy/terminal transparency is enabled — connecting and error states use an opaque shell and skip the tab fade-in animation.
 - **Terminal External Writes**: Snippet, plugin, and command-palette terminal injections now route through `queueTerminalInput` (ready/suspend gating) instead of direct `terminal:write` IPC.
 - **Input Queue Drain**: `clearTerminalInputQueue` bumps a per-session epoch so in-flight ghost tasks cannot apply stale input after suspend/destroy.
@@ -30,6 +35,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **WebGL Reactivate Races**: `reactivateTerminalWebgl` coalesces concurrent loads through the shared `loadPromise` used by `syncTerminalRenderer`. ([15576ab])
 
 ### Changed
+- **Terminal Files Overlay Layout**: Terminal panel stays laid out under Files/Dashboard (`invisible` overlay) instead of `display: none`, preserving xterm geometry and renderer state. ([5e87642])
 - **Terminal Module Layout**: Moved `Terminal.tsx` to `src/components/terminal/`; extracted `terminalCache`, ligatures, renderer setup, and instance lifecycle (`destroyTerminalInstance`, `getTerminalRecentLines`) into `src/lib/terminal/`. Store and AI context now import from `lib/terminal` instead of the React component. ([b0cfd5f], [d15f536])
 - **CodeRabbit review**: addressed all remaining findings (duplicate headings, reconnect lock ordering, child cleanup, input/queue races, listener error handling, renderer reconciliation, etc.). ([579efb4])
 

@@ -17,6 +17,9 @@ const tests = [
   'tests/terminalReconnectFlow.test.mjs',
   'tests/terminalConnectionWakeup.test.mjs',
   'tests/terminalLifecycleIntegration.test.mjs',
+  'tests/terminalOutputPayload.test.mjs',
+  'tests/terminalPanelRestore.test.mjs',
+  'tests/terminalScrollbackPreserve.test.mjs',
 ];
 
 for (const file of tests) {

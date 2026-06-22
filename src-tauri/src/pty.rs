@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use russh::client::Msg;
 use russh::{Channel, ChannelMsg};
@@ -135,7 +136,8 @@ struct TerminalLifecycleEvent {
 #[derive(Clone, Serialize)]
 struct TerminalOutputEvent {
     generation: u32,
-    data: Vec<u8>,
+    /// Base64-encoded PTY bytes. Avoids JSON `number[]` expansion for batched output.
+    data: String,
 }
 
 /// Emits a terminal output chunk to the frontend without changing the existing event contract.
@@ -145,7 +147,7 @@ struct TerminalOutputEvent {
 fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, generation: u32, payload: &[u8]) {
     let event = TerminalOutputEvent {
         generation,
-        data: payload.to_vec(),
+        data: STANDARD.encode(payload),
     };
     if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id), event) {
         eprintln!("[PTY] Failed to emit output: {}", e);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
@@ -28,14 +28,18 @@ import { useGhostPopupState } from '../../lib/ghostSuggestions/uiState';
 import { GhostSuggestionOverlay } from './GhostSuggestionOverlay';
 import { GhostSuggestionListOverlay } from './GhostSuggestionListOverlay';
 import {
+  activateCanvasRenderer,
   applyTerminalRendererAndLigatures,
   buildEffectiveRendererSettings,
+  getTerminalRendererState,
   attachTerminalLifecycleListeners,
   clearTerminalPendingInput,
   enqueueTerminalInputTask,
   flushPendingInput,
   queueTerminalInput,
   resolveLazyPtyAction,
+  isTerminalDomMeasurable,
+  restoreTerminalDisplay,
   safeFitTerminal,
   spawnTerminalFromStoreContext,
   suspendTerminalPty,
@@ -44,6 +48,8 @@ import {
   TERMINAL_CONNECTION_WAKEUP_EVENT,
   terminalCache,
   tryWakeTerminalOnReconnect,
+  traceTerminalBufferClear,
+  traceTerminalScreenMutation,
 } from '../../lib/terminal';
 
 const THEME_PRESETS: Record<string, Record<string, string>> = {
@@ -377,7 +383,8 @@ export function TerminalComponent({
 
   const refreshTerminalScreen = useCallback((term: XTerm) => {
     try {
-      const lastRow = Math.max(0, term.rows - 1);
+      const bufferLength = term.buffer?.active?.length ?? 0;
+      const lastRow = Math.max(0, Math.max(term.rows - 1, bufferLength - 1));
       term.refresh(0, lastRow);
     } catch {
       // Ignore refresh failures; geometry is still updated by fit().
@@ -460,8 +467,27 @@ export function TerminalComponent({
   }, []);
 
   const terminalGpuAllowed = Boolean(isVisible && isWorkspaceActive && isTerminalView);
+  const terminalRendererSettingsKey = useMemo(
+    () => [
+      settings.terminal.gpuAcceleration,
+      settings.terminal.fontLigatures,
+      settings.terminal.fontFamily,
+      settings.terminal.fontSize,
+      settings.terminal.lineHeight,
+      settings.terminal.cursorStyle,
+    ].join('|'),
+    [
+      settings.terminal.gpuAcceleration,
+      settings.terminal.fontLigatures,
+      settings.terminal.fontFamily,
+      settings.terminal.fontSize,
+      settings.terminal.lineHeight,
+      settings.terminal.cursorStyle,
+    ],
+  );
+  const lastAppliedRendererSettingsKeyRef = useRef<string | null>(null);
 
-  // Apply settings + GPU policy: only the visible active shell tab may use WebGL.
+  // Typography updates apply to every cached shell tab (including hidden ones).
   useEffect(() => {
     if (!isConnected || !termRef.current) {
       return;
@@ -472,6 +498,42 @@ export function TerminalComponent({
     term.options.fontFamily = settings.terminal.fontFamily;
     term.options.cursorStyle = settings.terminal.cursorStyle;
     term.options.lineHeight = settings.terminal.lineHeight;
+  }, [sessionId, settings.terminal, isConnected]);
+
+  // GPU + ligatures: only the visible active shell tab. On Files→Terminal return, refit
+  // only — never tear down WebGL (dispose blanks the screen while scrollback stays in memory).
+  useEffect(() => {
+    if (!isConnected || !termRef.current || !isVisible || !terminalGpuAllowed) {
+      return;
+    }
+
+    const term = termRef.current;
+    const rendererState = getTerminalRendererState(sessionId);
+    const settingsChanged = lastAppliedRendererSettingsKeyRef.current !== terminalRendererSettingsKey;
+    const rendererInitialized = (
+      (rendererState.kind === 'webgl' && Boolean(rendererState.webglAddon))
+      || Boolean(rendererState.canvasAddon)
+      || rendererState.webglContextLossBlocked
+    );
+
+    if (rendererInitialized && !settingsChanged) {
+      traceTerminalScreenMutation('visibility_renderer_refit', {
+        sessionId,
+        rendererKind: rendererState.kind,
+        source: 'Terminal.tsx.gpuEffect',
+      }, term);
+      if (rendererState.webglContextLossBlocked && !rendererState.canvasAddon) {
+        void activateCanvasRenderer(term, rendererState).then(() => {
+          restoreTerminalDisplay(term, fitAddonRef.current);
+        });
+      } else {
+        restoreTerminalDisplay(term, fitAddonRef.current);
+      }
+      return;
+    }
+
+    lastAppliedRendererSettingsKeyRef.current = terminalRendererSettingsKey;
+
     void applyTerminalRendererAndLigatures(
       sessionId,
       term,
@@ -483,29 +545,74 @@ export function TerminalComponent({
     });
 
     safeFitTerminal(fitAddonRef.current, term);
-  }, [sessionId, settings.terminal, terminalGpuAllowed, isConnected]);
+  }, [sessionId, terminalRendererSettingsKey, terminalGpuAllowed, isConnected, isVisible]);
 
-  // Force fit and focus when visibility changes (e.g. switching tabs) or connection becomes active
+  // Refit after tab switch or returning from Files/Dashboard (panel was display:none).
   useEffect(() => {
-    if (!isVisible || !isConnected) return;
+    if (!isVisible || !isConnected || !isTerminalView) return;
 
+    let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const frameId = requestAnimationFrame(() => {
-      timer = setTimeout(() => {
-        try {
-          resizeSchedulerRef.current?.schedule({ forceSync: true, immediate: true });
-          termRef.current?.focus();
-        } catch (e) {
-          console.warn('Fit/Focus failed on visibility change', e);
-        }
-      }, 150);
+    let frame2 = 0;
+
+    const frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        timer = setTimeout(() => {
+          if (cancelled) return;
+          try {
+            resizeSchedulerRef.current?.schedule({ forceSync: true, immediate: true });
+            const term = termRef.current;
+            if (term) {
+              refreshTerminalScreen(term);
+            }
+            term?.focus();
+          } catch (e) {
+            console.warn('Fit/Focus failed on visibility change', e);
+          }
+        }, 100);
+      });
     });
 
     return () => {
-      cancelAnimationFrame(frameId);
+      cancelled = true;
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
       if (timer) clearTimeout(timer);
     };
-  }, [isVisible, isConnected, refitTerminal]);
+  }, [isVisible, isConnected, isTerminalView, refitTerminal]);
+
+  // Redraw the visible shell when the terminal panel is foregrounded again (Files/Dashboard).
+  // Inactive shell tabs must not refit while hidden — that corrupts their display on tab switch.
+  useEffect(() => {
+    if (!isTerminalView || !isConnected || !isVisible) return;
+
+    let cancelled = false;
+    let frame2 = 0;
+    const frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        restoreTerminalDisplay(termRef.current, fitAddonRef.current);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+    };
+  }, [isTerminalView, isConnected, sessionId, isVisible]);
+
+  useEffect(() => {
+    traceTerminalScreenMutation('visibility_state', {
+      sessionId,
+      isVisible,
+      isTerminalView,
+      isWorkspaceActive,
+      isActiveTab,
+      source: 'Terminal.tsx.visibility',
+    }, termRef.current);
+  }, [sessionId, isVisible, isTerminalView, isWorkspaceActive, isActiveTab]);
 
   // Lazy PTY: defer spawn until a shell tab is first selected. Keep PTYs alive when
   // switching hosts or internal shell tabs; suspend only when leaving terminal view
@@ -526,16 +633,42 @@ export function TerminalComponent({
 
     if (action === 'spawn' && cached) {
       const store = useAppStore.getState();
-      spawnTerminalFromStoreContext({
-        sessionId,
-        connectionId: spawnConnectionId,
-        terminalKey,
-        term: termRef.current,
-        clearBuffer: false,
-        terminals: store.terminals,
-        windowsShell: store.settings.localTerm?.windowsShell,
-        remoteReady,
-      });
+      let frame = 0;
+      let attempts = 0;
+      const trySpawn = () => {
+        const term = termRef.current;
+        if (!term || !terminalCache.get(sessionId)) {
+          return;
+        }
+        if (!isTerminalDomMeasurable(term)) {
+          attempts += 1;
+          if (attempts < 30) {
+            frame = requestAnimationFrame(trySpawn);
+          }
+          return;
+        }
+        traceTerminalScreenMutation('lazy_spawn', {
+          sessionId,
+          connectionId: spawnConnectionId,
+          clearBuffer: false,
+          source: 'Terminal.tsx.lazyPtyEffect',
+        }, term);
+
+        spawnTerminalFromStoreContext({
+          sessionId,
+          connectionId: spawnConnectionId,
+          terminalKey,
+          term,
+          clearBuffer: false,
+          terminals: store.terminals,
+          windowsShell: store.settings.localTerm?.windowsShell,
+          remoteReady,
+        });
+      };
+      trySpawn();
+      return () => {
+        if (frame) cancelAnimationFrame(frame);
+      };
     }
   }, [isWorkspaceActive, isTerminalView, isActiveTab, isConnected, sessionId, terminalKey, spawnConnectionId, remoteReady]);
 
@@ -618,9 +751,17 @@ export function TerminalComponent({
       if (containerRef.current) {
         if (term.element) {
           if (!containerRef.current.contains(term.element)) {
+            traceTerminalScreenMutation('term_open_reattach', {
+              sessionId,
+              source: 'Terminal.tsx.mountEffect',
+            }, term);
             containerRef.current.appendChild(term.element);
           }
         } else {
+          traceTerminalScreenMutation('term_open_reattach', {
+            sessionId,
+            source: 'Terminal.tsx.mountEffect.open',
+          }, term);
           term.open(containerRef.current);
         }
         if (isVisible) {
@@ -689,6 +830,11 @@ export function TerminalComponent({
         } catch { /* ignore malformed OSC 7 */ }
         return true; // consumed — do not pass to xterm default handler
       });
+
+      traceTerminalScreenMutation('term_open_new', {
+        sessionId,
+        source: 'Terminal.tsx.mountEffect',
+      }, term);
 
       term.open(containerRef.current);
 
@@ -937,6 +1083,12 @@ export function TerminalComponent({
             return;
           }
           console.log('[Terminal] Session ended, restarting on Enter');
+          traceTerminalScreenMutation('enter_restart', {
+            sessionId,
+            connectionId: spawnConnectionId,
+            clearBuffer: true,
+            source: 'Terminal.tsx.onData',
+          }, term);
           clearTerminalPendingInput(sessionId);
           cached.lastResize = null;
           cached.spawnBlocked = false;
@@ -996,6 +1148,13 @@ export function TerminalComponent({
       && isActiveTabRef.current
     ) {
       const store = useAppStore.getState();
+      traceTerminalScreenMutation('mount_spawn', {
+        sessionId,
+        connectionId: spawnConnectionId,
+        clearBuffer: isNewTerminal,
+        isNewTerminal,
+        source: 'Terminal.tsx.mountEffect',
+      }, term);
       spawnTerminalFromStoreContext({
         sessionId,
         connectionId: spawnConnectionId,
@@ -1362,7 +1521,14 @@ export function TerminalComponent({
               label: 'Clear Terminal',
               icon: <Trash2 className="w-4 h-4" />,
               variant: 'danger',
-              action: () => termRef.current?.clear()
+              action: () => {
+                const term = termRef.current;
+                if (!term) return;
+                traceTerminalBufferClear('context_menu_clear', term, {
+                  sessionId,
+                  source: 'Terminal.tsx.contextMenu',
+                });
+              }
             }
           ]}
         />

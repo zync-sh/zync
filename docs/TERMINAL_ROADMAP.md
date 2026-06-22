@@ -1,6 +1,6 @@
 # Zync Terminal — Optimization & Robustness Roadmap
 
-**Last updated:** 2026-06-18 (P1 complete)
+**Last updated:** 2026-06-22 (P2 in progress)
 **Audit basis:** Full-stack review of `terminal/Terminal.tsx`, `TerminalManager.tsx`, `pty.rs`, `terminalSlice.ts`, ghost suggestions, and terminal IPC.
 
 Plans and prioritized work for terminal performance, reliability, and code quality. For ghost-suggestion architecture, see [TERMINAL_GHOST_SUGGESTIONS.md](./TERMINAL_GHOST_SUGGESTIONS.md). For session/tab restore behavior, see [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md).
@@ -80,7 +80,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 
 - Defer PTY spawn until a shell tab is first selected (`isActiveTab`).
 - Keep PTYs alive when switching **sidebar hosts** or **internal shell tabs** (scrollback + running shells preserved).
-- Suspend only the **active** shell PTY when leaving **Terminal view** for Files/Dashboard within the same workspace (`isTerminalView === false`).
+- Suspend only the **active** shell PTY when leaving **Terminal view** for Files/Dashboard within the same workspace (`isTerminalView === false`). The terminal panel stays **laid out** under the Files overlay (`invisible`, not `display:none`) so xterm scrollback and GPU context are preserved.
 - Modules: `ptyLifecycle.ts` (`spawnTerminalSession`, `suspendTerminalPty`), `spawnContext.ts`.
 
 **Remaining:** Idle-timer suspend for background hosts is **deferred** — host/shell tab switches intentionally keep PTYs alive to preserve scrollback and running shells.
@@ -124,8 +124,8 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 ## 6. P2 — Polish & Longer-Term
 
 - **GPU acceleration (WebGL renderer)** — implemented; see [§11](#11-gpu-acceleration-webgl-renderer)
-- Skip ghost suggestion IPC when tab is hidden
-- Binary Tauri event payloads instead of `number[]` serde for output
+- Skip ghost suggestion IPC when tab is hidden — **done** (guarded behind `isVisibleRef`)
+- Binary Tauri event payloads instead of `number[]` serde for output — **done (base64)**; `pty.rs` emits `data` as base64; frontend `decodeTerminalOutputData()` in `terminalOutputPayload.ts`. True Tauri `Channel` streaming remains optional follow-up.
 - ~~Integration tests: spawn → resize → generation → close sequences~~ — done (`terminalLifecycleIntegration.test.mjs`)
 - Split `Terminal.tsx` into `TerminalHost`, lifecycle hook, input pipeline, theme hook
 - Central terminal service API for store (`terminalService.destroy(id)`)

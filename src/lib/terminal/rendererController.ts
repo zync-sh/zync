@@ -4,11 +4,13 @@ import {
   disposeCanvasAddonInternal,
   disposeWebglAddonInternal,
 } from './rendererLifecycle.js';
+import { isTerminalDomMeasurable } from './terminalFit.js';
 import {
   resolveDesiredTerminalRenderer,
   type TerminalRendererPreferences,
 } from './rendererPolicy.js';
 import { getTerminalRendererState } from './rendererSession.js';
+import { traceTerminalScreenMutation } from './terminalClearTrace.js';
 import type { TerminalRendererKind, TerminalRendererState } from './types.js';
 import { isWebgl2Available } from './webglCapability.js';
 
@@ -53,9 +55,24 @@ async function loadWebglRenderer(
 
     addon.onContextLoss(() => {
       console.warn('[terminal] WebGL context lost — falling back to canvas for this session');
+      traceTerminalScreenMutation('webgl_context_loss', {
+        sessionId,
+        source: 'WebglAddon.onContextLoss',
+        domMeasurable: isTerminalDomMeasurable(term),
+      }, term);
       state.contextLossCount += 1;
       state.webglContextLossBlocked = true;
       state.lastError = 'webgl_context_lost';
+      state.kind = 'canvas';
+      disposeWebglAddonInternal(state, term, { contextAlreadyLost: true });
+
+      // Panel hidden (Files/Dashboard) uses display:none — canvas recovery here can
+      // wipe scrollback. Defer until the terminal host has measurable layout.
+      if (!isTerminalDomMeasurable(term)) {
+        notifyTerminalRendererChanged(sessionId);
+        return;
+      }
+
       void (async () => {
         await activateCanvasRenderer(term, state);
         onRefit?.();
