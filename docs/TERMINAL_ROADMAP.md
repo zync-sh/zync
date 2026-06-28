@@ -1,6 +1,6 @@
 # Zync Terminal — Optimization & Robustness Roadmap
 
-**Last updated:** 2026-06-28 (Phase 7 complete except deferred idle-host suspend)
+**Last updated:** 2026-06-28 (Phase 7 complete)
 **Audit basis:** Full-stack review of `terminal/Terminal.tsx`, `TerminalManager.tsx`, `pty.rs`, `terminalSlice.ts`, ghost suggestions, and terminal IPC.
 
 Plans and prioritized work for terminal performance, reliability, and code quality. For ghost-suggestion architecture, see [TERMINAL_GHOST_SUGGESTIONS.md](./TERMINAL_GHOST_SUGGESTIONS.md). For session/tab restore behavior, see [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md).
@@ -87,7 +87,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 - Suspend only the **active** shell PTY when leaving **Terminal view** for Files/Dashboard within the same workspace (`isTerminalView === false`). The terminal panel stays **laid out** under the Files overlay (`invisible`, not `display:none`) so xterm scrollback and GPU context are preserved.
 - Modules: `ptyLifecycle.ts` (`spawnTerminalSession`, `suspendTerminalPty`), `spawnContext.ts`.
 
-**Remaining (Phase 7):** Idle-timer suspend for background workspace hosts — **deferred** (`terminalIdlePty.ts` exists but is not wired). Killing remote SSH PTYs after 2 minutes forces a new login banner on return and feels like a cleared terminal; host switches keep PTYs alive like 2.17.0 until an opt-in setting + gentler respawn UX ships.
+**Remaining (Phase 7):** Idle-timer suspend — **opt-in** via Settings → Terminal → “Suspend idle host shells” (default **off**). When enabled, background host PTYs suspend after the configured idle timeout; scrollback stays; user presses **Enter** to resume (no auto SSH respawn).
 
 ---
 
@@ -487,8 +487,8 @@ Single focused milestone: upgrade to **xterm 6.x**, remove deprecated canvas add
 
 ## 13. Phase 7 — Maintainability & Scale
 
-**Status:** **complete** except 7.2 idle-host suspend (deferred)  
-**Shipped:** post-2.18.0 (refactor + xterm 6 options audit)
+**Status:** **complete**  
+**Shipped:** post-2.18.0 (refactor, xterm 6 options, opt-in idle-host suspend)
 
 ### Goal
 
@@ -499,7 +499,7 @@ Reduce terminal module coupling, reclaim resources from background workspace hos
 | # | Item | Status | Detail |
 |---|------|--------|--------|
 | 7.1 | Terminal service layer | **done** | `terminalService.ts` — `destroy`, `getRecentLines`, `suspendAllForConnection`; `terminalSlice` routes through service |
-| 7.2 | Idle-host PTY suspend | **deferred** | `terminalIdlePty.ts` scaffold only — not wired; remote SSH respawn shows duplicate `Last login` / poor scrollback UX |
+| 7.2 | Idle-host PTY suspend | **done** | Opt-in (`suspendIdleHostPtys`, default off); manual Enter-to-resume; idle message instead of auto SSH respawn |
 | 7.3 | `Terminal.tsx` split | **done** | `useTerminalSearch`, `useTerminalGhost`, `useTerminalKeybindings`, `TerminalSearchBar`, `TerminalDisconnectedView`, `TerminalContextMenu` |
 | 7.4 | xterm 6 options | **done** | `xtermOptions.ts` — `reflowCursorLine: false` (§3), `scrollback: 5000`, `windowsPty.conpty` for local Windows only; synchronized output is runtime DECSET (no init option) |
 | 7.5 | Legacy canvas aliases | **done** | Removed `activateCanvasRenderer` / `ensureCanvasRenderer*` re-exports |
@@ -517,7 +517,7 @@ Reduce terminal module coupling, reclaim resources from background workspace hos
 
 - [x] `terminalService` is the store-facing destroy/suspend entry point
 - [x] Idle-host suspend unit tests (`terminalIdlePty.test.mjs`) — module only, not active in app
-- [ ] Idle-host suspend: re-enable only with opt-in setting + no auto-respawn on SSH return
+- [x] Idle-host suspend: opt-in setting + Enter-to-resume (no auto-respawn on return)
 - [x] `Terminal.tsx` under ~500 lines with search/ghost in dedicated modules (~270 lines)
 - [x] `npm run test:terminal-renderer` green including `terminalIdlePty.test.mjs`
 

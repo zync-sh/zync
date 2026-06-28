@@ -18,6 +18,7 @@ import {
   clearTerminalPendingInput,
   enqueueTerminalInputTask,
   queueTerminalInput,
+  isTerminalIdleSuspended,
   spawnTerminalFromStoreContext,
   terminalCache,
 } from '../../lib/terminal';
@@ -243,7 +244,12 @@ export function useTerminalGhost({
             if (!isVisibleRef.current || !isConnectedRef.current || cached.spawnBlocked) {
               return;
             }
-            console.log('[Terminal] Session ended, restarting on Enter');
+            const idleSuspended = isTerminalIdleSuspended(mountSessionId);
+            console.log(
+              idleSuspended
+                ? '[Terminal] Idle-suspended shell, resuming on Enter'
+                : '[Terminal] Session ended, restarting on Enter',
+            );
             clearTerminalPendingInput(mountSessionId);
             cached.lastResize = null;
             cached.spawnBlocked = false;
@@ -253,7 +259,7 @@ export function useTerminalGhost({
               connectionId: spawnConnectionId,
               terminalKey,
               term,
-              clearBuffer: true,
+              clearBuffer: !idleSuspended,
               terminals: store.terminals,
               windowsShell: store.settings.localTerm?.windowsShell,
               remoteReady: true,

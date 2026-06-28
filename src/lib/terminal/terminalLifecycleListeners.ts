@@ -3,7 +3,19 @@ import { listen } from '@tauri-apps/api/event';
 import { clearTerminalInputQueue } from './inputQueue.js';
 import { handleTerminalReady } from './inputPipeline.js';
 import { clearTerminalPendingInput, terminalCache } from './terminalCache.js';
+import { touchTerminalActivity } from './terminalActivity.js';
+import { writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
 import { decodeTerminalOutputData, type TerminalOutputData } from './terminalOutputPayload.js';
+
+export { IDLE_HOST_SUSPEND_MESSAGE } from './terminalIdleSuspendNotice.js';
+
+export function terminalExitGenerationMatches(entry: NonNullable<ReturnType<typeof terminalCache.get>>, exitGeneration: number): boolean {
+  if (exitGeneration === entry.generation) {
+    return true;
+  }
+  // suspendTerminalPty bumps generation before the async exit event arrives.
+  return Boolean(entry.suspendedByIdle && exitGeneration === entry.generation - 1);
+}
 
 export interface TerminalLifecycleEvent {
   generation: number;
@@ -33,6 +45,7 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
     if (!entry || event.payload.generation !== entry.generation) {
       return;
     }
+    touchTerminalActivity(sessionId);
     term.write(decodeTerminalOutputData(event.payload.data));
   }).then((unlistenFn) => {
     if (terminalCache.has(sessionId)) {
@@ -54,11 +67,12 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
       return;
     }
 
-    if (event.payload.generation !== entry.generation) {
+    if (!terminalExitGenerationMatches(entry, event.payload.generation)) {
       return;
     }
 
     const suspendedForPanel = entry.suspendedByPanel;
+    const suspendedForIdle = entry.suspendedByIdle;
     entry.suspendedByPanel = false;
     entry.starting = false;
     entry.spawned = false;
@@ -66,7 +80,9 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
     clearTerminalInputQueue(sessionId);
     entry.lastResize = null;
 
-    if (!suspendedForPanel) {
+    if (suspendedForIdle) {
+      writeIdleHostSuspendNotice(sessionId);
+    } else if (!suspendedForPanel) {
       term.write('\r\n\x1b[33m[Terminal session ended. Press Enter to restart.]\x1b[0m\r\n');
     }
   }).then((unlistenFn) => {

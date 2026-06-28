@@ -77,6 +77,14 @@ runTest('handleTerminalReady flushes buffered input', () => {
   assert.equal(ipcWrites[0].data, 'ls\r');
 });
 
+runTest('handleTerminalReady clears idle-suspend guard after successful spawn', () => {
+  terminalCache.clear();
+  seedCache({ starting: true, generation: 2, suspendedByIdle: true, idleSuspendNoticeShown: true });
+  assert.equal(handleTerminalReady(SESSION, 2), true);
+  assert.equal(terminalCache.get(SESSION).suspendedByIdle, false);
+  assert.equal(terminalCache.get(SESSION).idleSuspendNoticeShown, false);
+});
+
 runTest('flushPendingInput is a no-op while starting', () => {
   terminalCache.clear();
   ipcWrites.length = 0;

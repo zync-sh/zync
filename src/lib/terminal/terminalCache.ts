@@ -14,6 +14,8 @@ export interface TerminalCache {
   starting: boolean;
   /** Set when the PTY was closed because the terminal panel was hidden (not tab switch). */
   suspendedByPanel?: boolean;
+  /** Set when the PTY was closed by idle-host suspend — blocks auto-respawn until Enter. */
+  suspendedByIdle?: boolean;
   listenerAttached: boolean;
   pendingInput: string;
   pendingInputBytes: number;
@@ -28,6 +30,10 @@ export interface TerminalCache {
   ligaturesLoadPromise?: Promise<void> | null;
   /** Set after terminal:create fails for a dead SSH backend; cleared on reconnect/ready. */
   spawnBlocked?: boolean;
+  /** Last PTY output or user input timestamp — used to skip idle-host suspend while busy. */
+  lastActivityAt?: number;
+  /** Idle-suspend banner already written for the current suspend cycle. */
+  idleSuspendNoticeShown?: boolean;
 }
 
 export const terminalCache = new Map<string, TerminalCache>();

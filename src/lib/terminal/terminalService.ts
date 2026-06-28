@@ -1,5 +1,6 @@
 import { destroyTerminalInstance, getTerminalRecentLines } from './instanceApi.js';
 import { suspendAllTerminalsForConnection } from './suspendAllTerminals.js';
+import type { SuspendTerminalPtyOptions } from './ptyLifecycle.js';
 
 /**
  * Store- and layout-facing terminal API. Keeps Zustand slices decoupled from
@@ -14,7 +15,10 @@ export const terminalService = {
     return getTerminalRecentLines(sessionId, lineCount);
   },
 
-  suspendAllForConnection(tabs: Array<{ id: string }> | undefined): void {
-    suspendAllTerminalsForConnection(tabs);
+  suspendAllForConnection(
+    tabs: Array<{ id: string }> | undefined,
+    options?: SuspendTerminalPtyOptions,
+  ): void {
+    suspendAllTerminalsForConnection(tabs, options);
   },
 } as const;

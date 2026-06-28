@@ -22,6 +22,12 @@ import { SetupWizard } from '../onboarding/SetupWizard';
 import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
 import { AiSidebar } from '../ai/AiSidebar';
 import { ModalRoot } from '../ui/ModalRoot';
+import {
+    cancelAllIdlePtySuspends,
+    cancelIdlePtySuspend,
+    resolveIdleHostPtySuspendDelayMs,
+    scheduleIdlePtySuspend,
+} from '../../lib/terminal';
 
 
 // Side-effect imports — these register each modal into the registry at startup.
@@ -581,6 +587,45 @@ export function MainLayout({ children }: { children: ReactNode }) {
         () => (activeTabId !== null ? tabs.find((t: Tab) => t.id === activeTabId) : undefined),
         [tabs, activeTabId],
     );
+    const suspendIdleHostPtys = useAppStore(
+        state => state.settings.terminal.suspendIdleHostPtys ?? false,
+    );
+    const idleHostPtySuspendMinutes = useAppStore(
+        state => state.settings.terminal.idleHostPtySuspendMinutes ?? 2,
+    );
+    const prevWorkspaceConnectionIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        const delayMs = resolveIdleHostPtySuspendDelayMs(
+            suspendIdleHostPtys,
+            idleHostPtySuspendMinutes,
+        );
+        const nextConnectionId = activeWorkspaceTab?.connectionId ?? null;
+        const prevConnectionId = prevWorkspaceConnectionIdRef.current;
+
+        if (delayMs === null) {
+            cancelAllIdlePtySuspends();
+        } else {
+            if (prevConnectionId && prevConnectionId !== nextConnectionId) {
+                const prevTabs = useAppStore.getState().terminals[prevConnectionId];
+                scheduleIdlePtySuspend(prevConnectionId, prevTabs, { delayMs });
+            }
+
+            if (nextConnectionId) {
+                cancelIdlePtySuspend(nextConnectionId);
+            }
+        }
+
+        prevWorkspaceConnectionIdRef.current = nextConnectionId;
+    }, [
+        activeTabId,
+        activeWorkspaceTab?.connectionId,
+        suspendIdleHostPtys,
+        idleHostPtySuspendMinutes,
+    ]);
+
+    useEffect(() => () => cancelAllIdlePtySuspends(), []);
+
     const showWelcomeScreen = useAppStore(state => state.showWelcomeScreen);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
     const sessionLoaded = useAppStore(state => state.sessionLoaded);

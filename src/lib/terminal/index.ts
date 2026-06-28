@@ -73,8 +73,11 @@ export type { BuildXtermOptionsParams, TerminalXtermSettings } from './xtermOpti
 export {
   cancelAllIdlePtySuspends,
   cancelIdlePtySuspend,
+  DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
   DEFAULT_IDLE_PTY_SUSPEND_MS,
-  flushIdlePtySuspend,
+  DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+  normalizeIdleHostPtySuspendMinutes,
+  resolveIdleHostPtySuspendDelayMs,
   scheduleIdlePtySuspend,
 } from './terminalIdlePty.js';
 
@@ -92,6 +95,7 @@ export {
 
 export type { SpawnTerminalSessionOptions, SuspendTerminalPtyOptions } from './ptyLifecycle.js';
 export {
+  isTerminalIdleSuspended,
   resetTerminalPtyForReconnect,
   spawnTerminalSession,
   suspendTerminalPty,
@@ -129,6 +133,7 @@ export type {
   TerminalOutputEvent,
 } from './terminalLifecycleListeners.js';
 export { attachTerminalLifecycleListeners } from './terminalLifecycleListeners.js';
+export { writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
 export {
   decodeTerminalOutputData,
   type LegacyTerminalOutputData,

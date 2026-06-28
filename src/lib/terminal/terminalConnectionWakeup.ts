@@ -33,7 +33,7 @@ export function tryWakeTerminalOnReconnect(ctx: ConnectionWakeupContext): boolea
   }
 
   const cached = terminalCache.get(ctx.sessionId);
-  if (!cached || cached.spawned) {
+  if (!cached || cached.spawned || cached.suspendedByIdle) {
     return false;
   }
 

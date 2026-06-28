@@ -6,6 +6,7 @@ import {
   formatTerminalSpawnError,
   isTerminalSpawnConnectionNotReadyError,
 } from './terminalSpawnErrors.js';
+import { clearIdleHostSuspendNotice, writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
 
 export interface SpawnTerminalSessionOptions {
   termId: string;
@@ -80,6 +81,16 @@ export interface SuspendTerminalPtyOptions {
    * Only set for Files/Dashboard view transitions — not tab or host switches.
    */
   panelHide?: boolean;
+  /**
+   * When true, marks the session idle-suspended — scrollback preserved, no auto-respawn
+   * until the user presses Enter.
+   */
+  idleHost?: boolean;
+}
+
+/** Whether auto-spawn paths should skip this session (idle-host suspend awaiting Enter). */
+export function isTerminalIdleSuspended(termId: string): boolean {
+  return Boolean(terminalCache.get(termId)?.suspendedByIdle);
 }
 
 /**
@@ -102,6 +113,8 @@ export function resetTerminalPtyForReconnect(termId: string): void {
   cached.spawned = false;
   cached.starting = false;
   cached.suspendedByPanel = false;
+  cached.suspendedByIdle = false;
+  clearIdleHostSuspendNotice(termId);
   cached.spawnBlocked = false;
   cached.lastResize = null;
 }
@@ -115,6 +128,10 @@ export function suspendTerminalPty(termId: string, options?: SuspendTerminalPtyO
 
   clearTerminalPendingInput(termId);
   clearTerminalInputQueue(termId);
+  if (options?.idleHost) {
+    cached.suspendedByIdle = true;
+    writeIdleHostSuspendNotice(termId);
+  }
   window.ipcRenderer.send('terminal:kill', { termId });
   cached.generation += 1;
   cached.spawned = false;

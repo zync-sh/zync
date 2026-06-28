@@ -1,4 +1,6 @@
 import { terminalCache } from './terminalCache.js';
+import { touchTerminalActivity } from './terminalActivity.js';
+import { clearIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
 
 const INPUT_BATCH_MS = 4;
 const INPUT_FLUSH_THRESHOLD = 64;
@@ -54,6 +56,7 @@ export function queueTerminalInput(termId: string | null | undefined, data: stri
 
   cached.pendingInput += data;
   cached.pendingInputBytes = (cached.pendingInputBytes || 0) + inputByteEncoder.encode(data).length;
+  touchTerminalActivity(termId);
 
   if (!cached.spawned || cached.starting) {
     return;
@@ -84,6 +87,8 @@ export function handleTerminalReady(termId: string, generation: number): boolean
   cached.starting = false;
   cached.spawned = true;
   cached.spawnBlocked = false;
+  cached.suspendedByIdle = false;
+  clearIdleHostSuspendNotice(termId);
   flushPendingInput(termId);
   return true;
 }

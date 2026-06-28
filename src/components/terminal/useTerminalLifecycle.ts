@@ -25,7 +25,9 @@ import {
   terminalCache,
   tryWakeTerminalOnReconnect,
   buildXtermOptions,
+  isTerminalIdleSuspended,
   shouldUseWindowsLocalPtyOptions,
+  writeIdleHostSuspendNotice,
 } from '../../lib/terminal';
 import type { TerminalSettingsSlice } from './useTerminalTheme';
 
@@ -404,7 +406,7 @@ export function useTerminalLifecycle({
       return;
     }
 
-    if (action === 'spawn' && cached) {
+    if (action === 'spawn' && cached && !isTerminalIdleSuspended(sessionId)) {
       const store = useAppStore.getState();
       let frame = 0;
       let attempts = 0;
@@ -588,6 +590,10 @@ export function useTerminalLifecycle({
 
     attachTerminalLifecycleListeners(sessionId, term);
 
+    if (terminalCache.get(sessionId)?.suspendedByIdle) {
+      writeIdleHostSuspendNotice(sessionId);
+    }
+
     const rendererState = getTerminalRendererState(sessionId);
     const gpuAllowed = Boolean(
       isVisibleRef.current
@@ -622,6 +628,7 @@ export function useTerminalLifecycle({
     if (
       cachedEntry
       && !cachedEntry.spawned
+      && !cachedEntry.suspendedByIdle
       && isWorkspaceActiveRef.current
       && isTerminalViewRef.current
       && isActiveTabRef.current

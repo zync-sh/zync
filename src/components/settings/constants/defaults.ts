@@ -9,3 +9,7 @@ export const DEFAULT_TERMINAL_PADDING = 12;
 export const DEFAULT_TERMINAL_LINE_HEIGHT = 1.2;
 export const DEFAULT_TERMINAL_LIGATURES = false;
 export const DEFAULT_TERMINAL_GPU_ACCELERATION = true;
+export {
+    DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+    DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
+} from '../../../lib/terminal/terminalIdlePty.js';

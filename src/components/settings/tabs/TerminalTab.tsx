@@ -10,6 +10,8 @@ import {
     DEFAULT_TERMINAL_LINE_HEIGHT,
     DEFAULT_TERMINAL_LIGATURES,
     DEFAULT_TERMINAL_GPU_ACCELERATION,
+    DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+    DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
 } from '../constants/defaults';
 import { TerminalRendererStatus } from './TerminalRendererStatus';
 
@@ -160,6 +162,31 @@ export function TerminalTab({
                         <TerminalRendererStatus
                             gpuAcceleration={settings.terminal.gpuAcceleration ?? DEFAULT_TERMINAL_GPU_ACCELERATION}
                         />
+                        <Toggle
+                            label="Suspend idle host shells"
+                            description="After switching away from a workspace host, suspend its PTYs once quiet (scrollback preserved). Shells still producing output stay alive. Press Enter on return to resume. Off by default — SSH hosts show a fresh login on auto-respawn."
+                            checked={settings.terminal.suspendIdleHostPtys ?? DEFAULT_SUSPEND_IDLE_HOST_PTYS}
+                            onChange={(v) => updateTerminalSettings({ suspendIdleHostPtys: v })}
+                        />
+                        {(settings.terminal.suspendIdleHostPtys ?? DEFAULT_SUSPEND_IDLE_HOST_PTYS) && (
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/30 px-3 py-2.5">
+                                <div>
+                                    <p className="text-sm font-medium text-[var(--color-app-text)]">Idle timeout</p>
+                                    <p className="text-[11px] text-[var(--color-app-muted)]">Minutes before background host PTYs suspend</p>
+                                </div>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={60}
+                                    value={settings.terminal.idleHostPtySuspendMinutes ?? DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES}
+                                    onChange={(e) => {
+                                        const minutes = Math.max(1, Math.min(60, Number(e.target.value) || 1));
+                                        void updateTerminalSettings({ idleHostPtySuspendMinutes: minutes });
+                                    }}
+                                    className="w-16 rounded-lg border border-[var(--color-app-border)] bg-app-bg/50 px-2 py-1 text-sm text-center"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     <div className="text-[11px] leading-relaxed text-[var(--color-app-muted)] rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/30 px-3 py-2.5">

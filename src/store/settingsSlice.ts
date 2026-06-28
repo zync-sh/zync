@@ -2,6 +2,11 @@ import { StateCreator } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AppStore } from './useAppStore';
 import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
+import {
+    DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
+    DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+    normalizeIdleHostPtySuspendMinutes,
+} from '../lib/terminal/terminalIdlePty.js';
 
 export interface AppSettings {
     theme: string;
@@ -26,6 +31,13 @@ export interface AppSettings {
         fontLigatures: boolean;
         /** WebGL2 GPU renderer; falls back to DOM when unavailable. */
         gpuAcceleration: boolean;
+        /**
+         * When enabled, suspend background workspace host PTYs after idleHostPtySuspendMinutes.
+         * Scrollback is preserved; press Enter on return to respawn (off by default — SSH respawn UX).
+         */
+        suspendIdleHostPtys?: boolean;
+        /** Minutes before background host PTYs suspend when suspendIdleHostPtys is enabled. */
+        idleHostPtySuspendMinutes?: number;
         cursorStyle: 'block' | 'underline' | 'bar';
         lineHeight: number;
         padding: number;
@@ -131,6 +143,8 @@ export const defaultSettings: AppSettings = {
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
         fontLigatures: false,
         gpuAcceleration: true,
+        suspendIdleHostPtys: DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+        idleHostPtySuspendMinutes: DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
         cursorStyle: 'block',
         lineHeight: 1.2,
         padding: 12
@@ -265,6 +279,9 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                     ...defaultSettings.terminal,
                     ...(loaded?.terminal || {}),
                     fontFamily: normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ?? defaultSettings.terminal.fontFamily,
+                    idleHostPtySuspendMinutes: normalizeIdleHostPtySuspendMinutes(
+                        loaded?.terminal?.idleHostPtySuspendMinutes ?? defaultSettings.terminal.idleHostPtySuspendMinutes,
+                    ),
                 },
                 fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
                 sidebarSections: {
@@ -393,14 +410,20 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
 
     updateTerminalSettings: async (updates) => {
         const previous = get().settings;
+        const normalizedUpdates = { ...updates };
+        if ('idleHostPtySuspendMinutes' in normalizedUpdates) {
+            normalizedUpdates.idleHostPtySuspendMinutes = normalizeIdleHostPtySuspendMinutes(
+                normalizedUpdates.idleHostPtySuspendMinutes,
+            );
+        }
         const updated = {
             ...previous,
-            terminal: { ...previous.terminal, ...updates }
+            terminal: { ...previous.terminal, ...normalizedUpdates }
         };
         set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['terminal']>;
+        const changedKeys = Object.keys(normalizedUpdates) as Array<keyof AppSettings['terminal']>;
         try {
-            await persistSettings({ terminal: updates });
+            await persistSettings({ terminal: normalizedUpdates });
         } catch (error) {
             console.error('Failed to save terminal settings:', error);
             const current = get().settings;

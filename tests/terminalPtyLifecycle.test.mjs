@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  isTerminalIdleSuspended,
   spawnTerminalSession,
   suspendTerminalPty,
 } from '../.tmp-agent-tests/src/lib/terminal/ptyLifecycle.js';
@@ -185,6 +186,47 @@ await runTest('suspendTerminalPty without panelHide does not set suspendedByPane
   const cached = terminalCache.get(SESSION);
   assert.equal(cached.generation, 6);
   assert.equal(cached.suspendedByPanel, false);
+});
+
+await runTest('suspendTerminalPty with idleHost marks suspendedByIdle', () => {
+  terminalCache.clear();
+  const writes = [];
+  seedCache({
+    spawned: true,
+    starting: false,
+    generation: 3,
+    term: {
+      rows: 24,
+      cols: 80,
+      clear: () => {},
+      reset: () => {},
+      write: (data) => writes.push(data),
+    },
+  });
+
+  suspendTerminalPty(SESSION, { idleHost: true });
+
+  const cached = terminalCache.get(SESSION);
+  assert.equal(cached.suspendedByIdle, true);
+  assert.equal(isTerminalIdleSuspended(SESSION), true);
+  assert.equal(cached.idleSuspendNoticeShown, true);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0], /Press Enter to resume/);
+});
+
+await runTest('spawnTerminalSession keeps suspendedByIdle until terminal-ready', () => {
+  terminalCache.clear();
+  seedCache({ spawned: false, starting: false, generation: 1, suspendedByIdle: true });
+
+  spawnTerminalSession({
+    termId: SESSION,
+    connectionId: 'local',
+    term: terminalCache.get(SESSION).term,
+  });
+
+  const cached = terminalCache.get(SESSION);
+  assert.equal(cached.suspendedByIdle, true);
+  assert.equal(isTerminalIdleSuspended(SESSION), true);
 });
 
 console.log('Terminal PTY lifecycle tests passed.');
