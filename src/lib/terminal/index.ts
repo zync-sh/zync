@@ -21,7 +21,6 @@ export {
 export {
   clearTerminalRendererSession,
   ensureDomRendererForSession,
-  ensureCanvasRendererForSession,
   getTerminalRendererState,
   hasTerminalRendererSession,
 } from './rendererSession.js';
@@ -40,10 +39,8 @@ export {
 } from './rendererDiagnostics.js';
 export {
   activateDomRenderer,
-  activateCanvasRenderer,
   disposeTerminalRenderer,
   ensureDomRenderer,
-  ensureCanvasRenderer,
   refreshTerminalScreen,
 } from './rendererLifecycle.js';
 
@@ -65,6 +62,14 @@ export {
 } from './rendererSetup.js';
 
 export { destroyTerminalInstance, getTerminalRecentLines } from './instanceApi.js';
+export { terminalService } from './terminalService.js';
+export {
+  cancelAllIdlePtySuspends,
+  cancelIdlePtySuspend,
+  DEFAULT_IDLE_PTY_SUSPEND_MS,
+  flushIdlePtySuspend,
+  scheduleIdlePtySuspend,
+} from './terminalIdlePty.js';
 
 export {
   canSendTerminalInput,

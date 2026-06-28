@@ -13,6 +13,7 @@ const tests = [
   'tests/terminalSpawnContext.test.mjs',
   'tests/terminalSpawnErrors.test.mjs',
   'tests/terminalLazyPty.test.mjs',
+  'tests/terminalIdlePty.test.mjs',
   'tests/terminalResizeSync.test.mjs',
   'tests/terminalReconnectReset.test.mjs',
   'tests/terminalReconnectFlow.test.mjs',

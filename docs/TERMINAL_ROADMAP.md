@@ -1,6 +1,6 @@
 # Zync Terminal — Optimization & Robustness Roadmap
 
-**Last updated:** 2026-06-28 (Phase 6 — xterm 6.x terminal milestone next)
+**Last updated:** 2026-06-28 (Phase 6 shipped v2.18.0; Phase 7 in progress)
 **Audit basis:** Full-stack review of `terminal/Terminal.tsx`, `TerminalManager.tsx`, `pty.rs`, `terminalSlice.ts`, ghost suggestions, and terminal IPC.
 
 Plans and prioritized work for terminal performance, reliability, and code quality. For ghost-suggestion architecture, see [TERMINAL_GHOST_SUGGESTIONS.md](./TERMINAL_GHOST_SUGGESTIONS.md). For session/tab restore behavior, see [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md).
@@ -19,6 +19,7 @@ Plans and prioritized work for terminal performance, reliability, and code quali
 10. [Exit Criteria](#10-exit-criteria)
 11. [GPU Acceleration (WebGL Renderer)](#11-gpu-acceleration-webgl-renderer)
 12. [Phase 6 — xterm 6.x Terminal Milestone](#12-phase-6--xterm-6x-terminal-milestone)
+13. [Phase 7 — Maintainability & Scale](#13-phase-7--maintainability--scale)
 
 ---
 
@@ -38,7 +39,7 @@ The largest remaining costs are:
 
 Recent hardening (commit `c10c082`): layout-transition safety timeout, always-on visual fit during transitions, window-resize refit, dev single-instance disabled in debug builds.
 
-**Next priority (post-2.17.0):** **xterm 6.x terminal milestone** — upgrade `@xterm/xterm` and all addons together, remove deprecated `@xterm/addon-canvas`, adopt **WebGL → DOM** fallback, fix ghost/cursor internal API usage, and run the full renderer QA matrix. See [§12](#12-phase-6--xterm-6x-terminal-milestone).
+**Next priority (post-2.18.0):** **Phase 7 maintainability & scale** — terminal service layer, idle-host PTY suspend, `Terminal.tsx` split, optional xterm 6 features. Phase 6 (xterm 6 + DOM fallback) shipped in **v2.18.0**. See [§13](#13-phase-7--maintainability--scale).
 
 ---
 
@@ -86,7 +87,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 - Suspend only the **active** shell PTY when leaving **Terminal view** for Files/Dashboard within the same workspace (`isTerminalView === false`). The terminal panel stays **laid out** under the Files overlay (`invisible`, not `display:none`) so xterm scrollback and GPU context are preserved.
 - Modules: `ptyLifecycle.ts` (`spawnTerminalSession`, `suspendTerminalPty`), `spawnContext.ts`.
 
-**Remaining:** Idle-timer suspend for background hosts is **deferred** — host/shell tab switches intentionally keep PTYs alive to preserve scrollback and running shells.
+**Remaining (Phase 7):** Idle-timer suspend for background workspace hosts — **deferred** (`terminalIdlePty.ts` exists but is not wired). Killing remote SSH PTYs after 2 minutes forces a new login banner on return and feels like a cleared terminal; host switches keep PTYs alive like 2.17.0 until an opt-in setting + gentler respawn UX ships.
 
 ---
 
@@ -126,7 +127,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 
 ## 6. P2 — Polish & Longer-Term
 
-- **xterm 6.x upgrade (Phase 6)** — **next**; bundled terminal milestone (canvas removal, DOM fallback, addon bumps, internal API fixes). See [§12](#12-phase-6--xterm-6x-terminal-milestone).
+- **xterm 6.x upgrade (Phase 6)** — **shipped v2.18.0**; DOM fallback, addon bumps, ghost/cursor API fixes. See [§12](#12-phase-6--xterm-6x-terminal-milestone).
 - **GPU acceleration (WebGL renderer)** — implemented; see [§11](#11-gpu-acceleration-webgl-renderer)
 - Skip ghost suggestion IPC when tab is hidden — **done** (guarded behind `isVisibleRef`)
 - Binary Tauri event payloads instead of `number[]` serde for output — **done (base64)**; `pty.rs` emits `data` as base64; frontend `decodeTerminalOutputData()` in `terminalOutputPayload.ts`. True Tauri `Channel` streaming remains optional follow-up.
@@ -134,7 +135,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 - Split `Terminal.tsx` into `TerminalHost`, lifecycle hook, input pipeline, theme hook
 - Central terminal service API for store (`terminalService.destroy(id)`)
 - Optional `reflowCursorLine` / `windowsPty` tuning for Windows ConPTY edge cases
-- ~~Replace private xterm `_core._renderService` usage in `cursorPosition.ts` when upgrading xterm~~ — **Phase 6** (§12)
+- ~~Replace private xterm `_core._renderService` usage in `cursorPosition.ts` when upgrading xterm~~ — **done** (Phase 6, v2.18.0)
 
 ---
 
@@ -190,14 +191,16 @@ Phase 5 — **done**
   - WebGL renderer with canvas fallback (§11) — fallback path to be replaced in Phase 6
   - Settings toggle + context-loss recovery + renderer status panel
 
-Phase 6 — **next** (see §12) — xterm 6.x terminal milestone
-  - Bump `@xterm/xterm` + all addons to 6.x-compatible versions
-  - Remove `@xterm/addon-canvas`; WebGL → DOM fallback
-  - Fix `cursorPosition.ts` / ghost overlay internal API usage
-  - Renderer policy, diagnostics, tests, manual QA matrix
+Phase 6 — **shipped v2.18.0** (see §12)
+  - xterm 6.x + DOM fallback ✓
+  - Ghost/cursor API fixes ✓
+  - Renderer policy, diagnostics, tests ✓
+  - Manual QA signed off (Windows WebView2)
 
-Phase 7 — after Phase 6
-  - Optional P2: `Terminal.tsx` split, terminal service layer, idle-host PTY suspend
+Phase 7 — **in progress** (see §13)
+  - Terminal service layer (`terminalService.ts`) ✓
+  - Idle-host PTY suspend (`terminalIdlePty.ts`) — deferred (SSH UX)
+  - `Terminal.tsx` split (search/ghost extraction) ✓
   - Optional xterm 6 features: `reflowCursorLine`, synchronized output tuning
 ```
 
@@ -219,7 +222,9 @@ Phase 7 — after Phase 6
 | `src/lib/terminal/ligatures.ts` | `LigaturesAddon` load/dispose |
 | `src/lib/terminal/rendererSetup.ts` | GPU + ligatures activation orchestration |
 | `src/lib/terminal/instanceApi.ts` | `destroyTerminalInstance`, `getTerminalRecentLines` |
-| `src/lib/terminal/renderer*.ts` | GPU policy, WebGL load, canvas fallback, diagnostics |
+| `src/lib/terminal/renderer*.ts` | GPU policy, WebGL load, DOM fallback, diagnostics |
+| `src/lib/terminal/terminalService.ts` | Store-facing destroy/suspend API (Phase 7) |
+| `src/lib/terminal/terminalIdlePty.ts` | Idle-timer PTY suspend on workspace host switch (Phase 7) |
 | `src/lib/terminal/inputPipeline.ts` | Input batching, ready gating, flush |
 | `src/lib/terminal/inputQueue.ts` | Serialized async onData / ghost middleware |
 | `src/lib/terminal/ptyLifecycle.ts` | `spawnTerminalSession`, `suspendTerminalPty` |
@@ -231,8 +236,7 @@ Phase 7 — after Phase 6
 | `src/lib/terminal/terminalResizeSync.ts` | Deduped PTY resize IPC |
 | `src/lib/terminal/index.ts` | Public API for UI + store |
 | `@xterm/addon-webgl` | Loaded lazily by `rendererController.ts` |
-| `@xterm/addon-canvas` | **Phase 6 remove** (gone in xterm 6.0) — replace WebGL fallback with DOM renderer |
-| `src/lib/ghostSuggestions/cursorPosition.ts` | **Phase 6** — replace `_core._renderService` usage for xterm 6 |
+| `src/lib/ghostSuggestions/cursorPosition.ts` | Char-measure element sizing (xterm 6; no private `_core` APIs) |
 
 ---
 
@@ -266,22 +270,31 @@ Terminal optimization work can be considered **Phase 1 complete** when:
 - [x] WebGL2 probe before load; init failure vs context-loss split
 - [x] Renderer session ownership in `lib/terminal/rendererSession.ts`
 - [x] Automated tests: policy, capability, session, controller sync
-- [ ] Manual QA: transparency + resize/fit under WebGL on Windows WebView2 (your step)
+- [x] Manual QA: transparency + resize/fit under WebGL on Windows WebView2 (signed off v2.18.0)
+
+**Phase 6 (xterm 6.x) complete** when:
+
+- [x] All `@xterm/*` packages on xterm 6–compatible versions; `@xterm/addon-canvas` removed (v2.18.0)
+- [x] WebGL primary; DOM fallback on GPU off / init failure / context loss
+- [x] Ghost cursor positioning uses layout-derived cell dimensions (no `_core._renderService`)
+- [x] Tab switch perf not regressed vs 2.17.0 (single active workspace mount unchanged)
+- [x] `npm run test:terminal-renderer` + terminal agent tests pass
+- [x] Manual QA matrix signed off on Windows WebView2 (theme/transparency, Shell 1↔2 GPU restore, DOM fallback)
 
 ---
 
 ## 11. GPU Acceleration (WebGL Renderer)
 
-### Status: implemented on xterm 5.5; Phase 6 upgrades to xterm 6.x (§12)
+### Status: implemented on xterm 6.x (v2.18.0)
 
-GPU rendering is implemented via `src/lib/terminal/` and wired from `terminal/Terminal.tsx`. **Phase 6** bumps to xterm 6.x and replaces the canvas-addon fallback with the built-in DOM renderer.
+GPU rendering is implemented via `src/lib/terminal/` and wired from `terminal/Terminal.tsx`. Non-WebGL paths use xterm's built-in **DOM renderer** (canvas addon removed in xterm 6.0).
 
 | Module | Role |
 |--------|------|
 | `types.ts` | `TerminalRendererKind`, `TerminalRendererState` |
-| `rendererPolicy.ts` | Pure policy: WebGL vs canvas from settings + context-loss blocks |
+| `rendererPolicy.ts` | Pure policy: WebGL vs DOM from settings + context-loss blocks |
 | `webglCapability.ts` | Cached WebGL2 probe before attempting load |
-| `rendererLifecycle.ts` | Dispose / explicit canvas fallback + screen refresh |
+| `rendererLifecycle.ts` | Dispose / explicit DOM fallback + screen refresh |
 | `rendererSession.ts` | Per-`sessionId` renderer state ownership |
 | `rendererController.ts` | Lazy WebGL load, init vs context-loss failure paths |
 | `rendererDiagnostics.ts` | Renderer health summaries for settings UI |
@@ -394,8 +407,7 @@ Add toggle under Typography or a new "Performance" group:
 
 ## 12. Phase 6 — xterm 6.x Terminal Milestone
 
-**Status:** in progress (post-2.17.0)  
-**Estimate:** 2–4 days focused work + manual QA  
+**Status:** **shipped** (v2.18.0, 2026-06-28)  
 **Current:** `@xterm/xterm` ^6.0.0, `@xterm/addon-webgl` ^0.19.0 — `@xterm/addon-canvas` removed
 
 ### Goal
@@ -464,15 +476,49 @@ Single focused milestone: upgrade to **xterm 6.x**, remove deprecated canvas add
 ### Exit criteria
 
 - [x] All `@xterm/*` packages on xterm 6–compatible versions; `@xterm/addon-canvas` removed
-- [x] WebGL primary; DOM fallback on GPU off / init failure / context loss (code path; manual smoke pending)
+- [x] WebGL primary; DOM fallback on GPU off / init failure / context loss
 - [x] Ghost cursor positioning uses layout-derived cell dimensions (no `_core._renderService`)
-- [ ] Tab switch perf not regressed vs 2.17.0 (~65–115ms Shell ↔ Files)
+- [x] Tab switch perf not regressed vs 2.17.0 (~65–115ms Shell ↔ Files)
 - [x] `npm run test:terminal-renderer` + terminal agent tests pass
-- [ ] Manual QA matrix (§11) signed off on Windows WebView2
+- [x] Manual QA matrix (§11) signed off on Windows WebView2
 
-### After Phase 6
+---
 
-**Phase 7** — optional maintainability (Terminal.tsx split, service layer, idle-host suspend) and optional xterm 6 features (`reflowCursorLine`, synchronized output).
+## 13. Phase 7 — Maintainability & Scale
+
+**Status:** in progress (post-2.18.0)  
+**Estimate:** 3–5 days focused work
+
+### Goal
+
+Reduce terminal module coupling, reclaim resources from background workspace hosts, and optionally adopt xterm 6 maintainability features — without regressing 2.17.0/2.18.0 tab-switch perf or scrollback preservation.
+
+### Work packages
+
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 7.1 | Terminal service layer | **done** | `terminalService.ts` — `destroy`, `getRecentLines`, `suspendAllForConnection`; `terminalSlice` routes through service |
+| 7.2 | Idle-host PTY suspend | **deferred** | `terminalIdlePty.ts` scaffold only — not wired; remote SSH respawn shows duplicate `Last login` / poor scrollback UX |
+| 7.3 | `Terminal.tsx` split | **done** | `useTerminalSearch`, `useTerminalGhost`, `useTerminalKeybindings`, `TerminalSearchBar`, `TerminalDisconnectedView`, `TerminalContextMenu` |
+| 7.4 | xterm 6 options | pending | Evaluate `reflowCursorLine`, synchronized output tuning for Windows ConPTY |
+| 7.5 | Legacy canvas aliases | **done** | Removed `activateCanvasRenderer` / `ensureCanvasRenderer*` re-exports |
+
+### Idle-host suspend behavior
+
+| Event | Action |
+|-------|--------|
+| User selects another sidebar host | Schedule PTY suspend for previous host's shell tabs (default 2 min) |
+| User returns within idle window | Cancel timer; PTYs still live |
+| Idle timer fires | `suspendAllTerminalsForConnection` — kills backend PTY, preserves `terminalCache` scrollback |
+| User returns after suspend | Lazy spawn on active shell tab selection (existing 4.1 policy) |
+
+### Exit criteria
+
+- [x] `terminalService` is the store-facing destroy/suspend entry point
+- [x] Idle-host suspend unit tests (`terminalIdlePty.test.mjs`) — module only, not active in app
+- [ ] Idle-host suspend: re-enable only with opt-in setting + no auto-respawn on SSH return
+- [x] `Terminal.tsx` under ~500 lines with search/ghost in dedicated modules (~270 lines)
+- [x] `npm run test:terminal-renderer` green including `terminalIdlePty.test.mjs`
 
 ---
 

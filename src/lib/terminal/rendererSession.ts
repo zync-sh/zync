@@ -21,9 +21,6 @@ export function ensureDomRendererForSession(sessionId: string): void {
   ensureDomRenderer(getTerminalRendererState(sessionId));
 }
 
-/** @deprecated Use ensureDomRendererForSession */
-export const ensureCanvasRendererForSession = ensureDomRendererForSession;
-
 export function clearTerminalRendererSession(sessionId: string, term?: Terminal): void {
   const state = rendererSessions.get(sessionId);
   if (!state) return;

@@ -1,6 +1,6 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
-import { destroyTerminalInstance } from '../lib/terminal';
+import { terminalService } from '../lib/terminal';
 import type { TerminalTabSnapshot } from './sessionPersistence';
 import { scheduleSaveSession } from './sessionSlice';
 
@@ -166,7 +166,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
         ipc.send('terminal:kill', { termId });
 
         // Destroy the xterm instance from cache (frees memory, clears history)
-        destroyTerminalInstance(termId);
+        terminalService.destroy(termId);
 
         set(state => {
             const currentTabs = state.terminals[connectionId] || [];
@@ -227,7 +227,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 // Kill/destroy only when not preserving (for reconnect/restore flow).
                 tabs.forEach(t => {
                     ipc.send('terminal:kill', { termId: t.id });
-                    destroyTerminalInstance(t.id);
+                    terminalService.destroy(t.id);
                 });
             }
 

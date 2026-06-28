@@ -77,12 +77,6 @@ export function ensureDomRenderer(state: TerminalRendererState, term?: Terminal)
   state.kind = 'dom';
 }
 
-/** @deprecated Use activateDomRenderer */
-export const activateCanvasRenderer = activateDomRenderer;
-
-/** @deprecated Use ensureDomRenderer */
-export const ensureCanvasRenderer = ensureDomRenderer;
-
 export function disposeTerminalRenderer(
   state: TerminalRendererState | undefined,
   term?: Terminal,
