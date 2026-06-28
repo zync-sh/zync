@@ -2,8 +2,8 @@
  * getCursorPixelPosition — converts xterm cursor cell coordinates to pixel
  * coordinates relative to the terminal container.
  *
- * Uses layout-derived cell dimensions (cols/rows vs screen element size) so ghost
- * overlays stay aligned under WebGL and DOM renderers without private xterm APIs.
+ * Uses xterm's char-measure element (subpixel getBoundingClientRect) with a
+ * viewport fallback so ghost overlays stay aligned under WebGL and DOM renderers.
  */
 
 import type { Terminal } from '@xterm/xterm';
@@ -25,8 +25,9 @@ function measureCellFromDom(term: Terminal): TerminalCellDimensions | null {
   }
 
   const sampleLength = Math.max(1, measure.textContent?.length ?? 1);
-  const width = measure.offsetWidth / sampleLength;
-  const height = measure.offsetHeight;
+  const rect = measure.getBoundingClientRect();
+  const width = rect.width / sampleLength;
+  const height = rect.height;
   if (width <= 0 || height <= 0) {
     return null;
   }
@@ -42,8 +43,10 @@ function estimateCellFromViewport(term: Terminal): TerminalCellDimensions | null
   }
 
   const screen = term.element?.querySelector('.xterm-screen');
-  const width = screen?.clientWidth ?? term.element?.clientWidth ?? 0;
-  const height = screen?.clientHeight ?? term.element?.clientHeight ?? 0;
+  const screenRect = screen instanceof HTMLElement ? screen.getBoundingClientRect() : null;
+  const hostRect = term.element?.getBoundingClientRect();
+  const width = screenRect?.width ?? hostRect?.width ?? 0;
+  const height = screenRect?.height ?? hostRect?.height ?? 0;
   if (width <= 0 || height <= 0) {
     return null;
   }

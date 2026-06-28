@@ -62,7 +62,6 @@ export async function activateDomRenderer(
   state: TerminalRendererState,
 ): Promise<void> {
   disposeWebglAddonInternal(state, term);
-  state.desiredKind = 'dom';
   state.kind = 'dom';
 
   refreshTerminalScreen(term);
@@ -75,7 +74,6 @@ export async function activateDomRenderer(
 
 export function ensureDomRenderer(state: TerminalRendererState, term?: Terminal): void {
   disposeWebglAddonInternal(state, term);
-  state.desiredKind = 'dom';
   state.kind = 'dom';
 }
 
