@@ -8,12 +8,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Idle host PTY suspend (opt-in)**: Settings → Terminal → **Suspend idle host shells** suspends background workspace host PTYs after a configurable idle timeout (scrollback preserved; press Enter to resume). Shells with output or buffered input since the host was backgrounded stay alive until quiet. ([3b05fec])
 
 ### Fixed
-- **Idle suspend message**: Suspend banner writes synchronously (PTY kill does not emit `terminal-exit`); idle guard clears only after `terminal-ready`.
-- **Idle suspend timers**: Pending jobs cancel when the setting is disabled; idle timeout minutes clamped at the settings store boundary.
-- **Terminal spawn errors**: Unreachable host / offline network failures show a user-friendly reconnect message instead of raw OS error codes.
-- **Local terminal gate**: Local shell mounts without a remote `activeConnectionId`.
-- **Terminal clipboard**: Context menu Copy/Paste uses the shared Tauri-with-browser-fallback clipboard path.
-- **Terminal search focus**: Closed search bar is removed from the DOM so it cannot receive keyboard focus.
+- **Idle suspend message**: Suspend banner writes synchronously (PTY kill does not emit `terminal-exit`); idle guard clears only after `terminal-ready`. ([3b05fec])
+- **Idle suspend timers**: Pending jobs cancel when the setting is disabled; idle timeout minutes clamped at the settings store boundary. ([3b05fec])
+- **Terminal spawn errors**: Unreachable host / offline network failures show a user-friendly reconnect message instead of raw OS error codes. ([238e3fd])
+- **Local terminal gate**: Local shell mounts without a remote `activeConnectionId`. ([238e3fd])
+- **Terminal clipboard**: Context menu Copy/Paste uses the shared Tauri-with-browser-fallback clipboard path. ([238e3fd])
+- **Terminal search focus**: Closed search bar is removed from the DOM so it cannot receive keyboard focus. ([238e3fd])
 
 ### Changed
 - **Terminal module layout**: Split `Terminal.tsx` into focused hooks and components; route tab destroy through `terminalService`; remove deprecated canvas renderer aliases. ([d872b3d])
@@ -753,6 +753,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 [Unreleased]: https://github.com/zync-sh/zync/compare/v2.18.0...HEAD
 [2.18.0]: https://github.com/zync-sh/zync/compare/v2.17.0...v2.18.0
+[238e3fd]: https://github.com/zync-sh/zync/commit/238e3fd
+[3b05fec]: https://github.com/zync-sh/zync/commit/3b05fec
 [ae2af4c]: https://github.com/zync-sh/zync/commit/ae2af4c
 [d872b3d]: https://github.com/zync-sh/zync/commit/d872b3d
 [21a2c5d]: https://github.com/zync-sh/zync/commit/21a2c5d
