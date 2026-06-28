@@ -4,6 +4,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+- **Terminal module layout**: Split `Terminal.tsx` into focused hooks and components; route tab destroy through `terminalService`; remove deprecated canvas renderer aliases. ([d872b3d])
+
 ## [2.18.0] - 2026-06-28
 
 ### Added
@@ -738,6 +741,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 [Unreleased]: https://github.com/zync-sh/zync/compare/v2.18.0...HEAD
 [2.18.0]: https://github.com/zync-sh/zync/compare/v2.17.0...v2.18.0
+[d872b3d]: https://github.com/zync-sh/zync/commit/d872b3d
 [21a2c5d]: https://github.com/zync-sh/zync/commit/21a2c5d
 [571fe5f]: https://github.com/zync-sh/zync/commit/571fe5f
 [c10c082]: https://github.com/zync-sh/zync/commit/c10c082
