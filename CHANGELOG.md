@@ -4,6 +4,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+- **Terminal xterm 6.x Upgrade**: Bump `@xterm/xterm` to 6.x; remove deprecated `@xterm/addon-canvas`. WebGL remains primary; GPU-off, init failure, and context loss fall back to xterm's built-in **DOM renderer**. Renderer types, diagnostics, and Settings → Terminal labels updated from canvas to DOM. Theme and vibrancy/transparency align with xterm 6 CSS; WebGL restores on active shell tab switch; ghost overlays use xterm char-measure sizing; renderer setup is hardened for in-flight WebGL→DOM transitions and per-session settings cache.
+- **Terminal Renderer Tests**: `needsTerminalRendererSetup()` helper, `tests/terminalRendererSetup.test.mjs`, and expanded controller/diagnostics coverage.
+
+### Changed
+- **Terminal Roadmap**: `docs/TERMINAL_ROADMAP.md` updated for the xterm 6 upgrade and DOM fallback renderer.
+
 ## [2.17.0] - 2026-06-27
 
 ### Added
