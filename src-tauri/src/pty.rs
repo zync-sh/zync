@@ -1,14 +1,15 @@
 use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use russh::client::Msg;
 use russh::{Channel, ChannelMsg};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::mem;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
+use tauri::ipc::{Channel as IpcChannel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
@@ -133,34 +134,12 @@ struct TerminalLifecycleEvent {
     exit_code: Option<u32>,
 }
 
-#[derive(Clone, Serialize)]
-struct TerminalOutputEvent {
-    generation: u32,
-    /// Base64-encoded PTY bytes. Avoids JSON `number[]` expansion for batched output.
-    data: String,
-}
-
-/// Emits a terminal output chunk to the frontend without changing the existing event contract.
+/// Flushes buffered PTY output through the streaming IPC channel.
 ///
-/// Keeping this in a helper centralizes the `terminal-output-{term_id}` event
-/// shape so local and remote PTY paths stay consistent.
-fn emit_terminal_output(app_handle: &AppHandle, term_id: &str, generation: u32, payload: &[u8]) {
-    let event = TerminalOutputEvent {
-        generation,
-        data: STANDARD.encode(payload),
-    };
-    if let Err(e) = app_handle.emit(&format!("terminal-output-{}", term_id), event) {
-        eprintln!("[PTY] Failed to emit output: {}", e);
-    }
-}
-
-/// Flushes buffered remote output into a single frontend event.
-///
-/// The remote SSH path may receive very small chunks for echo and control
-/// sequences. This helper coalesces them without losing trailing bytes on exit.
+/// Frames are `generation` (u32 LE) + raw PTY bytes so the frontend can ignore
+/// stale chunks after suspend/restart races.
 fn flush_pending_output(
-    app_handle: &AppHandle,
-    term_id: &str,
+    output_channel: &IpcChannel,
     generation: u32,
     pending_output: &mut Vec<u8>,
 ) {
@@ -169,7 +148,33 @@ fn flush_pending_output(
     }
 
     let output = mem::take(pending_output);
-    emit_terminal_output(app_handle, term_id, generation, &output);
+    let mut frame = Vec::with_capacity(4 + output.len());
+    frame.extend_from_slice(&generation.to_le_bytes());
+    frame.extend_from_slice(&output);
+
+    if let Err(e) = output_channel.send(InvokeResponseBody::Raw(frame)) {
+        eprintln!("[PTY] Failed to send output on channel: {}", e);
+    }
+}
+
+fn process_tree_has_children(root_pid: u32) -> bool {
+    use sysinfo::{Pid, ProcessesToUpdate, System};
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let parent = Pid::from_u32(root_pid);
+    system.processes().values().any(|process| process.parent() == Some(parent))
+}
+
+fn emit_terminal_exit(app_handle: &AppHandle, term_id: &str, generation: u32, exit_code: Option<u32>) {
+    if let Err(e) = app_handle.emit(
+        &format!("terminal-exit-{}", term_id),
+        TerminalLifecycleEvent {
+            generation,
+            exit_code,
+        },
+    ) {
+        eprintln!("[PTY] Failed to emit exit for {}: {}", term_id, e);
+    }
 }
 // Enum to handle both local PTY and remote SSH channels
 pub enum TerminalHandle {
@@ -180,7 +185,8 @@ pub enum TerminalHandle {
         /// Aborted on session close so it can't write to a dead PTY.
         inject_handle: Option<tokio::task::JoinHandle<()>>,
         master: Box<dyn MasterPty + Send>,
-        child: Box<dyn portable_pty::Child + Send>,
+        child_killer: Box<dyn ChildKiller + Send + Sync>,
+        child_pid: Option<u32>,
     },
     Remote {
         tx: mpsc::Sender<Vec<u8>>,           // Send input data to the channel task
@@ -190,9 +196,13 @@ pub enum TerminalHandle {
 }
 
 pub struct PtySession {
-    #[allow(dead_code)]
     pub term_id: String,
     pub connection_id: String,
+    pub generation: u32,
+    pub app_handle: AppHandle,
+    /// Held for the session lifetime so the frontend channel stays open until close.
+    #[allow(dead_code)]
+    pub output_channel: IpcChannel,
     pub handle: TerminalHandle,
 }
 
@@ -207,6 +217,49 @@ impl PtyManager {
         }
     }
 
+    fn cleanup_session_handles(handle: &mut TerminalHandle) {
+        match handle {
+            TerminalHandle::Local {
+                reader_handle,
+                inject_handle,
+                child_killer,
+                ..
+            } => {
+                if let Some(task) = inject_handle.take() {
+                    task.abort();
+                }
+                if let Some(task) = reader_handle.take() {
+                    task.abort();
+                }
+                let _ = child_killer.kill();
+            }
+            TerminalHandle::Remote { task_handle, .. } => {
+                if let Some(task) = task_handle.take() {
+                    task.abort();
+                }
+            }
+        }
+    }
+
+    /// Drop backend resources after a natural shell exit without aborting the reader task that reported it.
+    fn finalize_session_after_natural_exit(handle: &mut TerminalHandle) {
+        match handle {
+            TerminalHandle::Local {
+                reader_handle,
+                inject_handle,
+                child_killer,
+                ..
+            } => {
+                inject_handle.take();
+                reader_handle.take();
+                let _ = child_killer.kill();
+            }
+            TerminalHandle::Remote { task_handle, .. } => {
+                task_handle.take();
+            }
+        }
+    }
+
     // Create a local PTY session
     pub async fn create_local_session(
         &self,
@@ -216,6 +269,7 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
+        output_channel: IpcChannel,
         shell_override: Option<String>,
         cwd: Option<String>,
     ) -> Result<()> {
@@ -346,7 +400,7 @@ impl PtyManager {
             cmd.env_remove("OWD");
         }
 
-        let child = pair
+        let mut child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| anyhow!("Failed to spawn shell: {}", e))?;
@@ -365,16 +419,22 @@ impl PtyManager {
         // No shell integration injected — CWD is tracked passively via OSC 7
         // for shells that already emit it (starship, oh-my-posh, fish, etc.).
         let inject_handle: Option<tokio::task::JoinHandle<()>> = None;
+        let child_killer = child.clone_killer();
+        let child_pid = child.process_id();
 
         let session = PtySession {
             term_id: term_id.clone(),
             connection_id,
+            generation,
+            app_handle: app_handle.clone(),
+            output_channel: output_channel.clone(),
             handle: TerminalHandle::Local {
                 writer: writer_arc,
                 reader_handle: None,
                 inject_handle,
                 master: pair.master,
-                child,
+                child_killer,
+                child_pid,
             },
         };
 
@@ -387,8 +447,15 @@ impl PtyManager {
         // avoids orphaning the reader if close() races immediately after insert.
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
+        let output_channel_clone = output_channel.clone();
         let (reader_start_tx, reader_start_rx) = std_mpsc::channel::<()>();
         let (output_tx, mut output_rx) = tokio::sync::mpsc::channel::<LocalReaderEvent>(64);
+        let output_tx_for_wait = output_tx.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let exit_code = child.wait().ok().map(|status| status.exit_code());
+            let _ = output_tx_for_wait.blocking_send(LocalReaderEvent::Finished { exit_code });
+        });
 
         tokio::task::spawn_blocking(move || {
             let _ = reader_start_rx.recv();
@@ -416,6 +483,11 @@ impl PtyManager {
             }
         });
 
+        let exit_emitted = Arc::new(AtomicBool::new(false));
+        let exit_emitted_clone = exit_emitted.clone();
+        let sessions_for_exit = self.sessions.clone();
+        let term_id_for_exit = term_id.clone();
+
         let reader_handle = tokio::spawn(async move {
             let mut pending_output = Vec::new();
             let mut flush_deadline: Option<Instant> = None;
@@ -428,21 +500,32 @@ impl PtyManager {
                                 pending_output.extend_from_slice(&chunk);
 
                                 if pending_output.len() >= OUTPUT_FLUSH_THRESHOLD {
-                                    flush_pending_output(&app_handle_clone, &term_id_clone, generation, &mut pending_output);
+                                    flush_pending_output(&output_channel_clone, generation, &mut pending_output);
                                     flush_deadline = None;
                                 } else if flush_deadline.is_none() {
                                     flush_deadline = Some(Instant::now() + Duration::from_millis(OUTPUT_BATCH_MS));
                                 }
                             }
                             Some(LocalReaderEvent::Finished { exit_code }) => {
-                                flush_pending_output(&app_handle_clone, &term_id_clone, generation, &mut pending_output);
-                                let _ = app_handle_clone.emit(
-                                    &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent {
+                                flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                if !exit_emitted_clone.swap(true, Ordering::SeqCst) {
+                                    emit_terminal_exit(
+                                        &app_handle_clone,
+                                        &term_id_clone,
                                         generation,
                                         exit_code,
-                                    },
-                                );
+                                    );
+                                    let sessions_ref = sessions_for_exit.clone();
+                                    let term_id_cleanup = term_id_for_exit.clone();
+                                    tokio::spawn(async move {
+                                        let mut sessions = sessions_ref.lock().await;
+                                        if let Some(mut session) = sessions.remove(&term_id_cleanup) {
+                                            PtyManager::finalize_session_after_natural_exit(
+                                                &mut session.handle,
+                                            );
+                                        }
+                                    });
+                                }
                                 break;
                             }
                             None => break,
@@ -454,7 +537,7 @@ impl PtyManager {
                             tokio::time::sleep_until(deadline).await;
                         }
                     }, if flush_deadline.is_some() => {
-                        flush_pending_output(&app_handle_clone, &term_id_clone, generation, &mut pending_output);
+                        flush_pending_output(&output_channel_clone, generation, &mut pending_output);
                         flush_deadline = None;
                     }
                 }
@@ -493,6 +576,7 @@ impl PtyManager {
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
+        output_channel: IpcChannel,
         shell_override: Option<String>,
         remote_os: Option<String>,
         cwd: Option<String>,
@@ -585,6 +669,9 @@ impl PtyManager {
         let session = PtySession {
             term_id: term_id.clone(),
             connection_id,
+            generation,
+            app_handle: app_handle.clone(),
+            output_channel: output_channel.clone(),
             handle: TerminalHandle::Remote {
                 tx,
                 resize_tx,
@@ -607,6 +694,9 @@ impl PtyManager {
 
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
+        let output_channel_clone = output_channel.clone();
+        let sessions_for_exit = self.sessions.clone();
+        let term_id_for_exit = term_id.clone();
 
         // Spawn the manager task only after ready has been published so same-generation
         // output/exit events can never arrive before the frontend has seen ready.
@@ -623,43 +713,30 @@ impl PtyManager {
                                 pending_output.extend_from_slice(data.as_ref());
 
                                 if pending_output.len() >= OUTPUT_FLUSH_THRESHOLD {
-                                    flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+                                    flush_pending_output(&output_channel_clone, generation, &mut pending_output);
                                     flush_deadline = None;
                                 } else if flush_deadline.is_none() {
                                     flush_deadline = Some(Instant::now() + Duration::from_millis(OUTPUT_BATCH_MS));
                                 }
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
-                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
-                                let _ = app_handle.emit(
-                                    &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent {
-                                        generation,
-                                        exit_code: Some(exit_status),
-                                    },
+                                flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                emit_terminal_exit(
+                                    &app_handle,
+                                    &term_id_clone,
+                                    generation,
+                                    Some(exit_status),
                                 );
                                 break;
                             }
                             Some(ChannelMsg::Eof) => {
-                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
-                                let _ = app_handle.emit(
-                                    &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent {
-                                        generation,
-                                        exit_code: None,
-                                    },
-                                );
+                                flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                emit_terminal_exit(&app_handle, &term_id_clone, generation, None);
                                 break;
                             }
                             None => {
-                                flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
-                                let _ = app_handle.emit(
-                                    &format!("terminal-exit-{}", term_id_clone),
-                                    TerminalLifecycleEvent {
-                                        generation,
-                                        exit_code: None,
-                                    },
-                                );
+                                flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                emit_terminal_exit(&app_handle, &term_id_clone, generation, None);
                                 break;
                             }
                             _ => {}
@@ -671,7 +748,7 @@ impl PtyManager {
                             tokio::time::sleep_until(deadline).await;
                         }
                     }, if flush_deadline.is_some() => {
-                        flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+                        flush_pending_output(&output_channel_clone, generation, &mut pending_output);
                         flush_deadline = None;
                     }
 
@@ -694,8 +771,13 @@ impl PtyManager {
                 }
             }
 
-            flush_pending_output(&app_handle, &term_id_clone, generation, &mut pending_output);
+            flush_pending_output(&output_channel_clone, generation, &mut pending_output);
             let _ = channel.close().await;
+
+            let mut sessions = sessions_for_exit.lock().await;
+            if let Some(mut session) = sessions.remove(&term_id_for_exit) {
+                PtyManager::finalize_session_after_natural_exit(&mut session.handle);
+            }
         });
 
         let mut sessions = self.sessions.lock().await;
@@ -774,27 +856,31 @@ impl PtyManager {
         Ok(())
     }
 
+    /// True when the local shell has child processes (foreground/background jobs).
+    /// Remote sessions always return false — callers should use output-based busy detection.
+    pub async fn has_active_child_processes(&self, term_id: &str) -> bool {
+        let child_pid = {
+            let sessions = self.sessions.lock().await;
+            let Some(session) = sessions.get(term_id) else {
+                return false;
+            };
+
+            match &session.handle {
+                TerminalHandle::Local { child_pid, .. } => *child_pid,
+                TerminalHandle::Remote { .. } => return false,
+            }
+        };
+
+        let Some(pid) = child_pid else {
+            return false;
+        };
+        process_tree_has_children(pid)
+    }
+
     pub async fn close(&self, term_id: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if let Some(mut session) = sessions.remove(term_id) {
-            match &mut session.handle {
-                TerminalHandle::Local { reader_handle, inject_handle, child, .. } => {
-                    if let Some(handle) = inject_handle.take() {
-                        handle.abort();
-                    }
-                    if let Some(handle) = reader_handle.take() {
-                        handle.abort();
-                    }
-                    // Explicitly kill the child process instead of relying on Drop (see roadmap 5.7)
-                    let _ = child.kill();
-                    // Note: wait() could be used here for reaping, but would block; consider spawn_blocking if needed
-                }
-                TerminalHandle::Remote { task_handle, .. } => {
-                    if let Some(handle) = task_handle.take() {
-                        handle.abort();
-                    }
-                }
-            }
+            Self::cleanup_session_handles(&mut session.handle);
         }
         Ok(())
     }
@@ -811,23 +897,7 @@ impl PtyManager {
 
         for id in ids_to_remove {
             if let Some(mut session) = sessions.remove(&id) {
-                match &mut session.handle {
-                    TerminalHandle::Local { reader_handle, inject_handle, child, .. } => {
-                        if let Some(handle) = inject_handle.take() {
-                            handle.abort();
-                        }
-                        if let Some(handle) = reader_handle.take() {
-                            handle.abort();
-                        }
-                        // Explicitly kill the child process (same as close(); see roadmap 5.7 and close_by_connection review)
-                        let _ = child.kill();
-                    }
-                    TerminalHandle::Remote { task_handle, .. } => {
-                        if let Some(handle) = task_handle.take() {
-                            handle.abort();
-                        }
-                    }
-                }
+                Self::cleanup_session_handles(&mut session.handle);
             }
         }
 

@@ -2,6 +2,7 @@ import { clearTerminalRendererSession } from './rendererSession.js';
 import { disposeTerminalLigatures } from './ligatures.js';
 import { clearTerminalPendingInput, terminalCache } from './terminalCache.js';
 import { clearTerminalInputQueue } from './inputQueue.js';
+import { silenceTerminalOutputChannel } from './terminalReloadTeardown.js';
 export function getTerminalRecentLines(termId: string, lineCount = 20): string | null {
   if (!termId) {
     return null;
@@ -39,6 +40,9 @@ export function destroyTerminalInstance(termId: string): void {
     cached.unlisten.forEach((fn) => fn());
     cached.unlisten = [];
   }
+
+  silenceTerminalOutputChannel(cached.outputChannel);
+  cached.outputChannel = undefined;
 
   try {
     cached.term.dispose();

@@ -7,6 +7,7 @@ import {
   isTerminalSpawnConnectionNotReadyError,
 } from './terminalSpawnErrors.js';
 import { clearIdleHostSuspendNotice, writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
+import { attachTerminalOutputChannel } from './terminalOutputStream.js';
 
 export interface SpawnTerminalSessionOptions {
   termId: string;
@@ -37,6 +38,7 @@ export function spawnTerminalSession(options: SpawnTerminalSessionOptions): bool
 
   const generation = cached.generation + 1;
   cached.generation = generation;
+  cached.connectionId = connectionId;
   cached.spawned = true;
   cached.starting = true;
   cached.suspendedByPanel = false;
@@ -45,6 +47,8 @@ export function spawnTerminalSession(options: SpawnTerminalSessionOptions): bool
     term.clear();
     term.reset();
   }
+
+  const outputChannel = attachTerminalOutputChannel(termId, term);
 
   window.ipcRenderer
     .invoke('terminal:create', {
@@ -55,6 +59,7 @@ export function spawnTerminalSession(options: SpawnTerminalSessionOptions): bool
       shell,
       cwd,
       generation,
+      outputChannel,
     })
     .catch((err) => {
       console.error('Failed to create terminal:', err);

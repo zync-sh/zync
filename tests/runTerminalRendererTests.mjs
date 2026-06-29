@@ -25,6 +25,8 @@ const tests = [
   'tests/terminalConnectionWakeup.test.mjs',
   'tests/terminalLifecycleIntegration.test.mjs',
   'tests/terminalOutputPayload.test.mjs',
+  'tests/terminalOutputStream.test.mjs',
+  'tests/terminalTabClose.test.mjs',
   'tests/terminalPanelRestore.test.mjs',
   'tests/terminalScrollbackPreserve.test.mjs',
 ];

@@ -3,9 +3,9 @@ import { listen } from '@tauri-apps/api/event';
 import { clearTerminalInputQueue } from './inputQueue.js';
 import { handleTerminalReady } from './inputPipeline.js';
 import { clearTerminalPendingInput, terminalCache } from './terminalCache.js';
-import { touchTerminalActivity } from './terminalActivity.js';
 import { writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
-import { decodeTerminalOutputData, type TerminalOutputData } from './terminalOutputPayload.js';
+import { terminalService } from './terminalService.js';
+
 
 export { IDLE_HOST_SUSPEND_MESSAGE } from './terminalIdleSuspendNotice.js';
 
@@ -22,11 +22,7 @@ export interface TerminalLifecycleEvent {
   exit_code?: number;
 }
 
-export interface TerminalOutputEvent extends TerminalLifecycleEvent {
-  data: TerminalOutputData;
-}
-
-/** Attaches generation-gated output, ready, and exit listeners once per cached terminal. */
+/** Attaches generation-gated ready and exit listeners once per cached terminal. */
 export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm): void {
   const cached = terminalCache.get(sessionId);
   if (!cached || cached.listenerAttached) {
@@ -39,19 +35,6 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
 
   // Set early to prevent concurrent attach attempts; catches below handle registration failures without unhandled rejections.
   cached.listenerAttached = true;
-
-  listen<TerminalOutputEvent>(`terminal-output-${sessionId}`, (event) => {
-    const entry = terminalCache.get(sessionId);
-    if (!entry || event.payload.generation !== entry.generation) {
-      return;
-    }
-    touchTerminalActivity(sessionId);
-    term.write(decodeTerminalOutputData(event.payload.data));
-  }).then((unlistenFn) => {
-    if (terminalCache.has(sessionId)) {
-      terminalCache.get(sessionId)?.unlisten?.push(unlistenFn);
-    }
-  }).catch((e) => console.warn(`[terminal] output listener attach failed for ${sessionId}`, e));
 
   listen<TerminalLifecycleEvent>(`terminal-ready-${sessionId}`, (event) => {
     handleTerminalReady(sessionId, event.payload.generation);
@@ -83,7 +66,7 @@ export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm)
     if (suspendedForIdle) {
       writeIdleHostSuspendNotice(sessionId);
     } else if (!suspendedForPanel) {
-      term.write('\r\n\x1b[33m[Terminal session ended. Press Enter to restart.]\x1b[0m\r\n');
+      terminalService.closeTabOnShellExit(sessionId);
     }
   }).then((unlistenFn) => {
     if (terminalCache.has(sessionId)) {

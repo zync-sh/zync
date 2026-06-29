@@ -1818,6 +1818,7 @@ pub async fn terminal_create(
     connection_id: String,
     cols: u16,
     rows: u16,
+    output_channel: tauri::ipc::Channel,
     shell: Option<String>,
     cwd: Option<String>,
     generation: Option<u32>,
@@ -1846,6 +1847,7 @@ pub async fn terminal_create(
                 cols,
                 rows,
                 app,
+                output_channel,
                 shell,
                 cwd,
             )
@@ -1871,6 +1873,7 @@ pub async fn terminal_create(
                 cols,
                 rows,
                 app,
+                output_channel,
                 shell,
                 remote_os,
                 cwd,
@@ -2034,6 +2037,14 @@ pub async fn terminal_close(term_id: String, state: State<'_, AppState>) -> Resu
         .close(&term_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn terminal_has_active_processes(
+    term_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    Ok(state.pty_manager.has_active_child_processes(&term_id).await)
 }
 
 // Helper to get SFTP session - reconnects automatically if session is dead.

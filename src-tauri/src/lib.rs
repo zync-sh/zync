@@ -129,6 +129,7 @@ pub fn run() {
             commands::terminal_resize,
             commands::terminal_create,
             commands::terminal_close,
+            commands::terminal_has_active_processes,
             commands::connections_get,
             commands::connections_save,
             commands::connections_export_to_file,

@@ -1,6 +1,6 @@
 # Zync Terminal — Optimization & Robustness Roadmap
 
-**Last updated:** 2026-06-28 (Phase 7 complete)
+**Last updated:** 2026-06-29 (§14 release-gate items complete; ready for v2.19.0 QA)
 **Audit basis:** Full-stack review of `terminal/Terminal.tsx`, `TerminalManager.tsx`, `pty.rs`, `terminalSlice.ts`, ghost suggestions, and terminal IPC.
 
 Plans and prioritized work for terminal performance, reliability, and code quality. For ghost-suggestion architecture, see [TERMINAL_GHOST_SUGGESTIONS.md](./TERMINAL_GHOST_SUGGESTIONS.md). For session/tab restore behavior, see [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md).
@@ -20,6 +20,7 @@ Plans and prioritized work for terminal performance, reliability, and code quali
 11. [GPU Acceleration (WebGL Renderer)](#11-gpu-acceleration-webgl-renderer)
 12. [Phase 6 — xterm 6.x Terminal Milestone](#12-phase-6--xterm-6x-terminal-milestone)
 13. [Phase 7 — Maintainability & Scale](#13-phase-7--maintainability--scale)
+14. [Next Action Items](#14-next-action-items)
 
 ---
 
@@ -27,19 +28,11 @@ Plans and prioritized work for terminal performance, reliability, and code quali
 
 The terminal stack has strong foundations: generation-gated lifecycle events, frontend input batching, remote output coalescing, remote resize coalescing, and a module-level xterm cache for tab persistence.
 
-The largest remaining costs are:
+**Refactor and optimization (P0–P1 + maintainability milestone):** **complete** as of post-2.18.0 work — lazy PTY spawn, input queue, ready gating, local/remote output batching, resize scheduler, lifecycle modules, xterm 6 + DOM fallback, `Terminal.tsx` split (~260 lines), `terminalService`, opt-in idle-host PTY suspend. See [§10](#10-exit-criteria), [§12](#12-phase-6--xterm-6x-terminal-milestone), [§13](#13-phase-7--maintainability--scale).
 
-| Area | Problem |
-|------|---------|
-| **Scale** | N tabs ⇒ N live PTYs, N ResizeObservers, N reader tasks (even when hidden) |
-| **IPC** | Local PTY output is unbatched; remote path already batches |
-| **Correctness** | Async `onData` can reorder keystrokes; input not gated on `terminal-ready` |
-| **Structure** | `terminal/Terminal.tsx` (~1,300 lines) still couples xterm, IPC, ghost, theme, search, layout |
-| **Resize** | Five overlapping fit/resize paths; hidden tabs still observe resize |
+**§14 release-gate items:** **complete** (2026-06-29) — `terminal-exit` on kill, process-aware idle suspend (local), Tauri `Channel` PTY output streaming, multi-host immediate background-tab suspend. See [§14](#14-next-action-items).
 
-Recent hardening (commit `c10c082`): layout-transition safety timeout, always-on visual fit during transitions, window-resize refit, dev single-instance disabled in debug builds.
-
-**Next priority (post-2.18.0):** **Phase 7 maintainability & scale** — terminal service layer, idle-host PTY suspend, `Terminal.tsx` split, optional xterm 6 features. Phase 6 (xterm 6 + DOM fallback) shipped in **v2.18.0**. See [§13](#13-phase-7--maintainability--scale).
+**Release plan:** **v2.19.0** is unblocked pending manual QA sign-off on Windows WebView2.
 
 ---
 
@@ -87,7 +80,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 - Suspend only the **active** shell PTY when leaving **Terminal view** for Files/Dashboard within the same workspace (`isTerminalView === false`). The terminal panel stays **laid out** under the Files overlay (`invisible`, not `display:none`) so xterm scrollback and GPU context are preserved.
 - Modules: `ptyLifecycle.ts` (`spawnTerminalSession`, `suspendTerminalPty`), `spawnContext.ts`.
 
-**Remaining (Phase 7):** Idle-timer suspend — **opt-in** via Settings → Terminal → “Suspend idle host shells” (default **off**). When enabled, background host PTYs suspend after the configured idle timeout; scrollback stays; user presses **Enter** to resume (no auto SSH respawn).
+**Idle-host suspend — shipped:** Opt-in via Settings → Terminal → “Suspend idle host shells” (default **off**). Background host PTYs suspend after the configured idle timeout; scrollback stays; user presses **Enter** to resume. Busy shells (recent output/input) are deferred until quiet.
 
 ---
 
@@ -130,7 +123,7 @@ xterm on Windows ConPTY disables scrollback reflow by design (`windowsPty` compa
 - **xterm 6.x upgrade (Phase 6)** — **shipped v2.18.0**; DOM fallback, addon bumps, ghost/cursor API fixes. See [§12](#12-phase-6--xterm-6x-terminal-milestone).
 - **GPU acceleration (WebGL renderer)** — implemented; see [§11](#11-gpu-acceleration-webgl-renderer)
 - Skip ghost suggestion IPC when tab is hidden — **done** (guarded behind `isVisibleRef`)
-- Binary Tauri event payloads instead of `number[]` serde for output — **done (base64)**; `pty.rs` emits `data` as base64; frontend `decodeTerminalOutputData()` in `terminalOutputPayload.ts`. True Tauri `Channel` streaming remains optional follow-up.
+- Binary Tauri event payloads instead of `number[]` serde for output — **done**; PTY output streams via Tauri `Channel` (raw `u32` generation header + bytes) from `terminalOutputStream.ts` / `pty.rs`. Legacy base64 event decode kept in `terminalOutputPayload.ts` for dev safety.
 - ~~Integration tests: spawn → resize → generation → close sequences~~ — done (`terminalLifecycleIntegration.test.mjs`)
 - Split `Terminal.tsx` into `TerminalHost`, lifecycle hook, input pipeline, theme hook
 - Central terminal service API for store (`terminalService.destroy(id)`)
@@ -197,9 +190,9 @@ Phase 6 — **shipped v2.18.0** (see §12)
   - Renderer policy, diagnostics, tests ✓
   - Manual QA signed off (Windows WebView2)
 
-Phase 7 — **complete** except 7.2 deferred (see §13)
+Phase 7 — **complete** (see §13)
   - Terminal service layer (`terminalService.ts`) ✓
-  - Idle-host PTY suspend — deferred (SSH UX)
+  - Idle-host PTY suspend (opt-in) ✓
   - `Terminal.tsx` split ✓
   - xterm 6 options (`xtermOptions.ts`) ✓
 ```
@@ -224,7 +217,7 @@ Phase 7 — **complete** except 7.2 deferred (see §13)
 | `src/lib/terminal/instanceApi.ts` | `destroyTerminalInstance`, `getTerminalRecentLines` |
 | `src/lib/terminal/renderer*.ts` | GPU policy, WebGL load, DOM fallback, diagnostics |
 | `src/lib/terminal/terminalService.ts` | Store-facing destroy/suspend API (Phase 7) |
-| `src/lib/terminal/terminalIdlePty.ts` | Idle-timer PTY suspend scaffold (deferred, not wired) |
+| `src/lib/terminal/terminalIdlePty.ts` | Idle-host PTY suspend scheduler (`MainLayout` when setting enabled) |
 | `src/lib/terminal/xtermOptions.ts` | Central `ITerminalOptions` builder for xterm 6 (Phase 7.4) |
 | `src/lib/terminal/inputPipeline.ts` | Input batching, ready gating, flush |
 | `src/lib/terminal/inputQueue.ts` | Serialized async onData / ghost middleware |
@@ -516,10 +509,23 @@ Reduce terminal module coupling, reclaim resources from background workspace hos
 ### Exit criteria
 
 - [x] `terminalService` is the store-facing destroy/suspend entry point
-- [x] Idle-host suspend unit tests (`terminalIdlePty.test.mjs`) — module only, not active in app
+- [x] Idle-host suspend wired in app + unit tests (`terminalIdlePty.test.mjs`, `terminalIdleHostSuspend.test.mjs`)
 - [x] Idle-host suspend: opt-in setting + Enter-to-resume (no auto-respawn on return)
 - [x] `Terminal.tsx` under ~500 lines with search/ghost in dedicated modules (~270 lines)
 - [x] `npm run test:terminal-renderer` green including `terminalIdlePty.test.mjs`
+
+---
+
+## 14. Next Action Items
+
+**Status:** **complete** (2026-06-29). All four items shipped; v2.19.0 awaits manual QA.
+
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 1 | **`terminal-exit` on explicit kill** | **done** | Natural shell exit (local reader / remote SSH manager) emits `terminal-exit`; programmatic `close` / `close_by_connection` only tear down handles. Frontend `suspendTerminalPty` sets suspend flags and idle notice synchronously. |
+| 2 | **Process-aware idle suspend** | **done** | **Shipped idle suspend:** remote host shell tabs only (`shouldIdleSuspendConnection` excludes local). **Process probe:** `terminal_has_active_processes` uses local `sysinfo` child scan (fail-closed) when evaluating remote tabs during idle flush; remote busy detection still uses output/input. |
+| 3 | **PTY output streaming** | **done** | `terminal:create` accepts a Tauri `Channel`; batched output sent as raw frames (`generation` u32 LE + PTY bytes). `terminal-output-*` events removed. |
+| 4 | **Multi-host PTY scale** | **done** | On sidebar host switch with idle suspend enabled: all remote host shell tabs share the idle timer (no immediate suspend). Local shells are excluded from idle suspend. |
 
 ---
 

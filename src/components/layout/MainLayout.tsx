@@ -27,6 +27,8 @@ import {
     cancelIdlePtySuspend,
     resolveIdleHostPtySuspendDelayMs,
     scheduleIdlePtySuspend,
+    shouldIdleSuspendConnection,
+    terminalService,
 } from '../../lib/terminal';
 
 
@@ -606,7 +608,11 @@ export function MainLayout({ children }: { children: ReactNode }) {
         if (delayMs === null) {
             cancelAllIdlePtySuspends();
         } else {
-            if (prevConnectionId && prevConnectionId !== nextConnectionId) {
+            if (
+                prevConnectionId
+                && prevConnectionId !== nextConnectionId
+                && shouldIdleSuspendConnection(prevConnectionId)
+            ) {
                 const prevTabs = useAppStore.getState().terminals[prevConnectionId];
                 scheduleIdlePtySuspend(prevConnectionId, prevTabs, { delayMs });
             }
@@ -618,13 +624,19 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
         prevWorkspaceConnectionIdRef.current = nextConnectionId;
     }, [
-        activeTabId,
         activeWorkspaceTab?.connectionId,
         suspendIdleHostPtys,
         idleHostPtySuspendMinutes,
     ]);
 
     useEffect(() => () => cancelAllIdlePtySuspends(), []);
+
+    useEffect(() => {
+        terminalService.setCloseTabHandler((connectionId, termId) => {
+            useAppStore.getState().closeTerminal(connectionId, termId);
+        });
+        return () => terminalService.setCloseTabHandler(null);
+    }, []);
 
     const showWelcomeScreen = useAppStore(state => state.showWelcomeScreen);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);

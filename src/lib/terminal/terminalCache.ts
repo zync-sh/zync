@@ -1,6 +1,7 @@
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
 import type { SearchAddon } from '@xterm/addon-search';
+import type { Channel } from '@tauri-apps/api/core';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { InputTracker } from '../ghostSuggestions/inputTracker.js';
 
@@ -22,6 +23,10 @@ export interface TerminalCache {
   inputFlushTimer: ReturnType<typeof window.setTimeout> | null;
   lastResize: { rows: number; cols: number } | null;
   unlisten?: UnlistenFn[];
+  /** Streaming PTY output channel passed to terminal:create. */
+  outputChannel?: Channel;
+  /** Owning workspace connection — used to close the tab on natural shell exit. */
+  connectionId?: string;
   ghostTracker?: InputTracker;
   onDataDisposable?: { dispose: () => void };
   ligaturesAddon?: { dispose: () => void };

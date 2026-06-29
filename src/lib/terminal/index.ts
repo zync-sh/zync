@@ -77,9 +77,13 @@ export {
   DEFAULT_IDLE_PTY_SUSPEND_MS,
   DEFAULT_SUSPEND_IDLE_HOST_PTYS,
   normalizeIdleHostPtySuspendMinutes,
+  partitionBackgroundHostTabs,
+  shouldIdleSuspendConnection,
   resolveIdleHostPtySuspendDelayMs,
   scheduleIdlePtySuspend,
 } from './terminalIdlePty.js';
+export { isTerminalSessionProcessBusy } from './terminalProcessActivity.js';
+export { suspendAllTerminalsForConnection } from './suspendAllTerminals.js';
 
 export {
   canSendTerminalInput,
@@ -128,14 +132,25 @@ export {
 export type { ConnectionWakeupContext } from './terminalConnectionWakeup.js';
 export { tryWakeTerminalOnReconnect } from './terminalConnectionWakeup.js';
 
-export type {
-  TerminalLifecycleEvent,
-  TerminalOutputEvent,
-} from './terminalLifecycleListeners.js';
+export { LOCAL_TERMINAL_CONNECTION_ID } from './connectionIds.js';
+export type { TerminalLifecycleEvent } from './terminalLifecycleListeners.js';
 export { attachTerminalLifecycleListeners } from './terminalLifecycleListeners.js';
+
 export { writeIdleHostSuspendNotice } from './terminalIdleSuspendNotice.js';
 export {
   decodeTerminalOutputData,
   type LegacyTerminalOutputData,
   type TerminalOutputData,
 } from './terminalOutputPayload.js';
+export {
+  attachTerminalOutputChannel,
+  decodeTerminalOutputChannelFrame,
+  type TerminalOutputChannelFrame,
+} from './terminalOutputStream.js';
+export {
+  disposeTerminalOutputChannel,
+  registerTerminalReloadTeardown,
+  revokeTerminalOutputChannel,
+  silenceTerminalOutputChannel,
+  teardownTerminalsBeforeWebviewReload,
+} from './terminalReloadTeardown.js';
