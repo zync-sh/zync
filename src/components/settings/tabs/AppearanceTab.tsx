@@ -1,4 +1,4 @@
-import { useEffect, useState, type FocusEvent } from 'react';
+import { useEffect, useState, type FocusEvent, type MouseEvent } from 'react';
 import { Monitor } from 'lucide-react';
 import type { AppSettings } from '../../../store/settingsSlice';
 import { useAppStore } from '../../../store/useAppStore';
@@ -36,6 +36,7 @@ interface ThemeButtonProps {
     plugin: ThemePlugin;
     isSelected: boolean;
     onClick: () => void;
+    onMouseDown?: (event: MouseEvent) => void;
 }
 
 function getThemeId(pluginId: string) {
@@ -46,7 +47,17 @@ function getThemeAccent(plugin: ThemePlugin | undefined, themeName: string): str
     if (plugin?.manifest.preview_accent) return plugin.manifest.preview_accent;
     if (themeName === 'dark') return '#797bce';
     if (themeName === 'light') return '#6366f1';
-    return 'var(--color-app-accent)';
+    if (themeName === 'system') {
+        if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            return '#797bce';
+        }
+        return '#6366f1';
+    }
+    return '#6366f1';
+}
+
+function preventBlurBeforeClick(event: MouseEvent) {
+    event.preventDefault();
 }
 
 function normalizeHexColor(value: string | null | undefined): string | null {
@@ -89,12 +100,14 @@ function SystemThemeSwatch() {
     );
 }
 
-function ThemeButton({ plugin, isSelected, onClick }: ThemeButtonProps) {
+function ThemeButton({ plugin, isSelected, onClick, onMouseDown }: ThemeButtonProps) {
     const themeId = getThemeId(plugin.manifest.id);
     const isLight = plugin.manifest.mode !== 'dark';
 
     return (
         <button
+            type="button"
+            onMouseDown={onMouseDown}
             onClick={onClick}
             className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${isSelected
                 ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
@@ -177,8 +190,18 @@ export function AppearanceTab({
             },
             ...baseFontOptions,
         ];
-    const activeThemePlugin = themePlugins.find((p) => p.manifest.id === `${THEME_PREFIX}${settings.theme}`);
-    const themeAccent = getThemeAccent(activeThemePlugin, settings.theme);
+    const resolveThemeAccent = (themeId: string) => {
+        const plugin = themePlugins.find((p) => p.manifest.id === `${THEME_PREFIX}${themeId}`);
+        return getThemeAccent(plugin, themeId);
+    };
+
+    const selectTheme = (themeId: string) => {
+        const normalized = normalizeHexColor(resolveThemeAccent(themeId)) ?? '#6366f1';
+        setTempAccentColor(normalized);
+        void applyUpdate({ theme: themeId, accentColor: null });
+    };
+
+    const themeAccent = resolveThemeAccent(settings.theme);
     const normalizedAccentColor = normalizeHexColor(settings.accentColor);
     const normalizedThemeAccent = normalizeHexColor(themeAccent);
     const colorPickerValue = normalizedAccentColor ?? normalizedThemeAccent ?? '#6366f1';
@@ -191,6 +214,11 @@ export function AppearanceTab({
         const normalizedTempAccentColor = normalizeHexColor(tempAccentColor);
         if (!normalizedTempAccentColor) {
             setTempAccentColor(colorPickerValue);
+            return;
+        }
+        const themeDefaultAccent = normalizeHexColor(resolveThemeAccent(settings.theme)) ?? '#6366f1';
+        if (!settings.accentColor && normalizedTempAccentColor === themeDefaultAccent) {
+            setTempAccentColor(themeDefaultAccent);
             return;
         }
         if (normalizedTempAccentColor === colorPickerValue) return;
@@ -246,7 +274,9 @@ export function AppearanceTab({
                         <h4 className="text-xs font-semibold text-[var(--color-app-muted)] uppercase tracking-wider pl-1">System default</h4>
                         <div className="grid grid-cols-2 gap-4">
                             <button
-                                onClick={() => { void applyUpdate({ theme: 'system' }); }}
+                                type="button"
+                                onMouseDown={preventBlurBeforeClick}
+                                onClick={() => { selectTheme('system'); }}
                                 className={`group p-4 rounded-xl border text-left flex items-center gap-4 transition-all relative overflow-hidden ${settings.theme === 'system'
                                     ? 'bg-[var(--color-app-bg)] border-[var(--color-app-accent)] ring-1 ring-[var(--color-app-accent)]'
                                     : 'bg-[var(--color-app-bg)]/40 border-[var(--color-app-border)] hover:bg-[var(--color-app-bg)]/60 hover:border-[var(--color-app-border)]'
@@ -271,7 +301,8 @@ export function AppearanceTab({
                                     key={plugin.manifest.id}
                                     plugin={plugin}
                                     isSelected={settings.theme === getThemeId(plugin.manifest.id)}
-                                    onClick={() => { void applyUpdate({ theme: getThemeId(plugin.manifest.id) }); }}
+                                    onMouseDown={preventBlurBeforeClick}
+                                    onClick={() => { selectTheme(getThemeId(plugin.manifest.id)); }}
                                 />
                             ))}
                         </div>
@@ -287,7 +318,8 @@ export function AppearanceTab({
                                     key={plugin.manifest.id}
                                     plugin={plugin}
                                     isSelected={settings.theme === getThemeId(plugin.manifest.id)}
-                                    onClick={() => { void applyUpdate({ theme: getThemeId(plugin.manifest.id) }); }}
+                                    onMouseDown={preventBlurBeforeClick}
+                                    onClick={() => { selectTheme(getThemeId(plugin.manifest.id)); }}
                                 />
                             ))}
                         </div>

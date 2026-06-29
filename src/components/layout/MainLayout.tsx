@@ -1,4 +1,4 @@
-import { ReactNode, lazy, Suspense, useState, useEffect, memo, useCallback, useRef, useMemo } from 'react';
+import { ReactNode, lazy, Suspense, useState, useEffect, useLayoutEffect, memo, useCallback, useRef, useMemo } from 'react';
 import { Sidebar } from './Sidebar';
 import { useAppStore, Tab } from '../../store/useAppStore';
 import type { CoreTabView } from '../../features/connections/domain/types';
@@ -30,6 +30,7 @@ import {
     shouldIdleSuspendConnection,
     terminalService,
 } from '../../lib/terminal';
+import { refreshAllCachedTerminalThemes } from '../terminal/terminalTheme';
 
 
 // Side-effect imports — these register each modal into the registry at startup.
@@ -805,7 +806,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         if (isLoadingSettings) return;
 
         // Persist for splash screen
@@ -823,12 +824,14 @@ export function MainLayout({ children }: { children: ReactNode }) {
             document.body.setAttribute('data-theme', theme); // Set attribute for new plugin system
         }
 
-        // Apply Custom Accent
+        // Apply custom accent override, or clear inline overrides so theme CSS wins.
         if (accentColor) {
             document.body.style.setProperty('--color-app-accent', accentColor);
+            document.documentElement.style.setProperty('--color-app-accent', accentColor);
             localStorage.setItem('zync-accent-color', accentColor);
         } else {
             document.body.style.removeProperty('--color-app-accent');
+            document.documentElement.style.removeProperty('--color-app-accent');
             localStorage.removeItem('zync-accent-color');
         }
 
@@ -847,8 +850,11 @@ export function MainLayout({ children }: { children: ReactNode }) {
             document.documentElement.style.removeProperty('font-size');
         }
 
+        refreshAllCachedTerminalThemes();
+
         window.requestAnimationFrame(() => {
             persistBootThemeColors();
+            refreshAllCachedTerminalThemes();
         });
         const persistTimer = window.setTimeout(() => {
             persistBootThemeColors();
@@ -865,6 +871,13 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     }, [theme, accentColor, globalFontFamily, globalFontSize, isLoadingSettings, persistBootThemeColors]);
 
+    useEffect(() => {
+        const refreshAfterRegistry = () => {
+            refreshAllCachedTerminalThemes();
+        };
+        window.addEventListener('zync:theme-registry-ready', refreshAfterRegistry);
+        return () => window.removeEventListener('zync:theme-registry-ready', refreshAfterRegistry);
+    }, []);
 
     const hideBootSplash = useCallback(() => {
         try {

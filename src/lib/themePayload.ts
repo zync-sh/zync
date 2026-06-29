@@ -1,3 +1,6 @@
+import { useAppStore } from '../store/useAppStore';
+import { resolveThemeModeFromRegistry } from './themeModeRegistry.js';
+
 export type ZyncThemeMode = 'light' | 'dark';
 
 export interface ZyncThemeColors {
@@ -108,10 +111,30 @@ function relativeLuminance({ r, g, b }: { r: number; g: number; b: number }): nu
   return 0.2126 * R + 0.7152 * G + 0.0722 * B;
 }
 
+function isExplicitLightThemeId(themeId: string | null | undefined): boolean {
+  if (!themeId) return false;
+  return themeId === 'light'
+    || themeId.endsWith('-light')
+    || themeId === 'catppuccin-latte';
+}
+
+function isExplicitDarkThemeId(themeId: string | null | undefined): boolean {
+  if (!themeId) return false;
+  return themeId === 'dark'
+    || themeId.endsWith('-dark');
+}
+
 export function resolveZyncThemeMode(): ZyncThemeMode {
+  const activeThemeId = useAppStore.getState().settings.theme;
+  const fromManifest = resolveThemeModeFromRegistry(activeThemeId);
+  if (fromManifest) {
+    return fromManifest;
+  }
+
   // Prefer explicit app signal if present.
   const dataTheme = document.body.getAttribute('data-theme');
-  if (dataTheme === 'light' || dataTheme === 'dark') return dataTheme;
+  if (isExplicitLightThemeId(dataTheme)) return 'light';
+  if (isExplicitDarkThemeId(dataTheme)) return 'dark';
 
   // Some Zync themes mark mode via body classes.
   const classes = document.body.classList;

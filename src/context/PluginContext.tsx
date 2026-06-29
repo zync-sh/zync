@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ipcRenderer } from '../lib/tauri-ipc';
+import { registerThemePluginModes } from '../lib/themeModeRegistry';
 import { useAppStore } from '../store/useAppStore';
 
 export interface EditorProviderManifest {
@@ -221,23 +222,24 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         try {
             const loadedPlugins: Plugin[] = await ipcRenderer.invoke('plugins:load');
             console.log('[Plugins] Discovered:', loadedPlugins);
+
+            loadedPlugins.forEach((plugin) => {
+                if (!plugin.style) return;
+                const styleId = `plugin-style-${plugin.manifest.id}`;
+                if (!document.getElementById(styleId)) {
+                    const styleEl = document.createElement('style');
+                    styleEl.id = styleId;
+                    styleEl.textContent = plugin.style;
+                    document.head.appendChild(styleEl);
+                }
+            });
+
+            registerThemePluginModes(loadedPlugins);
+            window.dispatchEvent(new CustomEvent('zync:theme-registry-ready'));
             setPlugins(loadedPlugins);
 
             // Initialize Workers
             loadedPlugins.forEach(plugin => {
-                // 1. Inject CSS if present
-                if (plugin.style) {
-                    const styleId = `plugin-style-${plugin.manifest.id}`;
-                    if (!document.getElementById(styleId)) {
-                        const styleEl = document.createElement('style');
-                        styleEl.id = styleId;
-                        styleEl.textContent = plugin.style;
-                        document.head.appendChild(styleEl);
-                        // console.log(`[Plugin] Injected styles for ${plugin.manifest.id}`);
-                    }
-                }
-
-                // 2. Start Worker if script is present
                 if (!plugin.script) return;
 
                 try {
