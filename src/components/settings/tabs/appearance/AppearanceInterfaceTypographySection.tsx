@@ -1,7 +1,7 @@
 import type { AppSettings } from '../../../../store/settingsSlice';
 import { Select } from '../../../ui/Select';
 import { Section } from '../../common/Section';
-import { DEFAULT_GLOBAL_FONT_SIZE, DEFAULT_GLOBAL_FONT_STACK } from '../../constants/defaults';
+import { DEFAULT_GLOBAL_FONT_STACK } from '../../constants/defaults';
 
 const GLOBAL_FONT_SIZE_MIN = 10;
 const GLOBAL_FONT_SIZE_MAX = 24;

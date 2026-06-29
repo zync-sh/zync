@@ -14,7 +14,7 @@ export interface TerminalHostProps {
   sessionId: string;
   terminalPadding: number;
   terminalTransparencyEnabled: boolean;
-  terminalHostStyle: CSSProperties;
+  terminalHostStyle: CSSProperties | undefined;
   layoutTransitioning: boolean;
   isSearchOpen: boolean;
   searchText: string;

@@ -23,7 +23,7 @@ export interface TerminalLifecycleEvent {
 }
 
 /** Attaches generation-gated ready and exit listeners once per cached terminal. */
-export function attachTerminalLifecycleListeners(sessionId: string, term: XTerm): void {
+export function attachTerminalLifecycleListeners(sessionId: string, _term: XTerm): void {
   const cached = terminalCache.get(sessionId);
   if (!cached || cached.listenerAttached) {
     return;

@@ -183,8 +183,8 @@ export const TerminalComponent = memo(function TerminalComponent({
       <TerminalDisconnectedView
         connection={connection}
         isPendingRestore={isPendingRestore}
-        activeConnectionId={activeConnectionId}
-        onReconnect={() => connect(activeConnectionId)}
+        activeConnectionId={terminalKey}
+        onReconnect={() => connect(terminalKey)}
       />
     );
   }
