@@ -6,9 +6,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Added
 - **Idle host PTY suspend (opt-in)**: Settings → Terminal → **Suspend idle host shells** suspends background workspace host PTYs after a configurable idle timeout (scrollback preserved; press Enter to resume). Shells with output or buffered input since the host was backgrounded stay alive until quiet. ([3b05fec])
-- **PTY output channel streaming**: `terminal:create` accepts a Tauri `Channel`; batched PTY output is framed as u32 LE generation + raw bytes. `terminal-output-*` events removed. ([87305db])
-- **Process-aware idle suspend probe**: `terminal_has_active_processes` IPC uses a local sysinfo child-tree scan (fail-closed) to defer idle suspend while child processes are running. ([87305db])
-- **Shell exit closes tab**: Natural shell `exit` (local reader / remote SSH manager) emits `terminal-exit` and closes the shell tab. ([87305db])
+- **PTY output channel streaming**: `terminal:create` accepts a Tauri `Channel`; batched PTY output is framed as u32 LE generation + raw bytes. `terminal-output-*` events removed. ([517ff30])
+- **Process-aware idle suspend probe**: `terminal_has_active_processes` IPC uses a local sysinfo child-tree scan (fail-closed) to defer idle suspend while child processes are running. ([517ff30])
+- **Shell exit closes tab**: Natural shell `exit` (local reader / remote SSH manager) emits `terminal-exit` and closes the shell tab. ([517ff30])
 
 ### Fixed
 - **Idle suspend message**: Suspend banner writes synchronously (PTY kill does not emit `terminal-exit`); idle guard clears only after `terminal-ready`. ([3b05fec])
@@ -21,14 +21,14 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Terminal spawn error matching**: Unreachable-host message limited to DNS/network failures; reachable-host errors (e.g. connection refused) keep raw backend text. ([5504a33])
 - **Idle timeout accessibility**: Idle suspend minutes input exposes an accessible name for screen readers. ([5504a33])
 - **Terminal shortcut guards**: Global paste/find skip when no xterm instance is mounted (e.g. disconnected view). ([5504a33])
-- **Programmatic PTY close**: `close` / `close_by_connection` tear down handles without emitting `terminal-exit` (natural exit paths only). ([87305db])
-- **Local PTY exit hang**: Local reader waits on the child process in parallel with PTY read so PowerShell `exit` does not stall. ([87305db])
-- **Channel teardown on reload**: Normal tab close silences the output channel; dev HMR revokes callbacks to avoid Tauri "callback id" warnings. ([87305db])
+- **Programmatic PTY close**: `close` / `close_by_connection` tear down handles without emitting `terminal-exit` (natural exit paths only). ([517ff30])
+- **Local PTY exit hang**: Local reader waits on the child process in parallel with PTY read so PowerShell `exit` does not stall. ([517ff30])
+- **Channel teardown on reload**: Normal tab close silences the output channel; dev HMR revokes callbacks to avoid Tauri "callback id" warnings. ([517ff30])
 
 ### Changed
 - **Terminal module layout**: Split `Terminal.tsx` into focused hooks and components; route tab destroy through `terminalService`; remove deprecated canvas renderer aliases. ([d872b3d])
 - **Terminal xterm options**: Centralized xterm 6 init in `xtermOptions.ts`; scrollback increased to 5000 rows; local Windows ConPTY uses `windowsPty` heuristics. ([ae2af4c])
-- **Idle host PTY suspend policy**: Local workspace shells are excluded from idle suspend; remote host shell tabs share one idle timer (no immediate kill on sidebar host switch). ([87305db])
+- **Idle host PTY suspend policy**: Local workspace shells are excluded from idle suspend; remote host shell tabs share one idle timer (no immediate kill on sidebar host switch). ([517ff30])
 
 ## [2.18.0] - 2026-06-28
 
@@ -764,7 +764,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 [Unreleased]: https://github.com/zync-sh/zync/compare/v2.18.0...HEAD
 [2.18.0]: https://github.com/zync-sh/zync/compare/v2.17.0...v2.18.0
-[87305db]: https://github.com/zync-sh/zync/commit/87305db
+[517ff30]: https://github.com/zync-sh/zync/commit/517ff30
 [5504a33]: https://github.com/zync-sh/zync/commit/5504a33
 [238e3fd]: https://github.com/zync-sh/zync/commit/238e3fd
 [3b05fec]: https://github.com/zync-sh/zync/commit/3b05fec
