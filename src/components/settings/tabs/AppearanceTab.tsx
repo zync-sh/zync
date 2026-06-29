@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FocusEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import type { AppSettings } from '../../../store/settingsSlice';
 import { useAppStore } from '../../../store/useAppStore';
 import { getPluginCategory } from '../../editor/providers';
@@ -132,13 +132,21 @@ export function AppearanceTab({
     const clampedPercent = Math.round(clampedOpacity * 100);
     const [draftGlobalFontSize, setDraftGlobalFontSize] = useState(clampedGlobalFontSize);
     const [draftOpacityPercent, setDraftOpacityPercent] = useState(clampedPercent);
+    const lastSubmittedGlobalFontSizeRef = useRef<number | null>(null);
+    const lastSubmittedOpacityPercentRef = useRef<number | null>(null);
 
     useEffect(() => {
         setDraftGlobalFontSize(clampedGlobalFontSize);
+        if (lastSubmittedGlobalFontSizeRef.current === clampedGlobalFontSize) {
+            lastSubmittedGlobalFontSizeRef.current = null;
+        }
     }, [clampedGlobalFontSize]);
 
     useEffect(() => {
         setDraftOpacityPercent(clampedPercent);
+        if (lastSubmittedOpacityPercentRef.current === clampedPercent) {
+            lastSubmittedOpacityPercentRef.current = null;
+        }
     }, [clampedPercent]);
 
     const commitGlobalFontSize = () => {
@@ -148,8 +156,14 @@ export function AppearanceTab({
         );
         if (next === clampedGlobalFontSize) {
             setDraftGlobalFontSize(next);
+            lastSubmittedGlobalFontSizeRef.current = null;
             return;
         }
+        if (next === lastSubmittedGlobalFontSizeRef.current) {
+            setDraftGlobalFontSize(next);
+            return;
+        }
+        lastSubmittedGlobalFontSizeRef.current = next;
         void applyUpdate({ globalFontSize: next });
     };
 
@@ -157,8 +171,14 @@ export function AppearanceTab({
         const nextPercent = Math.max(30, Math.min(100, Number.parseInt(String(draftOpacityPercent), 10) || 100));
         if (nextPercent === clampedPercent) {
             setDraftOpacityPercent(nextPercent);
+            lastSubmittedOpacityPercentRef.current = null;
             return;
         }
+        if (nextPercent === lastSubmittedOpacityPercentRef.current) {
+            setDraftOpacityPercent(nextPercent);
+            return;
+        }
+        lastSubmittedOpacityPercentRef.current = nextPercent;
         void applyUpdate({ windowOpacity: nextPercent / 100 });
     };
 
@@ -170,21 +190,73 @@ export function AppearanceTab({
         commitAccentColor();
     };
 
-    const appColorsPanel = (
-        <AppearanceColorsPanel
-            sectionTitle="Theme"
-            hint={APP_THEME_HINT}
-            settings={settings}
-            lightPlugins={lightPlugins}
-            darkPlugins={darkPlugins}
-            themeAccent={themeAccent}
-            tempAccentColor={tempAccentColor}
-            onSelectTheme={selectTheme}
-            onTempAccentColorChange={setTempAccentColor}
-            onSelectPresetAccent={(color) => { void applyUpdate({ accentColor: color }); }}
-            onCommitAccentColor={commitAccentColor}
-            onColorInputBlur={handleColorInputBlur}
-        />
+    const appPanel = (
+        <>
+            <AppearanceColorsPanel
+                sectionTitle="Theme"
+                hint={APP_THEME_HINT}
+                settings={settings}
+                lightPlugins={lightPlugins}
+                darkPlugins={darkPlugins}
+                themeAccent={themeAccent}
+                tempAccentColor={tempAccentColor}
+                onSelectTheme={selectTheme}
+                onTempAccentColorChange={setTempAccentColor}
+                onSelectPresetAccent={(color) => { void applyUpdate({ accentColor: color }); }}
+                onCommitAccentColor={commitAccentColor}
+                onColorInputBlur={handleColorInputBlur}
+            />
+            <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+            <AppearanceInterfaceTypographySection
+                settings={settings}
+                globalFontDraft={globalFontDraft}
+                draftGlobalFontSize={draftGlobalFontSize}
+                onGlobalFontDraftChange={setGlobalFontDraft}
+                onApplyCustomFont={() => {
+                    const next = globalFontDraft.trim();
+                    if (next) {
+                        void applyUpdate({ globalFontFamily: next });
+                    }
+                }}
+                onGlobalFontFamilyChange={(value) => { void applyUpdate({ globalFontFamily: value }); }}
+                onDraftGlobalFontSizeChange={setDraftGlobalFontSize}
+                onCommitGlobalFontSize={commitGlobalFontSize}
+                onResetTypography={() => {
+                    void applyUpdate({
+                        globalFontFamily: DEFAULT_GLOBAL_FONT_STACK,
+                        globalFontSize: DEFAULT_GLOBAL_FONT_SIZE,
+                    });
+                }}
+            />
+            <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+            <AppearanceInterfaceSection
+                compactMode={settings.compactMode}
+                onCompactModeChange={(checked) => { void applyUpdate({ compactMode: checked }); }}
+            />
+        </>
+    );
+
+    const terminalPanel = (
+        <>
+            <AppearanceTerminalColorsNotice onOpenAppTheme={() => { onActiveViewChange('app'); }} />
+            <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+            <AppearanceTerminalTypographySection
+                settings={settings}
+                terminalFontDraft={terminalFontDraft}
+                isWindows={isWindows}
+                onTerminalFontDraftChange={setTerminalFontDraft}
+                onUpdateTerminalSettings={(updates) => { void updateTerminalSettings(updates); }}
+            />
+            <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
+            <AppearanceTerminalViewportSection
+                settings={settings}
+                draftOpacityPercent={draftOpacityPercent}
+                onDraftOpacityPercentChange={setDraftOpacityPercent}
+                onCommitTerminalOpacity={commitTerminalOpacity}
+                onTransparencyChange={(checked) => { void applyUpdate({ enableVibrancy: checked }); }}
+                onCursorStyleChange={(style) => { void updateTerminalSettings({ cursorStyle: style }); }}
+            />
+        </>
     );
 
     return (
@@ -199,63 +271,24 @@ export function AppearanceTab({
 
             <div
                 role="tabpanel"
-                id={`appearance-panel-${activeView}`}
-                aria-labelledby={`appearance-tab-${activeView}`}
+                id="appearance-panel-app"
+                aria-labelledby="appearance-tab-app"
+                hidden={activeView !== 'app'}
+                inert={activeView !== 'app' ? true : undefined}
                 className="space-y-6"
             >
-                {activeView === 'app' ? (
-                    <>
-                        {appColorsPanel}
-                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
-                        <AppearanceInterfaceTypographySection
-                            settings={settings}
-                            globalFontDraft={globalFontDraft}
-                            draftGlobalFontSize={draftGlobalFontSize}
-                            onGlobalFontDraftChange={setGlobalFontDraft}
-                            onApplyCustomFont={() => {
-                                const next = globalFontDraft.trim();
-                                if (next) {
-                                    void applyUpdate({ globalFontFamily: next });
-                                }
-                            }}
-                            onGlobalFontFamilyChange={(value) => { void applyUpdate({ globalFontFamily: value }); }}
-                            onDraftGlobalFontSizeChange={setDraftGlobalFontSize}
-                            onCommitGlobalFontSize={commitGlobalFontSize}
-                            onResetTypography={() => {
-                                void applyUpdate({
-                                    globalFontFamily: DEFAULT_GLOBAL_FONT_STACK,
-                                    globalFontSize: DEFAULT_GLOBAL_FONT_SIZE,
-                                });
-                            }}
-                        />
-                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
-                        <AppearanceInterfaceSection
-                            compactMode={settings.compactMode}
-                            onCompactModeChange={(checked) => { void applyUpdate({ compactMode: checked }); }}
-                        />
-                    </>
-                ) : (
-                    <>
-                        <AppearanceTerminalColorsNotice onOpenAppTheme={() => { onActiveViewChange('app'); }} />
-                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
-                        <AppearanceTerminalTypographySection
-                            settings={settings}
-                            terminalFontDraft={terminalFontDraft}
-                            isWindows={isWindows}
-                            onTerminalFontDraftChange={setTerminalFontDraft}
-                            onUpdateTerminalSettings={(updates) => { void updateTerminalSettings(updates); }}
-                        />
-                        <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
-                        <AppearanceTerminalViewportSection
-                            settings={settings}
-                            draftOpacityPercent={draftOpacityPercent}
-                            onDraftOpacityPercentChange={setDraftOpacityPercent}
-                            onCommitTerminalOpacity={commitTerminalOpacity}
-                            onTransparencyChange={(checked) => { void applyUpdate({ enableVibrancy: checked }); }}
-                            onCursorStyleChange={(style) => { void updateTerminalSettings({ cursorStyle: style }); }}
-                        />
-                    </>
-                )}
+                {appPanel}
+            </div>
+
+            <div
+                role="tabpanel"
+                id="appearance-panel-terminal"
+                aria-labelledby="appearance-tab-terminal"
+                hidden={activeView !== 'terminal'}
+                inert={activeView !== 'terminal' ? true : undefined}
+                className="space-y-6"
+            >
+                {terminalPanel}
             </div>
         </div>
     );

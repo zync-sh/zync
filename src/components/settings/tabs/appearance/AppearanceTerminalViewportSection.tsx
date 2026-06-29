@@ -31,14 +31,23 @@ export function AppearanceTerminalViewportSection({
 
                 <div className="space-y-3">
                     <div className="flex justify-between">
-                        <label className="text-sm font-medium text-[var(--color-app-text)]">Opacity</label>
+                        <label
+                            htmlFor="terminal-opacity-slider"
+                            id="terminal-opacity-label"
+                            className="text-sm font-medium text-[var(--color-app-text)]"
+                        >
+                            Opacity
+                        </label>
                         <span className="text-sm text-[var(--color-app-accent)] font-mono">{draftOpacityPercent}%</span>
                     </div>
                     <input
+                        id="terminal-opacity-slider"
                         type="range"
                         min="30"
                         max="100"
                         step="1"
+                        aria-labelledby="terminal-opacity-label"
+                        aria-valuetext={`${draftOpacityPercent} percent`}
                         className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
                         value={draftOpacityPercent}
                         onChange={(e) => {

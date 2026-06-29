@@ -82,11 +82,15 @@ export function AppearanceTerminalTypographySection({
                         triggerClassName="bg-app-bg/50"
                     />
                     <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-app-muted)]">
+                        <label
+                            htmlFor="terminal-custom-font-stack-input"
+                            className="text-xs font-semibold uppercase tracking-wide text-[var(--color-app-muted)]"
+                        >
                             Custom Font Stack
                         </label>
                         <div className="grid grid-cols-[1fr_auto] gap-2 items-stretch">
                             <input
+                                id="terminal-custom-font-stack-input"
                                 type="text"
                                 value={terminalFontDraft}
                                 onChange={(e) => { onTerminalFontDraftChange(e.target.value); }}
@@ -132,14 +136,23 @@ export function AppearanceTerminalTypographySection({
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
-                            <label className="text-sm font-medium text-[var(--color-app-text)]">Font Size</label>
+                            <label
+                                htmlFor="terminal-font-size-slider"
+                                id="terminal-font-size-label"
+                                className="text-sm font-medium text-[var(--color-app-text)]"
+                            >
+                                Font Size
+                            </label>
                             <span className="text-sm text-[var(--color-app-accent)] font-mono">{settings.terminal.fontSize}px</span>
                         </div>
                         <input
+                            id="terminal-font-size-slider"
                             type="range"
                             min="10"
                             max="24"
                             step="1"
+                            aria-labelledby="terminal-font-size-label"
+                            aria-valuetext={`${settings.terminal.fontSize} pixels`}
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
                             value={settings.terminal.fontSize}
                             onChange={(e) => { onUpdateTerminalSettings({ fontSize: Number.parseInt(e.target.value, 10) }); }}
@@ -148,14 +161,23 @@ export function AppearanceTerminalTypographySection({
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
-                            <label className="text-sm font-medium text-[var(--color-app-text)]">Internal Padding</label>
+                            <label
+                                htmlFor="terminal-internal-padding-slider"
+                                id="terminal-internal-padding-label"
+                                className="text-sm font-medium text-[var(--color-app-text)]"
+                            >
+                                Internal Padding
+                            </label>
                             <span className="text-sm text-[var(--color-app-accent)] font-mono">{settings.terminal.padding ?? 12}px</span>
                         </div>
                         <input
+                            id="terminal-internal-padding-slider"
                             type="range"
                             min="0"
                             max="48"
                             step="4"
+                            aria-labelledby="terminal-internal-padding-label"
+                            aria-valuetext={`${settings.terminal.padding ?? 12} pixels`}
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
                             value={settings.terminal.padding ?? 12}
                             onChange={(e) => { onUpdateTerminalSettings({ padding: Number.parseInt(e.target.value, 10) }); }}
@@ -164,14 +186,23 @@ export function AppearanceTerminalTypographySection({
 
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
-                            <label className="text-sm font-medium text-[var(--color-app-text)]">Line Height</label>
+                            <label
+                                htmlFor="terminal-line-height-slider"
+                                id="terminal-line-height-label"
+                                className="text-sm font-medium text-[var(--color-app-text)]"
+                            >
+                                Line Height
+                            </label>
                             <span className="text-sm text-[var(--color-app-accent)] font-mono">{(settings.terminal.lineHeight ?? 1.2).toFixed(2)}</span>
                         </div>
                         <input
+                            id="terminal-line-height-slider"
                             type="range"
                             min="1"
                             max="2"
                             step="0.05"
+                            aria-labelledby="terminal-line-height-label"
+                            aria-valuetext={(settings.terminal.lineHeight ?? 1.2).toFixed(2)}
                             className="w-full accent-[var(--color-app-accent)] h-2 bg-[var(--color-app-surface)] rounded-lg appearance-none cursor-pointer"
                             value={settings.terminal.lineHeight ?? 1.2}
                             onChange={(e) => { onUpdateTerminalSettings({ lineHeight: Number.parseFloat(e.target.value) }); }}
