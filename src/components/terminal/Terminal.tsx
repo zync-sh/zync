@@ -4,18 +4,15 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import { useAppStore, Connection } from '../../store/useAppStore';
-import { cn } from '../../lib/utils';
-import { GhostSuggestionOverlay } from './GhostSuggestionOverlay';
-import { GhostSuggestionListOverlay } from './GhostSuggestionListOverlay';
+import { LOCAL_TERMINAL_CONNECTION_ID } from '../../lib/terminal/connectionIds.js';
 import { useTerminalTheme } from './useTerminalTheme';
 import { useTerminalLifecycle } from './useTerminalLifecycle';
 import { useTerminalSearch } from './useTerminalSearch';
 import { useTerminalGhost } from './useTerminalGhost';
 import { useTerminalKeybindings } from './useTerminalKeybindings';
 import { useTerminalGlobalShortcuts } from './useTerminalGlobalShortcuts';
-import { TerminalSearchBar } from './TerminalSearchBar';
 import { TerminalDisconnectedView } from './TerminalDisconnectedView';
-import { TerminalContextMenu } from './TerminalContextMenu';
+import { TerminalHost } from './TerminalHost';
 
 interface TerminalComponentProps {
   connectionId?: string;
@@ -66,10 +63,10 @@ export const TerminalComponent = memo(function TerminalComponent({
   }, [updateSettings]);
 
   const activeConnectionId = connectionId || globalActiveId;
-  const terminalKey = activeConnectionId || 'local';
+  const terminalKey = activeConnectionId || LOCAL_TERMINAL_CONNECTION_ID;
   const ghostScope = connectionId || terminalKey;
 
-  const isLocal = terminalKey === 'local';
+  const isLocal = terminalKey === LOCAL_TERMINAL_CONNECTION_ID;
   const connection = !isLocal ? connections.find((c: Connection) => c.id === terminalKey) : null;
   const isConnected = isLocal || connection?.status === 'connected';
 
@@ -194,69 +191,29 @@ export const TerminalComponent = memo(function TerminalComponent({
   }
 
   return (
-    <div
-      key="connected"
-      className={cn('h-full w-full relative group outline-none', terminalTransparency.enabled ? 'terminal-transparent' : 'bg-app-bg')}
-      style={terminalHostStyle}
-      tabIndex={-1}
-      onClick={() => termRef.current?.focus()}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setContextMenu({ x: e.clientX, y: e.clientY });
-      }}
-    >
-      <TerminalSearchBar
-        isOpen={isSearchOpen}
-        searchText={searchText}
-        inputRef={searchInputRef}
-        onSearchTextChange={handleSearchTextChange}
-        onNext={handleNext}
-        onPrev={handlePrev}
-        onClose={handleClose}
-      />
-
-      {contextMenu && (
-        <TerminalContextMenu
-          position={contextMenu}
-          sessionId={sessionId}
-          ghostSettings={ghostSettings}
-          ghostPopup={ghostPopup}
-          ghostSuggestion={ghostSuggestion}
-          termRef={termRef}
-          truncateLabel={truncateLabel}
-          onAcceptGhostSuffix={acceptGhostSuffix}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
-
-      <div
-        className={cn(
-          'absolute inset-0 pointer-events-none',
-          layoutTransitioning && 'overflow-hidden',
-        )}
-        style={{
-          padding: `${Math.max(0, settings.terminal.padding ?? 12)}px`,
-        }}
-      >
-        <div className="relative h-full w-full">
-          <div ref={containerRef} className="h-full w-full terminal-container pointer-events-auto" />
-          {termRef.current && ghostSettings.inlineEnabled && ghostSuggestion && !ghostPopup.visible && (
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <GhostSuggestionOverlay term={termRef.current} suggestion={ghostSuggestion} />
-            </div>
-          )}
-          {termRef.current && ghostSettings.popupEnabled && ghostPopup.visible && ghostPopup.items.length > 0 && (
-            <div className="absolute inset-0 pointer-events-none overflow-visible z-20">
-              <GhostSuggestionListOverlay
-                term={termRef.current}
-                items={ghostPopup.items}
-                selectedIndex={ghostPopup.selectedIndex}
-                anchorLine={ghostPopup.anchorLine}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <TerminalHost
+      containerRef={containerRef}
+      termRef={termRef}
+      sessionId={sessionId}
+      terminalPadding={settings.terminal.padding ?? 12}
+      terminalTransparencyEnabled={terminalTransparency.enabled}
+      terminalHostStyle={terminalHostStyle}
+      layoutTransitioning={layoutTransitioning}
+      isSearchOpen={isSearchOpen}
+      searchText={searchText}
+      searchInputRef={searchInputRef}
+      onSearchTextChange={handleSearchTextChange}
+      onSearchNext={handleNext}
+      onSearchPrev={handlePrev}
+      onSearchClose={handleClose}
+      contextMenu={contextMenu}
+      onOpenContextMenu={setContextMenu}
+      onCloseContextMenu={() => setContextMenu(null)}
+      ghostSettings={ghostSettings}
+      ghostSuggestion={ghostSuggestion}
+      ghostPopup={ghostPopup}
+      truncateLabel={truncateLabel}
+      onAcceptGhostSuffix={acceptGhostSuffix}
+    />
   );
 }, terminalPropsEqual);

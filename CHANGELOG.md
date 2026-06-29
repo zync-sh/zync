@@ -24,11 +24,14 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Programmatic PTY close**: `close` / `close_by_connection` tear down handles without emitting `terminal-exit` (natural exit paths only). ([517ff30])
 - **Local PTY exit hang**: Local reader waits on the child process in parallel with PTY read so PowerShell `exit` does not stall. ([517ff30])
 - **Channel teardown on reload**: Normal tab close silences the output channel; dev HMR revokes callbacks to avoid Tauri "callback id" warnings. ([517ff30])
+- **PtySession build warning**: Drop unused `term_id`, `generation`, and `app_handle` fields from Rust `PtySession` (session map key and create-time clones already cover these). ([__HASH__])
 
 ### Changed
 - **Terminal module layout**: Split `Terminal.tsx` into focused hooks and components; route tab destroy through `terminalService`; remove deprecated canvas renderer aliases. ([d872b3d])
 - **Terminal xterm options**: Centralized xterm 6 init in `xtermOptions.ts`; scrollback increased to 5000 rows; local Windows ConPTY uses `windowsPty` heuristics. ([ae2af4c])
 - **Idle host PTY suspend policy**: Local workspace shells are excluded from idle suspend; remote host shell tabs share one idle timer (no immediate kill on sidebar host switch). ([517ff30])
+- **TerminalHost shell**: Connected-state terminal UI moved to `TerminalHost.tsx`; `Terminal.tsx` wires hooks and lifecycle only. ([__HASH__])
+- **Local terminal connection id**: `LOCAL_TERMINAL_CONNECTION_ID` canonical in `connectionIds.ts`; `tabService` re-exports for connection UI. ([__HASH__])
 
 ## [2.18.0] - 2026-06-28
 

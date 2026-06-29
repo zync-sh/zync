@@ -1,5 +1,6 @@
 import type { Connection, Tab } from '../domain/types.js';
 import type { VaultProfileId } from '../../../vault/profileTypes.js';
+import { LOCAL_TERMINAL_CONNECTION_ID } from '../../../lib/terminal/connectionIds.js';
 
 export interface TabState {
     tabs: Tab[];
@@ -7,7 +8,7 @@ export interface TabState {
     activeConnectionId: string | null;
 }
 
-export const LOCAL_TERMINAL_CONNECTION_ID = 'local';
+export { LOCAL_TERMINAL_CONNECTION_ID };
 export const GLOBAL_SNIPPETS_CONNECTION_ID = 'global';
 
 export const createLocalTerminalTabState = (tabs: Tab[]): TabState => {

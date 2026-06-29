@@ -196,10 +196,7 @@ pub enum TerminalHandle {
 }
 
 pub struct PtySession {
-    pub term_id: String,
     pub connection_id: String,
-    pub generation: u32,
-    pub app_handle: AppHandle,
     /// Held for the session lifetime so the frontend channel stays open until close.
     #[allow(dead_code)]
     pub output_channel: IpcChannel,
@@ -423,10 +420,7 @@ impl PtyManager {
         let child_pid = child.process_id();
 
         let session = PtySession {
-            term_id: term_id.clone(),
             connection_id,
-            generation,
-            app_handle: app_handle.clone(),
             output_channel: output_channel.clone(),
             handle: TerminalHandle::Local {
                 writer: writer_arc,
@@ -667,10 +661,7 @@ impl PtyManager {
         let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(4);
 
         let session = PtySession {
-            term_id: term_id.clone(),
             connection_id,
-            generation,
-            app_handle: app_handle.clone(),
             output_channel: output_channel.clone(),
             handle: TerminalHandle::Remote {
                 tx,
