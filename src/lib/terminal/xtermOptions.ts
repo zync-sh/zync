@@ -24,7 +24,7 @@ export const TERMINAL_SCROLLBACK_ROWS = 5000;
  * Build ITerminalOptions for new xterm instances.
  *
  * - reflowCursorLine stays false — shells handle cursor-line reflow; historical
- *   scrollback must not reflow (TERMINAL_ROADMAP §3).
+ *   scrollback must not reflow (docs/TERMINAL.md §13).
  * - windowsPty only for local Windows ConPTY, not remote SSH viewed on Windows.
  * - Synchronized output (DECSET 2026) is negotiated at runtime by xterm 6; no
  *   init option required.

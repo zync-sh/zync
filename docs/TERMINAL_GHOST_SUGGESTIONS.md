@@ -1,146 +1,161 @@
 # Terminal Ghost Suggestions
 
-This document describes the fish-style terminal suggestion system in Zync:
+**Last updated:** 2026-06-29  
+**Applies to:** Zync v2.19.1+
+
+Fish-style command completion for Zync shells:
 
 - Inline ghost text suffix while typing
 - Tab-triggered suggestion popup list
 - Per-scope history ranking (local or connection-specific)
 - Filesystem path completion (local + remote via `fs_list`)
 
-## Status Snapshot (2026-04-16)
+For the overall terminal stack (PTY, IPC, renderer, tab lifecycle), see [TERMINAL.md](./TERMINAL.md).
 
-- Backend-first modular ghost engine is active under `src-tauri/src/ghost/*` (parser, ranking, manager, commands, types).
-- Frontend routing has been decomposed from `Terminal.tsx` into helper modules (`client`, `runtime`, `controller`, `behavior`, `uiState`, `pathCompletion`).
-- Popup/context-menu/inline toggles are live in settings (`ghostSuggestions.*` + provider toggles).
-- Remaining work is parity tuning/polish (fish-like edge behavior, deeper smoke coverage), not baseline architecture setup.
+---
 
-## Naming Clarification
+## Overview
 
-- `ContextMenu` (`src/components/ui/ContextMenu.tsx`) is the generic right-click menu UI.
-- `GhostSuggestion*` components are completion overlays powered by the ghost suggestion engine.
-- The suggestion popup is not the generic context menu, even if both look menu-like.
+Ghost suggestions run **inside the terminal input pipeline**. Handlers are serialized through `inputQueue.ts` so fast typing and Tab resolution cannot reorder keystrokes relative to the shell.
 
-## File Structure And Responsibilities
+| Surface | Component / module |
+|---------|------------------|
+| Inline suffix | `GhostSuggestionOverlay.tsx` |
+| Popup list | `GhostSuggestionListOverlay.tsx` (portal to `document.body`) |
+| Input wiring | `useTerminalGhost.ts` (called from `Terminal.tsx`) |
+| Settings | **Settings → Terminal → Ghost suggestions** (`settings.ghostSuggestions`) |
+
+**Visibility:** Ghost IPC is skipped when the shell tab is hidden (`isVisibleRef`).
+
+---
+
+## Naming clarification
+
+- `ContextMenu` (`src/components/ui/ContextMenu.tsx`) — generic right-click menu UI.
+- `GhostSuggestion*` — completion overlays powered by the ghost engine.
+- The suggestion popup is **not** the generic context menu, even if both look menu-like.
+
+---
+
+## File structure
 
 ### Frontend UI (terminal overlays)
 
-- `src/components/terminal/Terminal.tsx`
-  - Integrates xterm input handling with ghost runtime.
-  - Accepts/dismisses suggestions, opens popup, routes Tab/arrow keys.
-  - Wires right-click menu actions to accept ghost candidates.
-- `src/components/terminal/GhostSuggestionOverlay.tsx`
-  - Renders inline ghost suffix at cursor position.
-  - Theme-aware text color via CSS variables.
-- `src/components/terminal/GhostSuggestionListOverlay.tsx`
-  - Renders suggestion list popup in a `document.body` portal.
-  - Tracks cursor position and auto-flips above when near viewport bottom.
-  - Keeps popup window stable while scrolling selection.
+| File | Role |
+|------|------|
+| `src/components/terminal/Terminal.tsx` | Mounts `useTerminalGhost`; passes ghost state into `TerminalHost` |
+| `src/components/terminal/useTerminalGhost.ts` | Binds xterm input to ghost runtime; Tab/arrow routing |
+| `src/components/terminal/GhostSuggestionOverlay.tsx` | Inline ghost suffix at cursor; theme via CSS variables |
+| `src/components/terminal/GhostSuggestionListOverlay.tsx` | Popup portal; cursor tracking; flips above near viewport bottom |
 
-### Frontend Logic (behavior + input routing)
+### Frontend logic (`src/lib/ghostSuggestions/`)
 
-- `src/lib/ghostSuggestions/types.ts`
-  - Shared frontend types for requests, popup state, tab state, and outcomes.
-- `src/lib/ghostSuggestions/client.ts`
-  - IPC client calls: suggest/candidates/commit/accept.
-  - Provider orchestration (history + filesystem) and tab completion outcome.
-- `src/lib/ghostSuggestions/inputTracker.ts`
-  - Maintains local line buffer from xterm `onData`.
-  - Handles accept keys, dismiss/reset behavior, and history commit callback.
-- `src/lib/ghostSuggestions/runtime.ts`
-  - Binds tracker callbacks, debounce, stale request protection.
-  - Dispatches input events to popup/tracker routing.
-- `src/lib/ghostSuggestions/controller.ts`
-  - Key-level popup interaction decisions (next/prev/accept/dismiss/close-pass).
-- `src/lib/ghostSuggestions/behavior.ts`
-  - Tab action policy (single candidate, shared prefix, double-tab list behavior).
-- `src/lib/ghostSuggestions/pathCompletion.ts`
-  - Filesystem suggestion engine with command-aware path heuristics and cache.
-- `src/lib/ghostSuggestions/popupState.ts`
-  - Pure helpers for popup open/close/selection movement.
-- `src/lib/ghostSuggestions/tabState.ts`
-  - Tab interaction state defaults/reset.
-- `src/lib/ghostSuggestions/uiState.ts`
-  - React hook for popup state + ref synchronization.
-- `src/lib/ghostSuggestions/cursorPosition.ts`
-  - Converts xterm cursor cell coordinates to pixel coordinates.
-- `src/lib/ghostSuggestions/suggestionEngine.ts`
-  - Provider engine scaffold for sync/debounced suggestions.
-- `src/lib/ghostSuggestions/providers/historyProvider.ts`
-  - Legacy helper scaffold (`CommandHistory` ring-buffer). Current runtime uses backend history via IPC (`ghost_*` commands).
+| File | Role |
+|------|------|
+| `types.ts` | Request, popup, tab state, outcome types |
+| `client.ts` | IPC: suggest / candidates / commit / accept; provider orchestration |
+| `inputTracker.ts` | Line buffer from `onData`; accept/dismiss; history commit callback |
+| `runtime.ts` | Tracker callbacks, debounce, stale-request guards |
+| `controller.ts` | Popup key decisions (next/prev/accept/dismiss/close-pass) |
+| `behavior.ts` | Tab policy: single candidate, shared prefix, double-tab list |
+| `pathCompletion.ts` | Path engine + command-aware heuristics + cache |
+| `popupState.ts` | Pure popup open/close/selection helpers |
+| `tabState.ts` | Tab interaction defaults/reset |
+| `uiState.ts` | React hook for popup state + ref sync |
+| `cursorPosition.ts` | Cell → pixel coords via `.xterm-char-measure-element` (xterm 6; no private APIs) |
+| `suggestionEngine.ts` | Provider scaffold for sync/debounced suggestions |
+| `providers/historyProvider.ts` | Legacy ring-buffer scaffold; **runtime uses Rust history via IPC** |
 
-### Backend Rust (history + ranking + commands)
+### Backend Rust (`src-tauri/src/ghost/`)
 
-- `src-tauri/src/ghost/mod.rs`
-  - Ghost module exports and wiring.
-- `src-tauri/src/ghost/types.rs`
-  - Persisted frecency/history models and constants.
-- `src-tauri/src/ghost/parser.rs`
-  - Prefix extraction from shell input segments.
-- `src-tauri/src/ghost/ranking.rs`
-  - Candidate ranking heuristics (frecency + suffix scoring).
-- `src-tauri/src/ghost/manager.rs`
-  - In-memory state, persistence, commit/accept/suggest/candidates APIs.
-- `src-tauri/src/ghost/commands.rs`
-  - Tauri commands: `ghost_commit`, `ghost_accept`, `ghost_suggest`, `ghost_candidates`.
-- `src-tauri/src/commands.rs`
-  - `AppState` owns shared `ghost_manager`.
-- `src-tauri/src/lib.rs`
-  - Registers ghost commands with Tauri invoke handler.
-- `src-tauri/src/fs.rs`
-  - `fs_list` type normalization used by path completion (`file`/`directory`/`symlink` mapping).
+| File | Role |
+|------|------|
+| `mod.rs` | Module exports |
+| `types.rs` | Frecency/history models and constants |
+| `parser.rs` | Prefix extraction from shell input segments |
+| `ranking.rs` | Frecency + suffix scoring |
+| `manager.rs` | In-memory state, persistence, suggest/candidates/commit/accept |
+| `commands.rs` | Tauri: `ghost_commit`, `ghost_accept`, `ghost_suggest`, `ghost_candidates` |
+| `src-tauri/src/commands.rs` | `AppState` owns `ghost_manager` |
+| `src-tauri/src/fs.rs` | `fs_list` type normalization for path completion |
 
-### Settings + Tests
+### Settings + tests
 
-- `src/store/settingsSlice.ts`
-  - `ghostSuggestions` settings (inline/popup/context menu + provider toggles).
-- `src/components/settings/SettingsModal.tsx`
-  - Ghost Suggestions settings UI section.
-- `tests/ghostSuggestionsHelpers.test.mjs`
-  - Behavior tests for controller/runtime/path helpers/tab behavior.
-- `tsconfig.agent-tests.json`
-  - Includes ghost helper modules in agent test compilation.
+| File | Role |
+|------|------|
+| `src/store/settingsSlice.ts` | `ghostSuggestions` schema |
+| `src/components/settings/tabs/TerminalTab.tsx` | Ghost toggles (inline, popup, context menu, providers) |
+| `tests/ghostSuggestionsHelpers.test.mjs` | Controller/runtime/path/tab behavior |
+| `tsconfig.agent-tests.json` | Compiles ghost helpers for agent tests |
 
-## Event/Data Flow
+---
 
-1. User types in terminal (`xterm.onData` in `Terminal.tsx`).
-2. `handleGhostInputEvent` routes keystrokes:
-   - Popup navigation/accept/dismiss, or
-   - Tracker feed for inline flow.
-3. `InputTracker` updates line state; runtime debounces inline suggestion fetch.
-4. `client.ts` resolves providers:
-   - History (Rust ghost manager via IPC)
-   - Filesystem path candidates (`fs_list`)
-5. UI overlays render:
-   - Inline suffix (`GhostSuggestionOverlay`)
-   - Popup list (`GhostSuggestionListOverlay`, portal, flip-aware)
-6. Accept/commit sends `ghost_accept` / `ghost_commit` to backend manager.
+## Event / data flow
 
-## Commands and Expected Behavior
+```
+xterm.onData
+  → inputQueue (serialized)
+    → useTerminalGhost / handleGhostInputEvent
+      → popup navigation OR inputTracker (inline)
+        → runtime debounce → client.ts
+          → history: ghost_* IPC (Rust manager)
+          → filesystem: fs_list
+      → GhostSuggestionOverlay / GhostSuggestionListOverlay
+      → ghost_accept / ghost_commit on accept
+```
 
-- `Tab`
-  - Accept single/shared-prefix suggestion, or show popup list.
-  - Falls back to shell-native tab completion if no custom candidates.
-- Arrow keys while popup open
-  - Move selection without collapsing popup.
-- `Esc` while popup open
-  - Dismiss popup.
-- `Enter`
-  - Commits command; history score updated.
+1. User types in the terminal.
+2. Keystrokes route to popup handling or inline tracker.
+3. `InputTracker` updates line state; runtime debounces inline fetch.
+4. `client.ts` merges history + filesystem candidates.
+5. Overlays render inline suffix and/or popup list.
+6. Accept/commit updates backend frecency history.
 
-## Related Documents
+---
 
-- [TERMINAL_ROADMAP.md](./TERMINAL_ROADMAP.md) — terminal performance, robustness, and refactor priorities
-- [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md) — tab/terminal session restore
+## Key bindings
 
-## Notes For Future Changes
+| Key | Behavior |
+|-----|----------|
+| **Tab** | Accept single/shared-prefix suggestion, or open popup; falls back to shell tab completion if no candidates |
+| **Arrow keys** (popup open) | Move selection; popup stays open |
+| **Esc** (popup open) | Dismiss popup |
+| **Enter** | Commit command; history score updated |
 
-- Keep popup rendering portal-based to avoid parent clipping.
-- Keep theme colors CSS-variable-based for dark/light compatibility.
-- If key routing changes, update both:
-  - `src/lib/ghostSuggestions/controller.ts`
-  - `tests/ghostSuggestionsHelpers.test.mjs`
-- If parser/ranking behavior changes, update backend unit tests in:
-  - `src-tauri/src/ghost/parser.rs`
-  - `src-tauri/src/ghost/ranking.rs`
-  - `src-tauri/src/ghost/manager.rs`
-- Avoid adding terminal key buffering unless a reproducible xterm sequence split is proven.
+---
+
+## Settings (`settings.ghostSuggestions`)
+
+**Settings → Terminal → Ghost suggestions**
+
+| Toggle | Default | Purpose |
+|--------|---------|---------|
+| Inline ghost text | on | Gray suffix at cursor |
+| Tab popup | on | List on Tab when multiple candidates |
+| Context menu actions | off | Accept candidates from terminal context menu |
+| Provider: history | on | Rust frecency history |
+| Provider: filesystem | on | `fs_list` path completion |
+
+---
+
+## Known gaps
+
+- Fish-like parity edge cases (behavior tuning, not missing architecture).
+- Deeper manual smoke coverage for remote path completion edge paths.
+
+---
+
+## Notes for changes
+
+- Keep popup **portal-based** to avoid parent clipping.
+- Keep overlay colors **CSS-variable-based** for theme compatibility.
+- Key routing changes → update `controller.ts` and `tests/ghostSuggestionsHelpers.test.mjs`.
+- Parser/ranking changes → update `parser.rs`, `ranking.rs`, `manager.rs` tests.
+- Do not add terminal key buffering unless a reproducible xterm sequence-split bug is proven.
+
+---
+
+## Related documents
+
+- [TERMINAL.md](./TERMINAL.md) — integrated terminal architecture (PTY, renderer, input pipeline)
+- [SESSION_PERSISTENCE.md](./SESSION_PERSISTENCE.md) — tab restore (ghost history is per connection scope)
