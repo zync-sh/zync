@@ -5,6 +5,8 @@ import { Select } from '../ui/Select';
 import type { Connection } from '../../store/useAppStore';
 import type { ConnectionExchangeExportFormat } from '../../features/connections/infrastructure/connectionTransfer';
 import { Search } from 'lucide-react';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
 
 interface ExportConnectionsModalProps {
     isOpen: boolean;
@@ -45,6 +47,7 @@ export function ExportConnectionsModal({
     const [searchTerm, setSearchTerm] = useState('');
     const [fileBaseName, setFileBaseName] = useState(defaultFileBaseName);
     const [includeSecrets, setIncludeSecrets] = useState(false);
+    const showHostAddressesInLists = useShowHostAddressesInLists();
 
     useEffect(() => {
         if (!isOpen) return;
@@ -178,6 +181,7 @@ export function ExportConnectionsModal({
                         <div className="space-y-1.5">
                             {filteredConnections.map((connection) => {
                                 const checked = selectedIds.has(connection.id);
+                                const labels = getConnectionDisplayLabels(connection, showHostAddressesInLists);
                                 return (
                                     <label
                                         key={connection.id}
@@ -190,8 +194,8 @@ export function ExportConnectionsModal({
                                             className="mt-0.5 h-3.5 w-3.5 accent-[var(--color-app-accent)]"
                                         />
                                         <div className="min-w-0">
-                                            <p className="truncate text-sm font-medium text-app-text">{connection.name || connection.host}</p>
-                                            <p className="truncate text-xs text-app-muted">{connection.username}@{connection.host}:{connection.port}</p>
+                                            <p className="truncate text-sm font-medium text-app-text">{labels.primary}</p>
+                                            <p className="truncate text-xs text-app-muted">{labels.secondary}</p>
                                         </div>
                                     </label>
                                 );

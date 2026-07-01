@@ -9,6 +9,8 @@ import { Select } from '../ui/Select';
 import { GroupSelector } from '../ui/GroupSelector';
 import { OSIcon } from '../icons/OSIcon';
 import { cn } from '../../lib/utils';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
 
 interface AddTunnelModalProps {
     isOpen: boolean;
@@ -36,6 +38,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
     const connections = useAppStore(state => state.connections);
     const tunnels = useAppStore(state => state.tunnels);
     const showToast = useAppStore((state) => state.showToast);
+    const showHostAddressesInLists = useShowHostAddressesInLists();
 
     // Derive existing groups for autocomplete
     const existingGroups = Array.from(new Set(
@@ -188,16 +191,19 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
     // Filter only valid SSH connections, but ALWAYS include the initial/selected one
     const hostOptions = connections
         .filter((c: Connection) => c.host || c.id === initialConnectionId || c.id === selectedConnectionId)
-        .map((conn: Connection) => ({
+        .map((conn: Connection) => {
+            const labels = getConnectionDisplayLabels(conn, showHostAddressesInLists);
+            return {
             value: conn.id,
-            label: conn.name || conn.host || 'Unknown Host',
-            description: conn.host ? `${conn.username}@${conn.host}` : 'Local/Custom Connection',
+            label: labels.primary || 'Unknown Host',
+            description: conn.host ? labels.secondary : 'Local/Custom Connection',
             icon: (
                 <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
                     <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
                 </div>
-            )
-        }));
+            ),
+        };
+        });
 
     return (
         <Modal

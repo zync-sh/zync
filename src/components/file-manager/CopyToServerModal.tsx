@@ -6,6 +6,8 @@ import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { Select, type SelectOption } from '../ui/Select';
 import { OSIcon } from '../icons/OSIcon';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
 
 interface CopyToServerModalProps {
   isOpen: boolean;
@@ -32,6 +34,7 @@ export function CopyToServerModal({
   const failTransfer = useAppStore(state => state.failTransfer);
   const showToast = useAppStore((state) => state.showToast);
   const connect = useAppStore(state => state.connect);
+  const showHostAddressesInLists = useShowHostAddressesInLists();
 
   const [selectedServerId, setSelectedServerId] = useState('');
   const [destinationPath, setDestinationPath] = useState('');
@@ -150,16 +153,19 @@ export function CopyToServerModal({
   };
 
   const availableServers = connections.filter((conn: Connection) => conn.id !== firstFile?.connectionId);
-  const serverOptions: SelectOption[] = availableServers.map(conn => ({
+  const serverOptions: SelectOption[] = availableServers.map(conn => {
+    const labels = getConnectionDisplayLabels(conn, showHostAddressesInLists);
+    return {
     value: conn.id,
-    label: conn.name,
-    description: `${conn.username}@${conn.host}`,
+    label: labels.primary,
+    description: labels.secondary,
     icon: (
       <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
         <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
       </div>
-    )
-  }));
+    ),
+  };
+  });
 
   const handleCopy = async () => {
     if (sourceFiles.length === 0 || !selectedServerId || !destinationPath) {

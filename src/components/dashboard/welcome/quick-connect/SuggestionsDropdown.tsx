@@ -3,6 +3,7 @@ import { Clock } from 'lucide-react';
 import type { Connection } from '../../../../store/connectionSlice';
 import { OSIcon } from '../../../icons/OSIcon';
 import { cn } from '../../../../lib/utils';
+import { useConnectionDisplayLabels } from '../../../../features/connections/presentation/useConnectionDisplayLabels';
 
 interface SuggestionsDropdownProps {
     showDropdown: boolean;
@@ -43,42 +44,69 @@ export function SuggestionsDropdown({
                         </li>
                     )}
                     {dropItems.map((conn, index) => (
-                        <li
+                        <SuggestionRow
                             key={conn.id}
-                            id={`${listboxId}-opt-${index}`}
-                            role="option"
-                            aria-selected={activeIndex === index}
-                            className={cn(
-                                'flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors',
-                                activeIndex === index ? 'bg-app-surface/70' : 'hover:bg-app-surface/40'
-                            )}
-                            onClick={() => onSelectExisting(conn.id)}
-                            onMouseEnter={() => setActiveIndex(index)}
-                        >
-                            <div className="relative shrink-0">
-                                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5 text-app-muted/60" />
-                                {conn.status === 'connected' && (
-                                    <span
-                                        className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green-500 border border-app-panel"
-                                        aria-hidden="true"
-                                    />
-                                )}
-                            </div>
-
-                            <div className="flex-1 min-w-0">
-                                <span className="block text-xs font-medium text-app-text truncate">{conn.name || conn.host}</span>
-                                <span className="block text-[10px] text-app-muted/60 font-mono truncate">
-                                    {conn.username}@{conn.host}:{conn.port}
-                                </span>
-                            </div>
-
-                            {conn.status === 'connected' && (
-                                <span className="text-[9px] text-green-500/70 font-medium shrink-0">live</span>
-                            )}
-                        </li>
+                            conn={conn}
+                            index={index}
+                            listboxId={listboxId}
+                            activeIndex={activeIndex}
+                            setActiveIndex={setActiveIndex}
+                            onSelectExisting={onSelectExisting}
+                        />
                     ))}
                 </motion.ul>
             )}
         </AnimatePresence>
+    );
+}
+
+function SuggestionRow({
+    conn,
+    index,
+    listboxId,
+    activeIndex,
+    setActiveIndex,
+    onSelectExisting,
+}: {
+    conn: Connection;
+    index: number;
+    listboxId: string;
+    activeIndex: number;
+    setActiveIndex: (index: number) => void;
+    onSelectExisting: (id: string) => void;
+}) {
+    const { primary, secondary } = useConnectionDisplayLabels(conn);
+
+    return (
+        <li
+            id={`${listboxId}-opt-${index}`}
+            role="option"
+            aria-selected={activeIndex === index}
+            className={cn(
+                'flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors',
+                activeIndex === index ? 'bg-app-surface/70' : 'hover:bg-app-surface/40',
+            )}
+            onClick={() => onSelectExisting(conn.id)}
+            onMouseEnter={() => setActiveIndex(index)}
+        >
+            <div className="relative shrink-0">
+                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5 text-app-muted/60" />
+                {conn.status === 'connected' && (
+                    <span
+                        className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green-500 border border-app-panel"
+                        aria-hidden="true"
+                    />
+                )}
+            </div>
+
+            <div className="flex-1 min-w-0">
+                <span className="block text-xs font-medium text-app-text truncate">{primary}</span>
+                <span className="block text-[10px] text-app-muted/60 truncate">{secondary}</span>
+            </div>
+
+            {conn.status === 'connected' && (
+                <span className="text-[9px] text-green-500/70 font-medium shrink-0">live</span>
+            )}
+        </li>
     );
 }

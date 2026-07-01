@@ -3,6 +3,10 @@ import { Bookmark, FileKey, Lock } from 'lucide-react';
 import { OSIcon } from '../../icons/OSIcon';
 import { cn } from '../../../lib/utils';
 import type { Connection } from '../../../store/connectionSlice';
+import {
+    useConnectionDisplayLabels,
+    useShowHostAddressesInLists,
+} from '../../../features/connections/presentation/useConnectionDisplayLabels';
 
 /** Formats a timestamp into a compact relative label used in the welcome list. */
 export function getRelativeTime(ts: number): string {
@@ -30,7 +34,9 @@ interface ConnectionCardProps {
 export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }: ConnectionCardProps) {
     const isConnected = conn.status === 'connected';
     const isFav       = Boolean(conn.isFavorite);
-    const displayName = conn.name || conn.host;
+    const { primary, secondary } = useConnectionDisplayLabels(conn);
+    const showHostAddressesInLists = useShowHostAddressesInLists();
+    const displayName = primary;
     const hasKey      = Boolean(conn.privateKeyPath);
     const hasPass     = Boolean(conn.password) && !hasKey;
 
@@ -40,7 +46,7 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
         isConnected    ? 'connected'          : null,
         hasKey         ? 'key authentication' : null,
         hasPass        ? 'password authentication' : null,
-        conn.port !== 22 ? `port ${conn.port}` : null,
+        showHostAddressesInLists && conn.port !== 22 ? `port ${conn.port}` : null,
     ].filter(Boolean).join(', ');
 
     return (
@@ -98,8 +104,8 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
                     )}>
                         {displayName}
                     </span>
-                    <span className="block text-[10px] text-app-muted/55 font-mono truncate">
-                        {conn.username}@{conn.host}
+                    <span className="block text-[10px] text-app-muted/55 truncate">
+                        {secondary}
                     </span>
                 </div>
 
@@ -107,7 +113,7 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
                 <div className="flex items-center gap-1 shrink-0" aria-hidden="true">
                     {hasKey && <FileKey size={10} className="text-app-muted/40" />}
                     {hasPass && <Lock size={10} className="text-app-muted/40" />}
-                    {conn.port !== 22 && (
+                    {showHostAddressesInLists && conn.port !== 22 && (
                         <span className="text-[9px] text-app-muted/40 font-mono">:{conn.port}</span>
                     )}
                 </div>
