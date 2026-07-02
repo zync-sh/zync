@@ -153,7 +153,7 @@ export function CopyToServerModal({
   };
 
   const availableServers = connections.filter((conn: Connection) => conn.id !== firstFile?.connectionId);
-  const sourceConnection = connections.find((conn: Connection) => conn.id === firstFile.connectionId);
+  const sourceConnection = connections.find((conn: Connection) => conn.id === firstFile?.connectionId);
   const sourceLabels = sourceConnection
     ? getConnectionDisplayLabels(sourceConnection, showHostAddressesInLists)
     : null;
