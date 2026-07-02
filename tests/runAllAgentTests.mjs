@@ -5,6 +5,7 @@ const tests = [
   'tests/aiSidebarResize.test.mjs',
   'tests/codeMirrorHelpers.test.mjs',
   'tests/connectionDomain.test.mjs',
+  'tests/connectionDisplay.test.mjs',
   'tests/connectionOpQueue.test.mjs',
   'tests/connectionFormTransforms.test.mjs',
   'tests/connectionLifecycleService.test.mjs',

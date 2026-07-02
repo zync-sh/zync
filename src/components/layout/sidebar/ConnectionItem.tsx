@@ -4,6 +4,7 @@ import { getCurrentDragSource } from '../../../lib/dragDrop';
 import { Settings } from 'lucide-react';
 import { OSIcon } from '../../icons/OSIcon';
 import { cn } from '../../../lib/utils';
+import { useConnectionDisplayLabels } from '../../../features/connections/presentation/useConnectionDisplayLabels';
 
 
 interface ConnectionItemComponentProps {
@@ -18,6 +19,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
     const isActive = useAppStore(state => state.activeConnectionId === conn.id);
     const hasTab = useAppStore(state => state.tabs.some((t: Tab) => t.connectionId === conn.id));
     const compactMode = useAppStore(state => state.settings.compactMode);
+    const { primary, secondary, ariaLabel } = useConnectionDisplayLabels(conn);
 
     // Actions (stable references from zustand, don't cause re-renders)
     const openTab = useAppStore(state => state.openTab);
@@ -118,7 +120,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                 }}
                 role="button"
                 tabIndex={0}
-                aria-label={`Connection ${conn.name || conn.host}`}
+                aria-label={ariaLabel}
                 onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -193,7 +195,7 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                                 compactMode ? "text-sm" : "text-[14px]",
                                 isActive ? "text-app-text font-semibold" : "text-app-text/80 group-hover:text-app-text"
                             )}>
-                                {conn.name || conn.host}
+                                {primary}
                             </span>
 
                             {/* Hover Actions */}
@@ -214,9 +216,9 @@ export const ConnectionItem = memo(function ConnectionItem({ conn, isCollapsed, 
                         <span className={cn(
                             "truncate leading-tight",
                             compactMode ? "text-[10px] mt-0.5" : "text-xs mt-0.5",
-                            "text-app-muted/50 font-mono group-hover:text-app-muted/70 transition-colors"
+                            "text-app-muted/50 group-hover:text-app-muted/70 transition-colors"
                         )}>
-                            {conn.username}@{conn.host}
+                            {secondary}
                         </span>
                     </div>
                 )}

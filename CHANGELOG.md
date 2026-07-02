@@ -4,6 +4,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.19.2] - 2026-07-02
+
+### Added
+- **Connection list privacy**: Settings → General → Privacy → **Show host addresses in lists** (default off). Sidebar, welcome, command palette, quick connect, and connection pickers use display names with `SSH, username` secondary labels; full endpoints remain in connection details. ([3e024e4], [4e1408c])
+
+### Changed
+- **README**: Restructured for v2.19 with local terminal, data ownership, APT install, documentation links, and workspace hero assets. ([2d709ca], [9533afc])
+- **Documentation**: Consolidated `docs/SECURITY.md` and `docs/TERMINAL.md`; refreshed ghost suggestions docs; removed obsolete terminal roadmap. ([7ab6d17])
+
 ## [2.19.1] - 2026-06-29
 
 ### Added
@@ -783,9 +792,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.19.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.19.2...HEAD
+[2.19.2]: https://github.com/zync-sh/zync/compare/v2.19.1...v2.19.2
 [2.19.1]: https://github.com/zync-sh/zync/compare/v2.18.0...v2.19.1
 [2.18.0]: https://github.com/zync-sh/zync/compare/v2.17.0...v2.18.0
+[3e024e4]: https://github.com/zync-sh/zync/commit/3e024e4
+[4e1408c]: https://github.com/zync-sh/zync/commit/4e1408c
+[2d709ca]: https://github.com/zync-sh/zync/commit/2d709ca
+[9533afc]: https://github.com/zync-sh/zync/commit/9533afc
+[7ab6d17]: https://github.com/zync-sh/zync/commit/7ab6d17
 [f03aeb5]: https://github.com/zync-sh/zync/commit/f03aeb5
 [15f515d]: https://github.com/zync-sh/zync/commit/15f515d
 [a5e45f2]: https://github.com/zync-sh/zync/commit/a5e45f2

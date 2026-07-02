@@ -13,6 +13,8 @@ import {
     type TerminalFontWeightSetting,
 } from '../components/settings/constants/defaults';
 import { resolveTerminalFontWeightBold } from '../lib/terminal/terminalTypography.js';
+import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
+import { refreshConnectionTabTitles } from '../features/connections/application/tabService.js';
 
 export interface AppSettings {
     theme: string;
@@ -120,6 +122,10 @@ export interface AppSettings {
         enabled: boolean;
     };
     lastSeenVersion: string;
+    privacy: {
+        /** When true, browse lists show username@host. When false, show labels/tags (safer for screen share). */
+        showHostAddressesInLists: boolean;
+    };
 }
 
 export const defaultSettings: AppSettings = {
@@ -146,6 +152,9 @@ export const defaultSettings: AppSettings = {
         enabled: true,
     },
     lastSeenVersion: '',
+    privacy: {
+        showHostAddressesInLists: DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS,
+    },
     terminal: {
         ...(() => {
             const typography = resolveDefaultTerminalTypography();
@@ -357,6 +366,7 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
                 },
                 keybindings: { ...defaultSettings.keybindings, ...(loaded?.keybindings || {}) },
                 ai: { ...defaultSettings.ai, ...(loaded?.ai || {}) },
+                privacy: { ...defaultSettings.privacy, ...(loaded?.privacy || {}) },
                 expandedFolders: loaded?.expandedFolders || []
             };
             set({ settings: merged, isLoadingSettings: false });
@@ -375,8 +385,21 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
         }
 
         const previous = get().settings;
+        const previousTabs = get().tabs;
         const updated = { ...previous, ...actualSettings };
-        set({ settings: updated });
+        const privacyPatch = actualSettings.privacy;
+        const privacyTitlesTouched = Boolean(
+            privacyPatch && 'showHostAddressesInLists' in privacyPatch,
+        );
+        const nextState: Partial<AppStore> = { settings: updated };
+        if (privacyTitlesTouched) {
+            nextState.tabs = refreshConnectionTabTitles(
+                previousTabs,
+                get().connections,
+                updated.privacy.showHostAddressesInLists,
+            );
+        }
+        set(nextState);
         const changedKeys = Object.keys(actualSettings) as Array<keyof AppSettings>;
         try {
             await persistSettings(actualSettings);
@@ -386,7 +409,13 @@ export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> 
             const rollbackPatch = Object.fromEntries(
                 changedKeys.map((key) => [key, previous[key]])
             ) as Partial<AppSettings>;
-            set({ settings: { ...current, ...rollbackPatch } });
+            const rollbackState: Partial<AppStore> = {
+                settings: { ...current, ...rollbackPatch },
+            };
+            if (privacyTitlesTouched) {
+                rollbackState.tabs = previousTabs;
+            }
+            set(rollbackState);
             throw error;
         }
     },

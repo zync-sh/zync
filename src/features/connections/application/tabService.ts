@@ -1,3 +1,4 @@
+import { getConnectionPrimaryLabel } from '../domain/connectionDisplay.js';
 import type { Connection, Tab } from '../domain/types.js';
 import type { VaultProfileId } from '../../../vault/profileTypes.js';
 import { LOCAL_TERMINAL_CONNECTION_ID } from '../../../lib/terminal/connectionIds.js';
@@ -59,15 +60,35 @@ export const activateExistingConnectionTab = (
     };
 };
 
+export interface CreateConnectionTabOptions {
+    showHostAddressesInLists?: boolean;
+}
+
+export const refreshConnectionTabTitles = (
+    tabs: Tab[],
+    connections: Connection[],
+    showHostAddressesInLists?: boolean,
+): Tab[] =>
+    tabs.map((tab) => {
+        if (tab.type !== 'connection' || !tab.connectionId || tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
+            return tab;
+        }
+        const connection = connections.find((entry) => entry.id === tab.connectionId);
+        if (!connection) return tab;
+        const title = getConnectionPrimaryLabel(connection, showHostAddressesInLists);
+        return title === tab.title ? tab : { ...tab, title };
+    });
+
 export const createConnectionTabState = (
     tabs: Tab[],
     connection: Connection,
     startView: Tab['view'],
+    options: CreateConnectionTabOptions = {},
 ): TabState => {
     const newTab: Tab = {
         id: crypto.randomUUID(),
         type: 'connection',
-        title: connection.name || connection.host || 'Untitled Connection',
+        title: getConnectionPrimaryLabel(connection, options.showHostAddressesInLists),
         connectionId: connection.id,
         view: startView,
     };

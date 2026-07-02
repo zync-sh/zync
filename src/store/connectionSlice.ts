@@ -59,6 +59,7 @@ import {
     resetTerminalPtyForReconnect,
 } from '../lib/terminal';
 import type { TabSnapshot } from './sessionPersistence';
+import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import { DEFAULT_VAULT_PROFILE_ID, isVaultProfileId, type VaultProfileId } from '../vault/profileTypes';
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
@@ -586,7 +587,13 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 return { ...activateExistingConnectionTab(state.tabs, existingTab, startView), lastRealConnectionId: conn.id, showWelcomeScreen: false };
             }
 
-            return { ...createConnectionTabState(state.tabs, conn, startView), lastRealConnectionId: conn.id, showWelcomeScreen: false };
+            const showHostAddressesInLists = get().settings.privacy?.showHostAddressesInLists
+                ?? DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
+            return {
+                ...createConnectionTabState(state.tabs, conn, startView, { showHostAddressesInLists }),
+                lastRealConnectionId: conn.id,
+                showWelcomeScreen: false,
+            };
         });
 
         if (connectAfterOpen) {

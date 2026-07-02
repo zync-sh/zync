@@ -13,7 +13,7 @@ Thank you for your interest in contributing to Zync. This document provides guid
    git remote add upstream https://github.com/zync-sh/zync.git
    ```
 
-3. Ensure you have the [prerequisites](./README.md#prerequisites) installed (Node.js, Rust, platform-specific dependencies).
+3. Ensure you have the [prerequisites](./README.md#prerequisites) installed (Node.js, Rust, and platform-specific dependencies).
 
 4. Run `npm install` and `npm run tauri dev` to start the development environment.
 

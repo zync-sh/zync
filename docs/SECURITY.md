@@ -1,19 +1,17 @@
-# Security Notes — Zync v2.16.0
+# Security Notes
 
-**Release date:** 2026-06-15  
-**Applies to:** Zync v2.16.0 (vault + Google sync release)
+**Last updated:** 2026-07-01  
+**Scope:** Vault, Google sync, credential handling, and operator guidance for current Zync releases.
 
 ---
 
 ## Summary
 
-v2.16.0 is **not** a CVE-style emergency patch. It introduces a **new security surface**: encrypted local vaulting, optional remember-on-device unlock, and Google Drive–backed encrypted sync.
-
-This document explains what changed from a security perspective, what users and operators should know, and what remains out of scope.
+Zync's main security surface is **encrypted local vaulting**, optional **remember-on-device unlock**, and **Google Drive–backed encrypted sync**. This document explains how those systems behave, what users and operators should know, and what remains out of scope.
 
 ---
 
-## New Security Capabilities
+## Security Capabilities
 
 ### Local Vault (encrypted at rest)
 
@@ -22,21 +20,15 @@ This document explains what changed from a security perspective, what users and 
 - Vault unlock requires a user passphrase; a **recovery key** can be generated for passphrase loss scenarios.
 - Plaintext host credentials can be **migrated into the vault** during normal workflows.
 
-**Relevant commits:** [6e8dd42], [1d865ed], [e0409f4]
-
 ### Stable credential identity
 
 - Hosts reference vault credentials via durable **`credentialId`** / `logicalId` instead of owning raw secrets directly.
 - Stale `itemId` / missing `credentialId` paths include **self-healing relink and repair** on load.
 
-**Relevant commits:** [1d865ed], [bdbd81b], [416c1b4]
-
 ### Credential revision history
 
 - Rotated credentials keep **revision snapshots**; operators can review prior revisions and restore an older one from the Vault UI.
 - Restore preserves stable `credentialId` identity so host references stay valid.
-
-**Relevant commits:** [e0409f4]
 
 ### Google Drive vault sync
 
@@ -44,20 +36,18 @@ This document explains what changed from a security perspective, what users and 
 - Sync collections use a **separate encryption passphrase** (local-vault-derived or custom).
 - OAuth uses Google's installed/desktop app flow with scoped access to Drive app data and account email.
 
-**Relevant commits:** [8cdb20d], [85f038e], [e3a393e]
-
 ---
 
-## Security Hardening in This Release
+## Security Hardening
 
-| Area | What was hardened |
-|------|-------------------|
-| **Session unlock cache** | Optional OS keychain cache for vault session material; hardened restore and vault-auth edge cases. ([35c3285], [416c1b4]) |
-| **Connect / test flows** | Vault-backed hosts prompt for unlock instead of silently failing or auto-connecting with missing secrets. ([c372596]) |
-| **Tab open behavior** | Vault-backed connections defer auto-connect until explicit user reconnect. ([1d865ed]) |
-| **Sync durability** | Atomic JSON writes with fsync on production sync/vault paths; improved restore convergence and Windows finalize handling. ([d5becab], [c69d592]) |
-| **Concurrent operations** | Guards against vault/sync state loss during overlapping provider and local operations. ([4ae5df9], [39ad2d7]) |
-| **Build-time secret filtering** | `build.rs` blocks most sensitive env keys from compile-time embedding; `GOOGLE_CLIENT_SECRET` is explicitly allowlisted only for desktop OAuth compatibility. ([6e8dd42]) |
+| Area | Behavior |
+|------|----------|
+| **Session unlock cache** | Optional OS keychain cache for vault session material; hardened restore and vault-auth edge cases |
+| **Connect / test flows** | Vault-backed hosts prompt for unlock instead of silently failing or auto-connecting with missing secrets |
+| **Tab open behavior** | Vault-backed connections defer auto-connect until explicit user reconnect |
+| **Sync durability** | Atomic JSON writes with fsync on production sync/vault paths; improved restore convergence and Windows finalize handling |
+| **Concurrent operations** | Guards against vault/sync state loss during overlapping provider and local operations |
+| **Build-time secret filtering** | `build.rs` blocks most sensitive env keys from compile-time embedding; `GOOGLE_CLIENT_SECRET` is explicitly allowlisted only for desktop OAuth compatibility |
 
 ---
 
@@ -94,13 +84,13 @@ This document explains what changed from a security perspective, what users and 
 
 ## Scope & Future Work (not security blockers)
 
-These are **product scope** limits for v2.16.0, not vulnerabilities:
+These are **product scope** limits today, not vulnerabilities:
 
-- **No team/org policy controls** — vault and sync are single-user oriented today; shared/team vaults are deferred to later phases.
+- **No team/org policy controls** — vault and sync are single-user oriented; shared/team vaults are deferred to later phases.
 - **No live bi-directional sync scheduling** — Google sync is manual upload/restore; there is no background auto-sync scheduler yet.
 - **Plugins** — marketplace plugins do **not** receive raw vault secrets by design; only explicit future export/copy flows could change that.
 
-**Not a concern for this release:** credential revision history UI (review + restore) **is included** in v2.16.0. Embedded desktop OAuth client credentials are **informational only** — see Google OAuth guidance above.
+Embedded desktop OAuth client credentials are **informational only** for the installed-app model — see Google OAuth guidance above.
 
 ---
 
@@ -112,25 +102,6 @@ If you discover a vulnerability in Zync, report it privately to the maintainers 
 
 ## Related Documentation
 
-- [VAULT.md](./VAULT.md) — current vault and sync architecture
+- [VAULT.md](./VAULT.md) — vault and sync architecture
 - [VAULT_ROADMAP.md](./VAULT_ROADMAP.md) — planned vault/sync work
-- [CHANGELOG.md](../CHANGELOG.md) — v2.16.0 section
-
----
-
-## Commit References
-
-[6e8dd42]: https://github.com/zync-sh/zync/commit/6e8dd42
-[8cdb20d]: https://github.com/zync-sh/zync/commit/8cdb20d
-[1d865ed]: https://github.com/zync-sh/zync/commit/1d865ed
-[bdbd81b]: https://github.com/zync-sh/zync/commit/bdbd81b
-[e0409f4]: https://github.com/zync-sh/zync/commit/e0409f4
-[85f038e]: https://github.com/zync-sh/zync/commit/85f038e
-[e3a393e]: https://github.com/zync-sh/zync/commit/e3a393e
-[35c3285]: https://github.com/zync-sh/zync/commit/35c3285
-[416c1b4]: https://github.com/zync-sh/zync/commit/416c1b4
-[c372596]: https://github.com/zync-sh/zync/commit/c372596
-[c69d592]: https://github.com/zync-sh/zync/commit/c69d592
-[d5becab]: https://github.com/zync-sh/zync/commit/d5becab
-[4ae5df9]: https://github.com/zync-sh/zync/commit/4ae5df9
-[39ad2d7]: https://github.com/zync-sh/zync/commit/39ad2d7
+- [CHANGELOG.md](../CHANGELOG.md) — release history

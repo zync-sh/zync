@@ -18,6 +18,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { usePlugins } from "../../context/PluginContext";
 import { clsx } from "clsx";
 import { OSIcon } from "../icons/OSIcon";
+import { useConnectionDisplayLabels } from "../../features/connections/presentation/useConnectionDisplayLabels";
 
 interface QuickPickItem {
     id: string;
@@ -434,9 +435,11 @@ export function CommandPalette() {
 
 /** Connection result row for file/history mode inside the command palette. */
 const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: Connection; onSelect: () => void }) {
+    const { primary, secondary, searchText } = useConnectionDisplayLabels(conn);
+
     return (
         <Command.Item
-            value={`${conn.name} ${conn.username} ${conn.host}`} // Explicit search value
+            value={searchText}
             onSelect={onSelect}
             className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
         >
@@ -444,8 +447,8 @@ const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: 
                 <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
             </div>
             <div className="flex flex-col">
-                <span className="font-medium">{conn.name || conn.host}</span>
-                <span className="text-[10px] text-app-muted/70">{conn.username}@{conn.host}</span>
+                <span className="font-medium">{primary}</span>
+                <span className="text-[10px] text-app-muted/70">{secondary}</span>
             </div>
             {conn.status === 'connected' && (
                 <span className="ml-auto text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded animate-pulse">Connected</span>

@@ -1,5 +1,6 @@
-import { FileText, Folder, RefreshCw } from 'lucide-react';
+import { Eye, FileText, Folder, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
+import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../../../features/connections/domain/connectionDisplay.js';
 import type { AppSettings } from '../../../store/settingsSlice';
 import type { SelectOption } from '../../ui/Select';
 import { Select } from '../../ui/Select';
@@ -55,6 +56,8 @@ export function GeneralTab({
     onClearConnections,
 }: GeneralTabProps) {
     const [isUpdatingAutoCheck, setIsUpdatingAutoCheck] = useState(false);
+    const showHostAddressesInLists =
+        settings.privacy?.showHostAddressesInLists ?? DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
 
     const handleAutoUpdateToggle = async () => {
         if (isUpdatingAutoCheck) return;
@@ -68,6 +71,45 @@ export function GeneralTab({
 
     return (
         <div className="space-y-6 animate-in fade-in duration-300">
+            <Section title="Privacy">
+                <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-start gap-3">
+                            <div className="p-2 bg-[var(--color-app-bg)] rounded-md border border-[var(--color-app-border)] text-[var(--color-app-accent)]">
+                                <Eye size={20} />
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-medium text-[var(--color-app-text)]">Show host addresses in lists</h4>
+                                <p className="text-xs text-[var(--color-app-muted)] mt-1 max-w-md">
+                                    When off, host lists use display names and tags instead of <code className="text-[10px]">user@host</code>.
+                                    Safer for screen sharing and recordings. Full endpoints remain in connection details.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => onUpdateSettings({
+                                privacy: {
+                                    ...(settings.privacy ?? { showHostAddressesInLists: DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS }),
+                                    showHostAddressesInLists: !showHostAddressesInLists,
+                                },
+                            })}
+                            role="switch"
+                            aria-checked={showHostAddressesInLists}
+                            aria-label="Show host addresses in lists"
+                            className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${
+                                showHostAddressesInLists ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
+                            }`}
+                        >
+                            <span
+                                className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${
+                                    showHostAddressesInLists ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                            />
+                        </button>
+                    </div>
+                </div>
+            </Section>
+
             <Section title="Application">
                 <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
                     <div className="flex items-center justify-between">
