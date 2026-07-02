@@ -92,13 +92,17 @@ curl -fsSL https://zync.thesudoer.in/uninstall.sh | sh
 Recommended on Debian-based distros. Keeps Zync updated with `apt upgrade` alongside your system packages.
 
 ```bash
-# 1. Add the GPG key
-curl -fsSL https://apt.zync.thesudoer.in/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/zync.gpg
+# 1. Prepare the APT keyring directory (missing on minimal installs)
+sudo install -m 0755 -d /etc/apt/keyrings
 
-# 2. Add the repository
+# 2. Add the GPG key
+curl -fsSL https://apt.zync.thesudoer.in/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/zync.gpg
+sudo chmod a+r /etc/apt/keyrings/zync.gpg
+
+# 3. Add the repository
 echo "deb [signed-by=/etc/apt/keyrings/zync.gpg] https://apt.zync.thesudoer.in stable main" | sudo tee /etc/apt/sources.list.d/zync.list
 
-# 3. Update and install
+# 4. Update and install
 sudo apt update && sudo apt install zync
 ```
 
