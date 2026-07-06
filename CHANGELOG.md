@@ -9,6 +9,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **WSL path completion**: Local WSL terminals list the Linux filesystem via `fs_list_wsl` / `wsl_get_cwd` instead of Windows `%USERPROFILE%`; spawn shell is persisted on the tab; prompt sniffing supports `host:~ $` themes. ([d2cef31])
 - **Ghost cwd tracking**: Passive cwd extraction from PowerShell (`PS E:\path›`) and common Unix prompts in PTY output; spawn cwd is seeded on `terminal-ready` when OSC 7 is unavailable. ([ee1b6c4])
 - **Ghost parked roadmap**: `docs/TERMINAL_GHOST_ROADMAP.md` — robustness, smarter ranking, and shell-safe popup v2 constraints. ([d5f8cee])
+- **Ghost suggest v2 (P5)**: Backend-first `ghost_suggest_v2` IPC — Rust decides history vs path in one engine; renderer calls a thin TS client. Path listing moved to `path_suggest.rs` (local, SSH SFTP, WSL). ([2245969])
+- **Ghost context ranking (P6)**: Cwd boost/penalty and recent in-session commands from terminal scrollback improve history and path picks per scope. ([2245969])
+- **Ghost SSH history seed (P7)**: Opt-in **Import remote shell history on connect** reads `~/.zsh_history` / `~/.bash_history` once per host over SFTP (never logged). ([2245969])
+- **Ghost spacing debug**: With `localStorage.setItem('zync:ghost-debug', '1')`, v2 responses include `rawSuffix` and `spacingReason` for suffix normalization. ([2245969])
 
 ### Changed
 - **Ghost escape handling (P2)**: Left/Right/Home/End and history keys desync the input tracker without wiping the line buffer; hard reset remains on Enter/Ctrl+C/Ctrl+U. ([7ecf0a5])
@@ -18,6 +22,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Ghost shell-safe keys**: Tab always forwards to the shell for native completion (fish/zsh/bash Tab completion). Right arrow accepts inline ghost; Tab dismisses ghost and pauses new suggestions until the line resets (Enter/Ctrl+C/Ctrl+U). ([a68a705])
 - **Ghost path listing connection id**: Filesystem ghost suffixes call `fs_list` with the workspace connection id instead of the history scope key. ([ee1b6c4])
 - **Documentation**: Updated `docs/TERMINAL_GHOST_SUGGESTIONS.md` for inline-only architecture and Tab desync behavior. ([d5f8cee])
+- **Ghost TS path layer**: Removed duplicate `pathCompletion.ts`; cwd tracking keeps `commandTokens.ts` / `pathUtils.ts` helpers only. ([2245969])
 
 ### Fixed
 - **Ghost pipeline suggestions (P4)**: Path completion and cwd tracking parse the active command segment after `|`, `&&`, and `;`; history matches pipeline tails with correct leading-space suffixes. ([c6442e9])
@@ -41,6 +46,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Ghost path completion cwd**: Bare `cd` lists the current directory; `~` maps to local HOME or remote SFTP cwd for directory and file-aware commands; relative multi-segment paths (e.g. `cd foo/bar`) resolve against tracked cwd; `cd ..` handles `~/…` parents correctly. ([ee1b6c4])
 - **Ghost cwd after `cd`**: `lastKnownCwd` updates on submitted `cd` / `pushd` commands (Enter) only — not when partially accepting an inline ghost suffix. ([ee1b6c4], [a68a705])
 - **Ghost Tab desync history**: After shell Tab completion, Enter no longer commits a stale input-tracker line buffer to ghost history or cwd inference. ([a68a705])
+- **Ghost suffix spacing (P5+)**: Partial command names glue without a space (`c` → `lear`); bare `cd` gets a space before dot/absolute paths (`.acme.sh/`, `/usr`); multi-token new words keep history leading space (`git status` + ` modified`). ([2245969])
+- **Ghost history import**: Zsh backslash-continued EXTENDED_HISTORY lines reassemble correctly; bash `#` metadata lines skipped. ([2245969])
+- **Ghost history seed**: Skips when remote home path fetch fails (no silent `/` seed); SFTP read timeouts no longer clear a healthy session; batch import uses HashSet dedup. ([2245969])
+- **WSL zsh probe stdin**: `read_wsl_zsh_init_files` sets stdin to null so background probes cannot hang on inherited input. ([2245969])
 
 ### Removed
 - **Tab popup ghost suggestions**: Removed the Tab-triggered completion list overlay, popup state/routing modules (`GhostSuggestionListOverlay`, tab/popup controller stack), and the **Tab popup suggestions** setting toggle. Tab no longer opens or navigates a Zync list. Removed auto-open popup while typing when multiple candidates matched. Context-menu suggestion actions now cover inline accept only (no multi-item popup list). ([336d54d])
