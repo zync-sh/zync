@@ -10,13 +10,16 @@ interface Props {
 /**
  * Renders a faded ghost-text completion at the xterm cursor position.
  *
- * Positioned absolutely inside the terminal container div (which already has
- * `position: relative` via the `terminal-container` class). Font values are
- * read from the public `term.options` API so they always match the live xterm
- * settings without relying on CSS variables that don't exist for the terminal.
+ * Positioned absolutely inside the overlay parent (sibling of `.terminal-container`).
+ * Cell height from xterm measurement keeps the suffix on the same row as the cursor.
  */
 export function GhostSuggestionOverlay({ term, suggestion }: Props) {
-  const [pos, setPos] = useState({ left: 0, top: 0 });
+  const [pos, setPos] = useState({
+    left: 0,
+    top: 0,
+    cellHeight: 0,
+    cellWidth: 0,
+  });
 
   useEffect(() => {
     if (!suggestion) return;
@@ -25,7 +28,7 @@ export function GhostSuggestionOverlay({ term, suggestion }: Props) {
     let prevLeft = 0;
     let prevTop = 0;
     let stableFrames = 0;
-    const STOP_AFTER = 5; // stop the burst after 5 consecutive unchanged frames
+    const STOP_AFTER = 5;
 
     const tick = () => {
       const next = getCursorPixelPosition(term);
@@ -42,8 +45,6 @@ export function GhostSuggestionOverlay({ term, suggestion }: Props) {
       }
     };
 
-    // Restart a short RAF burst on any terminal input or resize event so the
-    // overlay tracks cursor movement without looping forever while idle.
     const startBurst = () => {
       stableFrames = 0;
       window.cancelAnimationFrame(frameId);
@@ -64,26 +65,29 @@ export function GhostSuggestionOverlay({ term, suggestion }: Props) {
   if (!suggestion) return null;
 
   const fontFamily = term.options.fontFamily ?? 'monospace';
-  const fontSize   = `${term.options.fontSize   ?? 14}px`;
+  const fontSize = Number(term.options.fontSize ?? 14);
   const fontWeight = term.options.fontWeight ?? 'normal';
-  const lineHeight = term.options.lineHeight ?? 1.2;
+  const cellHeight = pos.cellHeight > 0
+    ? pos.cellHeight
+    : fontSize * Number(term.options.lineHeight ?? 1.2);
 
   return (
     <div
       aria-hidden="true"
       style={{
-        position:    'absolute',
-        left:        pos.left,
-        top:         pos.top,
+        position: 'absolute',
+        left: pos.left,
+        top: pos.top,
+        height: cellHeight,
+        lineHeight: `${cellHeight}px`,
         pointerEvents: 'none',
-        userSelect:  'none',
+        userSelect: 'none',
         fontFamily,
-        fontSize,
+        fontSize: `${fontSize}px`,
         fontWeight,
-        lineHeight,
-        color:       'color-mix(in srgb, var(--color-app-muted, #94a3b8) 60%, transparent)',
-        whiteSpace:  'pre',
-        zIndex:      10,
+        color: 'color-mix(in srgb, var(--color-app-muted, #94a3b8) 60%, transparent)',
+        whiteSpace: 'pre',
+        zIndex: 10,
       }}
     >
       {suggestion}
