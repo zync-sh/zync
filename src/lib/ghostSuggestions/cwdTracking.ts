@@ -1,3 +1,4 @@
+import { lineForSuggestionParsing } from './activeSegment.js';
 import {
   getCommandName,
   getLastArg,
@@ -12,7 +13,7 @@ import {
  * Best-effort cwd update after `cd` / `pushd` commits when OSC 7 is unavailable.
  */
 export function resolveCdTargetPath(line: string, cwd?: string): string | null {
-  const trimmed = line.trim();
+  const trimmed = lineForSuggestionParsing(line).trim();
   const command = getCommandName(trimmed);
   if (command !== 'cd' && command !== 'pushd') return null;
 

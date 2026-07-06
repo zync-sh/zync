@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
 import {
+  extractActiveSegment,
+  lineForSuggestionParsing,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/activeSegment.js';
+import {
+  shouldPreferPathSuggestion,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/client.js';
+import {
+  normalizeSuggestionSuffix,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/suggestionSuffix.js';
+import {
   handleGhostInputEvent,
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/runtime.js';
 import {
@@ -7,6 +17,7 @@ import {
   getPathSuggestions,
   hasUnmatchedQuoteOnActiveToken,
   isBareDirectoryListingLine,
+  WSL_FS_LIST_TIMEOUT_MS,
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/pathCompletion.js';
 import {
   InputTracker,
@@ -47,6 +58,16 @@ async function runTest(name, fn) {
       console.error(error);
     }
     throw error;
+  }
+}
+
+async function withMockWindow(mockWindow, fn) {
+  const originalWindow = globalThis.window;
+  globalThis.window = mockWindow;
+  try {
+    await fn();
+  } finally {
+    globalThis.window = originalWindow;
   }
 }
 
@@ -195,9 +216,49 @@ await runTest('isBareDirectoryListingLine matches bare cd token', () => {
   assert.equal(isBareDirectoryListingLine('cd data'), false);
 });
 
+await runTest('normalizeSuggestionSuffix adds space when line lacks trailing whitespace', () => {
+  assert.equal(normalizeSuggestionSuffix('echo hi && git', 'checkout staging'), ' checkout staging');
+  assert.equal(normalizeSuggestionSuffix('echo hi && git ', 'checkout staging'), 'checkout staging');
+  assert.equal(normalizeSuggestionSuffix('echo hi && git', ' checkout staging'), ' checkout staging');
+  assert.equal(normalizeSuggestionSuffix('cd Doc', 'uments/'), 'uments/');
+});
+
+await runTest('extractActiveSegment parses pipeline and separator tails', () => {
+  assert.equal(extractActiveSegment('echo hi && git che'), 'git che');
+  assert.equal(extractActiveSegment('ls -la | grep x; cd /va'), 'cd /va');
+  assert.equal(extractActiveSegment('sudo env FOO=1 git sta'), 'git sta');
+  assert.equal(lineForSuggestionParsing('echo hi | cat '), 'cat ');
+});
+
+await runTest('shouldPreferPathSuggestion uses active segment command', () => {
+  assert.equal(shouldPreferPathSuggestion('echo hi && cd Doc'), true);
+  assert.equal(shouldPreferPathSuggestion('echo hi && git status'), false);
+});
+
+await runTest('resolveCdTargetPath uses active segment for pipelines', () => {
+  assert.equal(resolveCdTargetPath('echo hi && cd foo/bar', '/home/me'), '/home/me/foo/bar');
+  assert.equal(resolveCdTargetPath('ls | cd ..', '/home/me/projects'), '/home/me');
+});
+
+await runTest('getPathSuggestions uses active segment for pipeline cd', async () => {
+  await withMockWindow({
+    ipcRenderer: {
+      invoke: async (_cmd, payload) => {
+        assert.equal(payload.path, '/home/me');
+        return [
+          { name: 'Documents', type: 'directory' },
+          { name: 'Downloads', type: 'directory' },
+        ];
+      },
+    },
+  }, async () => {
+    const out = await getPathSuggestions('echo hi && cd Doc', '/home/me', 'local', 10);
+    assert.deepEqual(out, ['uments/']);
+  });
+});
+
 await runTest('getPathSuggestions maps home prefix for file-aware commands', async () => {
-  const originalWindow = globalThis.window;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async (_cmd, payload) => {
         assert.equal(payload.path, '');
@@ -207,14 +268,49 @@ await runTest('getPathSuggestions maps home prefix for file-aware commands', asy
         ];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('cat ~/no', '/home/me', 'local', 10);
     assert.deepEqual(out, ['tes.txt']);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
+});
+
+await runTest('getPathSuggestions expands tilde cwd for WSL fs_list_wsl', async () => {
+  await withMockWindow({
+    ipcRenderer: {
+      invoke: async (cmd, payload) => {
+        if (cmd === 'wsl_get_cwd') {
+          return '/home/wsluser';
+        }
+        assert.equal(cmd, 'fs_list_wsl');
+        assert.equal(payload.path, '/home/wsluser');
+        return [{ name: 'data', type: 'directory' }];
+      },
+    },
+  }, async () => {
+    const out = await getPathSuggestions('cd', '~', 'local', 10, WSL_FS_LIST_TIMEOUT_MS, 'wsl');
+    assert.deepEqual(out, ['data/']);
+  });
+});
+
+await runTest('getPathSuggestions expands tilde path segments for WSL listing', async () => {
+  await withMockWindow({
+    ipcRenderer: {
+      invoke: async (cmd, payload) => {
+        if (cmd === 'wsl_get_cwd') {
+          return '/home/wsluser';
+        }
+        assert.equal(cmd, 'fs_list_wsl');
+        assert.equal(payload.path, '/home/wsluser');
+        return [
+          { name: 'projects', type: 'directory' },
+          { name: 'data', type: 'directory' },
+        ];
+      },
+    },
+  }, async () => {
+    const out = await getPathSuggestions('cd ~/p', '~', 'local', 10, WSL_FS_LIST_TIMEOUT_MS, 'wsl:tilde-test');
+    assert.deepEqual(out, ['rojects/']);
+  });
 });
 
 await runTest('handleGhostInputEvent feeds tracker for printable input', () => {
@@ -232,8 +328,7 @@ await runTest('handleGhostInputEvent feeds tracker for printable input', () => {
 });
 
 await runTest('getPathSuggestions lists cwd entries for bare cd command token', async () => {
-  const originalWindow = globalThis.window;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async (_cmd, payload) => {
         assert.equal(payload.connectionId, 'local');
@@ -244,19 +339,14 @@ await runTest('getPathSuggestions lists cwd entries for bare cd command token', 
         ];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('cd', '/home/me', 'local', 10);
     assert.deepEqual(out, ['Documents/', 'Downloads/']);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('getPathSuggestions supports bare cd folder prefixes without slash', async () => {
-  const originalWindow = globalThis.window;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async (_cmd, payload) => {
         assert.equal(payload.path, '/home/me');
@@ -267,40 +357,30 @@ await runTest('getPathSuggestions supports bare cd folder prefixes without slash
         ];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('cd Do', '/home/me', 'local-cd', 10);
     assert.deepEqual(out, ['cuments/', 'wnloads/']);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('getPathSuggestions keeps non-path commands quiet for bare words', async () => {
-  const originalWindow = globalThis.window;
   let called = false;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async () => {
         called = true;
         return [];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('echo Do', '/home/me', 'local-echo', 10);
     assert.deepEqual(out, []);
     assert.equal(called, false);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('getPathSuggestions supports bare file prefixes for cat', async () => {
-  const originalWindow = globalThis.window;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async (_cmd, payload) => {
         assert.equal(payload.path, '/home/me');
@@ -311,41 +391,31 @@ await runTest('getPathSuggestions supports bare file prefixes for cat', async ()
         ];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('cat REA', '/home/me', 'local-cat', 10);
     assert.deepEqual(out, ['DME.md', 'DME.txt']);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('getPathSuggestions does not use bare-word FS for non-core commands', async () => {
-  const originalWindow = globalThis.window;
   let called = false;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async () => {
         called = true;
         return [];
       },
     },
-  };
-
-  try {
+  }, async () => {
     const out = await getPathSuggestions('pwd Do', '/home/me', 'local-pwd', 10);
     assert.deepEqual(out, []);
     assert.equal(called, false);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('getPathSuggestions falls back to stale cache on slow fs_list', async () => {
-  const originalWindow = globalThis.window;
   let callCount = 0;
-  globalThis.window = {
+  await withMockWindow({
     ipcRenderer: {
       invoke: async () => {
         callCount += 1;
@@ -355,17 +425,13 @@ await runTest('getPathSuggestions falls back to stale cache on slow fs_list', as
         return new Promise(() => {});
       },
     },
-  };
-
-  try {
+  }, async () => {
     const first = await getPathSuggestions('cd Do', '/home/me', 'local-cache', 10, 50);
     assert.deepEqual(first, ['cuments/']);
 
     const second = await getPathSuggestions('cd Do', '/home/me', 'local-cache', 10, 10);
     assert.deepEqual(second, ['cuments/']);
-  } finally {
-    globalThis.window = originalWindow;
-  }
+  });
 });
 
 await runTest('InputTracker desyncs on left arrow without clearing line buffer', () => {

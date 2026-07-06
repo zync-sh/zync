@@ -1,5 +1,5 @@
 use crate::ghost::parser::extract_search_prefix;
-use crate::ghost::ranking::{best_candidate_for_prefix, ranked_candidates_for_prefix};
+use crate::ghost::ranking::{best_suffix_for_prefix, ranked_candidates_for_prefix};
 use crate::ghost::types::{
     FrecencyEntry, GhostData, LegacyGhostData, ScopeHistory, MAX_HISTORY, MIN_PREFIX_LEN,
     SAVE_INTERVAL,
@@ -82,22 +82,6 @@ impl GhostManager {
             eprintln!("[Ghost] Failed to rename tmp history: {}", e);
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
-    }
-
-    fn slice_suffix_case_insensitive<'a>(cmd: &'a str, prefix: &str) -> Option<&'a str> {
-        let cmd_lower = cmd.to_lowercase();
-        let prefix_lower = prefix.to_lowercase();
-        if !cmd_lower.starts_with(&prefix_lower) || cmd_lower == prefix_lower {
-            return None;
-        }
-
-        let prefix_chars = prefix.chars().count();
-        let byte_idx = cmd
-            .char_indices()
-            .nth(prefix_chars)
-            .map(|(i, _)| i)
-            .unwrap_or(cmd.len());
-        cmd.get(byte_idx..)
     }
 
     /// Remove score entries for commands that are no longer in `history` so the
@@ -183,20 +167,12 @@ impl GhostManager {
         };
 
         // ── Tier 1: case-sensitive prefix ────────────────────────────────────────
-        let t1 = best_candidate_for_prefix(scope_data, &trimmed_prefix, false);
-        if let Some(cmd) = t1 {
-            return Some(cmd[trimmed_prefix.len()..].to_string());
+        if let Some(suffix) = best_suffix_for_prefix(scope_data, &trimmed_prefix, false) {
+            return Some(suffix);
         }
 
         // ── Tier 2: case-insensitive prefix ──────────────────────────────────────
-        let t2 = best_candidate_for_prefix(scope_data, &trimmed_prefix, true);
-        if let Some(cmd) = t2 {
-            if let Some(suffix) = Self::slice_suffix_case_insensitive(cmd, &trimmed_prefix) {
-                return Some(suffix.to_string());
-            }
-        }
-
-        None
+        best_suffix_for_prefix(scope_data, &trimmed_prefix, true)
     }
 
     /// Called when the user explicitly accepts a suggestion (Tab / →).

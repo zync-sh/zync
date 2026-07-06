@@ -1,5 +1,11 @@
+import { lineForSuggestionParsing } from './activeSegment.js';
 import { ghostDebug } from './ghostDebug.js';
-import { parseWslDistro, shellIdIndicatesWsl, WSL_FS_LIST_TIMEOUT_MS } from './wslShell.js';
+import {
+  fetchWslCwd,
+  parseWslDistro,
+  shellIdIndicatesWsl,
+  WSL_FS_LIST_TIMEOUT_MS,
+} from './wslShell.js';
 
 export { WSL_FS_LIST_TIMEOUT_MS };
 
@@ -53,6 +59,7 @@ export const FS_LIST_TIMEOUT_MS = 450;
 export const REMOTE_FS_LIST_TIMEOUT_MS = 900;
 const fsListCache = new Map<string, { at: number; entries: FsEntry[] }>();
 const remoteHomeCache = new Map<string, { at: number; path: string }>();
+const wslHomeCache = new Map<string, { at: number; path: string }>();
 const REMOTE_HOME_CACHE_TTL_MS = 60_000;
 
 /** Expand `~` / `~/…` to an absolute SFTP path (SFTP does not do shell tilde expansion). */
@@ -96,6 +103,28 @@ async function resolveRemoteListingPath(
 ): Promise<string | null> {
   if (!path.includes('~')) return path;
   const home = await getRemoteHomeDir(connectionId);
+  if (!home) return null;
+  return expandTildePathForRemote(path, home);
+}
+
+async function getWslHomeDir(wslShellId: string): Promise<string | null> {
+  const now = Date.now();
+  const cached = wslHomeCache.get(wslShellId);
+  if (cached && now - cached.at <= REMOTE_HOME_CACHE_TTL_MS) {
+    return cached.path;
+  }
+  const home = await fetchWslCwd(wslShellId, WSL_FS_LIST_TIMEOUT_MS);
+  if (!home) return null;
+  wslHomeCache.set(wslShellId, { at: now, path: home });
+  return home;
+}
+
+async function resolveWslListingPath(
+  wslShellId: string,
+  path: string,
+): Promise<string | null> {
+  if (!path.includes('~')) return path;
+  const home = await getWslHomeDir(wslShellId);
   if (!home) return null;
   return expandTildePathForRemote(path, home);
 }
@@ -147,7 +176,7 @@ export function stripLeadingUnmatchedQuote(arg: string): string {
 
 /** True when the active shell token has an unmatched opening quote. */
 export function hasUnmatchedQuoteOnActiveToken(line: string): boolean {
-  const arg = getLastArg(line);
+  const arg = getLastArg(lineForSuggestionParsing(line));
   let inSingle = false;
   let inDouble = false;
   let escaped = false;
@@ -320,10 +349,12 @@ export function stripTrailingSep(path: string): string {
   return path.replace(/[/\\]+$/, '');
 }
 
-/** Map list paths to what `fs_list` expects (local HOME vs remote SFTP cwd). */
-function normalizeFsListPath(path: string, connectionId: string): string {
+/** Map list paths to what `fs_list` / `fs_list_wsl` expects. */
+function normalizeFsListPath(path: string, connectionId: string, useWsl = false): string {
   if (path === '~') {
-    return connectionId === 'local' ? '' : '~';
+    if (connectionId !== 'local') return '~';
+    if (useWsl) return '~';
+    return '';
   }
   if (!path && connectionId !== 'local') {
     return '.';
@@ -333,7 +364,7 @@ function normalizeFsListPath(path: string, connectionId: string): string {
 
 /** True for bare `cd` / `pushd` / `popd` (list cwd entries, not history like `cd ..`). */
 export function isBareDirectoryListingLine(line: string): boolean {
-  const trimmed = line.trimEnd();
+  const trimmed = lineForSuggestionParsing(line).trimEnd();
   const command = getCommandName(trimmed);
   if (!DIRECTORY_ONLY_COMMANDS.has(command)) return false;
   const lastArg = getLastArg(trimmed);
@@ -388,10 +419,12 @@ export async function getPathSuggestions(
   wslShellId?: string,
 ): Promise<string[]> {
   const listTimeoutMs = fsListTimeoutMs(timeoutMs, wslShellId);
-  const lastArg = stripLeadingUnmatchedQuote(getLastArg(line));
+  const parseLine = lineForSuggestionParsing(line);
+  const lastArg = stripLeadingUnmatchedQuote(getLastArg(parseLine));
   ghostDebug('path', {
     phase: 'start',
     line,
+    parseLine,
     connectionId,
     cwd: cwd ?? null,
     timeoutMs: listTimeoutMs,
@@ -402,7 +435,7 @@ export async function getPathSuggestions(
     ghostDebug('path', { phase: 'abort', reason: 'remote-target', lastArg });
     return [];
   }
-  const commandName = getCommandName(line);
+  const commandName = getCommandName(parseLine);
   const isDirectoryOnlyCommand = DIRECTORY_ONLY_COMMANDS.has(commandName);
   const isFileAwareCommand = FILE_AWARE_COMMANDS.has(commandName);
 
@@ -458,23 +491,40 @@ export async function getPathSuggestions(
     }
   }
 
+  const useWsl = Boolean(wslShellId && shellIdIndicatesWsl(wslShellId));
+
   // Resolve against CWD when we have one; otherwise use the dir as typed.
   let effectiveCwd = cwd;
-  if (connectionId !== 'local' && cwd?.includes('~')) {
-    const home = await getRemoteHomeDir(connectionId);
-    if (!home) {
-      ghostDebug('path', { phase: 'abort', reason: 'remote-home-unavailable', cwd });
-      return [];
+  if (cwd?.includes('~')) {
+    if (connectionId !== 'local') {
+      const home = await getRemoteHomeDir(connectionId);
+      if (!home) {
+        ghostDebug('path', { phase: 'abort', reason: 'remote-home-unavailable', cwd });
+        return [];
+      }
+      effectiveCwd = expandTildePathForRemote(cwd, home);
+    } else if (useWsl && wslShellId) {
+      const home = await getWslHomeDir(wslShellId);
+      if (!home) {
+        ghostDebug('path', { phase: 'abort', reason: 'wsl-home-unavailable', cwd });
+        return [];
+      }
+      effectiveCwd = expandTildePathForRemote(cwd, home);
     }
-    effectiveCwd = expandTildePathForRemote(cwd, home);
   }
   const resolvedDir = effectiveCwd ? resolveDir(dir, effectiveCwd, sep) : dir;
-  const useWsl = Boolean(wslShellId && shellIdIndicatesWsl(wslShellId));
-  let apiPath = normalizeFsListPath(stripTrailingSep(resolvedDir), connectionId);
+  let apiPath = normalizeFsListPath(stripTrailingSep(resolvedDir), connectionId, useWsl);
   if (connectionId !== 'local') {
     const expanded = await resolveRemoteListingPath(connectionId, apiPath);
     if (expanded === null) {
       ghostDebug('path', { phase: 'abort', reason: 'remote-path-expand-failed', apiPath });
+      return [];
+    }
+    apiPath = expanded;
+  } else if (useWsl && wslShellId && apiPath.includes('~')) {
+    const expanded = await resolveWslListingPath(wslShellId, apiPath);
+    if (expanded === null) {
+      ghostDebug('path', { phase: 'abort', reason: 'wsl-path-expand-failed', apiPath });
       return [];
     }
     apiPath = expanded;

@@ -136,9 +136,47 @@ pub fn extract_search_prefix(input: &str) -> Option<String> {
     Some(s.to_string())
 }
 
+fn prefix_matches(candidate: &str, prefix: &str, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        let candidate_lower = candidate.to_lowercase();
+        let prefix_lower = prefix.to_lowercase();
+        candidate_lower.starts_with(&prefix_lower) && candidate_lower != prefix_lower
+    } else {
+        candidate.starts_with(prefix) && candidate != prefix
+    }
+}
+
+fn suffix_after_prefix(candidate: &str, prefix: &str) -> Option<String> {
+    let prefix_chars = prefix.chars().count();
+    let byte_idx = candidate
+        .char_indices()
+        .nth(prefix_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(candidate.len());
+    candidate.get(byte_idx..).map(|s| s.to_string())
+}
+
+/// Suffix to append to the user's line when `prefix` matches a history command.
+/// Tries the full stored command first, then the command's active tail segment.
+pub fn history_suffix_for_command(
+    cmd: &str,
+    prefix: &str,
+    case_insensitive: bool,
+) -> Option<String> {
+    if prefix_matches(cmd, prefix, case_insensitive) {
+        return suffix_after_prefix(cmd, prefix);
+    }
+    if let Some(segment) = extract_search_prefix(cmd) {
+        if prefix_matches(&segment, prefix, case_insensitive) {
+            return suffix_after_prefix(&segment, prefix);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::extract_search_prefix;
+    use super::{extract_search_prefix, history_suffix_for_command};
 
     #[test]
     fn strips_shell_wrappers() {
@@ -175,5 +213,22 @@ mod tests {
         // Quote is not the last char but still unterminated — must also suppress.
         assert_eq!(extract_search_prefix("git commit -m \"foo bar"), None);
         assert_eq!(extract_search_prefix("echo 'hello world"), None);
+    }
+
+    #[test]
+    fn history_suffix_matches_pipeline_tail_with_spacing() {
+        let cmd = "echo hi && git checkout staging";
+        assert_eq!(
+            history_suffix_for_command(cmd, "git", false),
+            Some(" checkout staging".to_string())
+        );
+        assert_eq!(
+            history_suffix_for_command(cmd, "git ", false),
+            Some("checkout staging".to_string())
+        );
+        assert_eq!(
+            history_suffix_for_command(cmd, "git che", false),
+            Some("ckout staging".to_string())
+        );
     }
 }

@@ -1,3 +1,5 @@
+import { lineForSuggestionParsing } from './activeSegment.js';
+import { normalizeSuggestionSuffix } from './suggestionSuffix.js';
 import {
   getPathSuggestion,
   getLastArg,
@@ -6,16 +8,16 @@ import {
   hasUnmatchedQuoteOnActiveToken,
   isBareDirectoryListingLine,
   REMOTE_FS_LIST_TIMEOUT_MS,
-} from './pathCompletion';
-import { ghostDebug } from './ghostDebug';
-import { WSL_FS_LIST_TIMEOUT_MS } from './wslShell';
-import { cwdForWslPathCompletion, shellIdIndicatesWsl } from './wslShell';
+} from './pathCompletion.js';
+import { ghostDebug } from './ghostDebug.js';
+import { WSL_FS_LIST_TIMEOUT_MS } from './wslShell.js';
+import { cwdForWslPathCompletion, shellIdIndicatesWsl } from './wslShell.js';
 import type {
   GhostCommitRequest,
   GhostSuggestionProviders,
   GhostSuggestRequest,
   InlineSuggestionParams,
-} from './types';
+} from './types.js';
 
 const INLINE_FS_TIMEOUT_MS = 160;
 
@@ -88,8 +90,9 @@ export async function resolveInlineSuggestion({
       wslShellId,
     ).catch(() => null);
     if (fsSuffix) {
-      ghostDebug('resolve', { phase: 'path-hit', suffix: fsSuffix });
-      return fsSuffix;
+      const normalized = normalizeSuggestionSuffix(line, fsSuffix);
+      ghostDebug('resolve', { phase: 'path-hit', suffix: normalized });
+      return normalized;
     }
   }
 
@@ -101,8 +104,9 @@ export async function resolveInlineSuggestion({
   if (enabledProviders.history && !skipHistoryForBareCd && !skipHistoryForOpenQuote) {
     const historySuffix = await fetchHistorySuggestion(line, scope);
     if (historySuffix) {
-      ghostDebug('resolve', { phase: 'history-hit', suffix: historySuffix });
-      return historySuffix;
+      const normalized = normalizeSuggestionSuffix(line, historySuffix);
+      ghostDebug('resolve', { phase: 'history-hit', suffix: normalized });
+      return normalized;
     }
   }
 
@@ -115,8 +119,9 @@ export async function resolveInlineSuggestion({
       wslShellId,
     ).catch(() => null);
     if (fsSuffix) {
-      ghostDebug('resolve', { phase: 'path-hit-secondary', suffix: fsSuffix });
-      return fsSuffix;
+      const normalized = normalizeSuggestionSuffix(line, fsSuffix);
+      ghostDebug('resolve', { phase: 'path-hit-secondary', suffix: normalized });
+      return normalized;
     }
   }
 
@@ -125,10 +130,11 @@ export async function resolveInlineSuggestion({
 }
 
 export function shouldPreferPathSuggestion(line: string): boolean {
-  if (isFilesystemCommand(line)) {
+  const parseLine = lineForSuggestionParsing(line);
+  if (isFilesystemCommand(parseLine)) {
     return true;
   }
-  const lastArg = getLastArg(line);
+  const lastArg = getLastArg(parseLine);
   return lastArg.includes('/') || lastArg.includes('\\');
 }
 
@@ -142,5 +148,5 @@ function isFilesystemCommand(line: string): boolean {
 }
 
 function shouldUseGhostForLine(line: string): boolean {
-  return Boolean(getCommandNameFull(line));
+  return Boolean(getCommandNameFull(lineForSuggestionParsing(line)));
 }

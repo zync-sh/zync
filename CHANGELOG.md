@@ -20,6 +20,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Documentation**: Updated `docs/TERMINAL_GHOST_SUGGESTIONS.md` for inline-only architecture and Tab desync behavior. ([d5f8cee])
 
 ### Fixed
+- **Ghost pipeline suggestions (P4)**: Path completion and cwd tracking parse the active command segment after `|`, `&&`, and `;`; history matches pipeline tails with correct leading-space suffixes. ([c6442e9])
+- **Ghost suggestion spacing**: Inline suffixes add a leading space when the typed line lacks trailing whitespace; duplicate space is stripped when the user already typed one. ([c6442e9])
+- **Ghost WSL tilde listing**: Local WSL tabs expand `~` / `~/…` via `wsl_get_cwd` before `fs_list_wsl` instead of sending empty or `.` paths. ([c6442e9])
 - **Synced terminal navigation**: `terminal:navigate` issues shell-specific `cd` commands (cmd `/d`, PowerShell `Set-Location`, POSIX tilde-safe paths) based on the live PTY session. ([ba187a5])
 - **Ghost open-quote paths**: Filesystem suggestions still run inside open quotes (e.g. `cd "My D`); history is suppressed until the quote closes. ([ba187a5])
 - **Ghost remote home listing**: Remote `~` paths no longer normalize to SFTP `.` before home expansion. ([ba187a5])

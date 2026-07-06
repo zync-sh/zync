@@ -1,3 +1,4 @@
+use crate::ghost::parser::history_suffix_for_command;
 use crate::ghost::types::ScopeHistory;
 
 fn command_name(prefix: &str) -> &str {
@@ -53,55 +54,48 @@ fn suffix_bonus_for_command(prefix: &str, suffix: &str) -> i32 {
     bonus
 }
 
-/// Return the best history candidate for a prefix match, ranked by:
+/// Return the best inline suffix for a prefix match, ranked by:
 ///   1. highest frecency score
 ///   2. higher command bonus
 ///   3. shorter suffix length
 ///   4. recency order in history (stable fallback)
-pub fn best_candidate_for_prefix<'a>(
-    scope: &'a ScopeHistory,
+pub fn best_suffix_for_prefix(
+    scope: &ScopeHistory,
     prefix: &str,
     case_insensitive: bool,
-) -> Option<&'a String> {
-    let mut best_cmd: Option<&String> = None;
+) -> Option<String> {
+    let mut best_suffix: Option<String> = None;
     let mut best_score = f64::NEG_INFINITY;
     let mut best_suffix_len = usize::MAX;
-    let prefix_len = prefix.chars().count();
-    let prefix_lower = case_insensitive.then(|| prefix.to_lowercase());
     let mut best_bonus = i32::MIN;
+    let mut best_idx = usize::MAX;
 
-    for cmd in &scope.history {
-        let matched = if case_insensitive {
-            let cmd_lower = cmd.to_lowercase();
-            cmd_lower.starts_with(prefix_lower.as_ref().unwrap())
-                && cmd_lower != *prefix_lower.as_ref().unwrap()
-        } else {
-            cmd.starts_with(prefix) && cmd != prefix
-        };
-        if !matched {
+    for (idx, cmd) in scope.history.iter().enumerate() {
+        let Some(suffix) = history_suffix_for_command(cmd, prefix, case_insensitive) else {
             continue;
-        }
+        };
 
         let score = scope.scores.get(cmd).map(|e| e.live_score()).unwrap_or(0.0);
-        let cmd_len = cmd.chars().count();
-        let suffix_len = cmd_len.saturating_sub(prefix_len);
-        // Use char-boundary byte index to avoid panics on multibyte characters.
-        let byte_idx = cmd.char_indices().nth(prefix_len).map(|(i, _)| i).unwrap_or(cmd.len());
-        let suffix = &cmd[byte_idx..];
-        let bonus = suffix_bonus_for_command(prefix, suffix);
+        let suffix_len = suffix.chars().count();
+        let bonus = suffix_bonus_for_command(prefix, &suffix);
 
         if score > best_score
             || (score == best_score && bonus > best_bonus)
             || (score == best_score && bonus == best_bonus && suffix_len < best_suffix_len)
+            || (score == best_score
+                && bonus == best_bonus
+                && suffix_len == best_suffix_len
+                && idx < best_idx)
         {
-            best_cmd = Some(cmd);
+            best_suffix = Some(suffix);
             best_score = score;
             best_bonus = bonus;
             best_suffix_len = suffix_len;
+            best_idx = idx;
         }
     }
 
-    best_cmd
+    best_suffix
 }
 
 pub fn ranked_candidates_for_prefix(
@@ -113,28 +107,15 @@ pub fn ranked_candidates_for_prefix(
     if limit == 0 {
         return Vec::new();
     }
-    let prefix_len = prefix.chars().count();
-    let prefix_lower = case_insensitive.then(|| prefix.to_lowercase());
     let mut candidates: Vec<(String, f64, i32, usize, usize)> = Vec::new();
 
     for (idx, cmd) in scope.history.iter().enumerate() {
-        let matched = if case_insensitive {
-            let cmd_lower = cmd.to_lowercase();
-            cmd_lower.starts_with(prefix_lower.as_ref().unwrap())
-                && cmd_lower != *prefix_lower.as_ref().unwrap()
-        } else {
-            cmd.starts_with(prefix) && cmd != prefix
-        };
-        if !matched {
+        let Some(suffix) = history_suffix_for_command(cmd, prefix, case_insensitive) else {
             continue;
-        }
+        };
 
         let score = scope.scores.get(cmd).map(|e| e.live_score()).unwrap_or(0.0);
-        let cmd_len = cmd.chars().count();
-        let suffix_len = cmd_len.saturating_sub(prefix_len);
-        // Use char-boundary byte index to avoid panics on multibyte characters.
-        let byte_idx = cmd.char_indices().nth(prefix_len).map(|(i, _)| i).unwrap_or(cmd.len());
-        let suffix = cmd[byte_idx..].to_string();
+        let suffix_len = suffix.chars().count();
         let bonus = suffix_bonus_for_command(prefix, &suffix);
         candidates.push((suffix, score, bonus, suffix_len, idx));
     }
@@ -165,7 +146,7 @@ pub fn ranked_candidates_for_prefix(
 
 #[cfg(test)]
 mod tests {
-    use super::{best_candidate_for_prefix, ranked_candidates_for_prefix};
+    use super::{best_suffix_for_prefix, ranked_candidates_for_prefix};
     use crate::ghost::types::ScopeHistory;
 
     #[test]
@@ -178,9 +159,9 @@ mod tests {
             scores: Default::default(),
         };
 
-        let best = best_candidate_for_prefix(&scope, "git checkout ", false)
-            .expect("expected best candidate");
-        assert_eq!(best, "git checkout main");
+        let best = best_suffix_for_prefix(&scope, "git checkout ", false)
+            .expect("expected best suffix");
+        assert_eq!(best, "main");
     }
 
     #[test]
@@ -205,8 +186,8 @@ mod tests {
             scores: Default::default(),
         };
 
-        let best = best_candidate_for_prefix(&scope, "cd ", false).expect("expected candidate");
-        assert_eq!(best, "cd /var/log");
+        let best = best_suffix_for_prefix(&scope, "cd ", false).expect("expected suffix");
+        assert_eq!(best, "/var/log");
     }
 
     #[test]
@@ -216,8 +197,8 @@ mod tests {
             scores: Default::default(),
         };
 
-        let best = best_candidate_for_prefix(&scope, "ssh ", false).expect("expected candidate");
-        assert_eq!(best, "ssh root@prod");
+        let best = best_suffix_for_prefix(&scope, "ssh ", false).expect("expected suffix");
+        assert_eq!(best, "root@prod");
     }
 
     #[test]
@@ -230,8 +211,25 @@ mod tests {
             scores: Default::default(),
         };
 
-        let best = best_candidate_for_prefix(&scope, "cd Doc", false).expect("expected candidate");
-        assert_eq!(best, "cd Documents");
+        let best = best_suffix_for_prefix(&scope, "cd Doc", false).expect("expected suffix");
+        assert_eq!(best, "uments");
+    }
+
+    #[test]
+    fn pipeline_history_suffix_uses_active_segment_spacing() {
+        let scope = ScopeHistory {
+            history: vec!["echo hi && git checkout staging".to_string()],
+            scores: Default::default(),
+        };
+
+        assert_eq!(
+            best_suffix_for_prefix(&scope, "git", false),
+            Some(" checkout staging".to_string())
+        );
+        assert_eq!(
+            best_suffix_for_prefix(&scope, "git ", false),
+            Some("checkout staging".to_string())
+        );
     }
 
     #[test]
