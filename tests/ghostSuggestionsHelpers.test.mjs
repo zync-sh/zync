@@ -4,6 +4,7 @@ import {
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/runtime.js';
 import {
   getPathSuggestions,
+  isBareDirectoryListingLine,
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/pathCompletion.js';
 import {
   InputTracker,
@@ -15,6 +16,25 @@ import {
 import {
   resolveCdTargetPath,
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/cwdTracking.js';
+import {
+  classifyInputEscape,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/escapeInput.js';
+import {
+  shouldSuppressGhostForNativeShell,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/shellSuppression.js';
+import {
+  shouldProbeZshAutosuggest,
+  zshInitEnablesAutosuggestions,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/zshAutosuggestDetect.js';
+import {
+  cwdForWslPathCompletion,
+  linuxPathLooksLikeWsl,
+  resolveWslShellIdForPathCompletion,
+  shellIdIndicatesWsl,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/wslShell.js';
+import {
+  hasUnmatchedQuoteOnActiveToken,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/pathCompletion.js';
 
 async function runTest(name, fn) {
   try {
@@ -163,6 +183,12 @@ await runTest('resolveCdTargetPath parentDirectory handles tilde cwd', () => {
   assert.equal(resolveCdTargetPath('cd ..', '~/foo/bar'), '~/foo');
   assert.equal(resolveCdTargetPath('cd ..', '~/only'), '~');
   assert.equal(resolveCdTargetPath('cd ..', '~'), null);
+});
+
+await runTest('isBareDirectoryListingLine matches bare cd token', () => {
+  assert.equal(isBareDirectoryListingLine('cd'), true);
+  assert.equal(isBareDirectoryListingLine('cd '), true);
+  assert.equal(isBareDirectoryListingLine('cd data'), false);
 });
 
 await runTest('getPathSuggestions maps home prefix for file-aware commands', async () => {
@@ -338,13 +364,12 @@ await runTest('getPathSuggestions falls back to stale cache on slow fs_list', as
   }
 });
 
-await runTest('InputTracker suppresses suggestions after unknown escape edits until reset', () => {
+await runTest('InputTracker desyncs on left arrow without clearing line buffer', () => {
   const changed = [];
-  const dismissed = [];
   const tracker = new InputTracker({
     onLineChange: (line) => changed.push(line),
     onAccept: () => {},
-    onDismiss: () => dismissed.push(true),
+    onDismiss: () => {},
     onHistoryCommit: () => {},
   });
 
@@ -354,10 +379,93 @@ await runTest('InputTracker suppresses suggestions after unknown escape edits un
   tracker.feed('t');
 
   assert.deepEqual(changed, ['g', 'gi']);
-  assert.ok(dismissed.length >= 1);
-  assert.equal(tracker.getLineBuffer(), '');
+  assert.equal(tracker.isDesynced(), true);
+  assert.equal(tracker.getLineBuffer(), 'gi');
 
-  tracker.feed('\x15');
-  tracker.feed('l');
-  assert.deepEqual(changed, ['g', 'gi', 'l']);
+  tracker.feed('\r');
+  assert.equal(tracker.isDesynced(), false);
+  assert.equal(tracker.getLineBuffer(), '');
+});
+
+await runTest('InputTracker desyncs on history keys without clearing line buffer', () => {
+  const tracker = new InputTracker({
+    onLineChange: () => {},
+    onAccept: () => {},
+    onDismiss: () => {},
+    onHistoryCommit: () => {},
+  });
+
+  tracker.feed('git status');
+  tracker.feed('\x12');
+  assert.equal(tracker.isDesynced(), true);
+  assert.equal(tracker.getLineBuffer(), 'git status');
+
+  tracker.feed('\x03');
+  assert.equal(tracker.isDesynced(), false);
+  assert.equal(tracker.getLineBuffer(), '');
+});
+
+await runTest('classifyInputEscape categorizes cursor and history edits', () => {
+  assert.equal(classifyInputEscape('\x1b[D'), 'cursor_edit');
+  assert.equal(classifyInputEscape('\x1b[A'), 'history_edit');
+  assert.equal(classifyInputEscape('\x12'), 'history_edit');
+  assert.equal(classifyInputEscape('\x1b[200~'), 'unknown');
+  assert.equal(classifyInputEscape('a'), null);
+});
+
+await runTest('shouldSuppressGhostForNativeShell respects policy', () => {
+  assert.equal(shouldSuppressGhostForNativeShell('auto', '/usr/bin/fish'), true);
+  assert.equal(shouldSuppressGhostForNativeShell('auto', '/bin/zsh'), false);
+  assert.equal(shouldSuppressGhostForNativeShell('auto', '/bin/zsh', false), false);
+  assert.equal(shouldSuppressGhostForNativeShell('auto', '/bin/zsh', true), true);
+  assert.equal(shouldSuppressGhostForNativeShell('auto', 'powershell'), false);
+  assert.equal(shouldSuppressGhostForNativeShell('always', '/usr/bin/fish'), false);
+  assert.equal(shouldSuppressGhostForNativeShell('off', '/bin/zsh'), true);
+  assert.equal(shouldSuppressGhostForNativeShell('off', '/bin/bash'), true);
+});
+
+await runTest('cwdForWslPathCompletion ignores Windows drive paths', () => {
+  assert.equal(cwdForWslPathCompletion('E:\\\\work'), undefined);
+  assert.equal(cwdForWslPathCompletion('/home/gajendra'), '/home/gajendra');
+});
+
+await runTest('shouldProbeZshAutosuggest includes zsh and WSL shell ids', () => {
+  assert.equal(shouldProbeZshAutosuggest('/bin/zsh'), true);
+  assert.equal(shouldProbeZshAutosuggest('wsl'), true);
+  assert.equal(shouldProbeZshAutosuggest('wsl:Ubuntu'), true);
+  assert.equal(shouldProbeZshAutosuggest('powershell'), false);
+  assert.equal(shellIdIndicatesWsl('wsl:Ubuntu-22.04'), true);
+});
+
+await runTest('zshInitEnablesAutosuggestions detects common plugin hooks', () => {
+  assert.equal(
+    zshInitEnablesAutosuggestions('plugins=(git autosuggestions)\n'),
+    true,
+  );
+  assert.equal(
+    zshInitEnablesAutosuggestions('source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh\n'),
+    true,
+  );
+  assert.equal(
+    zshInitEnablesAutosuggestions('# zsh-autosuggestions disabled\nplugins=(git)\n'),
+    false,
+  );
+});
+
+await runTest('hasUnmatchedQuoteOnActiveToken blocks open quotes on active token', () => {
+  assert.equal(hasUnmatchedQuoteOnActiveToken('cat "My '), true);
+  assert.equal(hasUnmatchedQuoteOnActiveToken('cat "My file"'), false);
+});
+
+await runTest('extractCwdFromPromptOutput reads host:tilde prompts without @', () => {
+  const cwd = extractCwdFromPromptOutput('data\r\nkgajendra:~ $ ');
+  assert.equal(cwd, '~');
+});
+
+await runTest('resolveWslShellIdForPathCompletion infers WSL from Linux cwd', () => {
+  assert.equal(resolveWslShellIdForPathCompletion('default', '~'), 'wsl');
+  assert.equal(resolveWslShellIdForPathCompletion('powershell', '/home/gajendra'), 'wsl');
+  assert.equal(resolveWslShellIdForPathCompletion('wsl:Ubuntu', '~'), 'wsl:Ubuntu');
+  assert.equal(resolveWslShellIdForPathCompletion('powershell', 'E:\\\\work'), undefined);
+  assert.equal(linuxPathLooksLikeWsl('~/data'), true);
 });
