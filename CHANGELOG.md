@@ -4,6 +4,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Removed
+- **Tab popup ghost suggestions**: Removed the Tab-triggered completion list overlay, popup state/routing modules (`GhostSuggestionListOverlay`, tab/popup controller stack), and the **Tab popup suggestions** setting toggle. Tab no longer opens or navigates a Zync list — it goes to the shell unless an inline ghost suffix is active and accepted. Removed auto-open popup while typing when multiple candidates matched. Context-menu suggestion actions now cover inline accept only (no multi-item popup list). ([336d54d])
+
+### Changed
+- **Ghost suggestions (inline only)**: Inline faded suffix, history frecency, and filesystem path completion remain. Path commands such as `cd` and file-aware commands again show inline ghost suffixes (previously deferred to the popup list). Rust `ghost_candidates` IPC is retained for a future popup v2 rebuild. ([336d54d])
+- **Ghost shell-safe keys (P0/P1)**: Tab always forwards to the shell for native completion; Right arrow accepts inline ghost. Tab dismisses ghost and pauses new suggestions until the line resets (Enter/Ctrl+C/Ctrl+U), avoiding stale suffix after shell Tab completion.
+- **Ghost overlay alignment**: Position ghost suffix using `.xterm-screen` offset and measured cell height so inline text sits on the cursor row.
+- **Ghost path completion**: Fix bare `cd` token listing, `fs_list` HOME/`.` fallback without tilde, track cwd after `cd` commits/accepts when OSC 7 is missing.
+- **Ghost cwd from shell prompts**: Sniff PowerShell (`PS E:\path›`) and Unix prompt paths from PTY output so path suggestions use the live directory, not a stale drive root.
+- **Documentation**: Updated `docs/TERMINAL_GHOST_SUGGESTIONS.md` for inline-only architecture; added parked roadmap `docs/TERMINAL_GHOST_ROADMAP.md` (robustness, smarter ranking, shell-safe popup v2).
+
 ## [2.19.2] - 2026-07-02
 
 ### Added
