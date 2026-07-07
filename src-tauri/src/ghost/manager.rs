@@ -110,6 +110,9 @@ impl GhostManager {
         if trimmed.len() < MIN_PREFIX_LEN {
             return;
         }
+        if !crate::ghost::token::history_entry_safe_to_store(&trimmed) {
+            return;
+        }
 
         let mut data = self.data.lock().await;
         let scope_key = Self::normalize_scope(scope);
@@ -194,6 +197,9 @@ impl GhostManager {
     pub async fn accept(&self, command: String, scope: Option<&str>) {
         let trimmed = command.trim().to_string();
         if trimmed.len() < MIN_PREFIX_LEN {
+            return;
+        }
+        if !crate::ghost::token::history_entry_safe_to_store(&trimmed) {
             return;
         }
 

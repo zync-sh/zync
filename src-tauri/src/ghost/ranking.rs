@@ -1,5 +1,6 @@
 use crate::ghost::context::{cwd_context_bonus, recent_session_bonus, RankingContext};
 use crate::ghost::parser::history_suffix_for_command;
+use crate::ghost::token::history_entry_safe_to_store;
 use crate::ghost::types::ScopeHistory;
 
 fn command_name(prefix: &str) -> &str {
@@ -73,6 +74,9 @@ pub fn best_suffix_for_prefix(
     let mut best_idx = usize::MAX;
 
     for (idx, cmd) in scope.history.iter().enumerate() {
+        if !history_entry_safe_to_store(cmd) {
+            continue;
+        }
         let Some(suffix) = history_suffix_for_command(cmd, prefix, case_insensitive) else {
             continue;
         };
@@ -115,6 +119,9 @@ pub fn ranked_candidates_for_prefix(
     let mut candidates: Vec<(String, f64, i32, usize, usize)> = Vec::new();
 
     for (idx, cmd) in scope.history.iter().enumerate() {
+        if !history_entry_safe_to_store(cmd) {
+            continue;
+        }
         let Some(suffix) = history_suffix_for_command(cmd, prefix, case_insensitive) else {
             continue;
         };

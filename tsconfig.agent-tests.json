@@ -71,6 +71,7 @@
         "src/lib/ghostSuggestions/zshAutosuggestDetect.ts",
         "src/lib/terminal/terminalCache.ts",
         "src/lib/ghostSuggestions/promptCwdSniffer.ts",
+        "src/lib/ghostSuggestions/secretInputDetect.ts",
         "src/lib/ghostSuggestions/runtime.ts",
         "src/lib/terminal/types.ts",
         "src/lib/terminal/rendererPolicy.ts",

@@ -8,7 +8,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Ghost native shell policy**: Settings → Terminal → Ghost suggestions → **Native shell policy** (`auto` / `always` / `off`) suppresses inline ghost when fish is active or zsh autosuggestions are detected (probes `~/.zshrc` and related init files on host and WSL). ([7ecf0a5])
 - **WSL path completion**: Local WSL terminals list the Linux filesystem via `fs_list_wsl` / `wsl_get_cwd` instead of Windows `%USERPROFILE%`; spawn shell is persisted on the tab; prompt sniffing supports `host:~ $` themes. ([d2cef31])
 - **Ghost cwd tracking**: Passive cwd extraction from PowerShell (`PS E:\path›`) and common Unix prompts in PTY output; spawn cwd is seeded on `terminal-ready` when OSC 7 is unavailable. ([ee1b6c4])
-- **Ghost parked roadmap**: `docs/TERMINAL_GHOST_ROADMAP.md` — robustness, smarter ranking, and shell-safe popup v2 constraints. ([d5f8cee])
+- **Ghost documentation**: `docs/TERMINAL_GHOST.md` — consolidated architecture, suggestion engine, settings, and future plans. ([0df3d49])
 - **Ghost suggest v2 (P5)**: Backend-first `ghost_suggest_v2` IPC — Rust decides history vs path in one engine; renderer calls a thin TS client. Path listing moved to `path_suggest.rs` (local, SSH SFTP, WSL). ([2245969])
 - **Ghost context ranking (P6)**: Cwd boost/penalty and recent in-session commands from terminal scrollback improve history and path picks per scope. ([2245969])
 - **Ghost SSH history seed (P7)**: Opt-in **Import remote shell history on connect** reads `~/.zsh_history` / `~/.bash_history` once per host over SFTP (never logged). ([2245969])
@@ -17,11 +17,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Changed
 - **Ghost escape handling (P2)**: Left/Right/Home/End and history keys desync the input tracker without wiping the line buffer; hard reset remains on Enter/Ctrl+C/Ctrl+U. ([7ecf0a5])
 - **Ghost path completion**: Bare `cd` skips history fallback (avoids `cd ..` from unrelated history); WSL listings use longer timeouts, prefetch, and shared `WSL_FS_LIST_TIMEOUT_MS`. ([d2cef31])
-- **Documentation**: `docs/TERMINAL_GHOST_SUGGESTIONS.md` — WSL path completion, architecture and scaling limits, shipped P2/P3 notes. ([a55b4db])
+- **Documentation**: `docs/TERMINAL_GHOST.md` — WSL path completion, architecture, scaling limits, and shipped robustness notes. ([a55b4db], [0df3d49])
 - **Ghost suggestions (inline only)**: Inline faded suffix, history frecency, and filesystem path completion remain. Path commands such as `cd` and file-aware commands again show inline ghost suffixes (previously deferred to the popup list). Rust `ghost_candidates` IPC is retained for a future popup v2 rebuild. ([336d54d])
 - **Ghost shell-safe keys**: Tab always forwards to the shell for native completion (fish/zsh/bash Tab completion). Right arrow accepts inline ghost; Tab dismisses ghost and pauses new suggestions until the line resets (Enter/Ctrl+C/Ctrl+U). ([a68a705])
 - **Ghost path listing connection id**: Filesystem ghost suffixes call `fs_list` with the workspace connection id instead of the history scope key. ([ee1b6c4])
-- **Documentation**: Updated `docs/TERMINAL_GHOST_SUGGESTIONS.md` for inline-only architecture and Tab desync behavior. ([d5f8cee])
+- **Documentation**: Updated ghost docs for inline-only architecture and Tab desync behavior. ([d5f8cee], [0df3d49])
 - **Ghost TS path layer**: Removed duplicate `pathCompletion.ts`; cwd tracking keeps `commandTokens.ts` / `pathUtils.ts` helpers only. ([2245969])
 
 ### Fixed
@@ -50,6 +50,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Ghost history import**: Zsh backslash-continued EXTENDED_HISTORY lines reassemble correctly; bash `#` metadata lines skipped. ([2245969])
 - **Ghost history seed**: Skips when remote home path fetch fails (no silent `/` seed); SFTP read timeouts no longer clear a healthy session; batch import uses HashSet dedup. ([2245969])
 - **WSL zsh probe stdin**: `read_wsl_zsh_init_files` sets stdin to null so background probes cannot hang on inherited input. ([2245969])
+
+### Security
+- **Ghost password leak**: Detect hidden-input prompts (`sudo`, `su`, SSH `Password:`, passphrases) and suppress inline ghost plus history commits while active; block credential-like tokens from ghost history storage and suggestions (including alphanumeric passwords such as `su` credentials). ([9e0aae7])
 
 ### Removed
 - **Tab popup ghost suggestions**: Removed the Tab-triggered completion list overlay, popup state/routing modules (`GhostSuggestionListOverlay`, tab/popup controller stack), and the **Tab popup suggestions** setting toggle. Tab no longer opens or navigates a Zync list. Removed auto-open popup while typing when multiple candidates matched. Context-menu suggestion actions now cover inline accept only (no multi-item popup list). ([336d54d])

@@ -47,6 +47,12 @@ export function bindGhostTrackerRuntime({
       tracker.clearSuggestion();
       onSuggestion('', line);
       onClearUI();
+      if (tracker.isSecretInputMode()) {
+        ghostDebug('runtime', { phase: 'skip-fetch', reason: 'secret-input', line });
+        requestSeq += 1;
+        clearTimer();
+        return;
+      }
       if (tracker.isDesynced()) {
         ghostDebug('runtime', { phase: 'skip-fetch', reason: 'desynced', line });
         requestSeq += 1;

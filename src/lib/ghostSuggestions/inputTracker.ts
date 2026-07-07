@@ -61,6 +61,7 @@ export class InputTracker {
   private lineBuffer     = '';
   private activeSuffix   = '';
   private desynced       = false;
+  private secretInputMode = false;
   private opts: InputTrackerOptions;
 
   constructor(opts: InputTrackerOptions) {
@@ -75,6 +76,27 @@ export class InputTracker {
     this.activeSuffix = '';
     this.desynced = true;
     this.opts.onDismiss();
+  }
+
+  /** Shell is waiting for hidden input (sudo/SSH password, passphrase). */
+  enterSecretInputMode(): void {
+    this.secretInputMode = true;
+    this.lineBuffer = '';
+    this.activeSuffix = '';
+    this.desynced = true;
+    this.opts.onDismiss();
+  }
+
+  exitSecretInputMode(): void {
+    this.secretInputMode = false;
+    this.lineBuffer = '';
+    this.activeSuffix = '';
+    this.desynced = false;
+    this.opts.onDismiss();
+  }
+
+  isSecretInputMode(): boolean {
+    return this.secretInputMode;
   }
 
   /**
@@ -113,6 +135,14 @@ export class InputTracker {
 
     // ── Enter: commit command to history, reset buffer ─────────────────────────
     if (data === ENTER) {
+      if (this.secretInputMode) {
+        this.secretInputMode = false;
+        this.lineBuffer = '';
+        this.activeSuffix = '';
+        this.desynced = false;
+        this.opts.onDismiss();
+        return { consumed: false };
+      }
       if (!this.desynced) {
         const cmd = this.lineBuffer.trim();
         if (cmd) this.opts.onHistoryCommit(cmd);
@@ -149,6 +179,7 @@ export class InputTracker {
       this.lineBuffer   = '';
       this.activeSuffix = '';
       this.desynced = false;
+      this.secretInputMode = false;
       this.opts.onDismiss();
       return { consumed: false };
     }
@@ -171,6 +202,13 @@ export class InputTracker {
     }).join('');
 
     if (printable) {
+      // Hidden password/passphrase entry — never fetch ghost or commit history.
+      if (this.secretInputMode) {
+        this.activeSuffix = '';
+        this.opts.onDismiss();
+        return { consumed: false };
+      }
+
       // After unknown cursor/history edits we cannot trust the full line buffer.
       // Keep history commit behavior, but suppress ghost requests to avoid
       // inaccurate suggestions until shell line is reset (Enter/Ctrl+C/Ctrl+U).
@@ -222,6 +260,7 @@ export class InputTracker {
     this.lineBuffer   = '';
     this.activeSuffix = '';
     this.desynced = false;
+    this.secretInputMode = false;
   }
 
   destroy(): void {

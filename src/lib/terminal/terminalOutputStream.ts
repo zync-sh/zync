@@ -1,6 +1,7 @@
 import { Channel } from '@tauri-apps/api/core';
 import type { Terminal as XTerm } from '@xterm/xterm';
 import { feedPromptCwdSniffer } from '../ghostSuggestions/promptCwdSniffer.js';
+import { feedSecretInputSniffer } from '../ghostSuggestions/secretInputDetect.js';
 import { useAppStore } from '../../store/useAppStore.js';
 import { terminalCache } from './terminalCache.js';
 import { touchTerminalActivity } from './terminalActivity.js';
@@ -95,11 +96,19 @@ export function attachTerminalOutputChannel(termId: string, term: XTerm): Channe
     }
 
     touchTerminalActivity(termId);
-    if (entry.connectionId && outputMayContainPrompt(data)) {
+    if (entry.connectionId) {
       const connectionId = entry.connectionId;
-      feedPromptCwdSniffer(termId, data, (path) => {
-        useAppStore.getState().setTerminalCwd(connectionId, termId, path);
+      // Always run the bounded secret sniffer; chunk-boundary prefilters can miss prompts.
+      feedSecretInputSniffer(termId, data, () => {
+        const live = terminalCache.get(termId);
+        live?.ghostTracker?.enterSecretInputMode();
       });
+      if (outputMayContainPrompt(data)) {
+        feedPromptCwdSniffer(termId, data, (path) => {
+          entry.ghostTracker?.exitSecretInputMode();
+          useAppStore.getState().setTerminalCwd(connectionId, termId, path);
+        });
+      }
     }
     term.write(data);
   });

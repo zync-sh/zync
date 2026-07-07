@@ -123,6 +123,7 @@ export function useTerminalGhost({
         resolveInlineSuggestion: async (line) => {
           if (!ghostSettingsRef.current.inlineEnabled) return '';
           if (!isVisibleRef.current) return '';
+          if (cachedGhostTracker?.isSecretInputMode()) return '';
           const store = useAppStore.getState();
           const termState = store.terminals[terminalKey]?.find((t) => t.id === mountSessionId);
           const shellId = getEffectiveShellId(

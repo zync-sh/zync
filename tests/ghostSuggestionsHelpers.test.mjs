@@ -46,6 +46,9 @@ import {
 import {
   extractRecentCommands,
 } from '../.tmp-agent-tests/src/lib/ghostSuggestions/recentCommands.js';
+import {
+  detectSecretPromptInOutput,
+} from '../.tmp-agent-tests/src/lib/ghostSuggestions/secretInputDetect.js';
 async function runTest(name, fn) {
   try {
     await fn();
@@ -399,4 +402,34 @@ await runTest('extractRecentCommands ignores redirection markers inside commands
 await runTest('lineForSuggestionParsing uses tail after background ampersand', () => {
   assert.equal(lineForSuggestionParsing('sleep 1 & git che'), 'git che');
   assert.equal(extractActiveSegment('sleep 1 & git che'), 'git che');
+});
+
+await runTest('detectSecretPromptInOutput recognizes sudo and SSH password prompts', () => {
+  assert.equal(detectSecretPromptInOutput('[sudo] password for gajen: '), true);
+  assert.equal(detectSecretPromptInOutput("user@host's password: "), true);
+  assert.equal(detectSecretPromptInOutput('appserver@et-appserver:~$ su admin\nPassword: '), true);
+  assert.equal(detectSecretPromptInOutput('user@host:~/proj$ git status'), false);
+});
+
+await runTest('InputTracker suppresses ghost and history commit during secret input', () => {
+  let commits = 0;
+  let lineChanges = 0;
+  const tracker = new InputTracker({
+    onLineChange: () => { lineChanges += 1; },
+    onAccept: () => {},
+    onDismiss: () => {},
+    onHistoryCommit: () => { commits += 1; },
+  });
+
+  tracker.enterSecretInputMode();
+  tracker.feed('s');
+  tracker.feed('e');
+  tracker.feed('c');
+  tracker.feed('r');
+  tracker.feed('e');
+  tracker.feed('t');
+  assert.equal(lineChanges, 0);
+  tracker.feed('\r');
+  assert.equal(commits, 0);
+  assert.equal(tracker.isSecretInputMode(), false);
 });
