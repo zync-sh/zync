@@ -17,7 +17,6 @@ import { ghostDebug } from '../../lib/ghostSuggestions/ghostDebug';
 import {
   cwdForWslPathCompletion,
   resolveWslShellIdForPathCompletion,
-  shellIdIndicatesWsl,
 } from '../../lib/ghostSuggestions/wslShell';
 import type { AppSettings } from '../../store/settingsSlice';
 import { extractRecentCommands } from '../../lib/ghostSuggestions/recentCommands';
