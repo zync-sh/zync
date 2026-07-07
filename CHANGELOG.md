@@ -4,7 +4,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
-## [2.20.0] - 2026-07-07
+## [2.20.1] - 2026-07-07
 
 ### Added
 - **Ghost native shell policy**: Settings → Terminal → Ghost suggestions → **Native shell policy** (`auto` / `always` / `off`) suppresses inline ghost when fish is active or zsh autosuggestions are detected (probes `~/.zshrc` and related init files on host and WSL). ([7ecf0a5])
@@ -52,6 +52,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Ghost history import**: Zsh backslash-continued EXTENDED_HISTORY lines reassemble correctly; bash `#` metadata lines skipped. ([2245969])
 - **Ghost history seed**: Skips when remote home path fetch fails (no silent `/` seed); SFTP read timeouts no longer clear a healthy session; batch import uses HashSet dedup. ([2245969])
 - **WSL zsh probe stdin**: `read_wsl_zsh_init_files` sets stdin to null so background probes cannot hang on inherited input. ([2245969])
+- **Release build**: Removed unused import in `useTerminalGhost.ts` that failed TypeScript on CI (`tsc` exit 2). ([bee917a])
 
 ### Security
 - **Ghost password leak**: Detect hidden-input prompts (`sudo`, `su`, SSH `Password:`, passphrases) and suppress inline ghost plus history commits while active; block credential-like tokens from ghost history storage and suggestions (including alphanumeric passwords such as `su` credentials). SSH history import and the secret prompt sniffer use the same credential filter; prompt detection clears its PTY tail buffer so secret-input mode is not re-entered on every output chunk. ([5ebdaaf])
@@ -847,8 +848,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.20.0...HEAD
-[2.20.0]: https://github.com/zync-sh/zync/compare/v2.19.2...v2.20.0
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.20.1...HEAD
+[2.20.1]: https://github.com/zync-sh/zync/compare/v2.19.2...v2.20.1
 [2.19.2]: https://github.com/zync-sh/zync/compare/v2.19.1...v2.19.2
 [2.19.1]: https://github.com/zync-sh/zync/compare/v2.18.0...v2.19.1
 [2.18.0]: https://github.com/zync-sh/zync/compare/v2.17.0...v2.18.0
