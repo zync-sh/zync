@@ -52,7 +52,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **WSL zsh probe stdin**: `read_wsl_zsh_init_files` sets stdin to null so background probes cannot hang on inherited input. ([2245969])
 
 ### Security
-- **Ghost password leak**: Detect hidden-input prompts (`sudo`, `su`, SSH `Password:`, passphrases) and suppress inline ghost plus history commits while active; block credential-like tokens from ghost history storage and suggestions (including alphanumeric passwords such as `su` credentials). ([9e0aae7])
+- **Ghost password leak**: Detect hidden-input prompts (`sudo`, `su`, SSH `Password:`, passphrases) and suppress inline ghost plus history commits while active; block credential-like tokens from ghost history storage and suggestions (including alphanumeric passwords such as `su` credentials). ([5ebdaaf])
 
 ### Removed
 - **Tab popup ghost suggestions**: Removed the Tab-triggered completion list overlay, popup state/routing modules (`GhostSuggestionListOverlay`, tab/popup controller stack), and the **Tab popup suggestions** setting toggle. Tab no longer opens or navigates a Zync list. Removed auto-open popup while typing when multiple candidates matched. Context-menu suggestion actions now cover inline accept only (no multi-item popup list). ([336d54d])
