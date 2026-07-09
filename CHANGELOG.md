@@ -14,6 +14,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Tunnel start path**: All UI surfaces use `tunnelSlice` → `tunnel:start` (honors saved `bindAddress`); removed 30s status polling from tunnel UIs.
 - **Tunnel backend layout**: Tunnel subsystem consolidated under `src-tauri/src/tunnels/` (`commands.rs` IPC, `manager.rs` runtime).
 - **Add Port Forward wizard**: Redesigned as a two-step create flow — type selection with SVG diagrams, then configuration. Refined diagram animations and form layout; edit opens on the configuration step.
+- **Port Forward list**: List-first layout with type badges, port-flow chips, and connection names instead of raw IPs; denser grid tiles and `active/total` group counts.
 - **Add Tunnel modal**: Label clarified to “Auto-start tunnel when connection opens”.
 
 ### Fixed

@@ -9,6 +9,8 @@ import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { Modal } from '../ui/Modal';
 import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+
 import {
   parsePortConflictError,
   tunnelWithSwappedPort,
@@ -356,8 +358,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                         )}>
                           {groupName}
                         </h3>
-                        <span className="text-[10px] text-app-muted/50 bg-app-surface/50 px-1.5 py-0.5 rounded-full ml-1 font-mono">
-                          {groupTunnels.length}
+                        <span className="ml-1 rounded-full bg-app-surface/50 px-1.5 py-0.5 font-mono text-[10px] text-app-muted/50">
+                          {activeCount}/{groupTunnels.length} active
                         </span>
                       </div>
 
@@ -385,15 +387,14 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                       </div>
                     </div>
 
-                    {/* Group Tunnels Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                    <div className="space-y-1.5">
                       {groupTunnels.map(port => (
                         <TunnelCard
                           key={port.id}
                           tunnel={port}
                           connectionIcon={conn?.icon}
-                          connectionName={conn?.name}
-                          viewMode="grid"
+                          hostLabel={conn ? getConnectionDisplayLabels(conn, false).primary : undefined}
+                          viewMode="list"
                           onToggle={handleToggleTunnel}
                           onEdit={(t) => {
                             setEditingTunnel(t);
@@ -407,23 +408,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                           }}
                         />
                       ))}
-                      {/* Only show Add button in Ungrouped section if needed, or maybe global floating button? 
-                            Actually, putting Add button in Ungrouped section or as a separate card at the very end is tricky with grouping.
-                            Let's add it to the Ungrouped section or create a dedicated 'New' button in header instead.
-                            For now, let's keep it in the Ungrouped section or append it if it's the last group.
-                        */}
-                      {groupName === 'Ungrouped' && (
-                        <button
-                          onClick={() => {
-                            setEditingTunnel(null);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="group flex flex-col items-center justify-center min-h-[110px] p-4 rounded-xl border border-dashed border-app-border/40 hover:border-app-accent/50 bg-app-panel/20 hover:bg-app-accent/[0.02] transition-all duration-300"
-                        >
-                          <Plus size={24} className="mb-2 text-app-muted/40 group-hover:text-app-accent/80 group-hover:scale-110 transition-all duration-300" />
-                          <span className="text-[10px] font-medium text-app-muted/50 group-hover:text-app-accent/80 transition-colors">Add Forward</span>
-                        </button>
-                      )}
                     </div>
                   </div>
                 );

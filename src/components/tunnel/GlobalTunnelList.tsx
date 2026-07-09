@@ -9,6 +9,7 @@ import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
 import {
     parsePortConflictError,
     tunnelWithSwappedPort,
@@ -40,7 +41,7 @@ export function GlobalTunnelList() {
     const [initialConnectionId, setInitialConnectionId] = useState<string | undefined>(undefined);
     const [showPresetDropdown, setShowPresetDropdown] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -510,8 +511,8 @@ export function GlobalTunnelList() {
                                                         )}>
                                                             {groupName}
                                                         </h2>
-                                                        <span className="px-1 py-0.5 rounded bg-app-surface text-[9px] text-app-muted uppercase tracking-tighter border border-app-border/30">
-                                                            {ports.length} Port{ports.length > 1 ? 's' : ''}
+                                                        <span className="rounded border border-app-border/30 bg-app-surface px-1.5 py-0.5 font-mono text-[9px] text-app-muted">
+                                                            {activeCount}/{ports.length} active
                                                         </span>
                                                     </div>
                                                 </div>
@@ -548,15 +549,18 @@ export function GlobalTunnelList() {
                                             {/* Ports Grid/List */}
                                             {!isCollapsed && (
                                                 viewMode === 'grid' ? (
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                                                         {ports.map((tunnel) => {
                                                             const conn = connections.find(c => c.id === tunnel.connectionId);
+                                                            const hostLabel = conn
+                                                                ? getConnectionDisplayLabels(conn, false).primary
+                                                                : undefined;
                                                             return (
                                                                 <TunnelCard
                                                                     key={tunnel.id}
                                                                     tunnel={tunnel}
                                                                     connectionIcon={conn?.icon}
-                                                                    connectionName={conn?.name}
+                                                                    hostLabel={hostLabel}
                                                                     viewMode="grid"
                                                                     onToggle={handleToggleTunnel}
                                                                     onEdit={(t) => {
@@ -572,35 +576,21 @@ export function GlobalTunnelList() {
                                                                 />
                                                             );
                                                         })}
-
-                                                        {/* Add Forward Card */}
-                                                        {groupName === 'Ungrouped' && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    setEditingTunnel(null);
-                                                                    setInitialConnectionId(undefined); // Reset specifically for global add
-                                                                    setIsAddModalOpen(true);
-                                                                }}
-                                                                className="group relative flex flex-col items-center justify-center min-h-[90px] p-2 rounded-xl border border-dashed border-app-border/30 hover:border-app-accent/50 bg-app-panel/10 hover:bg-app-accent/[0.02] transition-all duration-300"
-                                                            >
-                                                                <div className="w-8 h-8 rounded-full bg-app-surface/50 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:bg-app-accent/10 transition-all duration-300 shadow-sm">
-                                                                    <Plus size={14} className="text-app-muted group-hover:text-app-accent" />
-                                                                </div>
-                                                                <span className="text-[10px] font-medium text-app-muted/60 group-hover:text-app-accent/80 transition-colors">Add Forward</span>
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 ) : (
                                                     // List View
                                                     <div className="space-y-1">
                                                         {ports.map((tunnel) => {
                                                             const conn = connections.find(c => c.id === tunnel.connectionId);
+                                                            const hostLabel = conn
+                                                                ? getConnectionDisplayLabels(conn, false).primary
+                                                                : undefined;
                                                             return (
                                                                 <TunnelCard
                                                                     key={tunnel.id}
                                                                     tunnel={tunnel}
                                                                     connectionIcon={conn?.icon}
-                                                                    connectionName={conn?.name}
+                                                                    hostLabel={hostLabel}
                                                                     viewMode="list"
                                                                     onToggle={handleToggleTunnel}
                                                                     onEdit={(t) => {
@@ -616,19 +606,6 @@ export function GlobalTunnelList() {
                                                                 />
                                                             );
                                                         })}
-                                                        {/* Add Forward Button in List View (Ungrouped) */}
-                                                        {groupName === 'Ungrouped' && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    setEditingTunnel(null);
-                                                                    setInitialConnectionId(undefined);
-                                                                    setIsAddModalOpen(true);
-                                                                }}
-                                                                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-app-border/40 hover:border-app-accent/50 bg-app-panel/20 hover:bg-app-accent/[0.02] text-xs text-app-muted hover:text-app-accent transition-all mt-2"
-                                                            >
-                                                                <Plus size={14} /> Add Forward
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 )
                                             )}
