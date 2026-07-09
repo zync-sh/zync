@@ -13,11 +13,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 ### Changed
 - **Tunnel start path**: All UI surfaces use `tunnelSlice` → `tunnel:start` (honors saved `bindAddress`); removed 30s status polling from tunnel UIs.
 - **Tunnel backend layout**: Tunnel subsystem consolidated under `src-tauri/src/tunnels/` (`commands.rs` IPC, `manager.rs` runtime).
-- **Add Port Forward wizard**: Two-step flow — step 1 selects tunnel type with animated SVG diagram (local / remote / dynamic); step 2 is the configuration form. Smoother modal transitions; edit mode skips straight to the form.
+- **Add Port Forward wizard**: Redesigned as a two-step create flow — type selection with SVG diagrams, then configuration. Refined diagram animations and form layout; edit opens on the configuration step.
 - **Add Tunnel modal**: Label clarified to “Auto-start tunnel when connection opens”.
 
 ### Fixed
-- **Add Port Forward diagram**: Local and remote type previews show opposite packet flow (outbound vs inbound); Target Server select no longer renders a stray background box on its label.
+- **Add Port Forward modal**: Target Server label no longer inherits the select field background.
 - **Tunnel status on transport drop**: Active tunnels flip Off when the SSH pipe breaks (WiFi loss, idle timeout). Backend detects fatal session errors (`Channel send error`, etc.), probes the session every 15s while a forward is running, and tears down listeners via `session_failure.rs` watcher.
 - **Transport drop scope**: `stop_tunnels_for_connections` stops only **runtime-active** forwards — saved but idle tunnel configs on the same host are no longer spammed with “not found in listeners”.
 - **Transport drop + terminals**: `connection:transport-lost` uses `handleTransportLost` (suspend PTY, preserve tabs/scrollback, `pendingRestore`) instead of full `disconnect()` — terminal tabs no longer disappear on unexpected disconnect.
