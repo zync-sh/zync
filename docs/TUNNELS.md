@@ -573,7 +573,7 @@ Note failures with: host OS, tunnel type (local/remote), which UI surface, and w
 
 ## 16. Improvement plan
 
-Active work track after v2.20.1. Implement in order where possible.
+Active work track after v2.21.0. Implement in order where possible.
 
 ### Phase 1 — Trust (P0) — **implemented (next tunnel release)**
 

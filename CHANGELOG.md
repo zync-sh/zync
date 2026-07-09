@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-07-09
+
 ### Added
 - **Dynamic / SOCKS forwarding (`ssh -D`)**: New `type: "dynamic"` tunnel — local SOCKS5 proxy through the SSH session (`tunnels/socks5.rs`, `tunnels/dynamic.rs`). UI preset, Add Tunnel modal, copy `socks5://` URL, `-D` import support.
 - **Tunnel reconnect restore**: On reconnect, Zync restarts tunnels that were active before disconnect plus any with per-tunnel **auto-start** enabled (`tunnelReconnectService.ts`).
@@ -14,7 +16,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Tunnel start path**: All UI surfaces use `tunnelSlice` → `tunnel:start` (honors saved `bindAddress`); removed 30s status polling from tunnel UIs.
 - **Tunnel backend layout**: Tunnel subsystem consolidated under `src-tauri/src/tunnels/` (`commands.rs` IPC, `manager.rs` runtime).
 - **Add Port Forward wizard**: Redesigned as a two-step create flow — type selection with SVG diagrams, then configuration. Refined diagram animations and form layout; edit opens on the configuration step.
-- **Port Forward list**: List-first layout with type badges, port-flow chips, and connection names instead of raw IPs; denser grid tiles and `active/total` group counts.
+- **Port Forward list**: List-first layout with footer type badges (SOCKS-style), port-flow chips, full-width list/grid, grid/list toggle on per-host PF, and `active/total` group counts.
 - **Add Tunnel modal**: Label clarified to “Auto-start tunnel when connection opens”.
 
 ### Fixed
@@ -30,6 +32,7 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Port conflict revert**: Stopping after alternate-port swap no longer leaves the On/Off toggle stuck active.
 - **TunnelManager crash**: Stable empty-array Zustand selector (fixes infinite re-render on mount).
 - **Reconnect failures**: Toast when a tunnel fails to restart after reconnect.
+- **Code review hardening**: Transport-lost stops tunnels before session removal; bounded SSH session probes; runtime mutex snapshots to avoid deadlocks; SOCKS handshake cancel/timeout; PTY emits `connection:transport-lost` before `terminal-exit` on EOF; `-D` hostname bind import; `tunnel:reconcileConnection` IPC payload fix; Add Tunnel port bounds and bulk-row a11y.
 
 ## [2.20.1] - 2026-07-07
 
@@ -875,7 +878,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.20.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.21.0...HEAD
+[2.21.0]: https://github.com/zync-sh/zync/compare/v2.20.1...v2.21.0
 [2.20.1]: https://github.com/zync-sh/zync/compare/v2.19.2...v2.20.1
 [2.19.2]: https://github.com/zync-sh/zync/compare/v2.19.1...v2.19.2
 [2.19.1]: https://github.com/zync-sh/zync/compare/v2.18.0...v2.19.1
