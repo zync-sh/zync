@@ -282,6 +282,18 @@ fn emit_terminal_exit(app_handle: &AppHandle, term_id: &str, generation: u32, ex
         eprintln!("[PTY] Failed to emit exit for {}: {}", term_id, e);
     }
 }
+
+fn emit_connection_transport_lost(app_handle: &AppHandle, connection_id: &str) {
+    if let Err(e) = app_handle.emit(
+        "connection:transport-lost",
+        serde_json::json!({ "connectionId": connection_id }),
+    ) {
+        eprintln!(
+            "[PTY] Failed to emit transport-lost for {}: {}",
+            connection_id, e
+        );
+    }
+}
 // Enum to handle both local PTY and remote SSH channels
 pub enum TerminalHandle {
     Local {
@@ -782,6 +794,7 @@ impl PtyManager {
             remote_is_windows,
             selected_shell,
         );
+        let connection_id_for_transport = connection_id.clone();
         let session = PtySession {
             connection_id,
             output_channel: output_channel.clone(),
@@ -845,11 +858,13 @@ impl PtyManager {
                             }
                             Some(ChannelMsg::Eof) => {
                                 flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                emit_connection_transport_lost(&app_handle, &connection_id_for_transport);
                                 emit_terminal_exit(&app_handle, &term_id_clone, generation, None);
                                 break;
                             }
                             None => {
                                 flush_pending_output(&output_channel_clone, generation, &mut pending_output);
+                                emit_connection_transport_lost(&app_handle, &connection_id_for_transport);
                                 emit_terminal_exit(&app_handle, &term_id_clone, generation, None);
                                 break;
                             }
@@ -869,6 +884,7 @@ impl PtyManager {
                     Some(input) = rx.recv() => {
                         if let Err(e) = channel.data(&input[..]).await {
                              eprintln!("[PTY] Failed to send data to channel: {}", e);
+                             emit_connection_transport_lost(&app_handle, &connection_id_for_transport);
                              break;
                         }
                     }

@@ -47,6 +47,7 @@
         "src/features/connections/application/connectionService.ts",
         "src/features/connections/application/tabService.ts",
         "src/features/connections/application/tunnelAutoStartService.ts",
+        "src/features/tunnels/application/tunnelReconnectService.ts",
         "src/features/connections/domain/connectionConfig.ts",
         "src/features/connections/domain/errorSanitization.ts",
         "src/features/connections/domain/folderTreeOps.ts",

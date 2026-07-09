@@ -1,7 +1,7 @@
 {
   "name": "zync",
   "private": true,
-  "version": "2.20.1",
+  "version": "2.21.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -29,6 +29,7 @@
     "test:connection-tab-service": "npm run compile:agent-tests && node tests/connectionTabService.test.mjs",
     "test:connection-lifecycle-service": "npm run compile:agent-tests && node tests/connectionLifecycleService.test.mjs",
     "test:tunnel-autostart-service": "npm run compile:agent-tests && node tests/tunnelAutoStartService.test.mjs",
+    "test:tunnel-reconnect-service": "npm run compile:agent-tests && node tests/tunnelReconnectService.test.mjs",
     "test:vault-nav-state": "npm run compile:agent-tests && node tests/vaultNavState.test.mjs",
     "test:vault-credential-types": "npm run compile:agent-tests && node tests/vaultCredentialTypes.test.mjs",
     "test:sync-error-parser": "npm run compile:agent-tests && node tests/syncErrorParser.test.mjs",

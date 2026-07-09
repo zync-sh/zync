@@ -5,7 +5,7 @@ export interface TunnelConfig {
     id: string;
     connectionId: string;
     name: string;
-    type: 'local' | 'remote';
+    type: 'local' | 'remote' | 'dynamic';
     localPort: number;
     remoteHost: string;
     remotePort: number;
@@ -29,6 +29,8 @@ export interface TunnelSlice {
     startTunnel: (id: string, connectionId: string) => Promise<void>;
     stopTunnel: (id: string, connectionId: string) => Promise<void>;
     updateTunnelStatus: (id: string, connectionId: string, status: TunnelConfig['status'], error?: string) => void;
+    reconcileTunnelsForConnection: (connectionId: string) => Promise<void>;
+    markAllTunnelsStoppedForConnection: (connectionId: string) => void;
 }
 
 // @ts-ignore
@@ -159,10 +161,10 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         }
     },
 
-    stopTunnel: async (id, _connectionId) => {
+    stopTunnel: async (id, connectionId) => {
         try {
             await ipc.invoke('tunnel:stop', id);
-            // Status update will come from backend event
+            get().updateTunnelStatus(id, connectionId, 'stopped');
         } catch (error: any) {
             console.error('Failed to stop tunnel:', error);
             get().showToast('error', 'Failed to stop tunnel');
@@ -180,5 +182,34 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
                 }
             };
         });
-    }
+    },
+
+    reconcileTunnelsForConnection: async (connectionId) => {
+        try {
+            await ipc.invoke('tunnel:reconcileConnection', connectionId);
+            await get().loadTunnels(connectionId);
+        } catch (error) {
+            console.error('Failed to reconcile tunnels for connection:', error);
+            get().markAllTunnelsStoppedForConnection(connectionId);
+        }
+    },
+
+    markAllTunnelsStoppedForConnection: (connectionId) => {
+        set(state => {
+            const currentList = state.tunnels[connectionId];
+            if (!currentList?.length) {
+                return state;
+            }
+            return {
+                tunnels: {
+                    ...state.tunnels,
+                    [connectionId]: currentList.map((tunnel) =>
+                        tunnel.status === 'active'
+                            ? { ...tunnel, status: 'stopped' as const, error: undefined }
+                            : tunnel,
+                    ),
+                },
+            };
+        });
+    },
 });

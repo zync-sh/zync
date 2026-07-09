@@ -9,6 +9,16 @@ import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import {
+    parsePortConflictError,
+    tunnelWithSwappedPort,
+} from '../../features/tunnels/application/tunnelPortConflict';
+import {
+    revertTunnelOriginalPort,
+    stopTunnelConfig,
+    startTunnelConfig,
+} from '../../features/tunnels/application/tunnelActions';
 
 export function GlobalTunnelList() {
     const connections = useAppStore(state => state.connections);
@@ -19,6 +29,8 @@ export function GlobalTunnelList() {
     const updateTunnelStatus = useAppStore(state => state.updateTunnelStatus);
     const deleteTunnel = useAppStore(state => state.deleteTunnel);
     const saveTunnel = useAppStore(state => state.saveTunnel);
+    const startTunnel = useAppStore(state => state.startTunnel);
+    const stopTunnel = useAppStore(state => state.stopTunnel);
 
     const showToast = useAppStore((state) => state.showToast);
     // const [tunnels, setTunnels] = useState<TunnelConfig[]>([]); // Removed local state
@@ -29,7 +41,7 @@ export function GlobalTunnelList() {
     const [initialConnectionId, setInitialConnectionId] = useState<string | undefined>(undefined);
     const [showPresetDropdown, setShowPresetDropdown] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
     const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -73,10 +85,7 @@ export function GlobalTunnelList() {
         };
 
         window.ipcRenderer.on('tunnel:status-change', handleStatusChange);
-
-        const interval = setInterval(loadTunnels, 30000);
         return () => {
-            clearInterval(interval);
             window.ipcRenderer.off('tunnel:status-change', handleStatusChange);
         };
     }, []);
@@ -164,22 +173,17 @@ export function GlobalTunnelList() {
 
         try {
             if (tunnel.status === 'active') {
-                await window.ipcRenderer.invoke('tunnel:stop', tunnel.id);
+                await stopTunnelConfig(tunnel, stopTunnel);
                 showToast('info', 'Forwarding stopped');
 
-                // Auto-revert if it was using a suggested port
-                if (tunnel.originalPort) {
-                    try {
-                        const revertedTunnel = {
-                            ...tunnel,
-                            [tunnel.type === 'local' ? 'localPort' : 'remotePort']: tunnel.originalPort,
-                            originalPort: undefined,
-                        };
-                        await saveTunnel(revertedTunnel);
+                try {
+                    const reverted = await revertTunnelOriginalPort(tunnel, saveTunnel);
+                    if (reverted && tunnel.originalPort) {
                         showToast('success', `Port reverted to ${tunnel.originalPort}`);
-                    } catch (revertError: any) {
-                        showToast('error', `Failed to revert port: ${revertError.message || revertError}`);
                     }
+                } catch (revertError: unknown) {
+                    const message = revertError instanceof Error ? revertError.message : String(revertError);
+                    showToast('error', `Failed to revert port: ${message}`);
                 }
 
                 // Connection Cleanup Logic
@@ -203,37 +207,16 @@ export function GlobalTunnelList() {
                         return;
                     }
                 }
-                // Start tunnel with proper parameters based on type
-                if (tunnel.type === 'remote') {
-                    await window.ipcRenderer.invoke('tunnel:start_remote',
-                        tunnel.connectionId,
-                        tunnel.remotePort,
-                        tunnel.remoteHost || '127.0.0.1',
-                        tunnel.localPort
-                    );
-                } else {
-                    await window.ipcRenderer.invoke('tunnel:start_local',
-                        tunnel.connectionId,
-                        tunnel.localPort,
-                        tunnel.remoteHost,
-                        tunnel.remotePort
-                    );
-                }
+                await startTunnelConfig(tunnel, startTunnel);
                 showToast('success', `Forwarding started`);
-                await loadTunnels();
             }
-        } catch (error: any) {
-            const errorMsg = error.message || error || 'Unknown error';
-
-            // Check if error mentions port conflict with suggested port
-            const portConflictMatch = errorMsg.match(/Port (\d+) is already in use\. Port (\d+) is available/);
-            if (portConflictMatch) {
-                const currentPort = parseInt(portConflictMatch[1]);
-                const suggestedPort = parseInt(portConflictMatch[2]);
-                setPortSuggestion({ tunnel, currentPort, suggestedPort });
+        } catch (error: unknown) {
+            const conflict = parsePortConflictError(error, tunnel);
+            if (conflict) {
+                setPortSuggestion(conflict);
                 return;
             }
-
+            const errorMsg = error instanceof Error ? error.message : String(error);
             showToast('error', `Action failed: ${errorMsg}`);
         }
     };
@@ -246,36 +229,13 @@ export function GlobalTunnelList() {
         setCustomPort(''); // Reset custom port input
 
         try {
-            const currentPort = tunnel.type === 'local' ? tunnel.localPort : tunnel.remotePort;
-            const updatedTunnel = {
-                ...tunnel,
-                [tunnel.type === 'local' ? 'localPort' : 'remotePort']: port,
-                originalPort: tunnel.originalPort || currentPort, // Store original if not already stored
-            };
-
-            // Save the updated config
+            const updatedTunnel = tunnelWithSwappedPort(tunnel, port);
             await saveTunnel(updatedTunnel);
-
-            // Then start tunnel with port
-            if (tunnel.type === 'remote') {
-                await window.ipcRenderer.invoke('tunnel:start_remote',
-                    tunnel.connectionId,
-                    port,
-                    tunnel.remoteHost || '127.0.0.1',
-                    tunnel.localPort
-                );
-            } else {
-                await window.ipcRenderer.invoke('tunnel:start_local',
-                    tunnel.connectionId,
-                    port,
-                    tunnel.remoteHost,
-                    tunnel.remotePort
-                );
-            }
+            await startTunnel(updatedTunnel.id, updatedTunnel.connectionId);
             showToast('success', `Switched to port ${port}`);
-            await loadTunnels();
-        } catch (error: any) {
-            showToast('error', `Failed to start on port ${port}: ${error.message || error}`);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            showToast('error', `Failed to start on port ${port}: ${message}`);
         }
     };
 
@@ -324,21 +284,7 @@ export function GlobalTunnelList() {
 
             for (const tunnel of tunnels) {
                 try {
-                    if (tunnel.type === 'remote') {
-                        await window.ipcRenderer.invoke('tunnel:start_remote',
-                            tunnel.connectionId,
-                            tunnel.remotePort,
-                            tunnel.remoteHost || '127.0.0.1',
-                            tunnel.localPort
-                        );
-                    } else {
-                        await window.ipcRenderer.invoke('tunnel:start_local',
-                            tunnel.connectionId,
-                            tunnel.localPort,
-                            tunnel.remoteHost,
-                            tunnel.remotePort
-                        );
-                    }
+                    await startTunnel(tunnel.id, tunnel.connectionId);
                     successCount++;
                 } catch (err) {
                     console.error(`Failed to start tunnel ${tunnel.name}:`, err);
@@ -364,7 +310,7 @@ export function GlobalTunnelList() {
         for (const tunnel of groupTunnels) {
             if (tunnel.status === 'active') {
                 try {
-                    await window.ipcRenderer.invoke('tunnel:stop', tunnel.id);
+                    await stopTunnel(tunnel.id, tunnel.connectionId);
                     count++;
                 } catch (err) {
                     console.error(`Failed to stop tunnel ${tunnel.name}:`, err);
@@ -530,8 +476,7 @@ export function GlobalTunnelList() {
                             )}
                         </div>
                     ) : (
-                        <div className="space-y-6 max-w-6xl">
-                            <div className="space-y-6 max-w-6xl">
+                        <div className="w-full space-y-6">
                                 {sortedGroupNames.map(groupName => {
                                     const ports = groupedTunnels[groupName];
                                     const activeCount = ports.filter(t => t.status === 'active').length;
@@ -565,8 +510,8 @@ export function GlobalTunnelList() {
                                                         )}>
                                                             {groupName}
                                                         </h2>
-                                                        <span className="px-1 py-0.5 rounded bg-app-surface text-[9px] text-app-muted uppercase tracking-tighter border border-app-border/30">
-                                                            {ports.length} Port{ports.length > 1 ? 's' : ''}
+                                                        <span className="rounded border border-app-border/30 bg-app-surface px-1.5 py-0.5 font-mono text-[9px] text-app-muted">
+                                                            {activeCount}/{ports.length} active
                                                         </span>
                                                     </div>
                                                 </div>
@@ -603,15 +548,18 @@ export function GlobalTunnelList() {
                                             {/* Ports Grid/List */}
                                             {!isCollapsed && (
                                                 viewMode === 'grid' ? (
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                                    <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3 2xl:grid-cols-4">
                                                         {ports.map((tunnel) => {
                                                             const conn = connections.find(c => c.id === tunnel.connectionId);
+                                                            const hostLabel = conn
+                                                                ? getConnectionDisplayLabels(conn, false).primary
+                                                                : undefined;
                                                             return (
                                                                 <TunnelCard
                                                                     key={tunnel.id}
                                                                     tunnel={tunnel}
                                                                     connectionIcon={conn?.icon}
-                                                                    connectionName={conn?.name}
+                                                                    hostLabel={hostLabel}
                                                                     viewMode="grid"
                                                                     onToggle={handleToggleTunnel}
                                                                     onEdit={(t) => {
@@ -627,35 +575,21 @@ export function GlobalTunnelList() {
                                                                 />
                                                             );
                                                         })}
-
-                                                        {/* Add Forward Card */}
-                                                        {groupName === 'Ungrouped' && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    setEditingTunnel(null);
-                                                                    setInitialConnectionId(undefined); // Reset specifically for global add
-                                                                    setIsAddModalOpen(true);
-                                                                }}
-                                                                className="group relative flex flex-col items-center justify-center min-h-[90px] p-2 rounded-xl border border-dashed border-app-border/30 hover:border-app-accent/50 bg-app-panel/10 hover:bg-app-accent/[0.02] transition-all duration-300"
-                                                            >
-                                                                <div className="w-8 h-8 rounded-full bg-app-surface/50 flex items-center justify-center mb-2 group-hover:scale-110 group-hover:bg-app-accent/10 transition-all duration-300 shadow-sm">
-                                                                    <Plus size={14} className="text-app-muted group-hover:text-app-accent" />
-                                                                </div>
-                                                                <span className="text-[10px] font-medium text-app-muted/60 group-hover:text-app-accent/80 transition-colors">Add Forward</span>
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 ) : (
                                                     // List View
-                                                    <div className="space-y-1">
+                                                    <div className="flex w-full flex-col gap-1.5">
                                                         {ports.map((tunnel) => {
                                                             const conn = connections.find(c => c.id === tunnel.connectionId);
+                                                            const hostLabel = conn
+                                                                ? getConnectionDisplayLabels(conn, false).primary
+                                                                : undefined;
                                                             return (
                                                                 <TunnelCard
                                                                     key={tunnel.id}
                                                                     tunnel={tunnel}
                                                                     connectionIcon={conn?.icon}
-                                                                    connectionName={conn?.name}
+                                                                    hostLabel={hostLabel}
                                                                     viewMode="list"
                                                                     onToggle={handleToggleTunnel}
                                                                     onEdit={(t) => {
@@ -671,26 +605,12 @@ export function GlobalTunnelList() {
                                                                 />
                                                             );
                                                         })}
-                                                        {/* Add Forward Button in List View (Ungrouped) */}
-                                                        {groupName === 'Ungrouped' && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    setEditingTunnel(null);
-                                                                    setInitialConnectionId(undefined);
-                                                                    setIsAddModalOpen(true);
-                                                                }}
-                                                                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed border-app-border/40 hover:border-app-accent/50 bg-app-panel/20 hover:bg-app-accent/[0.02] text-xs text-app-muted hover:text-app-accent transition-all mt-2"
-                                                            >
-                                                                <Plus size={14} /> Add Forward
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 )
                                             )}
                                         </div>
                                     );
                                 })}
-                            </div>
                         </div>
                     )}
             </div>

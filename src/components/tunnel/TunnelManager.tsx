@@ -2,32 +2,46 @@ import { useEffect, useState, useRef } from 'react';
 import { useAppStore } from '../../store/useAppStore';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
-import { Plus, Network, ChevronDown, FileText, Play, Square, Folder, FolderOpen, ArrowRight } from 'lucide-react';
+import { Plus, Network, ChevronDown, FileText, Play, Square, Folder, FolderOpen, LayoutGrid, List, ArrowRight } from 'lucide-react';
 import { TUNNEL_PRESETS, TunnelPreset } from '../../lib/tunnelPresets';
 import { AddTunnelModal } from '../modals/AddTunnelModal';
 import { ImportSSHCommandModal } from '../modals/ImportSSHCommandModal';
 import { Modal } from '../ui/Modal';
 import { TopbarDropdown } from '../ui/TopbarDropdown';
 import { TunnelCard, TunnelConfig } from './TunnelCard';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
 
+import {
+  parsePortConflictError,
+  tunnelWithSwappedPort,
+} from '../../features/tunnels/application/tunnelPortConflict';
+import { revertTunnelOriginalPort } from '../../features/tunnels/application/tunnelActions';
+
+const EMPTY_TUNNELS: TunnelConfig[] = [];
 
 export function TunnelManager({ connectionId }: { connectionId?: string }) {
   const globalId = useAppStore(state => state.activeConnectionId);
   const activeConnectionId = connectionId || globalId;
 
-  // Store Hooks
-
   const connections = useAppStore(state => state.connections);
   const conn = connections.find(c => c.id === activeConnectionId);
   const showToast = useAppStore((state) => state.showToast);
-
-  // Local state for this view
-  const [tunnels, setTunnels] = useState<TunnelConfig[]>([]);
-  const [, setLoading] = useState(false);
+  const tunnels = useAppStore((state) =>
+    activeConnectionId
+      ? (state.tunnels[activeConnectionId] ?? EMPTY_TUNNELS)
+      : EMPTY_TUNNELS,
+  );
+  const loadTunnels = useAppStore((state) => state.loadTunnels);
+  const startTunnel = useAppStore((state) => state.startTunnel);
+  const stopTunnel = useAppStore((state) => state.stopTunnel);
+  const saveTunnel = useAppStore((state) => state.saveTunnel);
+  const deleteTunnel = useAppStore((state) => state.deleteTunnel);
+  const updateTunnelStatus = useAppStore((state) => state.updateTunnelStatus);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingTunnel, setEditingTunnel] = useState<TunnelConfig | null>(null);
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Port suggestion dialog state
@@ -38,39 +52,27 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   } | null>(null);
   const [customPort, setCustomPort] = useState<string>(''); // For custom port input
 
-  // Fetch ONLY tunnels for this connection (or all and filter if needed, but let's try specific fetch first to be efficient)
-  // Actually, to match Global List success, let's just fetch all and filter client-side for now to guarantee consistency 
-  // until we confirm tunnel:list endpoint behavior.
-  const loadTunnels = async () => {
-    if (!activeConnectionId) return;
-    setLoading(true);
-    try {
-      // We use tunnel:getAll and filter because we know it works for the Global view
-      const list: TunnelConfig[] = await window.ipcRenderer.invoke('tunnel:getAll');
-      const filtered = list.filter(t => t.connectionId === activeConnectionId);
-      setTunnels(filtered);
-    } catch (error) {
-      console.error('Failed to load tunnels', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const connectionStatus = conn?.status;
 
   useEffect(() => {
-    loadTunnels();
+    if (!activeConnectionId) return;
+    void loadTunnels(activeConnectionId);
 
-    const handleStatusChange = (_: any, { id, status, error }: any) => {
-      setTunnels(prev => prev.map(t => t.id === id ? { ...t, status: status, error } : t));
+    const handleStatusChange = (_: unknown, { id, status, error }: { id: string; status: TunnelConfig['status']; error?: string }) => {
+      updateTunnelStatus(id, activeConnectionId, status, error);
     };
 
     window.ipcRenderer.on('tunnel:status-change', handleStatusChange);
-    const interval = setInterval(loadTunnels, 30000);
-
     return () => {
-      clearInterval(interval);
       window.ipcRenderer.off('tunnel:status-change', handleStatusChange);
     };
-  }, [activeConnectionId]);
+  }, [activeConnectionId, loadTunnels, updateTunnelStatus]);
+
+  useEffect(() => {
+    if (!activeConnectionId || connectionStatus === 'connected') return;
+    const reconcile = useAppStore.getState().reconcileTunnelsForConnection;
+    void reconcile(activeConnectionId);
+  }, [activeConnectionId, connectionStatus]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -112,63 +114,29 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   const handleToggleTunnel = async (tunnel: TunnelConfig) => {
     try {
       if (tunnel.status === 'active') {
-        // Stop the tunnel
-        await window.ipcRenderer.invoke('tunnel:stop', tunnel.id);
+        await stopTunnel(tunnel.id, tunnel.connectionId);
         showToast('info', 'Forwarding stopped');
 
-        // Auto-revert if it was using a suggested port
-        if (tunnel.originalPort) {
-          try {
-            const revertedTunnel = {
-              ...tunnel,
-              [tunnel.type === 'local' ? 'localPort' : 'remotePort']: tunnel.originalPort,
-              originalPort: undefined,
-            };
-            await window.ipcRenderer.invoke('tunnel:save', revertedTunnel);
+        try {
+          const reverted = await revertTunnelOriginalPort(tunnel, saveTunnel);
+          if (reverted && tunnel.originalPort) {
             showToast('success', `Port reverted to ${tunnel.originalPort}`);
-          } catch (revertError: any) {
-            showToast('error', `Failed to revert port: ${revertError.message || revertError}`);
           }
+        } catch (revertError: unknown) {
+          const message = revertError instanceof Error ? revertError.message : String(revertError);
+          showToast('error', `Failed to revert port: ${message}`);
         }
       } else {
-        if (tunnel.type === 'remote') {
-          await window.ipcRenderer.invoke('tunnel:start_remote',
-            tunnel.connectionId,
-            tunnel.remotePort,
-            tunnel.remoteHost || '127.0.0.1',
-            tunnel.localPort
-          );
-        } else {
-          await window.ipcRenderer.invoke('tunnel:start_local',
-            tunnel.connectionId,
-            tunnel.localPort,
-            tunnel.remoteHost,
-            tunnel.remotePort
-          );
-        }
+        await startTunnel(tunnel.id, tunnel.connectionId);
         showToast('success', 'Forwarding started');
       }
-      // Optimistic update or wait for event? Event will handle it.
-      await loadTunnels();
-    } catch (error: any) {
-      const errorMsg = error.message || error.toString();
-
-      // Parse error for suggested port: "Port X is already in use... Port Y is available."
-      const suggestedPortMatch = errorMsg.match(/Port (\d+) is available/);
-
-      if (suggestedPortMatch) {
-        const suggestedPort = parseInt(suggestedPortMatch[1], 10);
-        const currentPort = tunnel.type === 'local' ? tunnel.localPort : tunnel.remotePort;
-
-        // Show custom dialog instead of native confirm
-        setPortSuggestion({
-          tunnel,
-          currentPort,
-          suggestedPort,
-        });
+    } catch (error: unknown) {
+      const conflict = parsePortConflictError(error, tunnel);
+      if (conflict) {
+        setPortSuggestion(conflict);
         return;
       }
-
+      const errorMsg = error instanceof Error ? error.message : String(error);
       showToast('error', `Action failed: ${errorMsg}`);
     }
   };
@@ -181,36 +149,13 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     setCustomPort(''); // Reset custom port input
 
     try {
-      const currentPort = tunnel.type === 'local' ? tunnel.localPort : tunnel.remotePort;
-      const updatedTunnel = {
-        ...tunnel,
-        [tunnel.type === 'local' ? 'localPort' : 'remotePort']: port,
-        originalPort: tunnel.originalPort || currentPort, // Store original if not already stored
-      };
-
-      // Save the updated config
-      await window.ipcRenderer.invoke('tunnel:save', updatedTunnel);
-
-      // Then start tunnel with port
-      if (tunnel.type === 'remote') {
-        await window.ipcRenderer.invoke('tunnel:start_remote',
-          tunnel.connectionId,
-          port,
-          tunnel.remoteHost || '127.0.0.1',
-          tunnel.localPort
-        );
-      } else {
-        await window.ipcRenderer.invoke('tunnel:start_local',
-          tunnel.connectionId,
-          port,
-          tunnel.remoteHost,
-          tunnel.remotePort
-        );
-      }
+      const updatedTunnel = tunnelWithSwappedPort(tunnel, port);
+      await saveTunnel(updatedTunnel);
+      await startTunnel(updatedTunnel.id, updatedTunnel.connectionId);
       showToast('success', `Switched to port ${port}`);
-      await loadTunnels();
-    } catch (error: any) {
-      showToast('error', `Failed to start on port ${port}: ${error.message || error}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast('error', `Failed to start on port ${port}: ${message}`);
     }
   };
 
@@ -219,12 +164,13 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   };
 
   const handleDeleteTunnel = async (id: string) => {
+    if (!activeConnectionId) return;
     try {
-      await window.ipcRenderer.invoke('tunnel:delete', id);
+      await deleteTunnel(id, activeConnectionId);
       showToast('success', 'Forward deleted');
-      await loadTunnels();
-    } catch (error: any) {
-      showToast('error', `Failed to delete: ${error.message || error}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast('error', `Failed to delete: ${message}`);
     }
   };
   // Handle starting all tunnels in a group
@@ -238,21 +184,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     for (const tunnel of groupTunnels) {
       if (tunnel.status !== 'active') {
         try {
-          if (tunnel.type === 'remote') {
-            await window.ipcRenderer.invoke('tunnel:start_remote',
-              tunnel.connectionId,
-              tunnel.remotePort,
-              tunnel.remoteHost || '127.0.0.1',
-              tunnel.localPort
-            );
-          } else {
-            await window.ipcRenderer.invoke('tunnel:start_local',
-              tunnel.connectionId,
-              tunnel.localPort,
-              tunnel.remoteHost,
-              tunnel.remotePort
-            );
-          }
+          await startTunnel(tunnel.id, tunnel.connectionId);
           successCount++;
         } catch (err) {
           console.error(`Failed to start tunnel ${tunnel.name}:`, err);
@@ -261,7 +193,9 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       }
     }
 
-    loadTunnels();
+    if (activeConnectionId) {
+      await loadTunnels(activeConnectionId);
+    }
 
     if (failCount > 0) {
       showToast('error', `Started ${successCount} tunnels, failed ${failCount}`);
@@ -278,7 +212,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     for (const tunnel of groupTunnels) {
       if (tunnel.status === 'active') {
         try {
-          await window.ipcRenderer.invoke('tunnel:stop', tunnel.id);
+          await stopTunnel(tunnel.id, tunnel.connectionId);
           count++;
         } catch (err) {
           console.error(`Failed to stop tunnel ${tunnel.name}:`, err);
@@ -286,7 +220,9 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       }
     }
 
-    loadTunnels();
+    if (activeConnectionId) {
+      await loadTunnels(activeConnectionId);
+    }
     if (count > 0) showToast('info', `Stopped ${count} forwards in ${groupName === 'Ungrouped' ? 'ungrouped' : groupName}`);
   };
 
@@ -304,7 +240,33 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
             </span>
           )}
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex items-center gap-1.5">
+          <div className="flex bg-app-surface/50 p-0.5 rounded-lg border border-app-border/40">
+            <button
+              onClick={() => setViewMode('grid')}
+              className={cn(
+                'p-1.5 rounded transition-all',
+                viewMode === 'grid'
+                  ? 'bg-app-accent text-white shadow-sm'
+                  : 'text-app-muted hover:text-app-text hover:bg-app-highlight/30',
+              )}
+              title="Grid View"
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={cn(
+                'p-1.5 rounded transition-all',
+                viewMode === 'list'
+                  ? 'bg-app-accent text-white shadow-sm'
+                  : 'text-app-muted hover:text-app-text hover:bg-app-highlight/30',
+              )}
+              title="List View"
+            >
+              <List size={14} />
+            </button>
+          </div>
           <Button
             variant="ghost"
             onClick={() => setShowImportModal(true)}
@@ -386,7 +348,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
             </Button>
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="w-full space-y-8">
             {(() => {
               // Group tunnels
               const groups: Record<string, TunnelConfig[]> = {};
@@ -423,8 +385,8 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                         )}>
                           {groupName}
                         </h3>
-                        <span className="text-[10px] text-app-muted/50 bg-app-surface/50 px-1.5 py-0.5 rounded-full ml-1 font-mono">
-                          {groupTunnels.length}
+                        <span className="ml-1 rounded-full bg-app-surface/50 px-1.5 py-0.5 font-mono text-[10px] text-app-muted/50">
+                          {activeCount}/{groupTunnels.length} active
                         </span>
                       </div>
 
@@ -452,46 +414,53 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
                       </div>
                     </div>
 
-                    {/* Group Tunnels Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                      {groupTunnels.map(port => (
-                        <TunnelCard
-                          key={port.id}
-                          tunnel={port}
-                          connectionIcon={conn?.icon}
-                          connectionName={conn?.name}
-                          viewMode="grid"
-                          onToggle={handleToggleTunnel}
-                          onEdit={(t) => {
-                            setEditingTunnel(t);
-                            setIsAddModalOpen(true);
-                          }}
-                          onDelete={handleDeleteTunnel}
-                          onOpenBrowser={handleOpenBrowser}
-                          onCopy={(text) => {
-                            navigator.clipboard.writeText(text);
-                            showToast('success', 'Copied');
-                          }}
-                        />
-                      ))}
-                      {/* Only show Add button in Ungrouped section if needed, or maybe global floating button? 
-                            Actually, putting Add button in Ungrouped section or as a separate card at the very end is tricky with grouping.
-                            Let's add it to the Ungrouped section or create a dedicated 'New' button in header instead.
-                            For now, let's keep it in the Ungrouped section or append it if it's the last group.
-                        */}
-                      {groupName === 'Ungrouped' && (
-                        <button
-                          onClick={() => {
-                            setEditingTunnel(null);
-                            setIsAddModalOpen(true);
-                          }}
-                          className="group flex flex-col items-center justify-center min-h-[110px] p-4 rounded-xl border border-dashed border-app-border/40 hover:border-app-accent/50 bg-app-panel/20 hover:bg-app-accent/[0.02] transition-all duration-300"
-                        >
-                          <Plus size={24} className="mb-2 text-app-muted/40 group-hover:text-app-accent/80 group-hover:scale-110 transition-all duration-300" />
-                          <span className="text-[10px] font-medium text-app-muted/50 group-hover:text-app-accent/80 transition-colors">Add Forward</span>
-                        </button>
-                      )}
-                    </div>
+                    {viewMode === 'grid' ? (
+                      <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3 2xl:grid-cols-4">
+                        {groupTunnels.map(port => (
+                          <TunnelCard
+                            key={port.id}
+                            tunnel={port}
+                            connectionIcon={conn?.icon}
+                            hostLabel={conn ? getConnectionDisplayLabels(conn, false).primary : undefined}
+                            viewMode="grid"
+                            onToggle={handleToggleTunnel}
+                            onEdit={(t) => {
+                              setEditingTunnel(t);
+                              setIsAddModalOpen(true);
+                            }}
+                            onDelete={handleDeleteTunnel}
+                            onOpenBrowser={handleOpenBrowser}
+                            onCopy={(text) => {
+                              navigator.clipboard.writeText(text);
+                              showToast('success', 'Copied');
+                            }}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex w-full flex-col gap-1.5">
+                        {groupTunnels.map(port => (
+                          <TunnelCard
+                            key={port.id}
+                            tunnel={port}
+                            connectionIcon={conn?.icon}
+                            hostLabel={conn ? getConnectionDisplayLabels(conn, false).primary : undefined}
+                            viewMode="list"
+                            onToggle={handleToggleTunnel}
+                            onEdit={(t) => {
+                              setEditingTunnel(t);
+                              setIsAddModalOpen(true);
+                            }}
+                            onDelete={handleDeleteTunnel}
+                            onOpenBrowser={handleOpenBrowser}
+                            onCopy={(text) => {
+                              navigator.clipboard.writeText(text);
+                              showToast('success', 'Copied');
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               });
@@ -574,7 +543,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         onClose={() => {
           setIsAddModalOpen(false);
           setEditingTunnel(null);
-          void loadTunnels();
+          if (activeConnectionId) void loadTunnels(activeConnectionId);
         }}
       />
 
@@ -583,8 +552,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
         onClose={() => setShowImportModal(false)}
         connectionId={activeConnectionId} // Pass the active connection ID
         onImport={() => {
-          // Refresh list after import
-          void loadTunnels();
+          if (activeConnectionId) void loadTunnels(activeConnectionId);
         }}
       />
     </div>

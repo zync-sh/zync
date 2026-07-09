@@ -126,7 +126,7 @@ pub struct SavedTunnel {
     pub connection_id: String,
     pub name: String,
     #[serde(rename = "type")]
-    pub tunnel_type: String, // "local" or "remote"
+    pub tunnel_type: String, // "local", "remote", or "dynamic" (SOCKS)
     pub local_port: u16,
     pub remote_host: String,
     pub remote_port: u16,

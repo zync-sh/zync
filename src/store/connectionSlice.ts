@@ -29,10 +29,11 @@ import {
     markConnectionStatus,
     reduceTabCloseState,
 } from '../features/connections/application/connectionLifecycleService';
+import { pinFeatureOnConnectionIfNeeded } from '../features/connections/application/tunnelAutoStartService';
 import {
-    pinFeatureOnConnectionIfNeeded,
-    startAutoStartTunnels,
-} from '../features/connections/application/tunnelAutoStartService';
+    restartTunnelsAfterConnect,
+    snapshotActiveTunnelsForReconnect,
+} from '../features/tunnels/application/tunnelReconnectService';
 import {
     buildConnectConfigResult,
     connectConfigUsesVaultAuth,
@@ -45,7 +46,7 @@ import { connectionErrorMessage } from '../features/connections/domain/errorSani
 import { useVaultStore } from '../vault/useVaultStore';
 import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../vault/vaultLoading';
 import { isVaultLockedError } from '../vault/vaultUnlockPrompt';
-import { connectIpc, disconnectIpc, getRemoteCwdIpc } from '../features/connections/infrastructure/connectionIpc';
+import { connectIpc, disconnectIpc, getRemoteCwdIpc, transportLostIpc } from '../features/connections/infrastructure/connectionIpc';
 import { seedRemoteGhostHistory } from '../lib/ghostSuggestions/client';
 import { ghostDebug } from '../lib/ghostSuggestions/ghostDebug';
 import { runSerializedConnectionOp } from '../features/connections/infrastructure/connectionOpQueue';
@@ -91,6 +92,8 @@ export interface ConnectionSlice {
     // Connection Actions
     connect: (id: string, options?: { skipVaultPrompt?: boolean }) => Promise<void>;
     disconnect: (id: string) => Promise<void>;
+    /** WiFi drop / SSH EOF — stop active tunnels, keep terminal tabs and scrollback. */
+    handleTransportLost: (id: string) => Promise<void>;
     /** Connect when a host tab is opened or restored and the SSH session is not live. */
     autoConnectIfNeeded: (connectionId: string) => void;
 
@@ -491,20 +494,24 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 }).catch(() => {});
             }
 
-            // Auto-start tunnels
             try {
                 await get().loadTunnels(id);
                 const tunnels = get().tunnels[id] || [];
                 const startTunnel = get().startTunnel;
 
-                const autoStartCount = await startAutoStartTunnels(
+                const restartedCount = await restartTunnelsAfterConnect({
+                    connectionId: id,
                     tunnels,
-                    id,
                     startTunnel,
-                    (tunnel, error) => console.error(`Failed to auto-start tunnel ${tunnel.name}:`, error),
-                );
+                    onTunnelError: (tunnel, error) => {
+                        const label = tunnel.name || tunnel.id;
+                        const message = error instanceof Error ? error.message : String(error);
+                        console.error(`Failed to restart tunnel ${label}:`, error);
+                        get().showToast('error', `Tunnel "${label}" failed to start: ${message}`, 6000);
+                    },
+                });
 
-                if (autoStartCount > 0) {
+                if (restartedCount > 0) {
                     // 1. Pin 'port-forwarding' feature if not already pinned
                     const conn = get().connections.find(c => c.id === id);
                     if (conn) {
@@ -541,9 +548,52 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         });
     },
 
+    handleTransportLost: async (id) => {
+        return runSerializedConnectionOp(id, async () => {
+        markConnectionBackendOffline(id);
+
+        try {
+            await get().loadTunnels(id);
+            snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+        } catch (err) {
+            console.error('[TUNNEL] Failed to snapshot tunnels on transport lost:', err);
+        }
+
+        try {
+            await transportLostIpc(id);
+        } catch (error) {
+            console.error('Failed to mark transport lost on backend:', error);
+        }
+
+        const tabs = get().terminals[id] || [];
+        if (id !== 'local' && tabs.length > 0) {
+            set(state => ({
+                connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                terminals: {
+                    ...state.terminals,
+                    [id]: tabs.map(t => ({ ...t, pendingRestore: true })),
+                },
+            }));
+        } else {
+            set(state => ({
+                connections: markConnectionStatus(state.connections, id, 'disconnected'),
+            }));
+        }
+
+        await get().reconcileTunnelsForConnection(id);
+        });
+    },
+
     disconnect: async (id) => {
         return runSerializedConnectionOp(id, async () => {
         markConnectionBackendOffline(id);
+
+        try {
+            await get().loadTunnels(id);
+            snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+        } catch (err) {
+            console.error('[TUNNEL] Failed to snapshot tunnels before disconnect:', err);
+        }
 
         try {
             await disconnectIpc(id);

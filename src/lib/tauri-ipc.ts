@@ -137,6 +137,7 @@ const ipcRenderer = {
     const channelMap: Record<string, string> = {
       'ssh:connect': 'ssh_connect',
       'ssh:disconnect': 'ssh_disconnect',
+      'ssh:transportLost': 'ssh_transport_lost',
       'terminal:write': 'terminal_write',
       'terminal:resize': 'terminal_resize',
       'terminal:create': 'terminal_create',
@@ -160,6 +161,7 @@ const ipcRenderer = {
       'tunnel:start_local': 'tunnel_start_local', // Add snake_case mapping
       'tunnel:startRemote': 'tunnel_start_remote',
       'tunnel:start_remote': 'tunnel_start_remote', // Add snake_case mapping
+      'tunnel:start': 'tunnel_start',
       'tunnel:stop': 'tunnel_stop',
       'ssh:exec': 'ssh_exec',
       'ssh:test': 'ssh_test_connection',
@@ -181,6 +183,7 @@ const ipcRenderer = {
       'tunnel:list': 'tunnel_list',
       'tunnel:save': 'tunnel_save',
       'tunnel:delete': 'tunnel_delete',
+      'tunnel:reconcileConnection': 'tunnel_reconcile_connection',
       'window:is-maximized': 'window_is_maximized',
       // Dialog commands handled specially below
       'dialog:openFile': 'dialog_open_file',
@@ -351,7 +354,7 @@ const ipcRenderer = {
       // Manual argument mapping for mismatched commands
       if (tauriCommand === 'ssh_connect' || tauriCommand === 'ssh_test_connection') {
         payload = { config: args[0] };
-      } else if (tauriCommand === 'ssh_disconnect') {
+      } else if (tauriCommand === 'ssh_disconnect' || tauriCommand === 'ssh_transport_lost') {
         payload = { id: args[0] };
       } else if (tauriCommand === 'ssh_exec') {
         // Handle both object style {connectionId, command} and positional args
@@ -397,6 +400,13 @@ const ipcRenderer = {
           payload = { connectionId: args[0] };
         } else if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {
           payload = { connectionId: args[0].connectionId };
+        }
+      } else if (tauriCommand === 'tunnel_reconcile_connection') {
+        if (args.length === 1 && typeof args[0] === 'string') {
+          payload = { connection_id: args[0] };
+        } else if (args.length === 1 && typeof args[0] === 'object') {
+          const arg = args[0] as { connectionId?: string; connection_id?: string };
+          payload = { connection_id: arg.connection_id ?? arg.connectionId };
         }
       } else if (tauriCommand === 'tunnel_save') {
         payload = { tunnelVal: args[0] };
@@ -444,7 +454,7 @@ const ipcRenderer = {
           };
         }
 
-      } else if (tauriCommand === 'tunnel_stop') {
+      } else if (tauriCommand === 'tunnel_start' || tauriCommand === 'tunnel_stop') {
         payload = { id: args[0] };
       } else if (tauriCommand === 'fs_cwd') {
         if (args.length === 1 && typeof args[0] === 'object' && 'connectionId' in args[0]) {

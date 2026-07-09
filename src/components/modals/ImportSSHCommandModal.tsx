@@ -6,6 +6,7 @@ import { GroupSelector } from '../ui/GroupSelector';
 // import { parseSSHCommand } from '../../lib/sshCommandParser'; // Removed
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { defaultTunnelName } from '../../features/tunnels/domain/tunnelTypes';
 
 interface ImportSSHCommandModalProps {
     isOpen: boolean;
@@ -15,7 +16,7 @@ interface ImportSSHCommandModalProps {
 }
 
 interface ParsedTunnel {
-    type: 'local' | 'remote';
+    type: 'local' | 'remote' | 'dynamic';
     localPort: number;
     remoteHost: string;
     remotePort: number;
@@ -90,7 +91,12 @@ export function ImportSSHCommandModal({
                 const newTunnel = {
                     id: crypto.randomUUID(),
                     connectionId: selectedConnectionId,
-                    name: tunnel.name || `${tunnel.type === 'local' ? 'Local' : 'Remote'} ${tunnel.localPort}:${tunnel.remotePort}`,
+                    name: tunnel.name || defaultTunnelName(
+                        tunnel.type,
+                        tunnel.localPort,
+                        tunnel.remoteHost,
+                        tunnel.remotePort,
+                    ),
                     type: tunnel.type,
                     localPort: tunnel.localPort,
                     remoteHost: tunnel.remoteHost,
@@ -139,12 +145,12 @@ export function ImportSSHCommandModal({
                     <textarea
                         value={command}
                         onChange={(e) => setCommand(e.target.value)}
-                        placeholder="ssh -L 8080:localhost:80 -R 9000:localhost:3000 user@host..."
+                        placeholder="ssh -L 8080:localhost:80 -D 1080 -R 9000:localhost:3000 user@host..."
                         className="w-full h-32 px-3 py-2 text-sm font-mono bg-app-surface border border-app-border rounded-xl focus:outline-none focus:border-app-accent/50 resize-none placeholder:text-app-muted/30"
                         autoFocus
                     />
                     <p className="text-[10px] text-app-muted mt-2 px-1 opacity-70">
-                        Supports <code>-L</code> (Local) and <code>-R</code> (Remote) forwarding flags.
+                        Supports <code>-L</code> (Local), <code>-R</code> (Remote), and <code>-D</code> (SOCKS) flags.
                     </p>
                 </div>
 
@@ -197,17 +203,26 @@ export function ImportSSHCommandModal({
                                 {parseResult.tunnels.map((t, i) => (
                                     <div key={i} className="flex items-center gap-3 p-2 rounded bg-app-surface/50 border border-app-border/20 text-xs text-app-muted">
                                         <div className="flex items-center gap-1.5 font-mono">
-                                            <span className="text-app-text/90 font-bold">{t.type === 'local' ? t.localPort : t.remotePort}</span>
+                                            <span className="text-app-text/90 font-bold">
+                                                {t.type === 'remote' ? t.remotePort : t.localPort}
+                                            </span>
                                             <span className="text-app-muted/50">→</span>
                                             <span className="text-app-text/90 font-bold">
-                                                {t.type === 'local' ? `${t.remoteHost}:${t.remotePort}` : `localhost:${t.localPort}`}
+                                                {t.type === 'dynamic'
+                                                    ? 'SOCKS (any host)'
+                                                    : t.type === 'local'
+                                                        ? `${t.remoteHost}:${t.remotePort}`
+                                                        : `localhost:${t.localPort}`}
                                             </span>
                                         </div>
-                                        <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${t.type === 'remote'
-                                            ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                            : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                        <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${
+                                            t.type === 'dynamic'
+                                                ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20'
+                                                : t.type === 'remote'
+                                                    ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                                                    : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                                             }`}>
-                                            {t.type}
+                                            {t.type === 'dynamic' ? 'socks' : t.type}
                                         </span>
                                     </div>
                                 ))}

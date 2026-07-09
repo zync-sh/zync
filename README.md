@@ -210,6 +210,7 @@ sudo apt update && sudo apt install zync
 | [docs/VAULT.md](docs/VAULT.md) | Vault, credentials, Google sync |
 | [docs/TERMINAL.md](docs/TERMINAL.md) | Terminal system (IPC, renderer, lifecycle, settings) |
 | [docs/TERMINAL_GHOST.md](docs/TERMINAL_GHOST.md) | Ghost completions (inline, history, paths, suggestion engine) |
+| [docs/TUNNELS.md](docs/TUNNELS.md) | Port forwarding (local/remote, auto-start, sync, roadmap) |
 | [docs/SESSION_PERSISTENCE.md](docs/SESSION_PERSISTENCE.md) | Tab and terminal restore across restarts |
 | [docs/SETTINGS_SYSTEM.md](docs/SETTINGS_SYSTEM.md) | Global settings and `settings.json` |
 

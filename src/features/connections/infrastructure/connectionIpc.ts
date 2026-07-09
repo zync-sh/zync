@@ -77,6 +77,9 @@ export const connectIpc = async (config: ConnectionConfigPayload): Promise<Conne
 export const disconnectIpc = async (connectionId: string): Promise<void> =>
     window.ipcRenderer.invoke('ssh:disconnect', connectionId);
 
+export const transportLostIpc = async (connectionId: string): Promise<void> =>
+    window.ipcRenderer.invoke('ssh:transportLost', connectionId);
+
 export const disconnectVaultBackedIpc = async (): Promise<string[]> =>
     window.ipcRenderer.invoke('ssh:disconnectVaultBacked');
 export const getRemoteCwdIpc = async (connectionId: string): Promise<string> =>

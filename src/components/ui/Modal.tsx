@@ -8,8 +8,8 @@ import { Button } from './Button';
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title: string;
-  subtitle?: string;
+  title: ReactNode;
+  subtitle?: ReactNode;
   children: ReactNode;
   width?: string;
   className?: string;
@@ -103,12 +103,18 @@ export function Modal({
               className="absolute inset-0 bg-black/70 backdrop-blur-md"
             />
             <motion.div
+              layout
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ type: 'spring', duration: 0.2, bounce: 0.2 }}
+              transition={{
+                type: 'spring',
+                duration: 0.2,
+                bounce: 0.2,
+                layout: { duration: 0.35, ease: [0.32, 0.72, 0, 1] },
+              }}
               className={cn(
-                'relative w-full bg-app-panel backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden ring-1 ring-black/5 dark:ring-white/5',
+                'relative w-full bg-app-panel backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden ring-1 ring-black/5 dark:ring-white/5 transition-[max-width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]',
                 width,
                 className
               )}

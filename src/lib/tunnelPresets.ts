@@ -3,7 +3,7 @@ export interface TunnelPreset {
     name: string;
     icon: string; // Lucide icon name
     description: string;
-    type: 'local' | 'remote';
+    type: 'local' | 'remote' | 'dynamic';
     localPort: number;
     remoteHost: string;
     remotePort: number;
@@ -70,5 +70,15 @@ export const TUNNEL_PRESETS: TunnelPreset[] = [
         localPort: 443,
         remoteHost: 'localhost',
         remotePort: 443,
+    },
+    {
+        id: 'socks',
+        name: 'SOCKS Proxy',
+        icon: 'Globe',
+        description: 'Dynamic forward (ssh -D) — SOCKS5 on local port',
+        type: 'dynamic',
+        localPort: 1080,
+        remoteHost: '*',
+        remotePort: 0,
     },
 ];

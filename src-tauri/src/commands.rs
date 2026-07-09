@@ -15,7 +15,8 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
-use crate::tunnel::TunnelManager;
+use crate::tunnels::session_failure::{session_failure_channel, spawn_session_failure_watcher};
+use crate::tunnels::TunnelManager;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -448,13 +449,6 @@ fn data_path_from_raw_json(raw: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct TunnelStatusChange {
-    pub id: String,
-    pub status: String,
-    pub error: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CopyOperation {
     pub from: String,
@@ -485,13 +479,16 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(data_dir: std::path::PathBuf, app_handle: tauri::AppHandle) -> Self {
+        let (failure_tx, failure_rx) = session_failure_channel();
+        spawn_session_failure_watcher(app_handle.clone(), failure_rx);
+
         Self {
             app_handle,
             connections: Arc::new(Mutex::new(HashMap::new())),
             pty_manager: Arc::new(PtyManager::new()),
             file_system: Arc::new(FileSystem::new()),
             ssh_manager: Arc::new(SshManager::new()),
-            tunnel_manager: Arc::new(TunnelManager::new()),
+            tunnel_manager: Arc::new(TunnelManager::new(failure_tx)),
             snippets_manager: Arc::new(crate::snippets::SnippetsManager::new(data_dir.clone())),
             transfers: Arc::new(Mutex::new(HashMap::new())),
             agent_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -523,7 +520,7 @@ pub struct ConnectionHandle {
 async fn reconnect_connection(
     config: &ConnectionConfig,
     ssh_manager: &crate::ssh::SshManager,
-    tunnel_manager: &crate::tunnel::TunnelManager,
+    tunnel_manager: &crate::tunnels::TunnelManager,
 ) -> Result<ConnectionHandle, String> {
     let session = ssh_manager
         .connect(config.clone(), Arc::new(tunnel_manager.clone()))
@@ -1126,18 +1123,41 @@ pub async fn ssh_migrate_all_keys(app_handle: tauri::AppHandle) -> Result<usize,
     Ok(migrated_count)
 }
 
+/// Drop a dead SSH session after unexpected transport loss.
+/// Unlike `ssh_disconnect`, does not tear down terminal tabs — PTYs are already EOF or frontend-suspended.
 #[tauri::command]
-pub async fn ssh_disconnect(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    // First, close all associated PTYs to ensure tasks are aborted
+pub async fn ssh_transport_lost(
+    app: AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if let Err(error) = crate::tunnels::stop_tunnels_for_connections(&app, &state, &[id.clone()]).await {
+        eprintln!("[TUNNEL] stop on transport lost for {id}: {error}");
+    }
+
+    let mut connections = state.connections.lock().await;
+    connections.remove(&id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_disconnect(
+    app: AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     state
         .pty_manager
         .close_by_connection(&id)
         .await
         .map_err(|e| e.to_string())?;
 
+    if let Err(error) = crate::tunnels::stop_tunnels_for_connections(&app, &state, &[id.clone()]).await {
+        eprintln!("[TUNNEL] stop on disconnect for {id}: {error}");
+    }
+
     let mut connections = state.connections.lock().await;
     connections.remove(&id);
-    // Explicit close logic if needed, but drop handles largely work.
 
     Ok(())
 }
@@ -1162,7 +1182,7 @@ pub async fn ssh_disconnect_vault_backed(
         }
     }
 
-    if let Err(error) = stop_tunnels_for_connections(&app, &state, &ids).await {
+    if let Err(error) = crate::tunnels::stop_tunnels_for_connections(&app, &state, &ids).await {
         errors.push(format!("Tunnel stop failed: {error}"));
     }
 
@@ -1174,68 +1194,6 @@ pub async fn ssh_disconnect_vault_backed(
         Ok(ids)
     } else {
         Err(errors.join("; "))
-    }
-}
-
-async fn stop_tunnels_for_connections(
-    app: &AppHandle,
-    state: &AppState,
-    connection_ids: &[String],
-) -> Result<(), String> {
-    if connection_ids.is_empty() {
-        return Ok(());
-    }
-
-    let data_dir = get_data_dir(app);
-    let file_path = data_dir.join("tunnels.json");
-    if !file_path.exists() {
-        return Ok(());
-    }
-
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let saved_data: SavedTunnelsData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-    let connection_id_set: HashSet<&str> = connection_ids.iter().map(String::as_str).collect();
-    let tunnels = saved_data
-        .tunnels
-        .into_iter()
-        .filter(|t| connection_id_set.contains(t.connection_id.as_str()))
-        .collect::<Vec<_>>();
-
-    for tunnel in tunnels {
-        let internal_id = tunnel_internal_id(&tunnel);
-        let session = {
-            let connections = state.connections.lock().await;
-            connections
-                .get(&tunnel.connection_id)
-                .and_then(|c| c.session.clone())
-        };
-        let result = state
-            .tunnel_manager
-            .stop_tunnel(session, internal_id, tunnel.bind_address.clone())
-            .await;
-
-        let (status, error) = match result {
-            Ok(()) => ("stopped".to_string(), None),
-            Err(error) => ("error".to_string(), Some(error.to_string())),
-        };
-        let _ = app.emit(
-            "tunnel:status-change",
-            TunnelStatusChange {
-                id: tunnel.id,
-                status,
-                error,
-            },
-        );
-    }
-
-    Ok(())
-}
-
-fn tunnel_internal_id(tunnel: &SavedTunnel) -> String {
-    if tunnel.tunnel_type == "local" {
-        format!("local:{}:{}", tunnel.local_port, tunnel.remote_port)
-    } else {
-        format!("remote:{}:{}", tunnel.remote_port, tunnel.local_port)
     }
 }
 
@@ -3710,132 +3668,6 @@ pub async fn fs_exists(
 }
 
 #[tauri::command]
-pub async fn tunnel_start_local(
-    connection_id: String,
-    local_port: u16,
-    remote_host: String,
-    remote_port: u16,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let session = {
-        let connections = state.connections.lock().await;
-        connections
-            .get(&connection_id)
-            .and_then(|c| c.session.clone())
-            .ok_or_else(|| format!("Connection {} not found", connection_id))?
-    };
-
-    let res: anyhow::Result<String> = state
-        .tunnel_manager
-        .start_local_forwarding(
-            session,
-            "127.0.0.1".to_string(),
-            local_port,
-            remote_host,
-            remote_port,
-        )
-        .await;
-    res.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn tunnel_start_remote(
-    connection_id: String,
-    remote_port: u16,
-    local_host: String,
-    local_port: u16,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let session = {
-        let connections = state.connections.lock().await;
-        connections
-            .get(&connection_id)
-            .and_then(|c| c.session.clone())
-            .ok_or_else(|| format!("Connection {} not found", connection_id))?
-    };
-
-    let res: anyhow::Result<String> = state
-        .tunnel_manager
-        .start_remote_forwarding(
-            session,
-            "0.0.0.0".to_string(),
-            remote_port,
-            local_host,
-            local_port,
-        )
-        .await;
-    res.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn tunnel_stop(
-    app: AppHandle,
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    // 1. Load tunnel config to reconstruct ID
-    let data_dir = get_data_dir(&app);
-    let file_path = data_dir.join("tunnels.json");
-    if !file_path.exists() {
-        return Ok(()); // Nothing to stop
-    }
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let saved_data: SavedTunnelsData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-
-    let tunnel = saved_data
-        .tunnels
-        .into_iter()
-        .find(|t| t.id == id)
-        .ok_or_else(|| "Tunnel key not found".to_string())?;
-
-    // 2. Reconstruct internal ID
-    let internal_id = if tunnel.tunnel_type == "local" {
-        format!("local:{}:{}", tunnel.local_port, tunnel.remote_port)
-    } else {
-        format!("remote:{}:{}", tunnel.remote_port, tunnel.local_port)
-    };
-
-    let bind_address = tunnel.bind_address.clone();
-
-    // 3. Get session (needed for remote cancellation)
-    let session = {
-        let connections = state.connections.lock().await;
-        connections
-            .get(&tunnel.connection_id)
-            .and_then(|c| c.session.clone())
-    };
-
-    // 4. Stop
-    println!("[TUNNEL CMD] Stopping tunnel: internal_id={}", internal_id);
-    let res = state
-        .tunnel_manager
-        .stop_tunnel(session, internal_id, bind_address)
-        .await;
-
-    if let Err(ref e) = res {
-        let _ = app.emit(
-            "tunnel:status-change",
-            TunnelStatusChange {
-                id: id.clone(),
-                status: "error".to_string(),
-                error: Some(e.to_string()),
-            },
-        );
-    } else {
-        let _ = app.emit(
-            "tunnel:status-change",
-            TunnelStatusChange {
-                id: id.clone(),
-                status: "stopped".to_string(),
-                error: None,
-            },
-        );
-    }
-
-    res.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn window_is_maximized(app: AppHandle) -> bool {
     let Some(window) = app.get_webview_window("main") else {
         return false;
@@ -3886,253 +3718,6 @@ pub async fn window_close(app: AppHandle) -> Result<(), String> {
         .get_webview_window("main")
         .ok_or("Main window not found")?;
     window.close().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn tunnel_list(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    connection_id: String,
-) -> Result<Vec<SavedTunnel>, String> {
-    // let connection_id = connectionId; // Resolved: using snake_case directly
-    let data_dir = get_data_dir(&app);
-    let file_path = data_dir.join("tunnels.json");
-
-    if !file_path.exists() {
-        return Ok(vec![]);
-    }
-
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let saved_data: SavedTunnelsData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-
-    let mut tunnels: Vec<SavedTunnel> = saved_data
-        .tunnels
-        .into_iter()
-        .filter(|t| t.connection_id == connection_id)
-        .collect();
-
-    // Inject dynamic status
-    let local_listeners: tokio::sync::MutexGuard<
-        '_,
-        std::collections::HashMap<
-            String,
-            (tokio::task::AbortHandle, tokio::sync::broadcast::Sender<()>),
-        >,
-    > = state.tunnel_manager.local_listeners.lock().await;
-    let remote_forwards: tokio::sync::MutexGuard<
-        '_,
-        std::collections::HashMap<u16, (String, u16, String)>,
-    > = state.tunnel_manager.remote_forwards.lock().await;
-
-    for t in &mut tunnels {
-        let is_active = if t.tunnel_type == "local" {
-            let id = format!("local:{}:{}", t.local_port, t.remote_port);
-            local_listeners.contains_key(&id)
-        } else {
-            // remote maps u16 -> (host, port)
-            // Just check if the remote port is bound
-            remote_forwards.contains_key(&t.remote_port)
-        };
-
-        if is_active {
-            t.status = Some("active".to_string());
-        } else {
-            t.status = Some("stopped".to_string());
-        }
-    }
-
-    Ok(tunnels)
-}
-
-#[tauri::command]
-pub async fn tunnel_save(app: AppHandle, tunnel_val: serde_json::Value) -> Result<(), String> {
-    let mut tunnel: SavedTunnel = serde_json::from_value(tunnel_val).map_err(|e| e.to_string())?;
-    let data_dir = get_data_dir(&app);
-    if !data_dir.exists() {
-        std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    }
-    let file_path = data_dir.join("tunnels.json");
-
-    let _guard = crate::sync::domain_tunnels::TUNNELS_MUTATION_LOCK
-        .lock()
-        .map_err(|error| error.to_string())?;
-    let mut saved = crate::sync::domain_tunnels::load_saved_tunnels(&file_path)
-        .map_err(|error| error.to_string())?;
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-
-    if let Some(idx) = saved.tunnels.iter().position(|t| t.id == tunnel.id) {
-        tunnel.created_at = saved.tunnels[idx]
-            .created_at
-            .or(tunnel.created_at)
-            .or(Some(now_ms));
-        tunnel.updated_at = Some(now_ms);
-        saved.tunnels[idx] = tunnel;
-    } else {
-        tunnel.created_at = tunnel.created_at.or(Some(now_ms));
-        tunnel.updated_at = Some(now_ms);
-        saved.tunnels.push(tunnel);
-    }
-
-    crate::sync::domain_tunnels::write_saved_tunnels_atomic(&file_path, &saved)
-        .map_err(|error| error.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn tunnel_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let data_dir = get_data_dir(&app);
-    let file_path = data_dir.join("tunnels.json");
-
-    if !file_path.exists() {
-        return Ok(());
-    }
-
-    let _guard = crate::sync::domain_tunnels::TUNNELS_MUTATION_LOCK
-        .lock()
-        .map_err(|error| error.to_string())?;
-    let mut saved = crate::sync::domain_tunnels::load_saved_tunnels(&file_path)
-        .map_err(|error| error.to_string())?;
-
-    saved.tunnels.retain(|t| t.id != id);
-
-    crate::sync::domain_tunnels::write_saved_tunnels_atomic(&file_path, &saved)
-        .map_err(|error| error.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn tunnel_start(
-    app: AppHandle,
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    // 1. Load tunnel config
-    let data_dir = get_data_dir(&app);
-    let file_path = data_dir.join("tunnels.json");
-    if !file_path.exists() {
-        return Err("Tunnels file not found".to_string());
-    }
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let saved_data: SavedTunnelsData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-
-    let tunnel = saved_data
-        .tunnels
-        .into_iter()
-        .find(|t| t.id == id)
-        .ok_or_else(|| "Tunnel not found".to_string())?;
-
-    // 2. Get session
-    let session = {
-        let connections = state.connections.lock().await;
-        connections
-            .get(&tunnel.connection_id)
-            .and_then(|c| c.session.clone())
-            .ok_or_else(|| {
-                format!(
-                    "Connection {} not found or session closed",
-                    tunnel.connection_id
-                )
-            })?
-    };
-
-    let res = if tunnel.tunnel_type == "local" {
-        let bind_addr = tunnel
-            .bind_address
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-        state
-            .tunnel_manager
-            .start_local_forwarding(
-                session,
-                bind_addr,
-                tunnel.local_port,
-                tunnel.remote_host,
-                tunnel.remote_port,
-            )
-            .await
-    } else {
-        let bind_addr = tunnel
-            .bind_address
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-        state
-            .tunnel_manager
-            .start_remote_forwarding(
-                session,
-                bind_addr,
-                tunnel.remote_port,
-                tunnel.remote_host.clone(),
-                tunnel.local_port,
-            )
-            .await
-    };
-
-    if let Err(ref e) = res {
-        let _ = app.emit(
-            "tunnel:status-change",
-            TunnelStatusChange {
-                id: id.clone(),
-                status: "error".to_string(),
-                error: Some(e.to_string()),
-            },
-        );
-    } else {
-        let _ = app.emit(
-            "tunnel:status-change",
-            TunnelStatusChange {
-                id: id.clone(),
-                status: "active".to_string(),
-                error: None,
-            },
-        );
-    }
-
-    res.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn tunnel_get_all(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<SavedTunnel>, String> {
-    let data_dir = get_data_dir(&app);
-    let file_path = data_dir.join("tunnels.json");
-
-    if !file_path.exists() {
-        return Ok(vec![]);
-    }
-
-    let data = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let saved_data: SavedTunnelsData = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-
-    let mut tunnels = saved_data.tunnels;
-
-    // Inject dynamic status
-    let local_listeners = state.tunnel_manager.local_listeners.lock().await;
-    let remote_forwards = state.tunnel_manager.remote_forwards.lock().await;
-
-    for t in &mut tunnels {
-        let is_active = if t.tunnel_type == "local" {
-            let id = format!("local:{}:{}", t.local_port, t.remote_port);
-            local_listeners.contains_key(&id)
-        } else {
-            remote_forwards.contains_key(&t.remote_port)
-        };
-
-        if is_active {
-            t.status = Some("active".to_string());
-        } else {
-            t.status = Some("stopped".to_string());
-        }
-    }
-
-    Ok(tunnels)
 }
 
 #[tauri::command]

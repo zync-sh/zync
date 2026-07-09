@@ -31,6 +31,7 @@ import {
     terminalService,
 } from '../../lib/terminal';
 import { refreshAllCachedTerminalThemes } from '../terminal/terminalTheme';
+import { registerTunnelTransportLostListener } from '../../features/tunnels/application/tunnelTransportLost';
 
 
 // Side-effect imports — these register each modal into the registry at startup.
@@ -638,6 +639,8 @@ export function MainLayout({ children }: { children: ReactNode }) {
         });
         return () => terminalService.setCloseTabHandler(null);
     }, []);
+
+    useEffect(() => registerTunnelTransportLostListener(), []);
 
     const showWelcomeScreen = useAppStore(state => state.showWelcomeScreen);
     const isLoadingSettings = useAppStore(state => state.isLoadingSettings);

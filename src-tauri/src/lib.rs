@@ -12,7 +12,8 @@ mod ssh;
 mod ssh_config;
 mod ssh_parser;
 mod sync;
-pub mod tunnel;
+mod tunnels;
+pub use tunnels::{remote_forward_map_key, tunnel_runtime_id, TunnelManager};
 mod types;
 mod utils;
 mod vault;
@@ -123,6 +124,7 @@ pub fn run() {
             commands::ssh_extract_pem,
             commands::ssh_migrate_all_keys,
             commands::ssh_disconnect,
+            commands::ssh_transport_lost,
             commands::ssh_disconnect_vault_backed,
             commands::terminal_write,
             commands::terminal_navigate,
@@ -147,14 +149,15 @@ pub fn run() {
             commands::fs_copy_batch,
             commands::fs_rename_batch,
             commands::fs_exists,
-            commands::tunnel_get_all,
-            commands::tunnel_start_local,
-            commands::tunnel_start_remote,
-            commands::tunnel_stop,
-            commands::tunnel_list,
-            commands::tunnel_save,
-            commands::tunnel_delete,
-            commands::tunnel_start,
+            tunnels::commands::tunnel_get_all,
+            tunnels::commands::tunnel_start_local,
+            tunnels::commands::tunnel_start_remote,
+            tunnels::commands::tunnel_stop,
+            tunnels::commands::tunnel_list,
+            tunnels::commands::tunnel_save,
+            tunnels::commands::tunnel_delete,
+            tunnels::commands::tunnel_start,
+            tunnels::commands::tunnel_reconcile_connection,
             commands::window_is_maximized,
             commands::window_maximize,
             commands::window_minimize,

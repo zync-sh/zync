@@ -4,7 +4,7 @@ use russh::*;
 use russh_keys::*; // Re-adding this for key loading
 use std::sync::Arc;
 
-use crate::tunnel::TunnelManager;
+use crate::tunnels::TunnelManager;
 use crate::types::{AuthMethod, ConnectionConfig};
 use russh::client::Msg;
 use tokio::net::TcpStream;
@@ -12,6 +12,8 @@ use tokio::net::TcpStream;
 #[derive(Clone)]
 pub struct Client {
     pub tunnel_manager: Arc<TunnelManager>,
+    /// Zync connection id for scoping remote forward map lookups.
+    pub connection_id: String,
     pub kept_alive_session: Option<Arc<Box<client::Handle<Client>>>>,
     pub agent_keys: Arc<std::sync::Mutex<Vec<russh_keys::key::KeyPair>>>,
 }
@@ -20,6 +22,7 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("tunnel_manager", &"TunnelManager")
+            .field("connection_id", &self.connection_id)
             .field("kept_alive_session", &self.kept_alive_session.is_some())
             .field("agent_keys", &"Vec<KeyPair>")
             .finish()
@@ -108,12 +111,13 @@ impl client::Handler for Client {
             connected_address, connected_port
         );
 
+        let map_key = crate::tunnels::remote_forward_map_key(
+            &self.connection_id,
+            connected_port as u16,
+        );
         let target = {
-            let map: tokio::sync::MutexGuard<
-                '_,
-                std::collections::HashMap<u16, (String, u16, String)>,
-            > = self.tunnel_manager.remote_forwards.lock().await;
-            map.get(&(connected_port as u16)).cloned()
+            let map = self.tunnel_manager.remote_forwards.lock().await;
+            map.get(&map_key).cloned()
         };
 
         if let Some((target_host, target_port, _bind_addr)) = target {
@@ -294,7 +298,7 @@ impl SshManager {
     pub async fn connect(
         &self,
         config: ConnectionConfig,
-        tunnel_manager: Arc<crate::tunnel::TunnelManager>,
+        tunnel_manager: Arc<crate::tunnels::TunnelManager>,
     ) -> Result<client::Handle<Client>> {
         // Keep-alive: send a heartbeat every 60s to prevent NAT/firewall timeouts on idle sessions
         let client_config = client::Config {
@@ -329,6 +333,7 @@ impl SshManager {
             // 4. Create handler with agent keys
             let client_handler = Client {
                 tunnel_manager: tunnel_manager.clone(),
+                connection_id: config.id.clone(),
                 kept_alive_session: Some(Arc::new(Box::new(jump_session))),
                 agent_keys: self.agent_keys.clone(),
             };
@@ -347,6 +352,7 @@ impl SshManager {
         // Direct Connection Logic
         let client_handler = Client {
             tunnel_manager: tunnel_manager.clone(),
+            connection_id: config.id.clone(),
             kept_alive_session: None,
             agent_keys: self.agent_keys.clone(),
         };
