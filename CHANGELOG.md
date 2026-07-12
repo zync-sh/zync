@@ -18,8 +18,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Stale “Unlock Google encryption” on All Hosts**: Inventory gates on shared readiness after Sync & Backup unlock. ([c0c46a0])
 - **Theme-token warning banners**: Recovery key, Sync setup, Sync card, Vault secure-to-vault, and domain gate copy use `--color-app-*` (Zync themes via `data-theme`, not Tailwind `dark:`). ([c0c46a0])
 - **Secure-to-vault badge noise**: Missing key-file hosts no longer count as forever-unsecured. ([c0c46a0])
-- **Key-wrap download errors**: Transient provider failures are not misclassified as unrecoverable missing wrap. ([c0c46a0])
-- **Keep / materialize error handling**: Restore vs local reload failures separated; remote Keep actions clear busy state without unhandled rejections. ([5abc280], [f6a5e06])
+- **Key-wrap download / apply**: Only explicit missing-object means “no wrap”; wrong wrap version or provider is rejected; transient provider errors are not treated as missing wrap. ([c0c46a0], [9014826])
+- **Jump-host restore IDs**: Filtered Keep/restore chain uses normalized host ids for dedupe while preserving original casing for object names. ([9014826])
+- **Host inventory cache**: Scoped by provider account (email); cleared on disconnect so a previous Google account’s remote list cannot linger. ([9014826])
+- **Sync domain actions**: Google OAuth connect in-flight no longer disables Upload/Restore when encryption is already ready. ([9014826])
+- **Keep / materialize error handling**: Restore vs local reload failures separated; success toast suppressed when list reload fails; remote Keep actions clear busy state without unhandled rejections. ([5abc280], [f6a5e06], [9014826])
 
 ## [2.21.0] - 2026-07-09
 
