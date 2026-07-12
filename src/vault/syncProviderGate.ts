@@ -1,5 +1,10 @@
 import type { SyncCollectionStatus, SyncProviderStatus } from './syncIpc';
 
+/**
+ * Pure readiness model for a sync provider.
+ * Live state is owned by `useSyncReadinessStore` — do not re-derive
+ * connected/configured/keyCached separately in UI modules.
+ */
 export interface ProviderReadiness {
   isConnected: boolean;
   isEncryptionConfigured: boolean;

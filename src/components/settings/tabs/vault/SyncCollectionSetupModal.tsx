@@ -214,7 +214,10 @@ export function SyncCollectionSetupModal({
         )}
 
         {remoteDiscovery.status === 'error' && (
-          <p className="text-xs text-amber-300/85 leading-relaxed" role="alert">
+          <p
+            className="rounded-lg border border-[var(--color-app-warning)]/30 bg-[var(--color-app-warning)]/12 px-3 py-2 text-xs leading-relaxed text-[var(--color-app-text)]"
+            role="alert"
+          >
             {remoteDiscovery.message}
           </p>
         )}
@@ -290,7 +293,7 @@ export function SyncCollectionSetupModal({
           </p>
         )}
         {!hasLocalVaultConfigured && (
-          <p className="text-xs text-amber-300/85 leading-relaxed">
+          <p className="rounded-lg border border-[var(--color-app-warning)]/30 bg-[var(--color-app-warning)]/12 px-3 py-2 text-xs leading-relaxed text-[var(--color-app-text)]">
             Local Vault is not set up yet, so Google app-data sync will use a separate encryption passphrase.
             You can still sync hosts, tunnels, snippets, and settings. Vault credentials remain disabled until the local vault exists.
           </p>

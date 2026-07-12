@@ -1,6 +1,7 @@
-import { Check, Cloud, Shield } from 'lucide-react';
+import { Check, Shield } from 'lucide-react';
 import { Button } from '../../../ui/Button';
 import { cn } from '../../../../lib/utils';
+import { GoogleMarkIcon } from '../../../icons/providerIcons';
 
 interface SyncProviderSetupStepsProps {
   isConnected: boolean;
@@ -16,9 +17,9 @@ interface SyncProviderSetupStepsProps {
 }
 
 const STEPS = [
-  { key: 'connect', label: 'Connect', detail: 'Google Drive', icon: Cloud },
-  { key: 'setup', label: 'Encrypt', detail: 'Set up key', icon: Shield },
-  { key: 'unlock', label: 'Unlock', detail: 'This device', icon: Shield },
+  { key: 'connect', label: 'Connect', detail: 'Google Drive', icon: 'google' as const },
+  { key: 'setup', label: 'Encrypt', detail: 'Set up key', icon: 'shield' as const },
+  { key: 'unlock', label: 'Unlock', detail: 'This device', icon: 'shield' as const },
 ] as const;
 
 export function SyncProviderSetupSteps({
@@ -63,7 +64,6 @@ export function SyncProviderSetupSteps({
 
       <div className="mt-4 grid grid-cols-3 gap-2">
         {STEPS.map((step, index) => {
-          const Icon = step.icon;
           const isDone = done[index];
           const isActive = index === currentIndex && !isDone;
           return (
@@ -86,7 +86,13 @@ export function SyncProviderSetupSteps({
                       : 'border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/40 text-[var(--color-app-muted)]',
                 )}
               >
-                {isDone ? <Check size={14} /> : <Icon size={14} />}
+                {isDone ? (
+                  <Check size={14} />
+                ) : step.icon === 'google' ? (
+                  <GoogleMarkIcon size={14} variant={isActive ? 'color' : 'mono'} />
+                ) : (
+                  <Shield size={14} />
+                )}
               </div>
               <p className="mt-2 text-[11px] font-semibold text-[var(--color-app-text)]">{step.label}</p>
               <p className="text-[10px] text-[var(--color-app-muted)]">{step.detail}</p>

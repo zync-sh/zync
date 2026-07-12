@@ -1,4 +1,4 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useState } from 'react';
 import {
   syncIpc,
   type SyncCollectionStatus,
@@ -23,7 +23,8 @@ interface UseConnectionsRestoreOptions {
   googleSync: SyncProviderStatus | null;
   googleCollection: SyncCollectionStatus | null;
   showToast: (type: ToastType, message: string) => void;
-  setGoogleSync: Dispatch<SetStateAction<SyncProviderStatus | null>>;
+  /** Shared readiness store patch (lastSync / clear lastError). */
+  patchGoogleSync: (patch: Partial<SyncProviderStatus>) => void;
   onLoadConnections: () => Promise<void>;
   loadGoogleSync: () => Promise<void>;
   onReloadTunnels?: () => Promise<void>;
@@ -35,7 +36,7 @@ export function useConnectionsRestore({
   googleSync,
   googleCollection,
   showToast,
-  setGoogleSync,
+  patchGoogleSync,
   onLoadConnections,
   loadGoogleSync,
   onReloadTunnels,
@@ -71,16 +72,11 @@ export function useConnectionsRestore({
     setIsRestoringConnections(true);
     try {
       const result = await syncIpc.connectionsRestore('google', normalizedArgs);
-      setGoogleSync(prev =>
-        prev
-          ? {
-              ...prev,
-              lastSync: result.syncedAt,
-              lastError: undefined,
-              lastErrorCode: undefined,
-            }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await onLoadConnections();
       await loadGoogleSync();
       await onReloadTunnels?.();
@@ -109,7 +105,7 @@ export function useConnectionsRestore({
     onLoadConnections,
     onReloadSnippets,
     onReloadTunnels,
-    setGoogleSync,
+    patchGoogleSync,
     showToast,
   ]);
 

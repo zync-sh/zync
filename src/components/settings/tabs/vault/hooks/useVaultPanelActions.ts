@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { vaultIpc, type SecureToVaultPreview } from '../../../../../vault/ipc';
 import {
@@ -6,18 +6,19 @@ import {
   syncIpc,
   type SyncDomainPolicy,
   type SyncCollectionSetupArgs,
-  type SyncCollectionStatus,
   type SyncCollectionUnlockArgs,
   type SyncRestoreConflictItem,
   type SyncRestorePreviewResult,
-  type SyncProviderStatus,
 } from '../../../../../vault/syncIpc';
 import { parseSyncInvokeError } from '../../../../../vault/syncError';
 import {
   getProviderActionBlockedMessage,
-  getProviderReadiness,
   type ProviderSyncAction,
 } from '../../../../../vault/syncProviderGate';
+import {
+  ensureSyncReadinessListener,
+  useSyncReadinessStore,
+} from '../../../../../vault/useSyncReadinessStore';
 import { useConnectionsRestore } from './useConnectionsRestore';
 import { disconnectVaultBackedIpc } from '../../../../../features/connections/infrastructure/connectionIpc';
 import type { VaultItem } from '../../../../../vault/ipc';
@@ -294,9 +295,17 @@ export function useVaultPanelActions({
     }
   };
 
-  // ── Google sync ───────────────────────────────────────────────────────────
-  const [googleSync, setGoogleSync] = useState<SyncProviderStatus | null>(null);
-  const [googleCollection, setGoogleCollection] = useState<SyncCollectionStatus | null>(null);
+  // ── Google sync (shared readiness store — same as All Hosts) ──────────────
+  useEffect(() => {
+    ensureSyncReadinessListener();
+  }, []);
+  const googleSync = useSyncReadinessStore(s => s.oauth);
+  const googleCollection = useSyncReadinessStore(s => s.collection);
+  const readiness = useSyncReadinessStore(s => s.readiness);
+  const setGoogleSync = useSyncReadinessStore(s => s.setOauth);
+  const setGoogleCollection = useSyncReadinessStore(s => s.setCollection);
+  const patchGoogleSync = useSyncReadinessStore(s => s.patchOauth);
+  const refreshSyncReadiness = useSyncReadinessStore(s => s.refresh);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSyncingVault, setIsSyncingVault] = useState(false);
   const [isRestoringVault, setIsRestoringVault] = useState(false);
@@ -324,37 +333,31 @@ export function useVaultPanelActions({
 
   const ensureProviderAction = useCallback(
     (action: ProviderSyncAction, subject: string): boolean => {
-      const blockedMessage = getProviderActionBlockedMessage(
-        getProviderReadiness(googleSync, googleCollection),
-        action,
-        subject,
-      );
+      const blockedMessage = getProviderActionBlockedMessage(readiness, action, subject);
       if (blockedMessage) {
         showToast('error', blockedMessage);
         return false;
       }
       return true;
     },
-    [googleCollection, googleSync, showToast],
+    [readiness, showToast],
   );
 
   const loadGoogleSync = useCallback(async () => {
     try {
-      const status = await syncIpc.status('google');
-      setGoogleSync(status);
+      await refreshSyncReadiness('google');
     } catch (error) {
       console.warn('[Vault] Failed to load Google sync status:', error);
     }
-  }, []);
+  }, [refreshSyncReadiness]);
 
   const loadGoogleCollection = useCallback(async () => {
     try {
-      const status = await syncIpc.collectionStatus('google');
-      setGoogleCollection(status);
+      await refreshSyncReadiness('google');
     } catch (error) {
       console.warn('[Vault] Failed to load Google encryption status:', error);
     }
-  }, []);
+  }, [refreshSyncReadiness]);
 
   const handleSetupGoogleCollection = async (args: SyncCollectionSetupArgs) => {
     setIsSettingUpCollection(true);
@@ -498,7 +501,7 @@ export function useVaultPanelActions({
     setIsSyncingVault(true);
     try {
       const result = await syncIpc.uploadCredentials('google');
-      setGoogleSync(prev => (prev ? { ...prev, lastSync: result.syncedAt } : prev));
+      patchGoogleSync({ lastSync: result.syncedAt });
       await loadGoogleSync();
       showToast(
         result.uploaded > 0 ? 'success' : 'info',
@@ -612,22 +615,15 @@ export function useVaultPanelActions({
   };
 
   const handleSyncCredentialItem = async (itemId: string, label: string) => {
-    if (!googleSync?.connected) {
-      showToast('error', 'Connect Google Drive before syncing credentials.');
-      return;
-    }
-    if (!googleCollection?.configured) {
-      showToast('error', 'Set up Google encryption before syncing credentials.');
-      return;
-    }
+    if (!ensureProviderAction('sync', 'credentials')) return;
     setSyncingItemId(itemId);
     try {
       const result = await syncIpc.uploadCredential('google', { itemId });
-      setGoogleSync(prev =>
-        prev
-          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await loadGoogleSync();
       showToast('success', `Synced "${label}" to Google (${result.logicalId.slice(0, 8)}).`);
     } catch (error) {
@@ -655,11 +651,11 @@ export function useVaultPanelActions({
         return;
       }
       const result = await syncIpc.hostsUpload('google', { includeAll });
-      setGoogleSync(prev =>
-        prev
-          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await onLoadConnections();
       await loadGoogleSync();
       const syncedCount = result.uploaded;
@@ -694,7 +690,7 @@ export function useVaultPanelActions({
     googleSync,
     googleCollection,
     showToast,
-    setGoogleSync,
+    patchGoogleSync,
     onLoadConnections,
     loadGoogleSync,
     onReloadTunnels,
@@ -719,11 +715,11 @@ export function useVaultPanelActions({
     setIsRestoringHosts(true);
     try {
       const result = await syncIpc.hostsRestore('google');
-      setGoogleSync(prev =>
-        prev
-          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await onLoadConnections();
       await loadGoogleSync();
       const changed = result.restored + result.updated;
@@ -770,11 +766,11 @@ export function useVaultPanelActions({
           : domain === 'snippets'
             ? await syncIpc.snippetsUpload('google')
             : await syncIpc.settingsUpload('google');
-      setGoogleSync(prev =>
-        prev
-          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await loadGoogleSync();
       showToast(
         'success',
@@ -807,11 +803,11 @@ export function useVaultPanelActions({
           : domain === 'snippets'
             ? await syncIpc.snippetsRestore('google', snippetsArgs ?? {})
             : await syncIpc.settingsRestore('google');
-      setGoogleSync(prev =>
-        prev
-          ? { ...prev, lastSync: result.syncedAt, lastError: undefined, lastErrorCode: undefined }
-          : prev,
-      );
+      patchGoogleSync({
+        lastSync: result.syncedAt,
+        lastError: undefined,
+        lastErrorCode: undefined,
+      });
       await loadGoogleSync();
       if (domain === 'tunnels') {
         await onReloadTunnels?.();

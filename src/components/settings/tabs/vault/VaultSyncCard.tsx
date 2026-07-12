@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
-import { ChevronDown, Cloud, LogOut, RefreshCw, Shield } from 'lucide-react';
+import { ChevronDown, LogOut, RefreshCw, Shield } from 'lucide-react';
+import { GoogleMarkIcon } from '../../../icons/providerIcons';
 import type {
   SyncCollectionStatus,
   SyncConnectionsRestoreArgs,
@@ -86,9 +87,9 @@ function CollectionManagementSection({
 }: CollectionManagementSectionProps) {
   if (!googleCollection?.configured) {
     return (
-      <div className="mb-2 flex flex-col gap-2 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--color-app-warning)]/30 bg-[var(--color-app-warning)]/12 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-amber-200">
+          <p className="text-xs font-semibold text-[var(--color-app-text)]">
             Google encryption is not set up
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-app-muted)]">
@@ -116,9 +117,9 @@ function CollectionManagementSection({
 
   if (!googleCollection.keyCached) {
     return (
-      <div className="mb-2 flex flex-col gap-2 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-2 flex flex-col gap-2 rounded-lg border border-[var(--color-app-warning)]/30 bg-[var(--color-app-warning)]/12 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-amber-200">
+          <p className="text-xs font-semibold text-[var(--color-app-text)]">
             Google encryption is locked
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-app-muted)]">
@@ -246,9 +247,9 @@ export function VaultSyncCard({
   const googleStatusTone = googleSync?.connected
     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
     : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)] border-[var(--color-app-border)]/60';
+  // Domain ops only — Google OAuth connect (isSyncing) must not block Upload/Restore.
   const isDomainActionInFlight =
-    isSyncing
-    || isSyncingVault
+    isSyncingVault
     || isRestoringVault
     || isSyncingHosts
     || isRestoringHosts
@@ -265,15 +266,16 @@ export function VaultSyncCard({
     || isSettingUpCollection
     || isUnlockingCollection
     || isLockingCollection
-    || isRegeneratingCollectionRecoveryKey;
+    || isRegeneratingCollectionRecoveryKey
+    || isSyncing; // still block while OAuth connect is running
   const isProviderDomainActionDisabled =
     isCollectionActionBlocked
     || !googleCollection?.configured
     || !googleCollection?.keyCached;
   const providerReadiness = getProviderReadiness(googleSync, googleCollection);
-  const providerGateReason = getProviderGateReason(providerReadiness, {
-    isActionBlocked: isCollectionActionBlocked,
-  });
+  // Only show setup/unlock guidance here — not "finish current action" (that was blocking
+  // restore when encryption was already ready and confused users).
+  const providerGateReason = getProviderGateReason(providerReadiness);
   const isProviderReady = providerReadiness.isProviderReady;
   const encryptionHelpId = useId();
   const [encryptionHelpOpen, setEncryptionHelpOpen] = useState(false);
@@ -286,12 +288,14 @@ export function VaultSyncCard({
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <div className={cn(
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-              googleSync?.connected
-                ? 'bg-blue-500/15 text-blue-400'
-                : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)]',
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border',
+              'border-[var(--color-app-border)]/50 bg-[var(--color-app-surface)]',
+              !googleSync?.connected && 'text-[var(--color-app-muted)]',
             )}>
-              <Cloud size={16} />
+              <GoogleMarkIcon
+                size={18}
+                variant={googleSync?.connected ? 'color' : 'mono'}
+              />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-[var(--color-app-text)]">Google Drive</p>
@@ -339,7 +343,11 @@ export function VaultSyncCard({
               disabled={isCollectionActionBlocked}
               className="gap-1.5 shrink-0"
             >
-              {isSyncing ? <RefreshCw size={13} className="animate-spin" /> : <Cloud size={13} />}
+              {isSyncing ? (
+                <RefreshCw size={13} className="animate-spin" />
+              ) : (
+                <GoogleMarkIcon size={14} variant="mono" className="opacity-90" />
+              )}
               Connect
             </Button>
           )}
@@ -415,7 +423,7 @@ export function VaultSyncCard({
               />
 
             {!hasVaultConfigured && (
-              <p className="text-[11px] leading-relaxed text-amber-400/85">
+              <p className="text-[11px] leading-relaxed text-[var(--color-app-muted)]">
                 Local vault is not set up. App-data domains can sync with a custom Google sync passphrase; vault credential sync/restore stays disabled until you create the local vault.
               </p>
             )}
@@ -458,7 +466,7 @@ export function VaultSyncCard({
               Domain sync stores encrypted app data per category. Vault credential sync stores item-level records; full vault backup stays a separate disaster-recovery path.
             </p>
             {!googleSync?.connected && (
-              <p className="text-[11px] leading-relaxed text-amber-400/75">
+              <p className="text-[11px] leading-relaxed text-[var(--color-app-muted)]">
                 Tip: on the Google sign-in screen, check the Drive checkbox — Google requires explicit consent for storage access.
               </p>
             )}

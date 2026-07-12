@@ -315,20 +315,22 @@ export function VaultTab({ focusedProfileId = DEFAULT_VAULT_PROFILE_ID }: VaultT
         />
       </div>
 
-      {/* Secure-to-vault banner */}
+      {/* Secure-to-vault banner — app theme tokens (data-theme, not Tailwind dark:) */}
       {isUnlocked && securableCandidates.length > 0 && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-4">
+        <div className="rounded-xl border border-[var(--color-app-warning)]/30 bg-[var(--color-app-warning)]/12 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold text-amber-300">Unsecured credentials detected</p>
-              <p className="text-xs text-amber-300/70 mt-1 leading-relaxed">
+              <p className="text-sm font-semibold text-[var(--color-app-text)]">
+                Unsecured credentials detected
+              </p>
+              <p className="text-xs text-[var(--color-app-muted)] mt-1 leading-relaxed">
                 {securableCandidates.length} connection
                 {securableCandidates.length > 1 ? 's have' : ' has'} credentials stored in
                 plaintext. Secure them with vault encryption at rest.
               </p>
               {((panel.securePreview?.alreadySecured ?? 0) > 0 ||
                 (panel.securePreview?.skippedNoFile ?? 0) > 0) && (
-                <p className="text-[11px] text-amber-300/60 mt-1.5 leading-relaxed">
+                <p className="text-[11px] text-[var(--color-app-muted)]/80 mt-1.5 leading-relaxed">
                   {panel.securePreview?.alreadySecured ?? 0} already use vault auth
                   {(panel.securePreview?.skippedNoFile ?? 0) > 0
                     ? ` · ${panel.securePreview?.skippedNoFile ?? 0} skipped (key file missing)`

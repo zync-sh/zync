@@ -86,7 +86,9 @@ export function SyncDomainRow({
             {domainStatusCopy(status)}
           </p>
           {gateMessage && (
-            <p className="mt-1.5 text-[10px] leading-relaxed text-amber-300/80">{gateMessage}</p>
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-app-muted)]">
+              {gateMessage}
+            </p>
           )}
         </div>
 

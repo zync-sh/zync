@@ -350,7 +350,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         if (confirmed) {
             useAppStore.getState().clearConnections();
-            showToast('info', 'Connections cleared.');
+            showToast(
+                'info',
+                'Local connections cleared. Provider host list was also cleared for this session — refresh under All Hosts to load Google hosts again.',
+            );
         }
     };
     const getTabIndex = (tab: Tab) => (activeTab === tab ? 0 : -1);

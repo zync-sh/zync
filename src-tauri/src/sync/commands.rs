@@ -1,7 +1,8 @@
 use super::collection::{
-    clear_collection_key_cache, enforce_collection_key_cache_ttl, has_recovery_key_slot,
-    is_collection_key_cached, load_collection_key, load_manifest, regenerate_recovery_key,
-    save_manifest, set_collection_key_cache_ttl, setup_manifest, SYNC_COLLECTION_KEY_CACHE_TTL_SECS,
+    clear_collection_key_cache, collection_key_wrap_object_name, enforce_collection_key_cache_ttl,
+    has_recovery_key_slot, is_collection_key_cached, load_collection_key, load_manifest,
+    regenerate_recovery_key, remote_key_wrap_from_manifest, save_manifest, set_collection_key_cache_ttl,
+    setup_manifest, RemoteCollectionKeyWrapV1, SYNC_COLLECTION_KEY_CACHE_TTL_SECS,
     unlock_collection_key_with_passphrase, unlock_collection_key_with_recovery_key,
 };
 use super::domain_hosts::{apply_hosts_restore_records, load_hosts_sync_records, HostSyncRecord};
@@ -15,7 +16,7 @@ use super::profiles::{get_profile, now_secs, upsert_profile};
 use super::provider::{validate_provider_contract, ProviderUploadRecord, VaultProviderV1};
 use super::providers::google::{legacy_google_token_snapshot, GoogleVaultProvider};
 use super::types::{
-    ProviderCapabilities, ProviderStatusSnapshot, SyncCollectionDiscoverResult,
+    ProviderCapabilities, ProviderCredentialObject, ProviderStatusSnapshot, SyncCollectionDiscoverResult,
     SyncCollectionManifest, SyncCollectionSetupArgs, SyncCollectionSetupResult, SyncCollectionStatus,
     SyncCollectionUnlockArgs, SyncDomain,
     SyncDomainPolicy, SyncDomainStatus, SyncError, SyncKeyPolicyMode, SyncPolicyMode, SyncProfile, SyncProviderKind,
@@ -894,6 +895,53 @@ struct RemoteHostCollectResult {
     records: Vec<(HostSyncRecord, u64)>,
 }
 
+/// Resolve which provider host objects to download.
+/// When a logical-id filter is present, download only those named files (O(filter)),
+/// not every host in the collection (was O(all hosts) — made Keep-and-open very slow).
+fn host_objects_for_collect(
+    collection_id: &str,
+    logical_id_filter: Option<&HashSet<String>>,
+    listed: Vec<ProviderCredentialObject>,
+) -> Vec<ProviderCredentialObject> {
+    if let Some(filter) = logical_id_filter {
+        if !filter.is_empty() {
+            return filter
+                .iter()
+                .map(|logical_id| ProviderCredentialObject {
+                    object_name: hosts_object_name(collection_id, logical_id),
+                    object_id: None,
+                })
+                .collect();
+        }
+    }
+    listed
+        .into_iter()
+        .filter(|object| is_domain_object_name(&object.object_name, "hosts", ".zhost"))
+        .collect()
+}
+
+fn credential_objects_for_restore(
+    collection_id: &str,
+    requested_logical_ids: Option<&HashSet<String>>,
+    listed: Vec<ProviderCredentialObject>,
+) -> Vec<ProviderCredentialObject> {
+    if let Some(filter) = requested_logical_ids {
+        if !filter.is_empty() {
+            return filter
+                .iter()
+                .map(|logical_id| ProviderCredentialObject {
+                    object_name: credential_object_name(collection_id, logical_id),
+                    object_id: None,
+                })
+                .collect();
+        }
+    }
+    listed
+        .into_iter()
+        .filter(|object| is_credential_object_name(&object.object_name))
+        .collect()
+}
+
 async fn collect_remote_host_records(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -902,10 +950,22 @@ async fn collect_remote_host_records(
     secret_key: &SecretKey,
     logical_id_filter: Option<&HashSet<String>>,
 ) -> Result<RemoteHostCollectResult, String> {
-    let remote_objects = provider_impl
-        .list_collection_records(app, &manifest.sync_collection_id)
-        .await
-        .map_err(|e| sync_error_to_string(&e))?;
+    // Full listing only when we need every host (inventory / unfiltered restore).
+    // Filtered restore constructs object names and downloads those files only.
+    let listed = if logical_id_filter.map(|f| !f.is_empty()).unwrap_or(false) {
+        Vec::new()
+    } else {
+        provider_impl
+            .list_collection_records(app, &manifest.sync_collection_id)
+            .await
+            .map_err(|e| sync_error_to_string(&e))?
+    };
+
+    let remote_objects = host_objects_for_collect(
+        &manifest.sync_collection_id,
+        logical_id_filter,
+        listed,
+    );
 
     let mut scanned = 0u64;
     let mut skipped = 0u64;
@@ -913,9 +973,6 @@ async fn collect_remote_host_records(
     let mut records = Vec::<(HostSyncRecord, u64)>::new();
 
     for object in remote_objects {
-        if !is_domain_object_name(&object.object_name, "hosts", ".zhost") {
-            continue;
-        }
         scanned = scanned.saturating_add(1);
         let payload = match provider_impl.read_credential_record(app, &object).await {
             Ok(bytes) => bytes,
@@ -1455,20 +1512,29 @@ async fn restore_credentials_from_provider_records(
 ) -> Result<CredentialRestoreStats, String> {
     ensure_unlocked_vault_for_credential_restore(vault, "provider credentials").await?;
 
-    let remote_objects = provider_impl
-        .list_credential_records(app, &manifest.sync_collection_id)
-        .await
-        .map_err(|error| {
-            record_sync_error(provider_data_dir, kind, error.code, error.message.clone());
-            sync_error_to_string(&error)
-        })?;
+    // When restoring specific credential ids (e.g. Keep-and-open), skip full Drive
+    // listing + download of every .zcred — fetch only the named objects.
+    let listed = if requested_logical_ids.map(|f| !f.is_empty()).unwrap_or(false) {
+        Vec::new()
+    } else {
+        provider_impl
+            .list_credential_records(app, &manifest.sync_collection_id)
+            .await
+            .map_err(|error| {
+                record_sync_error(provider_data_dir, kind, error.code, error.message.clone());
+                sync_error_to_string(&error)
+            })?
+    };
+
+    let remote_objects = credential_objects_for_restore(
+        &manifest.sync_collection_id,
+        requested_logical_ids,
+        listed,
+    );
 
     let mut stats = CredentialRestoreStats::default();
 
     for object in remote_objects {
-        if !is_credential_object_name(&object.object_name) {
-            continue;
-        }
         stats.scanned = stats.scanned.saturating_add(1);
 
         let payload = match provider_impl.read_credential_record(app, &object).await {
@@ -2014,30 +2080,98 @@ async fn prepare_connections_restore_scope(
     host_logical_ids: Option<Vec<String>>,
     error_code: &'static str,
 ) -> Result<ConnectionsRestoreScope, String> {
-    let logical_id_filter = normalize_host_logical_id_filter(host_logical_ids);
-    let collected = collect_remote_host_records(
-        provider_impl,
-        app,
-        kind,
-        manifest,
-        secret_key,
-        logical_id_filter.as_ref(),
-    )
-    .await
-    .map_err(|message| {
-        record_sync_error(provider_data_dir, kind, error_code, message.clone());
-        message
-    })?;
-    let records = collected
-        .records
-        .into_iter()
-        .map(|(record, _revision)| record)
-        .collect::<Vec<_>>();
+    let initial_filter = normalize_host_logical_id_filter(host_logical_ids);
+    let local_ids = local_host_connection_id_set(provider_data_dir).unwrap_or_default();
+
+    // Unfiltered restore: single full collect (existing behavior).
+    if initial_filter.is_none() {
+        let collected = collect_remote_host_records(
+            provider_impl,
+            app,
+            kind,
+            manifest,
+            secret_key,
+            None,
+        )
+        .await
+        .map_err(|message| {
+            record_sync_error(provider_data_dir, kind, error_code, message.clone());
+            message
+        })?;
+        let records = collected
+            .records
+            .into_iter()
+            .map(|(record, _revision)| record)
+            .collect::<Vec<_>>();
+        return Ok(ConnectionsRestoreScope {
+            records,
+            scanned: collected.scanned,
+            skipped: collected.skipped,
+            failed: collected.failed,
+        });
+    }
+
+    // Filtered restore (Keep / Keep-and-open): also pull jump-host chain so connect works.
+    let mut pending: HashSet<String> = initial_filter.unwrap_or_default();
+    let mut fetched: HashSet<String> = HashSet::new();
+    let mut by_logical_id: HashMap<String, HostSyncRecord> = HashMap::new();
+    let mut scanned = 0u64;
+    let mut skipped = 0u64;
+    let mut failed = 0u64;
+
+    for _depth in 0..10 {
+        let to_fetch: HashSet<String> = pending
+            .difference(&fetched)
+            .cloned()
+            .collect();
+        if to_fetch.is_empty() {
+            break;
+        }
+
+        let collected = collect_remote_host_records(
+            provider_impl,
+            app,
+            kind,
+            manifest,
+            secret_key,
+            Some(&to_fetch),
+        )
+        .await
+        .map_err(|message| {
+            record_sync_error(provider_data_dir, kind, error_code, message.clone());
+            message
+        })?;
+
+        scanned = scanned.saturating_add(collected.scanned);
+        skipped = skipped.saturating_add(collected.skipped);
+        failed = failed.saturating_add(collected.failed);
+
+        pending.clear();
+        for (record, _revision) in collected.records {
+            fetched.insert(record.logical_id.clone());
+            if let Some(jump_id) = record
+                .jump_server_id
+                .as_ref()
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty())
+            {
+                let jump_key = normalize_host_connection_id(&jump_id);
+                let already_local = local_ids.contains(&jump_key) || local_ids.contains(&jump_id);
+                let already_batch =
+                    fetched.contains(&jump_id) || by_logical_id.contains_key(&jump_id);
+                if !already_local && !already_batch {
+                    pending.insert(jump_id);
+                }
+            }
+            by_logical_id.insert(record.logical_id.clone(), record);
+        }
+    }
+
     Ok(ConnectionsRestoreScope {
-        records,
-        scanned: collected.scanned,
-        skipped: collected.skipped,
-        failed: collected.failed,
+        records: by_logical_id.into_values().collect(),
+        scanned,
+        skipped,
+        failed,
     })
 }
 
@@ -2747,6 +2881,33 @@ pub async fn sync_collection_setup(
         None
     };
 
+    // Passphrase recovery after local wipe: download key-wrap blob from Drive first.
+    // Ok(None) = wrap not found (older backups). Err = propagate so callers see
+    // network/auth failures instead of sync_collection_key_unrecoverable.
+    let remote_key_wrap = if existing_manifest.is_none() {
+        if let Some(collection_id) = discovered_sync_collection_id.as_deref() {
+            match download_remote_collection_key_wrap(
+                provider_impl.as_ref(),
+                &app,
+                collection_id,
+            )
+            .await
+            {
+                Ok(wrap) => wrap,
+                Err(error) => {
+                    eprintln!(
+                        "[sync] Failed to download collection key wrap from provider: {error}"
+                    );
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let outcome = setup_manifest(
         &provider_data_dir,
         kind,
@@ -2754,14 +2915,71 @@ pub async fn sync_collection_setup(
         &passphrase,
         args.has_recovery_key,
         discovered_sync_collection_id,
+        remote_key_wrap,
     )
     .map_err(|e| sync_error_to_string(&e))?;
+
+    // Always push wrap to Drive so future devices/resets can recover with passphrase.
+    if let Err(error) =
+        upload_remote_collection_key_wrap(provider_impl.as_ref(), &app, &outcome.manifest).await
+    {
+        eprintln!(
+            "[sync] Failed to upload collection key wrap to provider (passphrase recovery may not work after wipe): {}",
+            error
+        );
+    }
 
     let status = collection_status_from_manifest(kind, Some(outcome.manifest));
     Ok(SyncCollectionSetupResult {
         status,
         recovery_key: outcome.recovery_key,
     })
+}
+
+async fn download_remote_collection_key_wrap(
+    provider_impl: &dyn VaultProviderV1,
+    app: &tauri::AppHandle,
+    sync_collection_id: &str,
+) -> Result<Option<RemoteCollectionKeyWrapV1>, String> {
+    let object_name = collection_key_wrap_object_name(sync_collection_id);
+    let object = ProviderCredentialObject {
+        object_name: object_name.clone(),
+        object_id: None,
+    };
+    let bytes = match provider_impl.read_credential_record(app, &object).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.code == "provider_object_not_found" => return Ok(None),
+        Err(error) => {
+            // Older collections may not have a wrap file yet.
+            if error.message.contains("not found") || error.code.contains("not_found") {
+                return Ok(None);
+            }
+            return Err(sync_error_to_string(&error));
+        }
+    };
+    let wrap: RemoteCollectionKeyWrapV1 = serde_json::from_slice(&bytes).map_err(|e| {
+        format!("[sync_collection_key_wrap_parse_failed] Invalid remote key wrap: {e}")
+    })?;
+    Ok(Some(wrap))
+}
+
+async fn upload_remote_collection_key_wrap(
+    provider_impl: &dyn VaultProviderV1,
+    app: &tauri::AppHandle,
+    manifest: &super::types::SyncCollectionManifest,
+) -> Result<(), String> {
+    let wrap = remote_key_wrap_from_manifest(manifest).ok_or_else(|| {
+        "[sync_collection_key_wrap_missing] Local manifest has no key wrap to upload.".to_string()
+    })?;
+    let payload = serde_json::to_vec_pretty(&wrap).map_err(|e| {
+        format!("[sync_collection_key_wrap_encode_failed] Failed to serialize key wrap: {e}")
+    })?;
+    let object_name = collection_key_wrap_object_name(&manifest.sync_collection_id);
+    provider_impl
+        .upload_credential_record(app, &object_name, payload)
+        .await
+        .map_err(|e| sync_error_to_string(&e))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -3890,6 +4108,31 @@ mod tests {
     fn default_revision_maps_zero_to_one() {
         assert_eq!(default_revision(0), 1);
         assert_eq!(default_revision(42), 42);
+    }
+
+    #[test]
+    fn host_objects_for_collect_uses_named_files_when_filtered() {
+        let filter = HashSet::from(["host-a".to_string(), "host-b".to_string()]);
+        let listed = vec![ProviderCredentialObject {
+            object_name: "zync-sync-col-hosts-other.zhost".into(),
+            object_id: Some("id".into()),
+        }];
+        let objects = host_objects_for_collect("col", Some(&filter), listed);
+        assert_eq!(objects.len(), 2);
+        let names: HashSet<_> = objects.into_iter().map(|o| o.object_name).collect();
+        assert!(names.contains("zync-sync-col-hosts-host-a.zhost"));
+        assert!(names.contains("zync-sync-col-hosts-host-b.zhost"));
+    }
+
+    #[test]
+    fn credential_objects_for_restore_uses_named_files_when_filtered() {
+        let filter = HashSet::from(["cred-1".to_string()]);
+        let objects = credential_objects_for_restore("col", Some(&filter), Vec::new());
+        assert_eq!(objects.len(), 1);
+        assert_eq!(
+            objects[0].object_name,
+            "zync-sync-col-credential-cred-1.zcred"
+        );
     }
 
     #[test]

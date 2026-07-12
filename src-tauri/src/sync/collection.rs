@@ -83,6 +83,86 @@ pub fn save_manifest(data_dir: &Path, manifest: &SyncCollectionManifest) -> Sync
     })
 }
 
+/// Remote-recoverable key wrap blob stored on the provider (Drive).
+/// Lets the user re-enter their passphrase after a local wipe and recover the
+/// same collection key that encrypted host files — without needing OS keychain.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCollectionKeyWrapV1 {
+    pub version: u32,
+    pub provider: String,
+    pub sync_collection_id: String,
+    pub key_policy_mode: SyncKeyPolicyMode,
+    pub key_wrap_salt: String,
+    pub key_wrap_nonce: String,
+    pub key_wrap_ciphertext: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_key_wrap_salt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_key_wrap_nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_key_wrap_ciphertext: Option<String>,
+}
+
+pub const REMOTE_KEY_WRAP_VERSION: u32 = 1;
+
+pub fn collection_key_wrap_object_name(sync_collection_id: &str) -> String {
+    format!("zync-sync-{sync_collection_id}-collection-keywrap.zkey")
+}
+
+pub fn remote_key_wrap_from_manifest(manifest: &SyncCollectionManifest) -> Option<RemoteCollectionKeyWrapV1> {
+    Some(RemoteCollectionKeyWrapV1 {
+        version: REMOTE_KEY_WRAP_VERSION,
+        provider: manifest.provider.clone(),
+        sync_collection_id: manifest.sync_collection_id.clone(),
+        key_policy_mode: manifest.key_policy_mode,
+        key_wrap_salt: manifest.key_wrap_salt.as_ref()?.as_str().to_string(),
+        key_wrap_nonce: manifest.key_wrap_nonce.as_ref()?.as_str().to_string(),
+        key_wrap_ciphertext: manifest.key_wrap_ciphertext.as_ref()?.as_str().to_string(),
+        recovery_key_wrap_salt: manifest
+            .recovery_key_wrap_salt
+            .as_ref()
+            .map(|v| v.as_str().to_string()),
+        recovery_key_wrap_nonce: manifest
+            .recovery_key_wrap_nonce
+            .as_ref()
+            .map(|v| v.as_str().to_string()),
+        recovery_key_wrap_ciphertext: manifest
+            .recovery_key_wrap_ciphertext
+            .as_ref()
+            .map(|v| v.as_str().to_string()),
+    })
+}
+
+pub fn apply_remote_key_wrap_to_manifest(
+    manifest: &mut SyncCollectionManifest,
+    wrap: &RemoteCollectionKeyWrapV1,
+) -> SyncResult<()> {
+    if wrap.sync_collection_id != manifest.sync_collection_id {
+        return Err(SyncError::new(
+            "sync_collection_key_wrap_mismatch",
+            "Remote key wrap belongs to a different sync collection.",
+        ));
+    }
+    manifest.key_policy_mode = wrap.key_policy_mode;
+    manifest.key_wrap_salt = Some(base64_data(wrap.key_wrap_salt.clone())?);
+    manifest.key_wrap_nonce = Some(base64_data(wrap.key_wrap_nonce.clone())?);
+    manifest.key_wrap_ciphertext = Some(base64_data(wrap.key_wrap_ciphertext.clone())?);
+    if wrap.recovery_key_wrap_salt.is_some()
+        && wrap.recovery_key_wrap_nonce.is_some()
+        && wrap.recovery_key_wrap_ciphertext.is_some()
+    {
+        manifest.recovery_key_wrap_salt =
+            Some(base64_data(wrap.recovery_key_wrap_salt.clone().unwrap_or_default())?);
+        manifest.recovery_key_wrap_nonce =
+            Some(base64_data(wrap.recovery_key_wrap_nonce.clone().unwrap_or_default())?);
+        manifest.recovery_key_wrap_ciphertext =
+            Some(base64_data(wrap.recovery_key_wrap_ciphertext.clone().unwrap_or_default())?);
+        manifest.has_recovery_key = true;
+    }
+    Ok(())
+}
+
 pub fn setup_manifest(
     data_dir: &Path,
     provider: SyncProviderKind,
@@ -90,6 +170,10 @@ pub fn setup_manifest(
     passphrase: &str,
     has_recovery_key: bool,
     preferred_sync_collection_id: Option<String>,
+    // When re-linking an existing Drive collection after local wipe, pass the
+    // key-wrap blob downloaded from the provider so the passphrase can recover
+    // the original collection key.
+    remote_key_wrap: Option<RemoteCollectionKeyWrapV1>,
 ) -> SyncResult<SyncCollectionSetupOutcome> {
     let current = load_manifest(data_dir, provider)?;
     let existing_manifest = current.is_some();
@@ -127,7 +211,23 @@ pub fn setup_manifest(
         },
     };
 
+    // Prefer remote wrap (from Drive) when local wrap is missing — this is how
+    // passphrase recovery works after a full local reset.
+    if manifest.key_wrap_salt.is_none() {
+        if let Some(wrap) = remote_key_wrap.as_ref() {
+            apply_remote_key_wrap_to_manifest(&mut manifest, wrap)?;
+        }
+    }
+
     let account = collection_key_account(&manifest);
+    // Linking an existing Drive collection id after local wipe (no wrap metadata yet).
+    let linking_existing_remote = !existing_manifest
+        && preferred_sync_collection_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+
     let collection_key = match load_collection_key_secret(&account) {
         Ok(encoded) => decode_collection_key(&encoded)?,
         Err(_) => {
@@ -137,15 +237,32 @@ pub fn setup_manifest(
             {
                 let mut unwrap_manifest = manifest.clone();
                 if let Some(original_mode) = original_key_policy_mode {
+                    // Prefer mode stored in wrap (may differ from UI selection).
                     unwrap_manifest.key_policy_mode = original_mode;
                 }
-                unwrap_collection_key(&unwrap_manifest, passphrase)?
-            } else if existing_manifest {
+                // Remote wrap already applied its key_policy_mode onto manifest.
+                if remote_key_wrap.is_some() {
+                    unwrap_manifest.key_policy_mode = manifest.key_policy_mode;
+                }
+                match unwrap_collection_key(&unwrap_manifest, passphrase) {
+                    Ok(key) => key,
+                    Err(_) => {
+                        return Err(SyncError::new(
+                            "sync_collection_passphrase_mismatch",
+                            "That passphrase did not unlock this Google encryption backup. \
+Use the same passphrase that was used when these Drive records were created.",
+                        ));
+                    }
+                }
+            } else if existing_manifest || linking_existing_remote {
                 return Err(SyncError::new(
-                    "sync_collection_key_missing",
-                    "Existing sync collection has no local key cache or wrapped key metadata. Reset this provider sync collection before uploading new records.",
+                    "sync_collection_key_unrecoverable",
+                    "No encryption key wrap was found for this Drive backup on this device or on Drive. \
+Older backups created before key-wrap cloud backup cannot be recovered with the passphrase alone after a full local reset. \
+Start a new empty collection and re-upload hosts, or recover from a machine that still has the original key.",
                 ));
             } else {
+                // Brand-new collection id — safe to generate a new key.
                 generate_collection_key()
             }
         }
@@ -878,6 +995,7 @@ mod tests {
             "local-passphrase-for-sync",
             false,
             None,
+            None,
         )
         .expect("create manifest");
         let created = created.manifest;
@@ -892,6 +1010,7 @@ mod tests {
             SyncKeyPolicyMode::CustomPassphrase,
             "custom-passphrase-for-sync",
             true,
+            None,
             None,
         )
         .expect("update manifest");
@@ -941,6 +1060,7 @@ mod tests {
             passphrase,
             false,
             None,
+            None,
         )
         .expect("setup manifest");
         let manifest = manifest.manifest;
@@ -980,6 +1100,7 @@ mod tests {
             SyncKeyPolicyMode::CustomPassphrase,
             "provider-sync-passphrase-v1",
             true,
+            None,
             None,
         )
         .expect("setup manifest with recovery");
@@ -1047,6 +1168,7 @@ mod tests {
             "local-passphrase-for-sync",
             false,
             None,
+            None,
         )
         .expect_err("missing key material should fail");
 
@@ -1073,6 +1195,7 @@ mod tests {
             "provider-sync-passphrase-v1",
             false,
             Some("collection-from-provider".to_string()),
+            None,
         )
         .expect("setup manifest");
 
@@ -1099,6 +1222,7 @@ mod tests {
             SyncKeyPolicyMode::CustomPassphrase,
             passphrase,
             false,
+            None,
             None,
         )
         .expect("setup manifest");

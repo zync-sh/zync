@@ -61,9 +61,9 @@ export function VaultStatusCard({
             className={cn(
               'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
               isUnlocked
-                ? 'bg-emerald-500/15 text-emerald-400'
+                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
                 : status?.status === 'locked'
-                  ? 'bg-amber-500/15 text-amber-400'
+                  ? 'bg-amber-500/15 text-amber-800 dark:text-amber-400'
                   : 'bg-[var(--color-app-surface)] text-[var(--color-app-muted)]',
             )}
           >

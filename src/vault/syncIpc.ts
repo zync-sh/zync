@@ -445,35 +445,68 @@ export const syncIpc = {
   collectionSetup: async (
     provider: SyncProvider,
     args: SyncCollectionSetupArgs,
-  ): Promise<SyncCollectionSetupResult> =>
-    invokeCore<SyncCollectionSetupResult>('sync_collection_setup', { provider, args }),
+  ): Promise<SyncCollectionSetupResult> => {
+    const result = await invokeCore<SyncCollectionSetupResult>('sync_collection_setup', {
+      provider,
+      args,
+    });
+    // Sidebar host inventory listens for this — without it, All Hosts stays on "Unlock…".
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   collectionUnlock: async (
     provider: SyncProvider,
     args: SyncCollectionUnlockArgs,
-  ): Promise<SyncCollectionStatus> =>
-    invokeCore<SyncCollectionStatus>('sync_collection_unlock', { provider, args }),
+  ): Promise<SyncCollectionStatus> => {
+    const result = await invokeCore<SyncCollectionStatus>('sync_collection_unlock', {
+      provider,
+      args,
+    });
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   collectionRegenerateRecoveryKey: async (
     provider: SyncProvider,
-  ): Promise<SyncCollectionSetupResult> =>
-    invokeCore<SyncCollectionSetupResult>('sync_collection_regenerate_recovery_key', { provider }),
+  ): Promise<SyncCollectionSetupResult> => {
+    const result = await invokeCore<SyncCollectionSetupResult>(
+      'sync_collection_regenerate_recovery_key',
+      { provider },
+    );
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   collectionLock: async (
     provider: SyncProvider,
-  ): Promise<SyncCollectionStatus> =>
-    invokeCore<SyncCollectionStatus>('sync_collection_lock', { provider }),
+  ): Promise<SyncCollectionStatus> => {
+    const result = await invokeCore<SyncCollectionStatus>('sync_collection_lock', { provider });
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   collectionForgetKey: async (
     provider: SyncProvider,
-  ): Promise<SyncCollectionStatus> =>
-    invokeCore<SyncCollectionStatus>('sync_collection_forget_key', { provider }),
+  ): Promise<SyncCollectionStatus> => {
+    const result = await invokeCore<SyncCollectionStatus>('sync_collection_forget_key', {
+      provider,
+    });
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   collectionSetCacheTtl: async (
     provider: SyncProvider,
     ttlSecs: number,
-  ): Promise<SyncCollectionStatus> =>
-    invokeCore<SyncCollectionStatus>('sync_collection_set_cache_ttl', { provider, ttlSecs }),
+  ): Promise<SyncCollectionStatus> => {
+    const result = await invokeCore<SyncCollectionStatus>('sync_collection_set_cache_ttl', {
+      provider,
+      ttlSecs,
+    });
+    notifySyncStatusChanged(provider);
+    return result;
+  },
 
   domainPolicies: async (provider: SyncProvider): Promise<SyncDomainPoliciesResult> =>
     invokeCore<SyncDomainPoliciesResult>('sync_domain_policies', { provider }),

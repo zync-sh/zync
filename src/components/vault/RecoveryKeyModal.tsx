@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { KeyRound, Copy, Check, Download, AlertTriangle } from 'lucide-react';
+import { cn } from '../../lib/utils';
 
 interface Props {
   isOpen: boolean;
@@ -98,10 +99,23 @@ export function RecoveryKeyModal({
       explicitDismissOnly
     >
       <div className="space-y-5">
-        {/* Warning banner */}
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-3">
-          <AlertTriangle size={15} className="text-amber-400 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-300/90 leading-relaxed">
+        {/*
+          Warning banner — use app CSS vars only.
+          Zync themes via data-theme + --color-app-*, not Tailwind `dark:`.
+          Hard-coded amber-950 / dark: never applied → unreadable in dark mode.
+        */}
+        <div
+          className={cn(
+            'flex items-start gap-3 rounded-lg px-3 py-3',
+            'border border-[var(--color-app-warning)]/30',
+            'bg-[var(--color-app-warning)]/12',
+          )}
+        >
+          <AlertTriangle
+            size={15}
+            className="shrink-0 mt-0.5 text-[var(--color-app-warning)]"
+          />
+          <p className="text-xs leading-relaxed text-[var(--color-app-text)]">
             This key is shown only once. Write it down or save the file before closing this dialog.
           </p>
         </div>

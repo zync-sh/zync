@@ -63,6 +63,12 @@ export function formatSyncCollectionSetupError(error: unknown): string {
   if (code === 'sync_collection_id_not_found') {
     return message || 'The selected Google Drive backup could not be found. Refresh and try again.';
   }
+  if (code === 'sync_collection_key_unrecoverable') {
+    return (
+      message ||
+      'This Drive backup cannot be unlocked after a local reset — the collection key is missing from this device. Create a new empty collection and re-upload, or recover from a PC that still has the key.'
+    );
+  }
 
   return message || 'Failed to set up Google encryption.';
 }
