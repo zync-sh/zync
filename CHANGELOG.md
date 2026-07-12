@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-07-12
+
 ### Added
 - **Multi-location host catalog**: Merge local hosts with provider inventory by stable `logicalId`; All / Local / Remote filters, session inventory cache, and Keep / Keep-and-open materialize (host + referenced credentials). ([5abc280], [f6a5e06])
 - **Shared sync readiness store**: Single source of truth for Google OAuth + collection encryption (`connected` / `configured` / `keyCached`) used by Sync & Backup and All Hosts so status cannot diverge. ([c0c46a0])
@@ -898,7 +900,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - Auto-updates
 - Multiple themes (Dark, Light, Dracula)
 
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.21.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.22.0...HEAD
+[2.22.0]: https://github.com/zync-sh/zync/compare/v2.21.0...v2.22.0
 [2.21.0]: https://github.com/zync-sh/zync/compare/v2.20.1...v2.21.0
 [2.20.1]: https://github.com/zync-sh/zync/compare/v2.19.2...v2.20.1
 [2.19.2]: https://github.com/zync-sh/zync/compare/v2.19.1...v2.19.2
