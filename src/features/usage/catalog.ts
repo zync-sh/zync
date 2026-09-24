@@ -9,6 +9,14 @@ export const USAGE_FEATURES = [
   'snippets',
   'dashboard',
   'plugins',
+  'connect_ok',
+  'connect_fail',
+  'auth_key',
+  'auth_password',
+  'tunnel_start',
+  'file_transfer',
+  'snippet_insert',
+  'split_files',
 ] as const;
 
 export type UsageFeatureId = (typeof USAGE_FEATURES)[number];

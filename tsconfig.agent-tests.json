@@ -128,6 +128,7 @@
         "src/lib/releaseNotes/alerts.ts",
         "src/lib/releaseNotes/headings.ts",
         "src/components/layout/featureMeta.ts",
+        "src/components/layout/featureTabInventory.ts",
         "src/lib/shells/types.ts",
         "src/components/layout/workspaceOpen/types.ts",
         "src/components/layout/workspaceOpen/buildWorkspaceOpenItems.ts",
@@ -170,6 +171,8 @@
 
         "src/features/usage/catalog.ts",
         "src/features/usage/queue.ts",
+        "src/features/usage/session.ts",
+        "src/features/usage/types.ts",
         "src/store/sessionPersistence.ts",
         "src/vault/credentialTypes.ts",
         "src/vault/profileTypes.ts",

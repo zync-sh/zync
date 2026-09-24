@@ -61,6 +61,29 @@ export const markConnectionConnected = (
     return updated ? next : connections;
 };
 
+export const applyConnectionMetadata = (
+    connections: Connection[],
+    connectionId: string,
+    detectedOs?: string | null,
+): Connection[] => {
+    const normalizedOs = detectedOs?.trim().toLowerCase();
+    if (!normalizedOs) return connections;
+
+    let updated = false;
+    const next = connections.map((connection) => {
+        if (
+            connection.id !== connectionId
+            || (connection.icon && connection.icon !== 'Server')
+        ) {
+            return connection;
+        }
+        updated = true;
+        return { ...connection, icon: normalizedOs };
+    });
+
+    return updated ? next : connections;
+};
+
 export const markConnectionErrorIfNeeded = (
     connections: Connection[],
     connectionId: string,

@@ -1,4 +1,5 @@
 import { StateCreator } from 'zustand';
+import { track } from '../features/usage';
 import type { AppStore } from './useAppStore';
 
 export interface Transfer {
@@ -94,13 +95,15 @@ export const createTransferSlice: StateCreator<AppStore, [], [], TransferSlice> 
         }));
         // Step 2: After the CSS transition (duration-300) plays, switch to 'completed' card
         setTimeout(() => {
+            let completed = false;
             set((state: AppStore) => ({
                 transfers: state.transfers.map((t: Transfer) => {
-                    if (t.id !== id) return t;
-                    // Guard: don't overwrite if already cancelled/failed during the delay
-                    return t.status === 'transferring' ? { ...t, status: 'completed' } : t;
+                    if (t.id !== id || t.status !== 'transferring') return t;
+                    completed = true;
+                    return { ...t, status: 'completed' };
                 })
             }));
+            if (completed) track('file_transfer');
         }, 400);
     },
 

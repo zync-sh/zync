@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { Globe, Server, X, Search, Terminal, Settings2, SlidersHorizontal } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { track } from '../../features/usage';
 import { cn } from '../../lib/utils';
 import { formatShortcutLabel } from '../../lib/shortcuts';
 import { TerminalQuickSettings } from './TerminalQuickSettings';
@@ -95,6 +96,7 @@ export function SnippetSidebar({ connectionId, tabId, isOpen, onClose, restoreTe
         window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
             detail: { connectionId, command: command + '\r' },
         }));
+        track('snippet_insert');
         showToast('success', 'Command sent to terminal');
     }, [connectionId, showToast]);
 

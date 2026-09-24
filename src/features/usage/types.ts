@@ -7,7 +7,18 @@ export interface UsagePayload {
   appVersion?: string;
   platform?: string;
   arch?: string;
+  openSeconds?: number;
   features?: Array<{ id: UsageFeatureId; count: number }>;
+  sessions?: UsageSessionPayload[];
+}
+
+export interface UsageSessionPayload {
+  id: string;
+  openedAt: string;
+  closedAt?: string;
+  openSeconds?: number;
+  timezone?: string;
+  utcOffsetMinutes?: number;
 }
 
 export interface UsageApiResult {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  applyConnectionMetadata,
   getCloseTabPreActions,
   markConnectionConnected,
   markConnectionErrorIfNeeded,
@@ -39,6 +40,19 @@ runTest('markConnectionConnected does not replace homePath with an empty placeho
   const connections = [{ id: 'a', status: 'connecting', homePath: '/home/a' }];
   const next = markConnectionConnected(connections, 'a', '');
   assert.equal(next[0].homePath, '/home/a');
+});
+
+runTest('applyConnectionMetadata replaces only the generic icon', () => {
+  const connections = [
+    { id: 'generic', icon: 'Server' },
+    { id: 'custom', icon: 'database' },
+  ];
+  const genericUpdated = applyConnectionMetadata(connections, 'generic', 'Ubuntu');
+  assert.equal(genericUpdated[0].icon, 'ubuntu');
+
+  const customUnchanged = applyConnectionMetadata(genericUpdated, 'custom', 'windows');
+  assert.equal(customUnchanged, genericUpdated);
+  assert.equal(customUnchanged[1].icon, 'database');
 });
 
 runTest('markConnectionErrorIfNeeded is idempotent for existing error', () => {

@@ -18,6 +18,7 @@ import {
     type DockTabPointerHandlers,
 } from './tabDock';
 import { collectLeaves, isFeatureContent, isPluginContent, isSplitFeatureId, isSplitLayout, layoutForCanvas, layoutForFeatureInstance, layoutHasPlugin } from '../../lib/paneLayout';
+import { featureTabsFromPaneGroups, initialFeatureTabsForView, mergeFeatureTabs, preferredFeatureTabId } from './featureTabInventory';
 import type { ShellEntry } from '../../lib/shells/types';
 import type { FeatureId, WorkspaceFeatureTab } from './featureMeta';
 import { GLOBAL_SNIPPETS_CONNECTION_ID, LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
@@ -283,17 +284,21 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
     const localPinnedFeatures = useAppStore(state => state.settings.localTerm?.pinnedFeatures);
 
-    // Local state for open feature tabs
+    // Local state for open feature tabs.
+    // The screen unmounts on host switch, so seed from panes that stayed in the store.
     const [openFeatures, setOpenFeatures] = useState<string[]>([]);
-    const initialFeatureTabRef = useRef<WorkspaceFeatureTab | null>(
-        isSplitFeatureId(tab.view) ? newWorkspaceFeatureTab(tab.view) : null,
-    );
-    const [featureTabs, setFeatureTabs] = useState<WorkspaceFeatureTab[]>(() => (
-        initialFeatureTabRef.current ? [initialFeatureTabRef.current] : []
-    ));
-    const [activeFeatureTabId, setActiveFeatureTabId] = useState<string | null>(
-        initialFeatureTabRef.current?.id ?? null,
-    );
+    const [featureTabSeed] = useState(() => {
+        const connectionId = tab.connectionId;
+        const state = useAppStore.getState();
+        return initialFeatureTabsForView(
+            tab.view,
+            connectionId ? state.paneLayouts[connectionId] : undefined,
+            connectionId ? state.activePaneGroupOwner[connectionId] : null,
+            newWorkspaceFeatureTab,
+        );
+    });
+    const [featureTabs, setFeatureTabs] = useState<WorkspaceFeatureTab[]>(() => featureTabSeed.tabs);
+    const [activeFeatureTabId, setActiveFeatureTabId] = useState<string | null>(() => featureTabSeed.activeId);
     const paneGroups = useAppStore(state => (
         tab.connectionId ? state.paneLayouts[tab.connectionId] : undefined
     ));
@@ -320,6 +325,17 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 if (activeFeatureTabId !== active.id) setActiveFeatureTabId(active.id);
                 return;
             }
+            const fromPanes = featureTabsFromPaneGroups(paneGroups);
+            const forView = fromPanes.filter(item => item.featureId === tab.view);
+            if (forView.length > 0) {
+                setFeatureTabs(prev => mergeFeatureTabs(prev, fromPanes));
+                const owner = tab.connectionId
+                    ? useAppStore.getState().activePaneGroupOwner[tab.connectionId]
+                    : null;
+                const nextActiveId = preferredFeatureTabId(forView, tab.view, paneGroups, owner);
+                if (activeFeatureTabId !== nextActiveId) setActiveFeatureTabId(nextActiveId);
+                return;
+            }
             const created = newWorkspaceFeatureTab(tab.view);
             setFeatureTabs(prev => [...prev, created]);
             setActiveFeatureTabId(created.id);
@@ -333,7 +349,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 return prev;
             });
         }
-    }, [activeFeatureTabId, featureTabs, pinnedFeatures, tab.view]);
+    }, [activeFeatureTabId, featureTabs, paneGroups, pinnedFeatures, tab.connectionId, tab.view]);
 
     useEffect(() => {
         const pinnedTabs = pinnedFeatures
@@ -347,22 +363,9 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     }, [pinnedFeatures]);
 
     useEffect(() => {
-        const grouped = Object.values(paneGroups ?? {}).flatMap(layout => (
-            collectLeaves(layout.root).flatMap(leaf => {
-                if (!isFeatureContent(leaf.content) || !leaf.content.instanceId) return [];
-                return [{
-                    id: leaf.content.instanceId,
-                    featureId: leaf.content.featureId,
-                    instanceId: leaf.content.instanceId,
-                } satisfies WorkspaceFeatureTab];
-            })
-        ));
+        const grouped = featureTabsFromPaneGroups(paneGroups);
         if (grouped.length === 0) return;
-        setFeatureTabs(prev => {
-            const existing = new Set(prev.map(item => item.id));
-            const additions = grouped.filter(item => !existing.has(item.id));
-            return additions.length > 0 ? [...prev, ...additions] : prev;
-        });
+        setFeatureTabs(prev => mergeFeatureTabs(prev, grouped));
     }, [paneGroups]);
 
     useEffect(() => {
@@ -398,7 +401,9 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
             setFeatureTabs(prev => [...prev, created]);
             setActiveFeatureTabId(created.id);
             if (tab.connectionId) {
-                useAppStore.getState().ensureFeaturePane(tab.connectionId, feature, created.instanceId);
+                const store = useAppStore.getState();
+                store.ensureFeaturePane(tab.connectionId, feature, created.instanceId);
+                store.activatePaneGroup(tab.connectionId, created.instanceId);
             }
             setTabView(tab.id, feature);
             return;

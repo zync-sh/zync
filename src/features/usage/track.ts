@@ -8,6 +8,24 @@ export function track(feature: UsageFeatureId): void {
   saveQueue(bumpFeature(loadQueue(), feature));
 }
 
+export function trackConnectSuccess(host: {
+  privateKeyPath?: string;
+  password?: string;
+  authRef?: { itemKind?: string };
+} | undefined): void {
+  track('connect_ok');
+  const kind = host?.authRef?.itemKind;
+  if (kind === 'ssh-private-key' || kind === 'ssh-agent-key' || host?.privateKeyPath) {
+    track('auth_key');
+    return;
+  }
+  if (kind === 'ssh-password' || host?.password) track('auth_password');
+}
+
+export function trackConnectFailure(): void {
+  track('connect_fail');
+}
+
 export function usageFeatureForTabView(view: string | undefined): UsageFeatureId | null {
   if (!view) return null;
   if (view === 'files') return 'files';

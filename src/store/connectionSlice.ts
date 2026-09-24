@@ -23,6 +23,7 @@ import {
     LOCAL_TERMINAL_CONNECTION_ID,
 } from '../features/connections/application/tabService';
 import {
+    applyConnectionMetadata,
     getCloseTabPreActions,
     markConnectionConnected,
     markConnectionErrorIfNeeded,
@@ -30,7 +31,7 @@ import {
     reduceTabCloseState,
 } from '../features/connections/application/connectionLifecycleService';
 import { pinFeatureOnConnectionIfNeeded } from '../features/connections/application/tunnelAutoStartService';
-import { track, usageFeatureForTabView } from '../features/usage';
+import { track, trackConnectFailure, trackConnectSuccess, usageFeatureForTabView } from '../features/usage';
 import {
     restartTunnelsAfterConnect,
     snapshotActiveTunnelsForReconnect,
@@ -88,6 +89,7 @@ import {
     dispatchTerminalConnectionWakeup,
     resetTerminalPtyForReconnect,
 } from '../lib/terminal';
+import { terminalCache } from '../lib/terminal/terminalCache';
 import type { TabSnapshot } from './sessionPersistence';
 import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import { DEFAULT_VAULT_PROFILE_ID, isVaultProfileId, type VaultProfileId } from '../vault/profileTypes';
@@ -106,6 +108,18 @@ const cancelledConnectAttempts = new Set<string>();
 const pendingConnectCancellations = new Set<string>();
 const createConnectAttemptId = (connectionId: string): string =>
     `${connectionId}:${crypto.randomUUID()}`;
+
+async function waitForTerminalStartup(termId: string, timeoutMs = 2500): Promise<boolean> {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+        const cached = terminalCache.get(termId);
+        if (cached?.spawned && !cached.starting) {
+            return true;
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+    }
+    return false;
+}
 
 export interface ConnectionSlice {
     connections: Connection[];
@@ -136,6 +150,7 @@ export interface ConnectionSlice {
     disconnect: (id: string) => Promise<void>;
     /** WiFi drop / SSH EOF — stop active tunnels, keep terminal tabs and scrollback. */
     handleTransportLost: (id: string) => Promise<void>;
+    applyConnectionMetadata: (id: string, detectedOs?: string | null) => void;
     // Tab Actions
     openTab: (connectionId: string, startView?: CoreTabView) => void;
     openPortForwardingTab: () => void;
@@ -444,6 +459,15 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         }
     },
 
+    applyConnectionMetadata: (id, detectedOs) => {
+        set(state => {
+            const connections = applyConnectionMetadata(state.connections, id, detectedOs);
+            if (connections === state.connections) return state;
+            saveToMain(connections, state.folders);
+            return { connections };
+        });
+    },
+
     connect: async (id, options) => {
         return runSerializedConnectOp(id, async () => {
         const attemptId = createConnectAttemptId(id);
@@ -525,6 +549,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     connections: markConnectionErrorIfNeeded(state.connections, id, message),
                 }));
                 get().showToast('error', message, 8000);
+                trackConnectFailure();
                 return;
             }
             const fullConfig = configResult.config;
@@ -601,23 +626,23 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (await finishCancelledConnect(true)) return;
             markConnectionBackendLive(id);
 
-            // Fetch home path after connection
-            let homePath = '';
-            let homePathResolved = false;
-            try {
-                homePath = (await getRemoteCwdIpc(id)).trim();
-                homePathResolved = Boolean(homePath);
-            } catch (e) {
-                console.error('[CONNECT] Failed to fetch home path:', e);
+            // Reset existing terminal bindings while the host is still marked as
+            // connecting. If we wait until after the connected state update,
+            // React can start a PTY and this reset immediately replaces it.
+            const existingTermIds = (get().terminals[id] ?? []).map((tab) => tab.id);
+            for (const termId of existingTermIds) {
+                resetTerminalPtyForReconnect(termId);
             }
-            // Final checkpoints around the success update so a late cancel is not lost to finally.
-            if (await finishCancelledConnect(true)) return;
+            const primaryTermId = get().ensureTerminal(id);
+            const activeWorkspace = get().tabs.find(tab => tab.id === get().activeTabId);
+            const terminalWillMount = activeWorkspace?.connectionId === id
+                && activeWorkspace.view === 'terminal';
 
             set(state => {
                 if (cancelledConnectAttempts.has(attemptId)) {
                     return state;
                 }
-                const connected = markConnectionConnected(state.connections, id, homePath, response?.detected_os);
+                const connected = markConnectionConnected(state.connections, id, '', response?.detected_os);
                 const newConns = legacyLocalKeyPassphraseIds.size > 0
                     ? connected.map(connection => legacyLocalKeyPassphraseIds.has(connection.id)
                         ? { ...connection, password: undefined }
@@ -627,6 +652,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 return { connections: newConns };
             });
             if (await finishCancelledConnect(true)) return;
+            if (id !== 'local') {
+                trackConnectSuccess(get().connections.find(connection => connection.id === id));
+            }
             if (legacyLocalKeyPassphraseIds.size > 0) {
                 get().showToast(
                     'info',
@@ -638,32 +666,59 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
             // Clear pendingRestore so SSH terminal tabs can now spawn their PTYs.
             get().clearPendingRestore(id);
-            get().ensureTerminal(id);
             const termIds = (get().terminals[id] ?? []).map((tab) => tab.id);
-            for (const termId of termIds) {
-                resetTerminalPtyForReconnect(termId);
-            }
             dispatchTerminalConnectionWakeup(termIds);
 
-            const ghostSettings = get().settings.ghostSuggestions;
-            if (
-                homePathResolved
-                && ghostSettings.importRemoteHistoryOnConnect
-                && ghostSettings.providers.history
-                && ghostSettings.inlineEnabled
-            ) {
-                void seedRemoteGhostHistory({
-                    connectionId: id,
-                    scope: id,
-                    homePath,
-                }).then((result) => {
-                    ghostDebug('seed', {
+            // Give a visible terminal the first SSH session channel. Ubuntu's
+            // PAM MOTD is one-shot and would otherwise be consumed by SFTP.
+            const terminalReady = !terminalWillMount
+                || await waitForTerminalStartup(primaryTermId);
+            if (await finishCancelledConnect(true)) return;
+
+            const applyHomePath = async () => {
+                if (cancelledConnectAttempts.has(attemptId)) return;
+                let homePath = '';
+                try {
+                    homePath = (await getRemoteCwdIpc(id)).trim();
+                } catch (e) {
+                    console.error('[CONNECT] Failed to fetch home path:', e);
+                    return;
+                }
+                if (!homePath || cancelledConnectAttempts.has(attemptId)) return;
+                set(state => {
+                    const connections = markConnectionConnected(state.connections, id, homePath);
+                    saveToMain(connections, state.folders);
+                    return { connections };
+                });
+                const ghostSettings = get().settings.ghostSuggestions;
+                if (
+                    ghostSettings.importRemoteHistoryOnConnect
+                    && ghostSettings.providers.history
+                    && ghostSettings.inlineEnabled
+                ) {
+                    void seedRemoteGhostHistory({
                         connectionId: id,
-                        imported: result.imported,
-                        skippedReason: result.skippedReason ?? null,
-                    });
-                }).catch(() => {});
+                        scope: id,
+                        homePath,
+                    }).then((result) => {
+                        ghostDebug('seed', {
+                            connectionId: id,
+                            imported: result.imported,
+                            skippedReason: result.skippedReason ?? null,
+                        });
+                    }).catch(() => {});
+                }
+            };
+
+            if (terminalReady) {
+                await applyHomePath();
+            } else if (terminalWillMount) {
+                void waitForTerminalStartup(primaryTermId, 20_000).then((ready) => {
+                    if (ready) return applyHomePath();
+                    return undefined;
+                });
             }
+            if (await finishCancelledConnect(true)) return;
 
             try {
                 await get().loadTunnels(id);
@@ -805,6 +860,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 return;
             }
             console.error('Connection failed:', message);
+            if (id !== 'local') trackConnectFailure();
             get().showToast('error', `Connection failed: ${message}`, 10000);
             // Only update to error state if not already in error to prevent loops
             set(state => {

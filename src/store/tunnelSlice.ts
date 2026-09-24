@@ -1,6 +1,7 @@
 import { StateCreator } from 'zustand';
 import type { AppStore } from './useAppStore';
 import { notify } from '../features/notifications';
+import { track } from '../features/usage';
 
 export interface TunnelConfig {
     id: string;
@@ -154,6 +155,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
     startTunnel: async (id, connectionId) => {
         try {
             await ipc.invoke('tunnel:start', id);
+            track('tunnel_start');
             // Status update will come from backend event
         } catch (error: any) {
             console.error('Failed to start tunnel:', error);

@@ -78,11 +78,14 @@ fn classify_windows_shell(shell_label: &str) -> ShellKind {
         return ShellKind::Other;
     }
 
-    let token = trimmed.split_whitespace().next().unwrap_or(trimmed);
-    let base_name = std::path::Path::new(token)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(token)
+    // Split off a Windows path before looking for arguments. Doing this in the
+    // opposite order turns `C:\Program Files\...\pwsh.exe` into `C:\Program`.
+    let path_tail = trimmed.rsplit(['\\', '/']).next().unwrap_or(trimmed);
+    let base_name = path_tail
+        .split_whitespace()
+        .next()
+        .unwrap_or(path_tail)
+        .trim_matches(['"', '\''])
         .to_ascii_lowercase();
 
     match base_name.as_str() {
@@ -105,6 +108,9 @@ fn classify_windows_shell(shell_label: &str) -> ShellKind {
 }
 
 fn remote_windows_shell_command(shell_override: &str) -> Option<&'static str> {
+    if shell_override.contains(['\\', '/']) {
+        return None;
+    }
     match classify_windows_shell(shell_override) {
         ShellKind::PowerShell => Some("powershell.exe -NoLogo"),
         ShellKind::Pwsh => Some("pwsh.exe -NoLogo"),
@@ -167,6 +173,23 @@ pub(crate) fn build_navigate_cd_command(path: &str, style: NavigateShellStyle) -
     }
 }
 
+fn initial_remote_cd_command(path: &str, style: NavigateShellStyle) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || matches!(path, "~" | "~/" | "~\\") {
+        return None;
+    }
+    Some(build_navigate_cd_command(path, style))
+}
+
+fn terminal_auth_banner(banner: &str) -> Vec<u8> {
+    let normalized = banner.replace("\r\n", "\n").replace('\r', "\n");
+    let mut output = normalized.replace('\n', "\r\n");
+    if !output.ends_with("\r\n") {
+        output.push_str("\r\n");
+    }
+    output.into_bytes()
+}
+
 fn local_navigate_shell_style(
     shell_override: Option<&str>,
     is_wsl_shell: bool,
@@ -203,6 +226,57 @@ fn remote_navigate_shell_style(
         Some(shell) => classify_windows_shell(shell).into(),
         None => NavigateShellStyle::WindowsOther,
     }
+}
+
+fn remote_shell_launch_command(shell: &str, remote_is_windows: bool) -> String {
+    if remote_is_windows {
+        remote_windows_shell_command(shell)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell, true)))
+    } else {
+        let escaped_shell = shell_single_quote(shell);
+        match remote_shell_login_flag(shell) {
+            Some(login_flag) => format!("exec '{}' {}", escaped_shell, login_flag),
+            None => format!("exec '{}'", escaped_shell),
+        }
+    }
+}
+
+fn deferred_remote_startup_input(
+    remote_os: &str,
+    detected_shell: Option<&str>,
+    shell_override: Option<&str>,
+    cwd: Option<&str>,
+) -> (NavigateShellStyle, String) {
+    let remote_is_windows = is_remote_windows(Some(remote_os));
+    let selected_shell = shell_override
+        .map(str::trim)
+        .filter(|shell| !shell.is_empty() && !shell.eq_ignore_ascii_case("default"));
+    let navigate_shell =
+        remote_navigate_shell_style(remote_is_windows, selected_shell.or(detected_shell));
+
+    let mut startup_input = String::new();
+    if let Some(shell) = selected_shell {
+        let launch_command = if remote_is_windows
+            && detected_shell.is_some_and(|current| {
+                matches!(
+                    classify_windows_shell(current),
+                    ShellKind::PowerShell | ShellKind::Pwsh
+                )
+            })
+            && remote_windows_shell_command(shell).is_none()
+        {
+            format!("& '{}'", powershell_single_quote(shell))
+        } else {
+            remote_shell_launch_command(shell, remote_is_windows)
+        };
+        startup_input.push_str(&launch_command);
+        startup_input.push('\r');
+    }
+    if let Some(cd_command) = cwd.and_then(|path| initial_remote_cd_command(path, navigate_shell)) {
+        startup_input.push_str(&cd_command);
+    }
+    (navigate_shell, startup_input)
 }
 
 fn powershell_single_quote(value: &str) -> String {
@@ -265,7 +339,8 @@ fn apply_flush_instruction(
         bytes,
         reason,
         rearm_burst: _,
-    } = instruction {
+    } = instruction
+    {
         record_flush_reason(reason);
         flush_output_frame(output_channel, generation, bytes);
     }
@@ -378,14 +453,57 @@ pub enum TerminalHandle {
         child_pid: Option<u32>,
     },
     Remote {
-        tx: mpsc::Sender<Vec<u8>>,           // Send input data to the channel task
+        input: Arc<RemoteInput>,
         resize_tx: mpsc::Sender<(u16, u16)>, // Send resize events
         task_handle: Option<tokio::task::JoinHandle<()>>,
     },
 }
 
+pub struct RemoteInput {
+    tx: mpsc::Sender<Vec<u8>>,
+    send_gate: Mutex<()>,
+    user_input_started: AtomicBool,
+    startup_pending: AtomicBool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DeferredStartupClaim {
+    Apply,
+    CancelledByInput,
+    NotPending,
+}
+
+impl RemoteInput {
+    fn new(tx: mpsc::Sender<Vec<u8>>, startup_pending: bool) -> Self {
+        Self {
+            tx,
+            send_gate: Mutex::new(()),
+            user_input_started: AtomicBool::new(false),
+            startup_pending: AtomicBool::new(startup_pending),
+        }
+    }
+
+    fn mark_user_input_started(&self) {
+        self.user_input_started.store(true, Ordering::Release);
+    }
+
+    // Call while holding send_gate so claiming startup and sending it are one
+    // ordered operation relative to normal terminal input.
+    fn claim_deferred_startup(&self) -> DeferredStartupClaim {
+        if !self.startup_pending.swap(false, Ordering::AcqRel) {
+            return DeferredStartupClaim::NotPending;
+        }
+        if self.user_input_started.load(Ordering::Acquire) {
+            DeferredStartupClaim::CancelledByInput
+        } else {
+            DeferredStartupClaim::Apply
+        }
+    }
+}
+
 pub struct PtySession {
     pub connection_id: String,
+    generation: u32,
     /// Held for the session lifetime so the frontend channel stays open until close.
     #[allow(dead_code)]
     pub output_channel: IpcChannel,
@@ -613,6 +731,7 @@ impl PtyManager {
             local_navigate_shell_style(shell_override.as_deref(), is_wsl_shell, &shell);
         let session = PtySession {
             connection_id,
+            generation,
             output_channel: output_channel.clone(),
             handle: TerminalHandle::Local {
                 writer: writer_arc,
@@ -775,7 +894,9 @@ impl PtyManager {
         output_channel: IpcChannel,
         shell_override: Option<String>,
         remote_os: Option<String>,
+        detected_shell: Option<String>,
         cwd: Option<String>,
+        auth_banner: Option<String>,
     ) -> Result<()> {
         // Clean up any existing dead/stale session with this ID before creating a new one
         let _ = self.close(&term_id).await;
@@ -794,27 +915,23 @@ impl PtyManager {
             .await
             .map_err(|e| anyhow!("Failed to request PTY: {}", e))?;
 
+        let remote_os_known = remote_os.is_some();
         let remote_is_windows = is_remote_windows(remote_os.as_deref());
-        let selected_shell = shell_override
+        let requested_shell = shell_override
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("default"));
+        // On a first connection the OS hint may not exist yet because probes
+        // intentionally run after the terminal claims the MOTD-bearing channel.
+        // Use the server's default shell until the hint is known rather than
+        // risking POSIX `exec` syntax on Windows OpenSSH.
+        let selected_shell = requested_shell.filter(|_| remote_os_known);
 
         if let Some(shell) = selected_shell {
             // Start explicit remote shell (path or command name) when user selected one.
             // Unix hosts use `exec` to replace the current command process with the chosen shell.
             // Windows OpenSSH hosts need native shell executables instead of POSIX `exec`.
-            let launch = if remote_is_windows {
-                remote_windows_shell_command(shell)
-                    .map(|command| command.to_string())
-                    .unwrap_or_else(|| format!("\"{}\"", windows_double_quote(shell, true)))
-            } else {
-                let escaped_shell = shell_single_quote(shell);
-                match remote_shell_login_flag(shell) {
-                    Some(login_flag) => format!("exec '{}' {}", escaped_shell, login_flag),
-                    None => format!("exec '{}'", escaped_shell),
-                }
-            };
+            let launch = remote_shell_launch_command(shell, remote_is_windows);
             // Important: `exec` and `request_shell` are different channel request
             // types. If `exec` fails, callers must open a fresh channel before retrying.
             channel.exec(false, launch).await.map_err(|e| {
@@ -828,37 +945,18 @@ impl PtyManager {
                 .map_err(|e| anyhow!("Failed to request shell: {}", e))?;
         }
 
-        // If cwd is provided, send a cd command immediately.
-        if let Some(path) = cwd {
-            let cd_cmd = if remote_is_windows {
-                match selected_shell
-                    .map(classify_windows_shell)
-                    .unwrap_or(ShellKind::Other)
-                {
-                    ShellKind::Cmd => {
-                        format!("cd /d \"{}\" && cls\r", windows_double_quote(&path, false))
-                    }
-                    ShellKind::PowerShell | ShellKind::Pwsh => {
-                        format!(
-                            "Set-Location -LiteralPath '{}'; Clear-Host\r",
-                            powershell_single_quote(&path)
-                        )
-                    }
-                    ShellKind::Other => {
-                        // Unknown Windows default shell. `cd \"...\"` is accepted by
-                        // both cmd and PowerShell for same-drive navigation; avoid
-                        // shell-specific `/d` or `Set-Location` syntax here.
-                        format!("cd \"{}\" && cls\r", windows_double_quote(&path, false))
-                    }
-                }
-            } else {
-                let trimmed = path.trim();
-                if trimmed == "~" {
-                    "clear\r".to_string()
-                } else {
-                    format!("cd {} && clear\r", posix_shell_cd_path(trimmed))
-                }
-            };
+        let navigate_shell = remote_navigate_shell_style(
+            remote_is_windows,
+            selected_shell.or(detected_shell.as_deref()),
+        );
+
+        // If cwd is provided, navigate without clearing the shell output. The
+        // server's login banner and MOTD are useful connection context.
+        if let Some(cd_cmd) = remote_os_known
+            .then_some(cwd.as_deref())
+            .flatten()
+            .and_then(|path| initial_remote_cd_command(path, navigate_shell))
+        {
             channel
                 .data(cd_cmd.as_bytes())
                 .await
@@ -869,13 +967,13 @@ impl PtyManager {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
         let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(4);
 
-        let navigate_shell = remote_navigate_shell_style(remote_is_windows, selected_shell);
         let connection_id_for_transport = connection_id.clone();
         let session = PtySession {
             connection_id,
+            generation,
             output_channel: output_channel.clone(),
             handle: TerminalHandle::Remote {
-                tx,
+                input: Arc::new(RemoteInput::new(tx, !remote_os_known)),
                 resize_tx,
                 task_handle: None,
             },
@@ -894,6 +992,10 @@ impl PtyManager {
                 exit_code: None,
             },
         );
+
+        if let Some(banner) = auth_banner {
+            flush_output_frame(&output_channel, generation, terminal_auth_banner(&banner));
+        }
 
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
@@ -1004,19 +1106,123 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Completes first-connect startup once deferred OS detection finishes.
+    /// Returns false when the terminal was closed or replaced meanwhile.
+    pub async fn finalize_remote_startup(
+        &self,
+        term_id: &str,
+        generation: u32,
+        remote_os: &str,
+        detected_shell: Option<&str>,
+        shell_override: Option<&str>,
+        cwd: Option<&str>,
+    ) -> Result<bool> {
+        let (navigate_shell, startup_input) =
+            deferred_remote_startup_input(remote_os, detected_shell, shell_override, cwd);
+        let default_navigate_shell =
+            remote_navigate_shell_style(is_remote_windows(Some(remote_os)), detected_shell);
+
+        let input = {
+            let sessions = self.sessions.lock().await;
+            let Some(session) = sessions.get(term_id) else {
+                return Ok(false);
+            };
+            if session.generation != generation {
+                return Ok(false);
+            }
+            match &session.handle {
+                TerminalHandle::Remote { input, .. } => input.clone(),
+                TerminalHandle::Local { .. } => return Ok(false),
+            }
+        };
+
+        let _send_guard = input.send_gate.lock().await;
+        let startup_claim = input.claim_deferred_startup();
+        if startup_claim == DeferredStartupClaim::NotPending {
+            return Ok(false);
+        }
+        let apply_startup = startup_claim == DeferredStartupClaim::Apply;
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            let Some(session) = sessions.get_mut(term_id) else {
+                return Ok(false);
+            };
+            if session.generation != generation {
+                return Ok(false);
+            }
+            session.navigate_shell = if apply_startup {
+                navigate_shell
+            } else {
+                default_navigate_shell
+            };
+        }
+
+        if !apply_startup {
+            return Ok(false);
+        }
+
+        if !startup_input.is_empty() {
+            input
+                .tx
+                .send(startup_input.into_bytes())
+                .await
+                .map_err(|error| anyhow!("Failed to finish remote terminal startup: {error}"))?;
+        }
+        Ok(true)
+    }
+
     pub async fn navigate_to_path(&self, term_id: &str, path: &str) -> Result<()> {
+        let remote_input = {
+            let sessions = self.sessions.lock().await;
+            let session = sessions
+                .get(term_id)
+                .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+            match &session.handle {
+                TerminalHandle::Remote { input, .. } => Some(input.clone()),
+                TerminalHandle::Local { .. } => None,
+            }
+        };
+
+        let Some(input) = remote_input else {
+            let cd_cmd = {
+                let sessions = self.sessions.lock().await;
+                let session = sessions
+                    .get(term_id)
+                    .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+                build_navigate_cd_command(path, session.navigate_shell)
+            };
+            return self.write(term_id, &cd_cmd).await;
+        };
+
+        // Navigation is terminal input too. Mark it before waiting so a pending
+        // startup cannot be injected ahead of a command built for the old shell.
+        input.mark_user_input_started();
+        let _send_guard = input.send_gate.lock().await;
         let cd_cmd = {
             let sessions = self.sessions.lock().await;
             let session = sessions
                 .get(term_id)
                 .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
-            build_navigate_cd_command(path, session.navigate_shell)
+            match &session.handle {
+                TerminalHandle::Remote {
+                    input: current_input,
+                    ..
+                } if Arc::ptr_eq(current_input, &input) => {
+                    build_navigate_cd_command(path, session.navigate_shell)
+                }
+                _ => return Err(anyhow!("Terminal session changed while navigating")),
+            }
         };
-        self.write(term_id, &cd_cmd).await
+        input
+            .tx
+            .send(cd_cmd.into_bytes())
+            .await
+            .map_err(|e| anyhow!("Failed to send navigation to SSH task: {}", e))
     }
 
     pub async fn write(&self, term_id: &str, data: &str) -> Result<()> {
-        let (local_writer_opt, remote_tx_opt) = {
+        let (local_writer_opt, remote_input_opt) = {
             let sessions = self.sessions.lock().await;
             let session = sessions
                 .get(term_id)
@@ -1024,7 +1230,7 @@ impl PtyManager {
 
             match &session.handle {
                 TerminalHandle::Local { writer, .. } => (Some(writer.clone()), None),
-                TerminalHandle::Remote { tx, .. } => (None, Some(tx.clone())),
+                TerminalHandle::Remote { input, .. } => (None, Some(input.clone())),
             }
         }; // sessions lock is dropped here
 
@@ -1036,9 +1242,14 @@ impl PtyManager {
             writer
                 .flush()
                 .map_err(|e| anyhow!("Failed to flush PTY: {}", e))?;
-        } else if let Some(tx) = remote_tx_opt {
-            // Send data to the manager task
-            tx.send(data.as_bytes().to_vec())
+        } else if let Some(input) = remote_input_opt {
+            // Mark interaction before waiting for the send gate. Deferred
+            // startup will either finish first or observe this and stand down.
+            input.mark_user_input_started();
+            let _send_guard = input.send_gate.lock().await;
+            input
+                .tx
+                .send(data.as_bytes().to_vec())
                 .await
                 .map_err(|e| anyhow!("Failed to send input to SSH task: {}", e))?;
         }
@@ -1133,8 +1344,9 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_navigate_cd_command, posix_shell_cd_path, remote_wait_action, NavigateShellStyle,
-        RemoteWaitAction,
+        build_navigate_cd_command, deferred_remote_startup_input, initial_remote_cd_command,
+        posix_shell_cd_path, remote_navigate_shell_style, remote_wait_action, terminal_auth_banner,
+        DeferredStartupClaim, NavigateShellStyle, RemoteInput, RemoteWaitAction,
     };
     use russh::ChannelMsg;
 
@@ -1180,12 +1392,155 @@ mod tests {
         let cmd = build_navigate_cd_command(r"E:\work\data", NavigateShellStyle::WindowsCmd);
         assert!(cmd.contains("cd /d"));
         assert!(cmd.contains(r"E:\work\data"));
+        assert!(!cmd.to_ascii_lowercase().contains("cls"));
     }
 
     #[test]
     fn build_navigate_cd_command_uses_posix_tilde_quoting() {
         let cmd = build_navigate_cd_command("~/data", NavigateShellStyle::Posix);
         assert_eq!(cmd, "cd ~/'data'\r");
+        assert!(!cmd.contains("clear"));
+    }
+
+    #[test]
+    fn build_navigate_cd_command_preserves_login_output_at_home() {
+        assert_eq!(
+            build_navigate_cd_command("~", NavigateShellStyle::Posix),
+            "cd ~\r"
+        );
+        assert_eq!(
+            build_navigate_cd_command(r"E:\work\data", NavigateShellStyle::WindowsPowerShell),
+            "Set-Location -LiteralPath 'E:\\work\\data'\r"
+        );
+    }
+
+    #[test]
+    fn initial_remote_navigation_skips_home_and_keeps_other_paths() {
+        assert_eq!(
+            initial_remote_cd_command("~", NavigateShellStyle::Posix),
+            None
+        );
+        assert_eq!(
+            initial_remote_cd_command("~/", NavigateShellStyle::Posix),
+            None
+        );
+        assert_eq!(
+            initial_remote_cd_command("~\\", NavigateShellStyle::WindowsPowerShell),
+            None
+        );
+        assert_eq!(
+            initial_remote_cd_command("  ", NavigateShellStyle::Posix),
+            None
+        );
+        assert_eq!(
+            initial_remote_cd_command("~/work", NavigateShellStyle::Posix).as_deref(),
+            Some("cd ~/'work'\r")
+        );
+    }
+
+    #[test]
+    fn deferred_startup_applies_posix_shell_then_cwd() {
+        let (style, input) =
+            deferred_remote_startup_input("ubuntu", Some("bash"), Some("zsh"), Some("/srv/app"));
+        assert_eq!(style, NavigateShellStyle::Posix);
+        assert_eq!(input, "exec 'zsh' -l\rcd '/srv/app'\r");
+    }
+
+    #[test]
+    fn deferred_startup_uses_windows_navigation_for_requested_shell() {
+        let (style, input) = deferred_remote_startup_input(
+            "windows",
+            Some("powershell"),
+            Some("pwsh"),
+            Some(r"E:\work\app"),
+        );
+        assert_eq!(style, NavigateShellStyle::WindowsPowerShell);
+        assert!(input.starts_with("pwsh.exe -NoLogo\r"));
+        assert!(input.ends_with("Set-Location -LiteralPath 'E:\\work\\app'\r"));
+    }
+
+    #[test]
+    fn deferred_startup_uses_detected_powershell_default() {
+        let (style, input) = deferred_remote_startup_input(
+            "windows",
+            Some("powershell"),
+            None,
+            Some(r"E:\work\app"),
+        );
+        assert_eq!(style, NavigateShellStyle::WindowsPowerShell);
+        assert_eq!(input, "Set-Location -LiteralPath 'E:\\work\\app'\r");
+    }
+
+    #[test]
+    fn deferred_startup_uses_cmd_cross_drive_navigation_for_default_cmd() {
+        let (style, input) =
+            deferred_remote_startup_input("windows", Some("cmd.exe"), None, Some(r"E:\work\app"));
+        assert_eq!(style, NavigateShellStyle::WindowsCmd);
+        assert_eq!(input, "cd /d \"E:\\work\\app\"\r");
+    }
+
+    #[test]
+    fn full_windows_shell_path_selects_powershell_navigation() {
+        let full_path = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        assert_eq!(
+            remote_navigate_shell_style(true, Some(full_path)),
+            NavigateShellStyle::WindowsPowerShell
+        );
+
+        let (detected_style, detected_input) =
+            deferred_remote_startup_input("windows", Some(full_path), None, Some(r"E:\work\app"));
+        assert_eq!(detected_style, NavigateShellStyle::WindowsPowerShell);
+        assert_eq!(
+            detected_input,
+            "Set-Location -LiteralPath 'E:\\work\\app'\r"
+        );
+
+        let (selected_style, selected_input) = deferred_remote_startup_input(
+            "windows",
+            Some("cmd.exe"),
+            Some(full_path),
+            Some(r"E:\work\app"),
+        );
+        assert_eq!(selected_style, NavigateShellStyle::WindowsPowerShell);
+        assert!(selected_input.starts_with("\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"\r"));
+        assert!(selected_input.ends_with("Set-Location -LiteralPath 'E:\\work\\app'\r"));
+    }
+
+    #[test]
+    fn deferred_startup_uses_powershell_call_operator_for_custom_shell_path() {
+        let (style, input) = deferred_remote_startup_input(
+            "windows",
+            Some("powershell"),
+            Some(r"C:\Tools\Custom Shell\shell.exe"),
+            None,
+        );
+        assert_eq!(style, NavigateShellStyle::WindowsOther);
+        assert_eq!(input, "& 'C:\\Tools\\Custom Shell\\shell.exe'\r");
+    }
+
+    #[test]
+    fn user_input_cancels_deferred_startup() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let input = RemoteInput::new(tx, true);
+
+        input.mark_user_input_started();
+
+        assert_eq!(
+            input.claim_deferred_startup(),
+            DeferredStartupClaim::CancelledByInput
+        );
+        assert_eq!(
+            input.claim_deferred_startup(),
+            DeferredStartupClaim::NotPending
+        );
+    }
+
+    #[test]
+    fn authentication_banner_keeps_lines_before_shell_output() {
+        assert_eq!(
+            terminal_auth_banner("Authorized users only\nWelcome"),
+            b"Authorized users only\r\nWelcome\r\n"
+        );
     }
 
     #[test]

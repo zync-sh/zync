@@ -19,6 +19,7 @@ use tokio::net::TcpStream;
 
 const MAX_FORWARDED_AGENT_PACKET_SIZE: usize = 256 * 1024;
 const AGENT_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_AUTH_BANNER_CHARS: usize = 16 * 1024;
 
 #[derive(Clone, Copy)]
 enum AgentSignatureDecision {
@@ -181,6 +182,7 @@ pub struct Client {
     pub host: String,
     pub port: u16,
     pub host_key_approval: Option<HostKeyApproval>,
+    auth_banner: Arc<Mutex<String>>,
 }
 
 impl std::fmt::Debug for Client {
@@ -199,6 +201,25 @@ impl std::fmt::Debug for Client {
 #[async_trait::async_trait]
 impl client::Handler for Client {
     type Error = anyhow::Error;
+
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let mut captured = self
+            .auth_banner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let remaining = MAX_AUTH_BANNER_CHARS.saturating_sub(captured.chars().count());
+        captured.extend(
+            banner
+                .chars()
+                .filter(|ch| matches!(ch, '\r' | '\n' | '\t') || !ch.is_control())
+                .take(remaining),
+        );
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,
@@ -655,6 +676,16 @@ impl SshManager {
         config: ConnectionConfig,
         tunnel_manager: Arc<crate::tunnels::TunnelManager>,
     ) -> Result<client::Handle<Client>> {
+        self.connect_with_banner(config, tunnel_manager)
+            .await
+            .map(|(session, _)| session)
+    }
+
+    pub async fn connect_with_banner(
+        &self,
+        config: ConnectionConfig,
+        tunnel_manager: Arc<crate::tunnels::TunnelManager>,
+    ) -> Result<(client::Handle<Client>, Option<String>)> {
         // Keep-alive: send a heartbeat every 60s to prevent NAT/firewall timeouts on idle sessions
         let client_config = client::Config {
             keepalive_interval: Some(std::time::Duration::from_secs(60)),
@@ -663,6 +694,7 @@ impl SshManager {
         };
         let client_config = Arc::new(client_config);
         let forwarded_agent = self.load_forwarded_agent(&config).await?;
+        let auth_banner = Arc::new(Mutex::new(String::new()));
 
         // Recursive Jump Host Logic
         if let Some(ref jump_host_config) = config.jump_host {
@@ -695,6 +727,7 @@ impl SshManager {
                 host: config.host.clone(),
                 port: config.port,
                 host_key_approval: config.host_key_approval.clone(),
+                auth_banner: auth_banner.clone(),
             };
 
             // russh::client::connect_stream takes stream and handler
@@ -702,10 +735,12 @@ impl SshManager {
                 russh::client::connect_stream(client_config, stream, client_handler).await?;
 
             // 5. Authenticate (Target)
-            return self
-                .authenticate_session(&mut session, &config)
-                .await
-                .map(|_| session);
+            self.authenticate_session(&mut session, &config).await?;
+            let banner = auth_banner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            return Ok((session, (!banner.is_empty()).then_some(banner)));
         }
 
         // Direct Connection Logic
@@ -717,6 +752,7 @@ impl SshManager {
             host: config.host.clone(),
             port: config.port,
             host_key_approval: config.host_key_approval.clone(),
+            auth_banner: auth_banner.clone(),
         };
 
         let mut session = client::connect(
@@ -726,9 +762,12 @@ impl SshManager {
         )
         .await?;
 
-        self.authenticate_session(&mut session, &config)
-            .await
-            .map(|_| session)
+        self.authenticate_session(&mut session, &config).await?;
+        let banner = auth_banner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        Ok((session, (!banner.is_empty()).then_some(banner)))
     }
 
     async fn authenticate_session(

@@ -127,8 +127,7 @@ export function GeneralTab({
                             <div>
                                 <h4 className="text-sm font-medium text-[var(--color-app-text)]">Share anonymous usage</h4>
                                 <p className="text-xs text-[var(--color-app-muted)] mt-1 max-w-md">
-                                    We periodically send daily totals: an install id, app version, OS, and which features you opened
-                                    (Files, splits, tunnels, and so on). The payload has no IP, hosts, paths, or commands.
+                                    We periodically send daily totals: an install id, app version, OS, which features you opened, how long the app was open, and when it was opened and closed, including the timezone. The payload has no IP, hosts, paths, or commands.
                                 </p>
                             </div>
                         </div>

@@ -1,6 +1,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isUsageEnabled } from './enabled.js';
 import { flushUsage, FLUSH_INTERVAL_MS } from './flush.js';
+import { clearUsageSession, ensureUsageSession } from './session.js';
 
 let started = false;
 let intervalId: number | null = null;
@@ -12,6 +13,7 @@ let onPageHide: (() => void) | null = null;
 export function startUsageLifecycle(): void {
   if (started) return;
   started = true;
+  ensureUsageSession();
   void flushUsage(true);
 
   intervalId = window.setInterval(() => {
@@ -63,5 +65,6 @@ export function stopUsageLifecycle(): void {
   }
   unlistenClose?.();
   unlistenClose = null;
+  clearUsageSession();
   started = false;
 }

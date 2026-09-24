@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { bumpFeature, createQueueState, markCurrentFlushed, utcDay } from '../.tmp-agent-tests/src/features/usage/queue.js';
+import { bumpFeature, createQueueState, markCurrentFlushed, sealDay, utcDay } from '../.tmp-agent-tests/src/features/usage/queue.js';
+import { clearUsageSession, ensureUsageSession } from '../.tmp-agent-tests/src/features/usage/session.js';
 
 function run(name, fn) {
   try {
@@ -49,6 +50,27 @@ run('markCurrentFlushed keeps dirty when counts grew after the snapshot', () => 
   assert.equal(flushed.current.dirty, true);
   assert.equal(flushed.current.features.files, 2);
   assert.equal(flushed.lastFlushAt, 2_000);
+});
+
+run('UTC rollover stores that day open time before it becomes pending', () => {
+  clearUsageSession();
+  ensureUsageSession(new Date('2026-09-23T22:00:00.000Z'));
+  const day = createQueueState(new Date('2026-09-23T22:00:00.000Z'));
+  const sealed = sealDay(day.current, new Date('2026-09-24T01:30:00.000Z'));
+  assert.equal(sealed.openSeconds, 2 * 60 * 60);
+  assert.equal(sealed.sessions.length, 1);
+  assert.equal(sealed.sessions[0].closedAt, '2026-09-24T00:00:00.000Z');
+  clearUsageSession();
+});
+
+run('a session that starts the next day does not seal the previous day', () => {
+  clearUsageSession();
+  ensureUsageSession(new Date('2026-09-24T01:00:00.000Z'));
+  const day = createQueueState(new Date('2026-09-23T22:00:00.000Z'));
+  const sealed = sealDay(day.current, new Date('2026-09-24T01:30:00.000Z'));
+  assert.equal(sealed.openSeconds, undefined);
+  assert.equal(sealed.sessions, undefined);
+  clearUsageSession();
 });
 
 run('UTC rollover keeps the unsent day in pending', () => {

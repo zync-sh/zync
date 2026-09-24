@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
 
@@ -645,6 +645,8 @@ pub struct ConnectionHandle {
     pub sftp_identity_maps: Arc<tokio::sync::OnceCell<SftpIdentityMaps>>,
     pub detected_os: Option<String>,
     pub detected_shell: Option<String>,
+    /// SSH userauth banner, shown once when this connection opens its first terminal.
+    pub auth_banner: Option<String>,
     pub uses_vault_auth: bool,
     /// Bumped on each new connect/reconnect; stale in-flight reconnects must match before replacing.
     pub reconnect_generation: u64,
@@ -664,140 +666,30 @@ pub enum ConnectAttempt {
     },
 }
 
-/// Internal helper: establishes a full SSH connection (session + SFTP + OS detection)
-/// and returns a fresh `ConnectionHandle`. Used for initial `ssh_connect` and reactive reconnection.
+/// Establishes the SSH transport without opening a session channel.
+///
+/// OpenSSH keeps PAM login messages for the first session channel. A terminal
+/// must therefore get a chance to claim that channel before SFTP and metadata
+/// probes run, otherwise the server's MOTD is discarded into a non-interactive
+/// channel.
 async fn reconnect_connection(
     config: &ConnectionConfig,
     ssh_manager: &crate::ssh::SshManager,
     tunnel_manager: &crate::tunnels::TunnelManager,
 ) -> Result<ConnectionHandle, String> {
-    let session = ssh_manager
-        .connect(config.clone(), Arc::new(tunnel_manager.clone()))
+    let (session, auth_banner) = ssh_manager
+        .connect_with_banner(config.clone(), Arc::new(tunnel_manager.clone()))
         .await
         .map_err(|e| format!("Failed to connect: {}", e))?;
-
-    // Initialize SFTP session
-    let sftp_session = match session.channel_open_session().await {
-        Ok(channel) => {
-            if let Err(e) = channel.request_subsystem(true, "sftp").await {
-                eprintln!("[SSH] Failed to request SFTP subsystem: {}", e);
-                None
-            } else {
-                let stream = channel.into_stream();
-                match russh_sftp::client::SftpSession::new(stream).await {
-                    Ok(sftp) => Some(Arc::new(sftp)),
-                    Err(e) => {
-                        eprintln!("[SSH] Failed to initialize SFTP: {}", e);
-                        None
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("[SSH] Failed to open channel for SFTP: {}", e);
-            None
-        }
-    };
-
-    // Detect OS (best-effort — reuse cached value if already known via caller)
-    let mut detected_os = None;
-    if let Ok(mut channel) = session.channel_open_session().await {
-        if channel.exec(true, "cat /etc/os-release").await.is_ok() {
-            let mut output = String::new();
-            while let Some(msg) = channel.wait().await {
-                match msg {
-                    russh::ChannelMsg::Data { data } => {
-                        output.push_str(&String::from_utf8_lossy(&data))
-                    }
-                    russh::ChannelMsg::ExitStatus { .. } => break,
-                    _ => {}
-                }
-            }
-            for line in output.lines() {
-                if line.starts_with("ID=") {
-                    let id = line.trim_start_matches("ID=").trim_matches('"');
-                    detected_os = Some(id.to_string());
-                    break;
-                }
-            }
-        }
-    }
-    if detected_os.is_none() {
-        if let Ok(mut channel) = session.channel_open_session().await {
-            if channel.exec(true, "uname -s").await.is_ok() {
-                let mut output = String::new();
-                while let Some(msg) = channel.wait().await {
-                    match msg {
-                        russh::ChannelMsg::Data { data } => {
-                            output.push_str(&String::from_utf8_lossy(&data))
-                        }
-                        russh::ChannelMsg::ExitStatus { .. } => break,
-                        _ => {}
-                    }
-                }
-                let sys_name = output.trim().to_lowercase();
-                if sys_name == "darwin" {
-                    detected_os = Some("macos".to_string());
-                } else if !sys_name.is_empty() {
-                    detected_os = Some(sys_name);
-                }
-            }
-        }
-    }
-    if detected_os.is_none() {
-        if let Ok(mut channel) = session.channel_open_session().await {
-            if channel.exec(true, "cmd /c ver").await.is_ok() {
-                let mut output = String::new();
-                while let Some(msg) = channel.wait().await {
-                    match msg {
-                        russh::ChannelMsg::Data { data } => {
-                            output.push_str(&String::from_utf8_lossy(&data))
-                        }
-                        russh::ChannelMsg::ExitStatus { .. } => break,
-                        _ => {}
-                    }
-                }
-                if output.to_lowercase().contains("windows") {
-                    detected_os = Some("windows".to_string());
-                }
-            }
-        }
-    }
-
-    // Detect login shell (best-effort)
-    let mut detected_shell = None;
-    if detected_os
-        .as_deref()
-        .map(|os| os.eq_ignore_ascii_case("windows"))
-        .unwrap_or(false)
-    {
-        detected_shell = Some("powershell".to_string());
-    } else if let Ok(mut channel) = session.channel_open_session().await {
-        if channel.exec(true, "basename \"${SHELL:-}\"").await.is_ok() {
-            let mut output = String::new();
-            while let Some(msg) = channel.wait().await {
-                match msg {
-                    russh::ChannelMsg::Data { data } => {
-                        output.push_str(&String::from_utf8_lossy(&data))
-                    }
-                    russh::ChannelMsg::ExitStatus { .. } => break,
-                    _ => {}
-                }
-            }
-            let shell_name = output.trim().to_string();
-            if !shell_name.is_empty() {
-                detected_shell = Some(shell_name);
-            }
-        }
-    }
 
     Ok(ConnectionHandle {
         config: config.clone(),
         session: Some(Arc::new(Mutex::new(session))),
-        sftp_session,
+        sftp_session: None,
         sftp_identity_maps: Arc::new(tokio::sync::OnceCell::new()),
-        detected_os,
-        detected_shell,
+        detected_os: None,
+        detected_shell: None,
+        auth_banner,
         uses_vault_auth: config_uses_vault_auth(config),
         reconnect_generation: 0,
         reconnect_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1094,9 +986,7 @@ pub async fn ssh_connect(
                 );
                 Ok(())
             }
-            _ => {
-                Err("Connection superseded")
-            }
+            _ => Err("Connection superseded"),
         }
     };
     if let Err(reason) = spawn_outcome {
@@ -1108,11 +998,7 @@ pub async fn ssh_connect(
                 if let Some(session) = handle.session.take() {
                     let guard = session.lock().await;
                     if let Err(error) = guard
-                        .disconnect(
-                            russh::Disconnect::ByApplication,
-                            reason,
-                            "",
-                        )
+                        .disconnect(russh::Disconnect::ByApplication, reason, "")
                         .await
                     {
                         eprintln!(
@@ -1157,11 +1043,7 @@ pub async fn ssh_connect(
                 if let Some(session) = handle.session.take() {
                     let guard = session.lock().await;
                     if let Err(error) = guard
-                        .disconnect(
-                            russh::Disconnect::ByApplication,
-                            "Connection cancelled",
-                            "",
-                        )
+                        .disconnect(russh::Disconnect::ByApplication, "Connection cancelled", "")
                         .await
                     {
                         eprintln!(
@@ -2859,11 +2741,12 @@ pub async fn terminal_create(
         Ok(term_id)
     } else {
         let channel = open_ssh_channel_with_single_reconnect(&connection_id, &state).await?;
-        let (remote_os, forward_agent) = {
+        let (remote_os, detected_shell, forward_agent) = {
             let connections = state.connections.lock().await;
             let connection = connections.get(&connection_id);
             (
                 connection.and_then(|c| c.detected_os.clone()),
+                connection.and_then(|c| c.detected_shell.clone()),
                 connection
                     .and_then(|c| c.config.agent_forwarding.as_ref())
                     .is_some(),
@@ -2876,11 +2759,24 @@ pub async fn terminal_create(
                 .map_err(|error| format!("SSH agent forwarding request failed: {error}"))?;
         }
 
-        state
+        let (auth_banner, reconnect_generation) = {
+            let mut connections = state.connections.lock().await;
+            let mut connection = connections.get_mut(&connection_id);
+            (
+                connection.as_mut().and_then(|c| c.auth_banner.take()),
+                connection.map(|c| c.reconnect_generation),
+            )
+        };
+
+        let deferred_startup = remote_os.is_none();
+        let deferred_shell = shell.clone();
+        let deferred_cwd = cwd.clone();
+
+        let created = state
             .pty_manager
             .create_remote_session(
                 term_id.clone(),
-                connection_id,
+                connection_id.clone(),
                 generation,
                 channel,
                 cols,
@@ -2889,10 +2785,46 @@ pub async fn terminal_create(
                 output_channel,
                 shell,
                 remote_os,
+                detected_shell,
                 cwd,
+                auth_banner.clone(),
             )
-            .await
-            .map_err(|e| e.to_string())?;
+            .await;
+        if let Err(error) = created {
+            if let Some(banner) = auth_banner {
+                let mut connections = state.connections.lock().await;
+                if let Some(connection) = connections.get_mut(&connection_id) {
+                    if Some(connection.reconnect_generation) == reconnect_generation
+                        && connection.auth_banner.is_none()
+                    {
+                        connection.auth_banner = Some(banner);
+                    }
+                }
+            }
+            return Err(error.to_string());
+        }
+
+        // The interactive shell has now claimed OpenSSH's first session
+        // channel, so metadata probes can no longer consume its PAM/MOTD text.
+        // Keep them detached from terminal startup; slow remote commands must
+        // not delay a usable prompt.
+        let metadata_connection_id = connection_id.clone();
+        let metadata_term_id = term_id.clone();
+        let metadata_app = state.app_handle.clone();
+        tokio::spawn(async move {
+            if let Some(app_state) = metadata_app.try_state::<AppState>() {
+                initialize_remote_metadata_after_terminal(
+                    &metadata_connection_id,
+                    Some(&metadata_term_id),
+                    Some(generation),
+                    deferred_startup,
+                    deferred_shell,
+                    deferred_cwd,
+                    app_state.inner(),
+                )
+                .await;
+            }
+        });
 
         Ok(term_id)
     }
@@ -2915,11 +2847,17 @@ async fn reconnect_stored_connection(
     };
     let _reconnect_guard = reconnect_lock.clone().lock_owned().await;
 
-    let expected_generation = {
+    let (expected_generation, previous_detected_os, previous_detected_shell) = {
         let connections = state.connections.lock().await;
         connections
             .get(connection_id)
-            .map(|handle| handle.reconnect_generation)
+            .map(|handle| {
+                (
+                    handle.reconnect_generation,
+                    handle.detected_os.clone(),
+                    handle.detected_shell.clone(),
+                )
+            })
             .ok_or_else(|| {
                 format!("Connection {connection_id} was disconnected during reconnect")
             })?
@@ -2960,6 +2898,8 @@ async fn reconnect_stored_connection(
         reconnect_connection(&connect_config, &state.ssh_manager, &state.tunnel_manager).await?;
     new_handle.config = original_config;
     new_handle.uses_vault_auth = uses_vault_auth;
+    new_handle.detected_os = previous_detected_os;
+    new_handle.detected_shell = previous_detected_shell;
     let mut connections = state.connections.lock().await;
     match connections.get(connection_id) {
         Some(existing) if existing.reconnect_generation == expected_generation => {
@@ -3044,6 +2984,277 @@ async fn open_ssh_channel_with_single_reconnect(
         .map_err(|e| format!("Channel open failed after reconnect: {}", e))
 }
 
+async fn run_connection_probe(
+    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    command: &str,
+) -> Option<String> {
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+    tokio::time::timeout(PROBE_TIMEOUT, async {
+        let mut channel = {
+            let guard = session.lock().await;
+            guard.channel_open_session().await.ok()?
+        };
+        channel.exec(true, command).await.ok()?;
+        let mut output = String::new();
+        while let Some(message) = channel.wait().await {
+            match message {
+                russh::ChannelMsg::Data { data } => {
+                    output.push_str(&String::from_utf8_lossy(&data));
+                }
+                russh::ChannelMsg::ExitStatus { .. } => {}
+                _ => {}
+            }
+        }
+        Some(output)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn parse_windows_openssh_default_shell(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let marker = "REG_SZ";
+        let marker_start = line.to_ascii_uppercase().find(marker)?;
+        let value = line[marker_start + marker.len()..].trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn resolve_windows_openssh_shell(probe_output: Option<String>) -> Option<String> {
+    probe_output.map(|output| {
+        parse_windows_openssh_default_shell(&output).unwrap_or_else(|| "cmd.exe".to_string())
+    })
+}
+
+#[cfg(test)]
+mod remote_metadata_tests {
+    use super::{parse_windows_openssh_default_shell, resolve_windows_openssh_shell};
+
+    #[test]
+    fn parses_windows_openssh_default_shell_registry_value() {
+        let output = concat!(
+            "HKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\r\n",
+            "    DefaultShell    REG_SZ    C:\\Program Files\\PowerShell\\7\\pwsh.exe\r\n",
+        );
+
+        assert_eq!(
+            parse_windows_openssh_default_shell(output).as_deref(),
+            Some(r"C:\Program Files\PowerShell\7\pwsh.exe")
+        );
+    }
+
+    #[test]
+    fn missing_windows_openssh_default_shell_uses_caller_fallback() {
+        assert_eq!(
+            parse_windows_openssh_default_shell("ERROR: not found"),
+            None
+        );
+    }
+
+    #[test]
+    fn successful_probe_without_registry_value_uses_cmd() {
+        assert_eq!(
+            resolve_windows_openssh_shell(Some(String::new())).as_deref(),
+            Some("cmd.exe")
+        );
+    }
+
+    #[test]
+    fn failed_probe_does_not_cache_cmd() {
+        assert_eq!(resolve_windows_openssh_shell(None), None);
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConnectionMetadataPayload {
+    connection_id: String,
+    detected_os: Option<String>,
+    detected_shell: Option<String>,
+}
+
+async fn initialize_remote_metadata_after_terminal(
+    connection_id: &str,
+    term_id: Option<&str>,
+    generation: Option<u32>,
+    finalize_startup: bool,
+    pending_shell: Option<String>,
+    pending_cwd: Option<String>,
+    state: &AppState,
+) {
+    let (session, reconnect_generation, cached_os, cached_shell) = {
+        let connections = state.connections.lock().await;
+        let Some(connection) = connections.get(connection_id) else {
+            return;
+        };
+        (
+            connection.session.clone(),
+            connection.reconnect_generation,
+            connection.detected_os.clone(),
+            connection.detected_shell.clone(),
+        )
+    };
+    if cached_os.is_some() && cached_shell.is_some() {
+        if let (true, Some(term_id), Some(generation)) = (finalize_startup, term_id, generation) {
+            finalize_remote_terminal_startup(
+                term_id,
+                generation,
+                cached_os.as_deref(),
+                cached_shell.as_deref(),
+                pending_shell.as_deref(),
+                pending_cwd.as_deref(),
+                state,
+            )
+            .await;
+        }
+        return;
+    }
+    let Some(session) = session else {
+        return;
+    };
+
+    let mut detected_os = None;
+    if let Some(output) = run_connection_probe(&session, "cat /etc/os-release").await {
+        detected_os = output.lines().find_map(|line| {
+            line.strip_prefix("ID=")
+                .map(|id| id.trim_matches('"').to_string())
+        });
+    }
+    if detected_os.is_none() {
+        if let Some(output) = run_connection_probe(&session, "uname -s").await {
+            let system = output.trim().to_ascii_lowercase();
+            if !system.is_empty() {
+                detected_os = Some(if system == "darwin" {
+                    "macos".to_string()
+                } else {
+                    system
+                });
+            }
+        }
+    }
+    if detected_os.is_none() {
+        if let Some(output) = run_connection_probe(&session, "cmd /c ver").await {
+            if output.to_ascii_lowercase().contains("windows") {
+                detected_os = Some("windows".to_string());
+            }
+        }
+    }
+
+    let detected_shell = if detected_os
+        .as_deref()
+        .is_some_and(|os| os.eq_ignore_ascii_case("windows"))
+    {
+        let probe_output = run_connection_probe(
+            &session,
+            r"cmd.exe /d /c reg.exe query HKLM\SOFTWARE\OpenSSH /v DefaultShell",
+        )
+        .await;
+        // OpenSSH uses cmd.exe when the registry query succeeds but DefaultShell
+        // is absent. A failed probe must remain unknown so it can be retried.
+        resolve_windows_openssh_shell(probe_output)
+    } else {
+        run_connection_probe(&session, "basename \"${SHELL:-}\"")
+            .await
+            .map(|output| output.trim().to_string())
+            .filter(|shell| !shell.is_empty())
+    };
+
+    let current_metadata = {
+        let mut connections = state.connections.lock().await;
+        if let Some(connection) = connections.get_mut(connection_id) {
+            if connection.reconnect_generation == reconnect_generation {
+                if detected_os.is_some() {
+                    connection.detected_os = detected_os.clone();
+                }
+                if detected_shell.is_some() {
+                    connection.detected_shell = detected_shell.clone();
+                }
+                Some((
+                    connection.detected_os.clone(),
+                    connection.detected_shell.clone(),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some((current_os, current_shell)) = current_metadata {
+        let _ = state.app_handle.emit(
+            "connection:metadata",
+            ConnectionMetadataPayload {
+                connection_id: connection_id.to_string(),
+                detected_os: current_os.clone(),
+                detected_shell: current_shell.clone(),
+            },
+        );
+
+        if let (true, Some(term_id), Some(generation)) = (finalize_startup, term_id, generation) {
+            finalize_remote_terminal_startup(
+                term_id,
+                generation,
+                current_os.as_deref(),
+                current_shell.as_deref(),
+                pending_shell.as_deref(),
+                pending_cwd.as_deref(),
+                state,
+            )
+            .await;
+        }
+    }
+}
+
+fn probe_remote_metadata_after_sftp(connection_id: String, app_handle: AppHandle) {
+    tokio::spawn(async move {
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            initialize_remote_metadata_after_terminal(
+                &connection_id,
+                None,
+                None,
+                false,
+                None,
+                None,
+                state.inner(),
+            )
+            .await;
+        }
+    });
+}
+
+async fn finalize_remote_terminal_startup(
+    term_id: &str,
+    generation: u32,
+    remote_os: Option<&str>,
+    detected_shell: Option<&str>,
+    pending_shell: Option<&str>,
+    pending_cwd: Option<&str>,
+    state: &AppState,
+) {
+    let Some(remote_os) = remote_os else {
+        return;
+    };
+    if let Err(error) = state
+        .pty_manager
+        .finalize_remote_startup(
+            term_id,
+            generation,
+            remote_os,
+            detected_shell,
+            pending_shell,
+            pending_cwd,
+        )
+        .await
+    {
+        eprintln!(
+            "[TERM] Failed to apply deferred startup for terminal {}: {}",
+            term_id, error
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn terminal_close(term_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state
@@ -3068,14 +3279,84 @@ pub fn terminal_flush_stats() -> crate::pty_output_flush::FlushReasonCounts {
     crate::pty_output_flush::flush_reason_snapshot()
 }
 
-// Helper to get SFTP session - reconnects automatically if session is dead.
-// Zero overhead for healthy connections; only re-establishes when needed.
+#[derive(Debug)]
+enum OpenSftpError {
+    Transport(String),
+    ChannelRejected(String),
+    Subsystem(String),
+    Initialize(String),
+}
+
+impl std::fmt::Display for OpenSftpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport(message)
+            | Self::ChannelRejected(message)
+            | Self::Subsystem(message)
+            | Self::Initialize(message) => formatter.write_str(message),
+        }
+    }
+}
+
+fn classify_sftp_channel_open_error(error: russh::Error) -> OpenSftpError {
+    let message = format!("Failed to open SFTP channel: {error}");
+    if matches!(error, russh::Error::ChannelOpenFailure(_)) {
+        OpenSftpError::ChannelRejected(message)
+    } else {
+        OpenSftpError::Transport(message)
+    }
+}
+
+#[cfg(test)]
+mod sftp_open_error_tests {
+    use super::{classify_sftp_channel_open_error, OpenSftpError};
+
+    #[test]
+    fn server_channel_rejection_does_not_look_like_transport_loss() {
+        let error = classify_sftp_channel_open_error(russh::Error::ChannelOpenFailure(
+            russh::ChannelOpenFailure::AdministrativelyProhibited,
+        ));
+        assert!(matches!(error, OpenSftpError::ChannelRejected(_)));
+    }
+
+    #[test]
+    fn disconnect_is_classified_as_transport_loss() {
+        let error = classify_sftp_channel_open_error(russh::Error::Disconnect);
+        assert!(matches!(error, OpenSftpError::Transport(_)));
+    }
+}
+
+async fn open_sftp_session(
+    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+) -> Result<Arc<russh_sftp::client::SftpSession>, OpenSftpError> {
+    let channel = {
+        let guard = session.lock().await;
+        guard
+            .channel_open_session()
+            .await
+            .map_err(classify_sftp_channel_open_error)?
+    };
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|error| {
+            OpenSftpError::Subsystem(format!("Failed to request SFTP subsystem: {error}"))
+        })?;
+    let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|error| {
+            OpenSftpError::Initialize(format!("Failed to initialize SFTP: {error}"))
+        })?;
+    Ok(Arc::new(sftp))
+}
+
+// Helper to get SFTP session - initializes it lazily on the live transport and
+// reconnects only when the SSH transport itself has gone away.
 async fn get_sftp_or_reconnect(
     state: &AppState,
     id: &str,
 ) -> Result<Arc<russh_sftp::client::SftpSession>, String> {
-    // 1. Try to get existing SFTP session
-    let config = {
+    let (config, existing_session, reconnect_generation) = {
         let connections = state.connections.lock().await;
         let conn = connections
             .get(id)
@@ -3084,14 +3365,58 @@ async fn get_sftp_or_reconnect(
         if let Some(sftp) = &conn.sftp_session {
             return Ok(sftp.clone());
         }
-        conn.config.clone()
+        (
+            conn.config.clone(),
+            conn.session.clone(),
+            conn.reconnect_generation,
+        )
     };
 
-    // 2. Session dropped — attempt full reconnect
-    println!(
-        "[SFTP] Session not found for '{}', attempting reconnect...",
-        id
-    );
+    if let Some(session) = existing_session {
+        match open_sftp_session(&session).await {
+            Ok(opened) => {
+                let (sftp, opened_first_sftp) = {
+                    let mut connections = state.connections.lock().await;
+                    let conn = connections
+                        .get_mut(id)
+                        .ok_or_else(|| "Connection was removed while SFTP started".to_string())?;
+                    if conn.reconnect_generation != reconnect_generation {
+                        return conn
+                            .sftp_session
+                            .clone()
+                            .ok_or_else(|| "Connection changed while SFTP started".to_string());
+                    }
+                    let opened_first_sftp = conn.sftp_session.is_none();
+                    let sftp = conn
+                        .sftp_session
+                        .get_or_insert_with(|| opened.clone())
+                        .clone();
+                    (sftp, opened_first_sftp)
+                };
+                if opened_first_sftp {
+                    probe_remote_metadata_after_sftp(id.to_string(), state.app_handle.clone());
+                }
+                return Ok(sftp);
+            }
+            Err(OpenSftpError::Transport(_)) => {
+                let mut connections = state.connections.lock().await;
+                if let Some(conn) = connections.get_mut(id) {
+                    if conn.reconnect_generation == reconnect_generation {
+                        conn.session = None;
+                    }
+                }
+            }
+            Err(
+                error @ (OpenSftpError::ChannelRejected(_)
+                | OpenSftpError::Subsystem(_)
+                | OpenSftpError::Initialize(_)),
+            ) => {
+                return Err(error.to_string());
+            }
+        }
+    }
+
+    println!("[SFTP] SSH session missing for '{}', reconnecting...", id);
 
     let timeout_duration = std::time::Duration::from_secs(12);
     match tokio::time::timeout(
@@ -3109,11 +3434,38 @@ async fn get_sftp_or_reconnect(
             ))
         }
     };
-    let sftp = {
+    let (session, reconnect_generation) = {
         let connections = state.connections.lock().await;
-        connections.get(id).and_then(|c| c.sftp_session.clone())
+        let conn = connections
+            .get(id)
+            .ok_or_else(|| "Reconnection succeeded but connection is missing".to_string())?;
+        (
+            conn.session
+                .clone()
+                .ok_or_else(|| "Reconnection succeeded but SSH session is missing".to_string())?,
+            conn.reconnect_generation,
+        )
+    };
+    let sftp = open_sftp_session(&session)
+        .await
+        .map_err(|error| error.to_string())?;
+    let opened_first_sftp = {
+        let mut connections = state.connections.lock().await;
+        if let Some(conn) = connections.get_mut(id) {
+            if conn.reconnect_generation == reconnect_generation {
+                let opened_first_sftp = conn.sftp_session.is_none();
+                conn.sftp_session = Some(sftp.clone());
+                opened_first_sftp
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if opened_first_sftp {
+        probe_remote_metadata_after_sftp(id.to_string(), state.app_handle.clone());
     }
-    .ok_or_else(|| "Reconnection succeeded but SFTP initialization failed".to_string())?;
 
     println!("[SFTP] Reconnected successfully for '{}'", id);
     Ok(sftp)
@@ -3122,7 +3474,13 @@ async fn get_sftp_or_reconnect(
 async fn sftp_list_ctx(
     state: &AppState,
     id: &str,
-) -> Result<(Arc<russh_sftp::client::SftpSession>, Arc<tokio::sync::OnceCell<SftpIdentityMaps>>), String> {
+) -> Result<
+    (
+        Arc<russh_sftp::client::SftpSession>,
+        Arc<tokio::sync::OnceCell<SftpIdentityMaps>>,
+    ),
+    String,
+> {
     let sftp = get_sftp_or_reconnect(state, id).await?;
     let cache = {
         let connections = state.connections.lock().await;
@@ -3607,8 +3965,11 @@ pub(crate) async fn ghost_fs_list(
     } else {
         let (sftp, identity_cache) = sftp_list_ctx(state, connection_id).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
-        match tokio::time::timeout(timeout_duration, state.file_system.list_remote(&sftp, path, &identity_cache))
-            .await
+        match tokio::time::timeout(
+            timeout_duration,
+            state.file_system.list_remote(&sftp, path, &identity_cache),
+        )
+        .await
         {
             Ok(Ok(res)) => Ok(res),
             Ok(Err(e)) if sftp_error_is_dead_session(&e) => {
@@ -5351,8 +5712,6 @@ pub async fn settings_restore_last_known_good(
         modified_ms,
     })
 }
-
-use tauri::Emitter;
 
 #[derive(Clone, serde::Serialize)]
 struct TransferProgress {

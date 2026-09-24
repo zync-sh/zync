@@ -4,6 +4,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.32.2] - 2026-09-24
+
+### Changed
+- **Anonymous usage:** The daily report also includes how long the app was open, when it was opened and closed, the timezone, and counts for connections, sign-in method, tunnel starts, finished file transfers, snippets sent to a shell, and Files splits. Still no IP, hosts, paths, or commands. ([7c5509b], [69ce069])
+
+### Fixed
+- **SSH login banners and startup:** Authentication banners and the remote login MOTD now reach the first terminal instead of being consumed by metadata/SFTP setup. Deferred shell and working-directory startup uses generation-safe cached metadata, preserves Windows shell syntax, and will not inject commands after the user starts typing. Windows OpenSSH detects its configured default shell so CMD, PowerShell, explicit shell paths, and cross-drive navigation use the correct syntax. ([e3dab28], [2adf32b], [00e7e49])
+- **Files tabs on host switch:** Leaving a host (or Local) and coming back no longer adds another Files tab. The Files panes already saved for that host are reused. A Files pane docked beside a shell stays the active tab instead of a later Files pane. A new Files tab is created only when that host does not have one yet. ([d251558], [00e7e49])
+
 ## [2.32.1] - 2026-09-20
 
 ### Changed
@@ -1450,7 +1459,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [d3f4060]: https://github.com/zync-sh/zync/commit/d3f4060
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.32.1...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.32.2...HEAD
+[2.32.2]: https://github.com/zync-sh/zync/compare/v2.32.1...v2.32.2
 [2.32.1]: https://github.com/zync-sh/zync/compare/v2.32.0...v2.32.1
 [2.32.0]: https://github.com/zync-sh/zync/compare/v2.31.0...v2.32.0
 [2.31.0]: https://github.com/zync-sh/zync/compare/v2.30.0...v2.31.0
@@ -1604,3 +1614,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [aaa9e82]: https://github.com/zync-sh/zync/commit/aaa9e82
 [09ea72c]: https://github.com/zync-sh/zync/commit/09ea72c
 [063c515]: https://github.com/zync-sh/zync/commit/063c515
+[e3dab28]: https://github.com/zync-sh/zync/commit/e3dab28
+[2adf32b]: https://github.com/zync-sh/zync/commit/2adf32b

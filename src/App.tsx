@@ -17,6 +17,12 @@ import { GlobalAgentSignatureDialog } from './components/connections/GlobalAgent
 import { GlobalConnectionsRestorePreviewModal } from './components/vault/GlobalConnectionsRestorePreviewModal';
 import * as RadixTooltip from '@radix-ui/react-tooltip';
 
+type ConnectionMetadataPayload = {
+    connectionId?: string;
+    detectedOs?: string | null;
+    detectedShell?: string | null;
+};
+
 function AppContent() {
     const loadConnections = useAppStore((state) => state.loadConnections);
     const loadSettings = useAppStore((state) => state.loadSettings);
@@ -27,6 +33,14 @@ function AppContent() {
 
     useTransferEvents();
     useAutoUpdater();
+
+    useEffect(() => window.ipcRenderer.on(
+        'connection:metadata',
+        (_event, payload: ConnectionMetadataPayload) => {
+            if (!payload?.connectionId) return;
+            useAppStore.getState().applyConnectionMetadata(payload.connectionId, payload.detectedOs);
+        },
+    ), []);
 
     useEffect(() => {
         // Initialize State — order matters: connections must load before session
