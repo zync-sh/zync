@@ -1,6 +1,12 @@
 # Zync plugin SDK (beta)
 
-Public authoring types for Manifest v2 plugins. This package lives in the Zync repository but has its own npm version and release lifecycle. It is not published to npm yet.
+Public authoring types for Manifest v2 plugins. This package lives in the Zync repository but has its own npm version and release lifecycle.
+
+Install the prerelease as a development dependency:
+
+```sh
+npm install --save-dev @zync-sh/plugin-sdk@beta
+```
 
 To try the local package from another project, install it by path:
 
@@ -8,7 +14,7 @@ To try the local package from another project, install it by path:
 npm install --save-dev /path/to/zync/packages/plugin-sdk
 ```
 
-Once published, install `@zync-sh/plugin-sdk` by version instead. The SDK is a development dependency: Zync supplies the `zync` object when it starts a plugin worker or pane. Do not bundle an SDK runtime into the plugin.
+Zync supplies the `zync` object when it starts a plugin worker or pane. Do not bundle an SDK runtime into the plugin.
 
 ## Manifest
 

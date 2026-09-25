@@ -22,4 +22,4 @@ for (const args of [
   });
   if (result.status !== 0) process.exit(result.status || 1);
 }
-console.log(`SDK ${metadata.version} automatic release checks passed. Manual staging and security review still required.`);
+console.log(`SDK ${metadata.version} automatic release checks passed. Marketplace staging and independent review are required before stable promotion.`);
