@@ -12,7 +12,7 @@ const project = fs.mkdtempSync(path.join(os.tmpdir(), 'zync-plugin-starter-'));
 const output = path.join(project, 'dist');
 try {
   fs.cpSync(template, project, { recursive: true });
-  const link = path.join(project, 'node_modules', '@zync', 'plugin-sdk');
+  const link = path.join(project, 'node_modules', '@zync-sh', 'plugin-sdk');
   fs.mkdirSync(path.dirname(link), { recursive: true });
   fs.symlinkSync(path.join(root, 'packages', 'plugin-sdk'), link, process.platform === 'win32' ? 'junction' : 'dir');
   const build = spawnSync(process.execPath, [path.join(project, 'scripts', 'build.mjs')], {

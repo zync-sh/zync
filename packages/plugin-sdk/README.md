@@ -8,14 +8,14 @@ To try the local package from another project, install it by path:
 npm install --save-dev /path/to/zync/packages/plugin-sdk
 ```
 
-Once published, install `@zync/plugin-sdk` by version instead. The SDK is a development dependency: Zync supplies the `zync` object when it starts a plugin worker or pane. Do not bundle an SDK runtime into the plugin.
+Once published, install `@zync-sh/plugin-sdk` by version instead. The SDK is a development dependency: Zync supplies the `zync` object when it starts a plugin worker or pane. Do not bundle an SDK runtime into the plugin.
 
 ## Manifest
 
 `defineManifest` gives TypeScript a Manifest v2 contract and returns the same object. It does **not** validate a package or grant permissions; the Zync host is the final authority.
 
 ```ts
-import { defineManifest } from '@zync/plugin-sdk';
+import { defineManifest } from '@zync-sh/plugin-sdk';
 
 export default defineManifest({
   manifestVersion: 2,
@@ -44,7 +44,7 @@ Run the packaged CLI against the **built plugin directory** (the one containing 
 npx zync-plugin validate ./dist/my-plugin --zync-version 2.32.2
 ```
 
-In this repository, the same check is available as `npm run plugin:validate -- ./examples/plugins/manifest-v2-demo`. For programmatic checks, import `validateManifest` or `validatePackageDirectory` from `@zync/plugin-sdk/validate`. Validation returns `{ valid, issues }`; warnings do not fail the check.
+In this repository, the same check is available as `npm run plugin:validate -- ./examples/plugins/manifest-v2-demo`. For programmatic checks, import `validateManifest` or `validatePackageDirectory` from `@zync-sh/plugin-sdk/validate`. Validation returns `{ valid, issues }`; warnings do not fail the check.
 
 The preflight checks Manifest v2 fields, publisher namespace, semantic plugin version, contribution/permission declarations, known permissions, network host declarations, referenced files, basic package limits, and plugin API compatibility. Pass `--zync-version` to check compatibility with a specific app build; without it, the Zync range is syntax-checked only. Unknown optional permissions produce warnings because the host denies them until supported. The preflight does **not** validate signatures, inspect executable behavior, or replace native install-time validation. The signing tool and native host retain their own package and security checks.
 
@@ -55,7 +55,7 @@ The [basic starter template](templates/basic/README.md) is included in this pack
 For a worker:
 
 ```ts
-import type { ZyncWorkerApi } from '@zync/plugin-sdk/worker';
+import type { ZyncWorkerApi } from '@zync-sh/plugin-sdk/worker';
 
 declare const zync: ZyncWorkerApi;
 
@@ -66,7 +66,7 @@ zync.on('ready', async () => {
 });
 ```
 
-For an isolated pane, use `import type { ZyncPaneApi } from '@zync/plugin-sdk/pane'` and declare `window.zync` with that type in your pane source. Panes can exchange messages with their worker; they do not get the worker API, host DOM, or direct network access.
+For an isolated pane, use `import type { ZyncPaneApi } from '@zync-sh/plugin-sdk/pane'` and declare `window.zync` with that type in your pane source. Panes can exchange messages with their worker; they do not get the worker API, host DOM, or direct network access.
 
 The typed worker interface covers the Manifest v2 broker APIs only. Legacy plugin APIs are deliberately absent. Every host operation is still checked against the installed manifest, current grant, runtime identity, and applicable scope. The SDK version does not replace the manifest's `engines.pluginApi` compatibility declaration.
 

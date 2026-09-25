@@ -2,7 +2,7 @@
 
 Copy this directory into a new project and replace the sample publisher, id, and name in `manifest.mjs` before distributing it.
 
-Until `@zync/plugin-sdk` is published, install it from your local Zync checkout:
+Until `@zync-sh/plugin-sdk` is published, install it from your local Zync checkout:
 
 ```sh
 npm install --save-dev /path/to/zync/packages/plugin-sdk

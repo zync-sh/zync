@@ -12,7 +12,7 @@ const manifest = { manifestVersion: 2, id: 'com.example.test' };
 assert.equal(defineManifest(manifest), manifest, 'manifest helper must not mutate plugin metadata');
 
 const packageJson = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
-assert.equal(packageJson.name, '@zync/plugin-sdk');
+assert.equal(packageJson.name, '@zync-sh/plugin-sdk');
 assert.equal(packageJson.private, undefined, 'SDK must remain independently publishable');
 
 const cacheDir = mkdtempSync(path.join(tmpdir(), 'zync-plugin-sdk-pack-'));

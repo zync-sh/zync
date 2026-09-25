@@ -1,5 +1,5 @@
 {
-  "name": "@zync/plugin-sdk",
+  "name": "@zync-sh/plugin-sdk",
   "version": "2.0.0-beta.1",
   "description": "Manifest v2 authoring types and preflight validation for Zync plugins",
   "type": "module",
@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zync-sh/zync.git",
+    "url": "git+https://github.com/zync-sh/zync.git",
     "directory": "packages/plugin-sdk"
   },
   "engines": { "node": ">=20" },
@@ -19,7 +19,7 @@
     "./worker": { "types": "./worker.d.ts" },
     "./pane": { "types": "./pane.d.ts" }
   },
-  "bin": { "zync-plugin": "./bin/zync-plugin.mjs" },
+  "bin": { "zync-plugin": "bin/zync-plugin.mjs" },
   "types": "./index.d.ts",
   "scripts": { "prepublishOnly": "node ../../scripts/plugin-signing/sdk-release-check.mjs" },
   "publishConfig": { "access": "public" }

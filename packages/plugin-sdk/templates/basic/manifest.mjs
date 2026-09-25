@@ -1,4 +1,4 @@
-import { defineManifest } from '@zync/plugin-sdk';
+import { defineManifest } from '@zync-sh/plugin-sdk';
 
 export default defineManifest({
   manifestVersion: 2,
