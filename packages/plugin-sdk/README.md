@@ -8,6 +8,8 @@ Install the prerelease as a development dependency:
 npm install --save-dev @zync-sh/plugin-sdk@beta
 ```
 
+This first npm release is a beta. npm also initialized its `latest` tag to this version, so use `@beta` explicitly until a stable release is promoted.
+
 To try the local package from another project, install it by path:
 
 ```sh

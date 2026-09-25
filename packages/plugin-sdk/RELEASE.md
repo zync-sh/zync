@@ -9,7 +9,9 @@ Before a beta npm SDK release:
 1. Run `npm run sdk:release-check` from the Zync repository root. It checks type contracts, validator cases, the starter build, and the exact npm package contents.
 2. Run the native plugin tests and the full agent regression suite.
 3. Run `node check.mjs` in the sibling `zync-plugin-channel-examples` project to validate, sign, and verify stable and beta builds in a disposable registry.
-4. Review the exact SDK tarball, production dependency audit, license, and documentation. Publish the prerelease with the `beta` npm tag, never `latest`, and install it in a clean project to verify the CLI and exported types.
+4. Review the exact SDK tarball, production dependency audit, license, and documentation. Publish the prerelease with the `beta` npm tag and install it in a clean project to verify the CLI and exported types. Check the actual registry tags after publishing; npm initialized `latest` to the beta on this package's first release despite `--tag beta` and rejected removal of `latest`. Do not describe `latest` as stable until a stable release replaces that tag.
+
+`@zync-sh/plugin-sdk@2.0.0-beta.1` was published under `beta` on 2026-09-25. A clean npm install verified the CLI and exported runtime helpers. npm also currently resolves `latest` to this first beta; install `@beta` explicitly until stable promotion.
 
 The SDK beta is an authoring tool, not a production marketplace launch. Before promoting it to `latest` or calling the marketplace production-ready, deploy the signed test builds to a protected HTTPS staging registry. Manually verify marketplace listing, opt-in beta update, switch back to stable, permission review, and retained-version rollback in the desktop app. Record the tested Zync build, SDK version, registry version, and package digests; complete the external-plugin smoke test and independent security review. Local signing tests do not substitute for these checks.
 
