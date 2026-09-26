@@ -8,6 +8,16 @@
 
 ## Implementation status
 
+### API 2.1 SSH commands (local, unpublished)
+
+The standalone PM2 Monitor rebuild in `../zync-pm2-monitor` uses the new `zync.sshCommand.execute` worker API. Native `plugins/ssh_command.rs` authorizes `ssh.command.execute`, resolves the connection from the host-owned pane binding, and quotes program/arguments individually for POSIX SSH servers. Plugins cannot pass a connection ID. This is an explicit **remote code execution** permission, not a command allowlist or filesystem sandbox; the permission review explains the account-level risk.
+
+Commands have a five-second open timeout, twenty-second execution timeout, combined 2 MiB output limit, 64-argument/16 KiB input limit, one concurrent command per pane, and eight globally. A binding lease cancels channels on close/rebind/runtime revocation; optional-permission changes stop the runtime natively. A returned opaque connection token includes the binding and reconnect generation; passing `expectedConnectionToken` prevents a later action from silently targeting a replacement connection. Missing exit status is an error. Channel cancellation cannot undo remote side effects or guarantee termination of daemonized processes.
+
+Host API compatibility and the local SDK are advanced to 2.1; no npm publication is implied. Existing API 2.0 plugins remain compatible. The old marketplace PM2 archive remains untouched until a signed standalone release exists.
+
+### Existing Sandbox MVP
+
 The Sandbox MVP is complete on `feature/plugin-sandbox-v2` for locally reviewed Manifest v2 plugins:
 
 - one frontend plugin/manifest type model replaces the previous repeated component-local shapes;
@@ -22,6 +32,7 @@ The Sandbox MVP is complete on `feature/plugin-sandbox-v2` for locally reviewed 
 - Developer Mode is a native, persisted, default-off policy boundary: local inspection and activation require it, local and legacy packages stay stopped while it is off, disabling it invalidates runtime identities, and signed marketplace packages remain available;
 - the typed frontend message broker now lives under `src/features/plugins/broker/`; it validates and routes Manifest v2 pane, notification, confirmation, command, storage, network, and filesystem requests while `PluginContext` retains lifecycle composition and the explicit Manifest v1 compatibility bridge;
 - permission decisions are stored natively and bound to the publisher, version, and SHA-256 digest of the reviewed package; optional permissions default to denied;
+- brokered file, SSH, network, private-storage, notification and confirmation actions request missing declared optional permissions through Zync's Allow/Deny dialog before executing. Deny cancels the action without remembering a refusal, so another attempt asks again. Allow persists the grant without restarting the worker; Settings can revoke it. Required or undeclared permissions cannot be elevated this way. Native checks revalidate the active runtime and installed package before saving approval, and concurrent requests for the same runtime/permission share one dialog;
 - worker generations receive host-owned native runtime identities; notifications, command registration, and private plugin storage are enforced against the live runtime, package digest, declaration, grant, and request-rate limit, while command identity and title must also match the manifest contribution;
 - `zync.storage` persists bounded string values in a publisher/plugin namespace with atomic replacement; plugins cannot select or enumerate another plugin's storage path;
 - Manifest v2 pane registration resolves the declared title and HTML entry from the verified package in native code; pane ids are host-namespaced, frames use opaque origins and a restrictive CSP, and the legacy panel bridge is not exposed;
@@ -40,10 +51,10 @@ The Sandbox MVP is complete on `feature/plugin-sandbox-v2` for locally reviewed 
 - the main webview has production and development CSPs that deny remote scripts, remote frames, objects, base-tag changes, and form submission; every plugin and editor frame adds its own no-network CSP rather than inheriting the host's approved destinations. Tauri script-hash augmentation is disabled only for `script-src` because sandboxed `srcDoc` panes require inline bootstrap code; removing that exception requires moving pane documents to a separately served origin;
 - focused native and frontend contract tests cover permission identity and validation boundaries.
 - adversarial package and permission tests exercise traversal and platform-conflicting paths, entry-count and compression bombs, package tampering, oversized manifests/files/pane HTML, forged identity/signatures, unknown permission grants, wildcard host-scope smuggling, runtime/handle ownership, request floods, and malformed, cyclic, deep, or oversized Worker messages;
-- an installable local example lives at `examples/plugins/manifest-v2-demo` for exercising the Developer install flow and command activation.
+- the former standalone demo is retained only at `tests/fixtures/plugins/manifest-v2-demo` for automated security tests; developer examples use the SDK basic starter.
 - an independently versioned `@zync-sh/plugin-sdk@2.0.0-beta.1` authoring package is published on npm and maintained at `packages/plugin-sdk`; it exposes Manifest v2 authoring types, brokered Worker/pane API types, a manifest identity helper, pre-signing validation, and a basic starter template. Manifest v2 engine ranges are enforced by the native host during review, activation, load, and rollback. Live marketplace staging evidence remains Phase 5 work.
 
-The completion gate includes TypeScript validation, a production frontend build, the full agent regression suite, 77 native plugin security tests, package corpus checks, and the manually exercised demo flows recorded in `examples/plugins/manifest-v2-demo/README.md`. The Plugins settings surface was also checked in the local browser test view; native install and permission behavior is covered by the desktop demo flow and native integration tests because a normal browser cannot access Tauri's plugin store.
+The completion gate includes TypeScript validation, a production frontend build, the full agent regression suite, 77 native plugin security tests, package corpus checks, and historically exercised desktop demo flows. The Plugins settings surface was also checked in the local browser test view; native install and permission behavior is covered by the desktop demo flow and native integration tests because a normal browser cannot access Tauri's plugin store.
 
 Permission review and durable package-bound install grants are implemented for local and trusted-marketplace Manifest v2 packages. Updates show added, changed, removed, and unchanged access before activation; unchanged optional grants are preserved while new or scope-changed optional access defaults off, and approval is bound to the exact installed package reviewed. New packages now pass a bounded Worker-ready health check before their rollback copy is retained; failed checks restore both the previous package and its approval, while interrupted transactions recover on next launch. Plugin details expose the retained last-known-good version, and a user-requested rollback atomically rotates the current and retained packages, restores the matching permission approval, and health-checks the restored runtime. The native broker now enforces notification emission, host-owned confirmation dialogs, command registration, plugin-private storage, bounded public HTTPS reads, runtime-scoped user-selected local filesystem reads and writes, and pane-bound SSH home-folder reads. Package-level integrity, Ed25519 package signatures, signed registry verification, publisher-key binding and rotation, expiry, rollback protection, cumulative publisher-key and exact-release revocation, native registry-selected marketplace installation, staged root-key rotation, and repeated-crash automatic rollback are implemented. Deploying the signed registry remains operational beta work. Persisted/workspace handles, remote writes, remaining compatibility APIs, broader scoped/temporary grant lifetimes, stronger runtime-level network confinement, and final management screens also remain; Zync must not yet describe the entire compatibility bridge as fully sandboxed. Registry publication, backup, compromise, and root rotation are covered by [PLUGIN_REGISTRY_OPERATIONS.md](./PLUGIN_REGISTRY_OPERATIONS.md).
 
@@ -505,7 +516,7 @@ The implemented package signature format is version 1:
 
 For now, a local package may remain unsigned and is labelled **Local development**. A valid local signature is labelled **Signed package**, with a separate warning that registry ownership has not yet verified the publisher. Marketplace acceptance will require a signature plus a matching key from trusted signed registry metadata; the public key embedded in a package is never sufficient for verified-publisher status.
 
-Developers can manually exercise this flow with `npm run plugin:keygen`, `npm run plugin:sign`, and `npm run plugin:verify`. The signing command copies the source to a new output directory, refuses to overwrite existing output, and rejects publisher keys stored inside the source tree. The complete demo walkthrough is in `examples/plugins/manifest-v2-demo/README.md`.
+Developers can manually exercise this flow with `npm run plugin:keygen`, `npm run plugin:sign`, and `npm run plugin:verify`. The signing command copies the source to a new output directory, refuses to overwrite existing output, and rejects publisher keys stored inside the source tree. Use the SDK basic starter at `packages/plugin-sdk/templates/basic` to build a local plugin before signing.
 
 ### 10.3 Registry resilience
 
@@ -872,3 +883,7 @@ Zync may describe standard plugins as sandboxed when all of these are true:
 - the legacy unrestricted bridge is disabled for marketplace packages.
 
 Until then, Zync should accurately describe current executable plugins as isolated from the host UI but trusted for the capabilities exposed by the compatibility bridge.
+
+### Plugin pane shortcut boundary
+
+`zync:shortcut` messages are untrusted plugin requests, not proof of a physical keypress. The host validates the source/focus, matches its current bindings, and independently authorizes the command against a restricted allowlist. Only opening host-controlled settings/palette/AI UI and tab/pane focus navigation are allowed. Closing tabs, changing saved settings, zoom IPC, connection creation, terminal input, and Files/Tunnels/Snippets/Dashboard actions are excluded. Opening a host palette does not authorize a subsequent privileged action; that selection remains host-controlled. The injected keyboard shim's `isTrusted` check is usability filtering, not a security boundary.

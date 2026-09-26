@@ -35,6 +35,7 @@ paneLayouts[connectionId][layoutOwner] = PaneLayout
 - **Ungroup / unsplit** = those shells and features return as tabs.
 - **Ungrouped Files / Dashboard / …** = a **pane** filling the workspace (same canvas as a shell). Not a z-30 overlay. Drag onto a shell **or onto itself** to split. A layout does **not** need a shell.
 - **Pane header** = the drag handle once content is grouped. Drag a header onto **another pane’s edge** to move it, or onto **its own edge** to split a sibling. Dropping in the center of a pane cancels. Repeat until the shared four-pane cap.
+- Plugin frames stay inside the pane's content area; they must not cover the shared header. Pane requests wait for native connection binding, and divider pointer capture keeps resizing continuous across frames.
 - **Split** always duplicates the focused pane's content. Shells create another shell session; Files receives a new listing instance copied from the source pane's current folder; other features and plugins mount another independent pane instance.
 
 ---
