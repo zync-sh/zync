@@ -12,15 +12,27 @@ function runTest(name, fn) {
   }
 }
 
-runTest('always includes New Shell and skips plugins', () => {
+runTest('includes New Shell and registered plugin panes', () => {
   const items = buildWorkspaceOpenItems({
     shells: [{ id: 'bash', label: 'Bash' }],
     canOpenFeature: true,
     features: [{ id: 'files', isOpen: true, isActive: false }],
+    plugins: [{ id: 'dev.example:monitor', title: 'Process Monitor', isOpen: false }],
   });
   assert.equal(items.some((item) => item.kind === 'new-shell'), true);
-  assert.equal(items.some((item) => item.id.startsWith('plugin:')), false);
+  assert.equal(items.some((item) => item.kind === 'plugin' && item.pluginId === 'dev.example:monitor'), true);
   assert.equal(items.some((item) => item.kind === 'feature' && item.featureId === 'files'), true);
+});
+
+runTest('labels an existing plugin pane as Open rather than New tab', () => {
+  const items = buildWorkspaceOpenItems({
+    shells: [],
+    canOpenFeature: true,
+    features: [],
+    plugins: [{ id: 'dev.example:monitor', title: 'Process Monitor', isOpen: true }],
+  });
+  const plugin = items.find((item) => item.kind === 'plugin');
+  assert.equal(plugin?.hint, 'Open');
 });
 
 runTest('omits feature rows when the workspace cannot open features', () => {

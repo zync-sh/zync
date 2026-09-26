@@ -51,15 +51,8 @@ function pathExtension(pathname: string): string {
 }
 
 function extensionOf(raw: string): string {
-  let path = raw.trim().split('?')[0].split('#')[0];
-  if (/^file:/i.test(path)) {
-    try {
-      path = new URL(path).pathname;
-    } catch {
-      /* keep */
-    }
-  }
-  return pathExtension(path.replace(/\\/g, '/'));
+  const path = raw.trim().split('?')[0].split('#')[0];
+  return pathExtension(path);
 }
 
 function hasMediaExtension(raw: string): boolean {
@@ -88,61 +81,8 @@ export function hasPathTraversal(raw: string): boolean {
   });
 }
 
-/** Absolute Windows/POSIX/`file:` paths with a media extension. */
-export function isLocalMediaPath(raw: string | undefined | null): boolean {
-  if (!raw) return false;
-  const trimmed = raw.trim();
-  if (!hasMediaExtension(trimmed)) return false;
-  if (/^file:/i.test(trimmed)) {
-    try {
-      return new URL(trimmed).protocol === 'file:';
-    } catch {
-      return false;
-    }
-  }
-  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) return true;
-  if (trimmed.startsWith('\\\\')) return true;
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
-  return false;
-}
-
-export function toFileUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (/^file:/i.test(trimmed)) return trimmed;
-  if (/^[a-zA-Z]:[\\/]/.test(trimmed)) {
-    return new URL(`file:///${trimmed.replace(/\\/g, '/')}`).href;
-  }
-  if (trimmed.startsWith('\\\\')) {
-    return new URL(`file:${trimmed.replace(/\\/g, '/')}`).href;
-  }
-  if (trimmed.startsWith('/')) {
-    return new URL(`file://${trimmed}`).href;
-  }
-  return trimmed;
-}
-
-export function toFilesystemPath(raw: string): string {
-  const trimmed = raw.trim();
-  if (!/^file:/i.test(trimmed)) return trimmed;
-  const url = new URL(trimmed);
-  let path = decodeURIComponent(url.pathname);
-  if (/^\/[a-zA-Z]:\//.test(path)) path = path.slice(1);
-  if (url.hostname) {
-    const rest = path.replace(/^\//, '').replace(/\//g, '\\');
-    return `\\\\${url.hostname}${rest ? `\\${rest}` : ''}`;
-  }
-  return path;
-}
-
-/** Rewrite a Windows/POSIX path to `file:` so markdown/HTML sanitizers keep it. */
-export function rewriteLocalMediaSrc(src: string): string | null {
-  if (!isLocalMediaPath(src) || hasPathTraversal(src)) return null;
-  return toFileUrl(src);
-}
-
 export function isAllowedMediaUrl(raw: string | undefined | null): boolean {
   if (!raw) return false;
-  if (isLocalMediaPath(raw) && !hasPathTraversal(raw)) return true;
   const url = parseHttpUrl(raw);
   if (!url) return false;
   if (hostAllowed(url.hostname)) return true;
@@ -183,7 +123,7 @@ function unwrapAngle(raw: string): string {
 export function shouldEmbedAsMedia(raw: string): boolean {
   const path = unwrapAngle(raw);
   if (!isAllowedMediaUrl(path) || hasPathTraversal(path)) return false;
-  if (isLocalMediaPath(path) || isGithubAttachmentUrl(path)) return true;
+  if (isGithubAttachmentUrl(path)) return true;
   const kind = classifyMediaUrl(path);
   return kind === 'image' || kind === 'video';
 }
@@ -196,27 +136,17 @@ function mapOutsideFences(markdown: string, fn: (chunk: string) => string): stri
 }
 
 function toMarkdownImageDest(path: string): string {
-  const local = rewriteLocalMediaSrc(path);
-  if (local) return `<${local}>`;
   if (/[()\s]/.test(path)) return `<${path}>`;
   return path;
 }
 
 /**
- * GitHub/WaveTerm often paste a bare path, CDN GIF URL, or `![](C:\…)`.
- * Rewrite those to image markdown before the parser treats them as links/`C:` protocols.
+ * GitHub release notes often contain bare attachment or CDN media URLs.
+ * Rewrite those to image markdown while leaving code fences untouched.
  */
-export function rewriteMarkdownLocalMedia(markdown: string): string {
+export function rewriteMarkdownMediaUrls(markdown: string): string {
   return mapOutsideFences(markdown, (chunk) => {
-    const withImages = chunk.replace(
-      /!\[([^\]]*)\]\(\s*<?([^>\n)]+)>?\s*\)/g,
-      (full, alt: string, dest: string) => {
-        const path = dest.trim();
-        if (!isLocalMediaPath(path)) return full;
-        return `![${alt}](${toMarkdownImageDest(path)})`;
-      },
-    );
-    return withImages.replace(/^[ \t]*\S[^\n]*$/gm, (line) => {
+    return chunk.replace(/^[ \t]*\S[^\n]*$/gm, (line) => {
       const trimmed = line.trim();
       if (trimmed.startsWith('![') || /^<\/?[a-zA-Z]/.test(trimmed)) return line;
       const linked = trimmed.match(/^\[([^\]]*)\]\(\s*<?([^>\n)]+)>?\s*\)$/);

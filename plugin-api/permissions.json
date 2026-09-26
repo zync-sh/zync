@@ -1,0 +1,152 @@
+[
+  {
+    "id": "ui.pane.register",
+    "risk": "declarative",
+    "title": "Add workspace panes",
+    "description": "Register pane content that uses Zync's normal split and docking system."
+  },
+  {
+    "id": "ui.dashboard.register",
+    "risk": "declarative",
+    "title": "Add dashboard cards",
+    "description": "Register isolated cards on supported Zync dashboards."
+  },
+  {
+    "id": "ui.commands.register",
+    "risk": "declarative",
+    "title": "Add commands",
+    "description": "Register commands in approved Zync command surfaces."
+  },
+  {
+    "id": "ui.status.register",
+    "risk": "declarative",
+    "title": "Add status items",
+    "description": "Display bounded text, icons, and actions in status areas."
+  },
+  {
+    "id": "ui.notifications.emit",
+    "risk": "low",
+    "title": "Show notifications",
+    "description": "Show notifications identified as coming from this plugin."
+  },
+  {
+    "id": "ui.sidebar.register",
+    "risk": "declarative",
+    "title": "Add sidebar entries",
+    "description": "Register navigation entries that open this plugin's surfaces."
+  },
+  {
+    "id": "ui.settings.register",
+    "risk": "declarative",
+    "title": "Add plugin settings",
+    "description": "Register settings owned and namespaced by this plugin."
+  },
+  {
+    "id": "editor.provider.register",
+    "risk": "declarative",
+    "title": "Add file editors",
+    "description": "Register isolated viewers or editors for supported file types."
+  },
+  {
+    "id": "theme.pack.register",
+    "risk": "declarative",
+    "title": "Add appearance resources",
+    "description": "Provide validated theme tokens or icon assets without host CSS."
+  },
+  {
+    "id": "connection.metadata.read",
+    "risk": "personal-data",
+    "title": "Read connection details",
+    "description": "Read non-secret metadata for connections the user approves."
+  },
+  {
+    "id": "terminal.input.send",
+    "risk": "command-execution",
+    "title": "Send terminal input",
+    "description": "Send approved text to terminals in the granted connection scope."
+  },
+  {
+    "id": "terminal.tab.create",
+    "risk": "system-changing",
+    "title": "Create terminal tabs",
+    "description": "Open terminals in connections the user approves."
+  },
+  {
+    "id": "terminal.command.execute",
+    "risk": "command-execution",
+    "title": "Run terminal commands",
+    "description": "Execute approved commands in the granted terminal scope."
+  },
+  {
+    "id": "ssh.command.execute",
+    "risk": "command-execution",
+    "title": "Run SSH commands",
+    "description": "Run arbitrary commands with your SSH account's authority on servers where you open this plugin. Commands can read, change, or delete server data."
+  },
+  {
+    "id": "filesystem.pluginData.read",
+    "risk": "low",
+    "title": "Read plugin data",
+    "description": "Read files from this plugin's private data directory."
+  },
+  {
+    "id": "filesystem.pluginData.write",
+    "risk": "low",
+    "title": "Write plugin data",
+    "description": "Write files inside this plugin's private data directory."
+  },
+  {
+    "id": "filesystem.external.read",
+    "risk": "personal-data",
+    "title": "Read selected files",
+    "description": "Read files or folders the user explicitly selects."
+  },
+  {
+    "id": "filesystem.external.write",
+    "risk": "system-changing",
+    "title": "Change selected files",
+    "description": "Create or modify files in locations the user explicitly selects."
+  },
+  {
+    "id": "ssh.filesystem.read",
+    "risk": "personal-data",
+    "title": "Read files on pane servers",
+    "description": "Read files and folders on the SSH server attached to a plugin pane."
+  },
+  {
+    "id": "network.fetch",
+    "risk": "personal-data",
+    "title": "Connect to approved websites",
+    "description": "Make brokered network requests to the domains shown during approval."
+  },
+  {
+    "id": "network.local",
+    "risk": "high-risk-transient",
+    "title": "Connect to local services",
+    "description": "Connect to explicitly approved loopback or private-network services."
+  },
+  {
+    "id": "ui.dialog.confirm",
+    "risk": "low",
+    "title": "Show confirmation dialogs",
+    "description": "Ask for confirmation in clearly identified Zync-owned dialogs."
+  },
+  {
+    "id": "clipboard.read",
+    "risk": "high-risk-transient",
+    "title": "Read clipboard text",
+    "description": "Read clipboard text after a foreground user action."
+  },
+  {
+    "id": "clipboard.write",
+    "risk": "system-changing",
+    "title": "Write clipboard text",
+    "description": "Replace clipboard text after a foreground user action."
+  },
+  {
+    "id": "plugins.metadata.read",
+    "risk": "low",
+    "title": "Read plugin inventory",
+    "description": "Read non-secret metadata about installed plugins."
+  }
+]

@@ -18,7 +18,7 @@ import {
     type DockTabPointerHandlers,
 } from './tabDock';
 import { collectLeaves, isFeatureContent, isPluginContent, isSplitFeatureId, isSplitLayout, layoutForCanvas, layoutForFeatureInstance, layoutHasPlugin } from '../../lib/paneLayout';
-import { featureTabsFromPaneGroups, initialFeatureTabsForView, mergeFeatureTabs, preferredFeatureTabId } from './featureTabInventory';
+import { featureTabsFromPaneGroups, initialFeatureTabsForView, mergeFeatureTabs, preferredFeatureTabId, stablePluginPanelInventory } from './featureTabInventory';
 import type { ShellEntry } from '../../lib/shells/types';
 import type { FeatureId, WorkspaceFeatureTab } from './featureMeta';
 import { GLOBAL_SNIPPETS_CONNECTION_ID, LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
@@ -82,6 +82,7 @@ const SettingsJsonEditorPanel = lazy(() =>
     import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
 );
 import { VaultWorkspaceLoading } from '../vault/VaultWorkspaceLoading';
+import { PluginUnavailable } from '../plugins/PluginUnavailable';
 
 const VaultWorkspacePanel = lazy(() =>
     import('../vault/VaultWorkspacePanel').then(module => ({ default: module.default }))
@@ -260,10 +261,10 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     const connection = useAppStore(useShallow(state => state.connections.find(c => c.id === tab.connectionId)));
 
     // Plugin panels
-    const { panels: pluginPanels } = usePlugins();
+    const { panels: pluginPanels, plugins: installedPlugins, loaded: pluginsLoaded } = usePlugins();
     const workspacePluginPanels = useMemo(
-        () => pluginPanels.map(p => ({ id: p.id, title: p.title })),
-        [pluginPanels],
+        () => stablePluginPanelInventory(pluginPanels, installedPlugins),
+        [pluginPanels, installedPlugins],
     );
 
     // Terminal Store Selectors - Optimized
@@ -557,7 +558,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
         if (isPluginView) {
             const pluginId = view.slice('plugin:'.length);
-            const pluginExists = pluginPanels.some((panel) => panel.id === pluginId);
+            const pluginExists = workspacePluginPanels.some((panel) => panel.id === pluginId);
             if (!pluginExists) {
                 console.warn('[MainLayout] Ignoring plugin tab view without registered panel:', view);
                 return;
@@ -582,15 +583,18 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
         if (view === 'terminal' && termId && tab.connectionId) {
             setActiveTerminal(tab.connectionId, termId);
         }
-    }, [activeFeatureTabId, featureTabs, pluginPanels, setTabView, tab.id, tab.connectionId, setActiveTerminal]);
+    }, [activeFeatureTabId, featureTabs, workspacePluginPanels, setTabView, tab.id, tab.connectionId, setActiveTerminal]);
 
     const handleFeatureClose = useCallback((feature: string) => {
+        if (feature.startsWith('plugin:') && tab.connectionId && pinnedFeatures.includes(feature)) {
+            toggleConnectionFeature(tab.connectionId, feature);
+        }
         setOpenFeatures(prev => prev.filter(f => f !== feature));
         // If we closed the active view, switch back to terminal
         if (tab.view === feature) {
             setTabView(tab.id, 'terminal');
         }
-    }, [setOpenFeatures, tab.view, tab.id, setTabView]);
+    }, [setOpenFeatures, tab.view, tab.id, tab.connectionId, setTabView, pinnedFeatures, toggleConnectionFeature]);
 
     const handleFeatureTabSelect = useCallback((featureTabId: string, featureId: FeatureId) => {
         setActiveFeatureTabId(featureTabId);
@@ -879,11 +883,18 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                                             html={panel.html}
                                             panelId={panel.id}
                                             pluginId={panel.pluginId}
+                                            legacyAccess={panel.legacyAccess}
+                                            paneInstanceId={`overlay:${panel.id}`}
                                             connectionId={tab.connectionId || null}
                                         />
                                     </div>
                                 );
                             })}
+                            {isPluginTabView(tab.view) && !pluginPanels.some(panel => `plugin:${panel.id}` === tab.view) && (
+                                <div className="absolute inset-0 z-10">
+                                    {pluginsLoaded ? <PluginUnavailable panelId={tab.view.slice('plugin:'.length)} /> : <TabLoading />}
+                                </div>
+                            )}
 
                             {/* 
                                 Terminal View

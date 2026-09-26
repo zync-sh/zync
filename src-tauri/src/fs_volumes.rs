@@ -202,7 +202,12 @@ fn windows_volumes() -> Result<Vec<FileVolume>> {
             break;
         }
     }
-    volumes.sort_by(|a, b| a.letter.as_deref().unwrap_or("").cmp(b.letter.as_deref().unwrap_or("")));
+    volumes.sort_by(|a, b| {
+        a.letter
+            .as_deref()
+            .unwrap_or("")
+            .cmp(b.letter.as_deref().unwrap_or(""))
+    });
     volumes.extend(windows_wsl_volumes());
     volumes.truncate(MAX_VOLUMES);
     Ok(volumes)
@@ -492,14 +497,20 @@ pub fn volumes_from_proc_mounts(text: &str) -> Vec<FileVolume> {
     if !seen.contains("/") {
         volumes.insert(
             0,
-            FileVolume::new("/".to_string(), "Filesystem".to_string(), FileVolumeKind::Fixed),
+            FileVolume::new(
+                "/".to_string(),
+                "Filesystem".to_string(),
+                FileVolumeKind::Fixed,
+            ),
         );
     } else {
-        volumes.sort_by(|a, b| match (a.path.as_str() == "/", b.path.as_str() == "/") {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.path.cmp(&b.path),
-        });
+        volumes.sort_by(
+            |a, b| match (a.path.as_str() == "/", b.path.as_str() == "/") {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.path.cmp(&b.path),
+            },
+        );
     }
     volumes
 }
@@ -510,7 +521,10 @@ mod tests {
 
     #[test]
     fn unescape_octal_spaces() {
-        assert_eq!(unescape_mount_field("/media/me/My\\040Disk"), "/media/me/My Disk");
+        assert_eq!(
+            unescape_mount_field("/media/me/My\\040Disk"),
+            "/media/me/My Disk"
+        );
         assert_eq!(unescape_mount_field("/media/end\\040"), "/media/end ");
         assert_eq!(unescape_mount_field("/media/Café"), "/media/Café");
         assert_eq!(unescape_mount_field("/media/Caf\\303\\251"), "/media/Café");

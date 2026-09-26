@@ -8267,7 +8267,7 @@ dependencies = [
 
 [[package]]
 name = "zync"
-version = "2.32.2"
+version = "2.33.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8276,6 +8276,7 @@ dependencies = [
  "bytes",
  "chacha20poly1305",
  "dirs 5.0.1",
+ "ed25519-dalek",
  "futures-util",
  "hkdf 0.13.0",
  "hmac 0.13.0",
@@ -8290,6 +8291,7 @@ dependencies = [
  "russh-keys",
  "russh-sftp",
  "secrecy",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -8307,6 +8309,7 @@ dependencies = [
  "url",
  "uuid",
  "whoami",
+ "windows-sys 0.61.2",
  "winreg 0.56.0",
  "zeroize",
  "zip 2.4.2",

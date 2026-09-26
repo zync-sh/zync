@@ -211,7 +211,9 @@ impl AuthStore {
         };
         let refresh = match refresh {
             Some(t) => Some(t),
-            None => refresh_token_entry().ok().and_then(|e| e.get_password().ok()),
+            None => refresh_token_entry()
+                .ok()
+                .and_then(|e| e.get_password().ok()),
         };
         let _ = delete_refresh_token();
         let _ = std::fs::remove_file(self.account_path());
@@ -322,8 +324,7 @@ impl AuthStore {
 }
 
 fn refresh_token_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-        .map_err(|e| err("keyring", e.to_string()))
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).map_err(|e| err("keyring", e.to_string()))
 }
 
 fn store_refresh_token(token: &str) -> Result<(), String> {

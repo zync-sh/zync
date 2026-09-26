@@ -83,7 +83,11 @@ impl FrameWriter {
         }
     }
 
-    pub fn end(&mut self, status: u16, headers: HashMap<String, Vec<String>>) -> Result<(), String> {
+    pub fn end(
+        &mut self,
+        status: u16,
+        headers: HashMap<String, Vec<String>>,
+    ) -> Result<(), String> {
         self.sent_end = true;
         (self.write)(AgentOut::Json(serde_json::json!({
             "type": "end",
@@ -166,8 +170,7 @@ async fn proxy_http(
     let method = if open.method.is_empty() {
         reqwest::Method::GET
     } else {
-        reqwest::Method::from_bytes(open.method.as_bytes())
-            .unwrap_or(reqwest::Method::GET)
+        reqwest::Method::from_bytes(open.method.as_bytes()).unwrap_or(reqwest::Method::GET)
     };
 
     let port = target_port(&target_url);
@@ -198,14 +201,13 @@ async fn proxy_http(
         None
     };
 
-    let mut builder = apply_share_http_headers(
-        client.request(method.clone(), req_url),
-        open,
-        &target_url,
-    );
+    let mut builder =
+        apply_share_http_headers(client.request(method.clone(), req_url), open, &target_url);
     if !no_body {
         let stream = futures_util::stream::unfold(readers.req_rx, |mut rx| async move {
-            rx.recv().await.map(|chunk| (Ok::<Bytes, std::io::Error>(chunk), rx))
+            rx.recv()
+                .await
+                .map(|chunk| (Ok::<Bytes, std::io::Error>(chunk), rx))
         });
         builder = builder.body(reqwest::Body::wrap_stream(stream));
     } else {
@@ -261,7 +263,11 @@ async fn proxy_websocket(
     let mut stream = connect_target(&target_url).await?;
 
     let host = localhost_http_host(&target_url);
-    let path = if open.path.is_empty() { "/" } else { open.path.as_str() };
+    let path = if open.path.is_empty() {
+        "/"
+    } else {
+        open.path.as_str()
+    };
     let request_line = if open.query.is_empty() {
         format!("GET {path} HTTP/1.1\r\n")
     } else {
@@ -271,12 +277,19 @@ async fn proxy_websocket(
     req.extend_from_slice(format!("Host: {host}\r\n").as_bytes());
     req.extend_from_slice(b"Connection: Upgrade\r\nUpgrade: websocket\r\n");
     for (key, values) in &open.headers {
-        if hop_header(key) || key.eq_ignore_ascii_case("Host") || key.eq_ignore_ascii_case("Connection") {
+        if hop_header(key)
+            || key.eq_ignore_ascii_case("Host")
+            || key.eq_ignore_ascii_case("Connection")
+        {
             continue;
         }
         if key.eq_ignore_ascii_case("Origin") && is_loopback_url(&target_url) {
             req.extend_from_slice(
-                format!("Origin: {}\r\n", loopback_origin(target_url.scheme(), &host)).as_bytes(),
+                format!(
+                    "Origin: {}\r\n",
+                    loopback_origin(target_url.scheme(), &host)
+                )
+                .as_bytes(),
             );
             continue;
         }
@@ -330,7 +343,10 @@ async fn proxy_tcp(
     let target_url = parse_target_url(target)?;
     let stream = connect_target(&target_url).await?;
     let mut headers = HashMap::new();
-    headers.insert("Content-Type".into(), vec!["application/octet-stream".into()]);
+    headers.insert(
+        "Content-Type".into(),
+        vec!["application/octet-stream".into()],
+    );
     w.end(200, headers)?;
 
     let (mut read_half, mut write_half) = stream.into_split();
@@ -391,11 +407,9 @@ fn parse_target_url(target: &str) -> Result<url::Url, String> {
 }
 
 fn target_port(target: &url::Url) -> u16 {
-    target.port().unwrap_or(if target.scheme() == "https" {
-        443
-    } else {
-        80
-    })
+    target
+        .port()
+        .unwrap_or(if target.scheme() == "https" { 443 } else { 80 })
 }
 
 fn loopback_host(host: &str) -> &str {
@@ -473,9 +487,7 @@ async fn race_loopback_connect(port: u16) -> Result<(TcpStream, &'static str), S
             .await
             .map(|stream| (stream, "127.0.0.1"))
     };
-    let v6 = async {
-        try_connect("::1", port).await.map(|stream| (stream, "::1"))
-    };
+    let v6 = async { try_connect("::1", port).await.map(|stream| (stream, "::1")) };
     tokio::pin!(v4, v6);
     let mut v4_err = None;
     let mut v6_err = None;
@@ -564,8 +576,15 @@ fn apply_share_http_headers(
 fn hop_header(key: &str) -> bool {
     matches!(
         key.to_ascii_lowercase().as_str(),
-        "host" | "content-length" | "transfer-encoding" | "connection" | "keep-alive" | "te"
-            | "trailers" | "upgrade" | "proxy-connection"
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "keep-alive"
+            | "te"
+            | "trailers"
+            | "upgrade"
+            | "proxy-connection"
     )
 }
 
@@ -580,11 +599,9 @@ pub fn localhost_http_host(target: &url::Url) -> String {
     if !is_loopback_url(target) {
         return target.host_str().unwrap_or("localhost").to_string();
     }
-    let port = target.port().unwrap_or(if target.scheme() == "https" {
-        443
-    } else {
-        80
-    });
+    let port = target
+        .port()
+        .unwrap_or(if target.scheme() == "https" { 443 } else { 80 });
     if (port == 80 && (target.scheme() == "http" || target.scheme().is_empty()))
         || (port == 443 && target.scheme() == "https")
     {
@@ -603,7 +620,9 @@ fn is_loopback_url(target: &url::Url) -> bool {
     target.host_str().is_some_and(|host| {
         let host = loopback_host(host);
         host.eq_ignore_ascii_case("localhost")
-            || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
     })
 }
 

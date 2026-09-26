@@ -2,7 +2,7 @@
 
 Official catalog of community and Zync-supported plugins available in the Marketplace.
 
-For installation instructions and developer documentation, see the [zync-extensions](https://github.com/zync-sh/zync-extensions) repository.
+For installation instructions and developer documentation, see the [zync-extensions](https://github.com/zync-sh/zync-extensions) repository. The target runtime, permission, publisher, and marketplace security architecture is documented in [docs/PLUGINS.md](./docs/PLUGINS.md).
 
 ---
 

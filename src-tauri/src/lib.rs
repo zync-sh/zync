@@ -20,9 +20,9 @@ mod ssh_parser;
 mod sync;
 mod tunnels;
 pub use tunnels::{remote_forward_map_key, tunnel_runtime_id, TunnelManager};
+mod share;
 mod types;
 mod utils;
-mod share;
 mod vault;
 #[cfg(windows)]
 mod windows_conpty;
@@ -73,11 +73,17 @@ pub fn run() {
             let data_dir = commands::get_data_dir(&app_handle);
             let app_state = AppState::new(data_dir.clone(), app_handle.clone());
             app.manage(app_state);
+            app.manage(plugins::broker::PluginBrokerState::new());
+            app.manage(plugins::filesystem::PluginFilesystemState::new());
+            app.manage(plugins::storage::PluginStorageState::new());
+            app.manage(plugins::recovery::PluginRecoveryState::load_and_begin(
+                app.handle(),
+            )?);
             app.manage(share::ShareState::new(app_handle.clone(), data_dir.clone()));
             app.manage(tokio::sync::Mutex::new(vault::store::VaultService::new(
                 data_dir,
             )));
-            commands::cleanup_stale_plugin_window_temp_files(&app_handle);
+            plugins::PluginScanner::cleanup_stale_inspections(&app_handle);
             commands::cleanup_stale_ephemeral_key_files(&app_handle);
             Ok(())
         })
@@ -132,9 +138,6 @@ pub fn run() {
                     }
                     _ => {}
                 },
-                tauri::WindowEvent::Destroyed => {
-                    commands::cleanup_plugin_window_temp_file(window.label());
-                }
                 _ => {}
             }
         })
@@ -231,16 +234,54 @@ pub fn run() {
             commands::app_exit,
             commands::app_relaunch,
             commands::plugins_load,
+            commands::plugins_developer_mode_get,
+            commands::plugins_developer_mode_set,
+            commands::plugins_registry_load,
+            commands::plugins_beta_plugins_get,
+            commands::plugins_beta_plugin_set,
             commands::plugins_toggle,
-            commands::plugins_install,
-            commands::plugins_install_local,
+            commands::plugins_inspect_local,
+            commands::plugins_inspect_marketplace,
+            commands::plugins_install_inspected,
+            commands::plugins_commit_activation,
+            commands::plugins_rollback_activation,
+            commands::plugins_rollback_version,
+            commands::plugins_discard_inspection,
+            commands::plugins_runtime_start,
+            commands::plugins_runtime_authorize,
+            commands::plugins_runtime_register_command,
+            commands::plugins_runtime_register_pane,
+            commands::plugins_storage_get,
+            commands::plugins_storage_keys,
+            commands::plugins_storage_set,
+            commands::plugins_storage_delete,
+            commands::plugins_filesystem_pick,
+            commands::plugins_filesystem_pick_write_file,
+            commands::plugins_filesystem_read_text,
+            commands::plugins_filesystem_write_text,
+            commands::plugins_filesystem_list,
+            commands::plugins_runtime_bind_pane,
+            commands::plugins_runtime_unbind_pane,
+            commands::plugins_ssh_filesystem_list,
+            plugins::ssh_command::plugins_ssh_command_execute,
+            commands::plugins_ssh_filesystem_read_text,
+            commands::plugins_runtime_stop,
+            commands::plugins_runtime_reset,
+            commands::plugins_network_fetch,
+            commands::plugins_recovery_status,
+            commands::plugins_recovery_record_failure,
+            commands::plugins_recovery_clear_safe_mode,
+            commands::plugins_recovery_clear_plugin_failures,
+            commands::plugins_management_details,
+            commands::plugins_runtime_optional_permission,
+            commands::plugins_management_set_optional_permissions,
+            commands::plugins_management_clear_storage,
             commands::plugins_uninstall,
             commands::plugin_fs_read,
             commands::plugin_fs_write,
             commands::plugin_fs_list,
             commands::plugin_fs_exists,
             commands::plugin_fs_create_dir,
-            commands::plugin_window_create,
             commands::config_select_folder,
             commands::system_install_cli,
             commands::ssh_parse_command,
@@ -331,6 +372,15 @@ pub fn run() {
             share::share_agent_start,
             share::share_agent_stop,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(recovery) = app.try_state::<plugins::recovery::PluginRecoveryState>() {
+                    if let Err(error) = recovery.mark_clean_exit() {
+                        log::warn!("[Plugins] Failed to record a clean app exit: {error}");
+                    }
+                }
+            }
+        });
 }

@@ -1,0 +1,52 @@
+:root {
+  --zui-background: #15181d; --zui-surface: #1b2026; --zui-border: #343b44;
+  --zui-text: #e9edf1; --zui-muted: #a1aab5; --zui-primary: #78d6ad;
+  --zui-positive: #67d8ac; --zui-negative: #fa8d91; --zui-warning: #e7bc75; --zui-info: #89b9ea;
+}
+.zui-root { color: var(--zui-text); background: var(--zui-background); color-scheme: var(--zui-color-scheme, dark); font: 13px/1.4 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.zui-root *, .zui-tooltip, .zui-select-menu { box-sizing: border-box; }
+.zui-root [hidden], .zui-tooltip[hidden], .zui-select-menu[hidden] { display: none !important; }
+.zui-root ::-webkit-scrollbar { width: 6px; height: 6px; }
+.zui-root ::-webkit-scrollbar-track, .zui-root ::-webkit-scrollbar-corner { background: transparent; }
+.zui-root ::-webkit-scrollbar-thumb { background: var(--zui-border); border-radius: 99px; border: 1px solid transparent; background-clip: padding-box; }
+.zui-root ::-webkit-scrollbar-thumb:hover { background: var(--zui-muted); }
+@supports not selector(::-webkit-scrollbar) { .zui-root * { scrollbar-width: thin; scrollbar-color: var(--zui-border) transparent; } }
+.zui-root button, .zui-root input, .zui-root select, .zui-button, .zui-input, .zui-select-trigger {
+  font: inherit; color: var(--zui-text); background: var(--zui-surface); border: 1px solid var(--zui-border); border-radius: 6px;
+}
+.zui-root button, .zui-button { cursor: pointer; }
+.zui-root button:hover:not(:disabled), .zui-button:hover:not(:disabled) { background: color-mix(in srgb, var(--zui-primary) 9%, var(--zui-surface)); }
+.zui-root button:disabled, .zui-button:disabled { opacity: .45; cursor: default; }
+.zui-root :is(button, input, select, pre):focus-visible, .zui-button:focus-visible, .zui-input:focus-visible { outline: 2px solid var(--zui-primary); outline-offset: -2px; }
+.zui-root input, .zui-root select, .zui-input { padding: 6px 8px; }
+.zui-root input:not([type=checkbox]), .zui-input, .zui-select-trigger { height: 32px; }
+.zui-root input::placeholder, .zui-input::placeholder { color: var(--zui-muted); opacity: .8; }
+.zui-root input[type=checkbox] { accent-color: var(--zui-primary); width: 14px; height: 14px; margin: 0; }
+.zui-button { padding: 6px 10px; }
+.zui-button[data-variant=primary] { background: var(--zui-primary); color: var(--zui-background); }
+.zui-button[data-variant=danger] { color: var(--zui-negative); }
+.zui-button[data-variant=ghost] { background: transparent; border-color: transparent; }
+.zui-field { display: grid; gap: 6px; min-width: 0; }
+.zui-field > span { color: var(--zui-muted); font-size: 12px; }
+.zui-input { width: 100%; min-width: 0; }
+.zui-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.zui-empty-state { display: grid; gap: 10px; place-content: center; padding: 24px; text-align: center; }
+.zui-empty-state h2 { margin: 0; font-size: 14px; }
+.zui-empty-state p { margin: 0; max-width: 48ch; color: var(--zui-muted); }
+.zui-badge { display: inline-flex; padding: 2px 6px; border-radius: 4px; color: var(--zui-muted); background: var(--zui-surface); }
+.zui-badge[data-tone=positive] { color: var(--zui-positive); }
+.zui-badge[data-tone=negative] { color: var(--zui-negative); }
+.zui-badge[data-tone=warning] { color: var(--zui-warning); }
+.zui-badge[data-tone=info] { color: var(--zui-info); }
+.zui-select-control { min-width: 0; flex: 0 0 auto; }
+.zui-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 0 10px; text-align: left; white-space: nowrap; font-size: 12px; }
+.zui-select-trigger::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid var(--zui-muted); border-bottom: 1.5px solid var(--zui-muted); transform: translateY(-2px) rotate(45deg); flex-shrink: 0; }
+.zui-select-menu { position: fixed; z-index: 20; padding: 4px; overflow: auto; border: 1px solid var(--zui-border); border-radius: 7px; background: var(--zui-surface); box-shadow: 0 8px 24px #0003; }
+.zui-select-menu button { display: block; width: 100%; padding: 7px 9px; border: 0; background: transparent; color: var(--zui-text); text-align: left; font: 12px/1.4 Inter, system-ui, sans-serif; cursor: pointer; }
+.zui-select-menu button[aria-selected=true] { color: var(--zui-primary); background: color-mix(in srgb, var(--zui-primary) 10%, var(--zui-surface)); }
+.zui-select-menu button:disabled { opacity: .45; cursor: default; }
+.zui-select-menu button:focus-visible { outline: 2px solid var(--zui-primary); outline-offset: -2px; }
+.zui-select-menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--zui-primary) 9%, var(--zui-surface)); }
+.zui-tooltip { position: fixed; z-index: 30; pointer-events: none; max-width: min(280px, calc(100vw - 16px)); padding: 6px 10px; border: 1px solid var(--zui-border); border-radius: 6px; background: color-mix(in srgb, var(--zui-surface) 95%, transparent); backdrop-filter: blur(12px); color: var(--zui-text); font: 500 12px/1.4 Inter, system-ui, sans-serif; box-shadow: 0 12px 24px #0003; overflow-wrap: anywhere; }
+.zui-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: no-preference) { .zui-root :is(button, input), .zui-button { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; } }

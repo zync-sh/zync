@@ -1,4 +1,4 @@
-import type { Plugin } from '../../context/PluginContext';
+import type { Plugin } from '../../features/plugins/types';
 
 // Synthetic frontend routing ID used to render PlainFileEditor directly (not the backend plugin ID).
 export const BUILTIN_PLAIN_EDITOR_ID = 'builtin-plain';

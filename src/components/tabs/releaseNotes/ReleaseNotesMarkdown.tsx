@@ -19,16 +19,15 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { AlertOctagon, AlertTriangle, Check, Copy, Info, Lightbulb, Megaphone } from 'lucide-react';
 import { KeyboardKey } from '../../ui/KeyboardKey';
 import { matchAlertPrefix, stripAlertPrefixFromParts, type AlertKind } from '../../../lib/releaseNotes/alerts';
-import { rewriteMarkdownLocalMedia } from '../../../lib/releaseNotes/mediaUrls';
+import { rewriteMarkdownMediaUrls } from '../../../lib/releaseNotes/mediaUrls';
 import { getNodeText } from '../../../lib/releaseNotes/reactText';
 import { RELEASE_NOTES_SANITIZE_SCHEMA } from '../../../lib/releaseNotes/sanitizeSchema';
-import { rehypeRewriteLocalMedia, releaseNotesUrlTransform } from '../../../lib/releaseNotes/urlTransform';
+import { releaseNotesUrlTransform } from '../../../lib/releaseNotes/urlTransform';
 import { ReleaseNotesImage, ReleaseNotesVideo } from './ReleaseNotesMedia';
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS: NonNullable<ComponentProps<typeof ReactMarkdown>['rehypePlugins']> = [
   rehypeRaw,
-  rehypeRewriteLocalMedia,
   [rehypeSanitize, RELEASE_NOTES_SANITIZE_SCHEMA],
 ];
 
@@ -201,7 +200,7 @@ export const ReleaseNotesMarkdown = memo(function ReleaseNotesMarkdown({
   isLightTheme: boolean;
   renderHeading: (level: 1 | 2 | 3, children: ReactNode) => ReactNode;
 }) {
-  const prepared = useMemo(() => rewriteMarkdownLocalMedia(markdown), [markdown]);
+  const prepared = useMemo(() => rewriteMarkdownMediaUrls(markdown), [markdown]);
 
   const components = useMemo((): Components => ({
     h1: ({ children }) => renderHeading(1, children),

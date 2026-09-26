@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import type { SplitFeatureId } from '../../lib/paneLayout';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { usePlugins } from '../../context/PluginContext';
+import { PluginUnavailable } from '../plugins/PluginUnavailable';
 
 const FileManager = lazy(() => import('../FileManager').then((module) => ({ default: module.FileManager })));
 const Dashboard = lazy(() => import('../dashboard/Dashboard').then((module) => ({ default: module.Dashboard })));
@@ -26,7 +27,7 @@ export function FeaturePaneBody({
     instanceId?: string;
     visible: boolean;
 }) {
-    const { panels } = usePlugins();
+    const { panels, loaded } = usePlugins();
     const plugin = pluginId ? panels.find((panel) => panel.id === pluginId) : undefined;
     return (
         <Suspense fallback={<FeaturePaneFallback />}>
@@ -50,8 +51,11 @@ export function FeaturePaneBody({
                     panelId={plugin.id}
                     pluginId={plugin.pluginId}
                     connectionId={connectionId}
+                    legacyAccess={plugin.legacyAccess}
+                    paneInstanceId={instanceId ?? `plugin:${plugin.id}`}
                 />
             )}
+            {pluginId && !plugin && (loaded ? <PluginUnavailable panelId={pluginId} /> : <FeaturePaneFallback />)}
         </Suspense>
     );
 }

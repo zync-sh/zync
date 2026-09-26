@@ -3,8 +3,7 @@ use super::auth::AuthStore;
 use super::config::{to_ws_url, ShareConfig};
 use super::protocol::{
     self, decode_data_frame, encode_data_frame, AgentOut, DataMsg, Envelope, ErrorMsg, Hello,
-    OkMsg, Open, TYPE_CLOSE, TYPE_DATA, TYPE_ERROR,
-    TYPE_OPEN, TYPE_PING,
+    OkMsg, Open, TYPE_CLOSE, TYPE_DATA, TYPE_ERROR, TYPE_OPEN, TYPE_PING,
 };
 use super::proxy::handle_open;
 use super::stream::Stream;
@@ -108,10 +107,10 @@ impl AgentManager {
         let handle = tokio::spawn(async move {
             run_agent_loop(app, data_dir, config, auth, statuses, share, cancel_task).await;
         });
-        self.slots.lock().await.insert(
-            share_id,
-            AgentSlot { cancel, handle },
-        );
+        self.slots
+            .lock()
+            .await
+            .insert(share_id, AgentSlot { cancel, handle });
         self.emit().await;
     }
 
@@ -185,7 +184,11 @@ async fn run_agent_loop(
             &app,
             &statuses,
             &share,
-            if saved.as_ref().and_then(|s| s.resume_token.as_ref()).is_some() {
+            if saved
+                .as_ref()
+                .and_then(|s| s.resume_token.as_ref())
+                .is_some()
+            {
                 AgentConnState::Reconnecting
             } else {
                 AgentConnState::Connecting
@@ -197,8 +200,13 @@ async fn run_agent_loop(
             match mint_ticket(&config, &auth, &share.id).await {
                 Ok(t) => ticket = Some(t),
                 Err(e) => {
-                    if saved.as_ref().and_then(|s| s.resume_token.as_ref()).is_none() {
-                        emit_status(&app, &statuses, &share, AgentConnState::AuthFailed, Some(e)).await;
+                    if saved
+                        .as_ref()
+                        .and_then(|s| s.resume_token.as_ref())
+                        .is_none()
+                    {
+                        emit_status(&app, &statuses, &share, AgentConnState::AuthFailed, Some(e))
+                            .await;
                         return;
                     }
                 }
@@ -242,11 +250,22 @@ async fn run_agent_loop(
             }
             SessionResult::ShareStopped => {
                 clear_resume(&resume_path);
-                emit_status(&app, &statuses, &share, AgentConnState::Offline, Some("stopped".into())).await;
+                emit_status(
+                    &app,
+                    &statuses,
+                    &share,
+                    AgentConnState::Offline,
+                    Some("stopped".into()),
+                )
+                .await;
                 return;
             }
             SessionResult::AuthFailed => {
-                if saved.as_ref().and_then(|s| s.resume_token.as_ref()).is_some() {
+                if saved
+                    .as_ref()
+                    .and_then(|s| s.resume_token.as_ref())
+                    .is_some()
+                {
                     saved = None;
                     clear_resume(&resume_path);
                     ticket = None;
@@ -258,8 +277,14 @@ async fn run_agent_loop(
                             // Fall through to backoff so auth failures are rate-limited.
                         }
                         Err(e) => {
-                            emit_status(&app, &statuses, &share, AgentConnState::AuthFailed, Some(e))
-                                .await;
+                            emit_status(
+                                &app,
+                                &statuses,
+                                &share,
+                                AgentConnState::AuthFailed,
+                                Some(e),
+                            )
+                            .await;
                             return;
                         }
                     }
@@ -450,9 +475,7 @@ async fn run_session(
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentOut>();
     let write = {
         let tx = tx.clone();
-        move |v: AgentOut| {
-            tx.send(v).map_err(|_| "agent write closed".to_string())
-        }
+        move |v: AgentOut| tx.send(v).map_err(|_| "agent write closed".to_string())
     };
     let streams = Arc::new(Mutex::new(HashMap::<i64, Stream>::new()));
     let target = target.to_string();
@@ -631,7 +654,9 @@ async fn run_session(
 }
 
 fn resume_path(data_dir: &Path, share_id: &str) -> PathBuf {
-    data_dir.join("share-agent").join(format!("{share_id}.json"))
+    data_dir
+        .join("share-agent")
+        .join(format!("{share_id}.json"))
 }
 
 fn load_resume(path: &Path) -> Option<ResumeFile> {

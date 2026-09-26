@@ -29,6 +29,8 @@ export type FeaturePaneContent = {
 export type PluginPaneContent = {
     kind: 'plugin';
     pluginId: string;
+    /** Host-generated identity for one mounted pane; older sessions may omit it. */
+    instanceId?: string;
 };
 
 export type PaneContent = TermPaneContent | FeaturePaneContent | PluginPaneContent;
@@ -62,7 +64,7 @@ export type DockEdge = 'left' | 'right' | 'top' | 'bottom';
 export type DockPayload =
     | { kind: 'term'; termId: string; sourcePaneId?: string }
     | { kind: 'feature'; featureId: SplitFeatureId; instanceId?: string; sourcePaneId?: string }
-    | { kind: 'plugin'; pluginId: string; sourcePaneId?: string };
+    | { kind: 'plugin'; pluginId: string; instanceId?: string; sourcePaneId?: string };
 
 export type DockResult = 'opened' | 'focused' | 'moved' | 'refused-cap' | 'no-target' | 'self';
 
@@ -90,8 +92,12 @@ export function newFilesInstanceId(): string {
     return newFeatureInstanceId('files');
 }
 
-export function pluginPaneContent(pluginId: string): PluginPaneContent {
-    return { kind: 'plugin', pluginId };
+export function newPluginInstanceId(): string {
+    return `plugin-${crypto.randomUUID()}`;
+}
+
+export function pluginPaneContent(pluginId: string, instanceId = newPluginInstanceId()): PluginPaneContent {
+    return { kind: 'plugin', pluginId, instanceId };
 }
 
 /** Preserve the exact pane identity when its header or Split tab starts a dock drag. */
@@ -108,5 +114,10 @@ export function paneDockPayload(pane: PaneLeaf): DockPayload {
             sourcePaneId: pane.id,
         };
     }
-    return { kind: 'plugin', pluginId: content.pluginId, sourcePaneId: pane.id };
+    return {
+        kind: 'plugin',
+        pluginId: content.pluginId,
+        instanceId: content.instanceId,
+        sourcePaneId: pane.id,
+    };
 }

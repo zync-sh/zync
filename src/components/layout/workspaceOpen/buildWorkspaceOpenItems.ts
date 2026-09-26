@@ -1,6 +1,6 @@
 import { FEATURE_META, type FeatureId } from '../featureMeta';
 import type { ShellEntry } from '../../../lib/shells/types';
-import type { WorkspaceOpenFeatureState, WorkspaceOpenItem } from './types';
+import type { WorkspaceOpenFeatureState, WorkspaceOpenItem, WorkspaceOpenPluginState } from './types';
 
 export const WORKSPACE_OPEN_GROUP_ORDER: WorkspaceOpenItem['group'][] = [
     'create',
@@ -37,6 +37,7 @@ export function buildWorkspaceOpenItems(input: {
     shells: readonly ShellEntry[];
     canOpenFeature: boolean;
     features?: readonly WorkspaceOpenFeatureState[];
+    plugins?: readonly WorkspaceOpenPluginState[];
 }): WorkspaceOpenItem[] {
     const items: WorkspaceOpenItem[] = [
         {
@@ -85,6 +86,18 @@ export function buildWorkspaceOpenItems(input: {
             keywords: uniqueKeywords(meta.label, featureId, 'open'),
             featureId,
             hint: state?.isOpen ? 'New tab' : undefined,
+        });
+    }
+
+    for (const plugin of input.plugins ?? []) {
+        items.push({
+            id: `plugin:${plugin.id}`,
+            group: 'open',
+            kind: 'plugin',
+            label: plugin.title,
+            keywords: uniqueKeywords(plugin.title, plugin.id, 'plugin', 'pane', 'open'),
+            pluginId: plugin.id,
+            hint: plugin.isOpen ? 'Open' : undefined,
         });
     }
 

@@ -237,7 +237,11 @@ mod tests {
             p.on_bytes(b"y", now + Duration::from_millis(6)),
             FlushInstruction::None
         ));
-        assert_eq!(p.deadline(), Some(deadline), "append must not move the epoch");
+        assert_eq!(
+            p.deadline(),
+            Some(deadline),
+            "append must not move the epoch"
+        );
         let (bytes, rearm, _) = flush_bytes(p.on_timer(deadline));
         assert_eq!(bytes, b"xy");
         assert!(!rearm);

@@ -8,6 +8,27 @@ import {
 } from '../../lib/paneLayout';
 import type { WorkspaceFeatureTab } from './featureMeta';
 
+/** Installed pane definitions survive worker reloads; runtime HTML never enters this inventory. */
+export function stablePluginPanelInventory(
+    active: readonly { id: string; title: string }[],
+    installed: readonly { manifest: { id: string; contributes?: { paneKinds?: readonly { id: string; title: string }[] } } }[],
+): { id: string; title: string }[] {
+    const panels = new Map(active.map(panel => [panel.id, { id: panel.id, title: panel.title }]));
+    for (const plugin of installed) {
+        for (const pane of plugin.manifest.contributes?.paneKinds ?? []) {
+            const id = `${plugin.manifest.id}:${pane.id}`;
+            if (!panels.has(id)) panels.set(id, { id, title: pane.title });
+        }
+    }
+    return [...panels.values()];
+}
+
+/** Pinned and restored active plugins must not depend on a mount-local open list. */
+export function pluginTabInventory(openFeatures: string[], pinnedFeatures: string[], activeView: string): string[] {
+    return [...new Set([...openFeatures, ...pinnedFeatures, activeView])]
+        .filter(view => view.startsWith('plugin:') && view.length > 'plugin:'.length);
+}
+
 /** Feature panes already stored for a host. One tab per instance id. */
 export function featureTabsFromPaneGroups(
     groups: PaneLayoutGroups | null | undefined,

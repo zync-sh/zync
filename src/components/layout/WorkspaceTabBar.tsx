@@ -202,12 +202,15 @@ export const WorkspaceTabBar = memo(function WorkspaceTabBar({
     };
     const hostIsWindows = connectionId === LOCAL_TERMINAL_CONNECTION_ID
         && window.electronUtils?.platform === 'win32';
+    const remoteReady = useAppStore(state => state.connections.some(
+        connection => connection.id === connectionId && connection.status === 'connected',
+    ));
     const {
         shells: availableShells,
         isLoading: shellsLoading,
         error: shellsError,
         refetch: refetchShells,
-    } = useAvailableShells({ isWindows: hostIsWindows, connectionId });
+    } = useAvailableShells({ isWindows: hostIsWindows, connectionId, remoteReady });
 
     return (
         <CombinedTabBar

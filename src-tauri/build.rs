@@ -12,6 +12,9 @@ fn main() {
     println!("cargo:rerun-if-changed=icons/32x32.png");
     println!("cargo:rerun-if-changed=icons/128x128.png");
     println!("cargo:rerun-if-env-changed=GOOGLE_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=ZYNC_PLUGIN_REGISTRY_URL");
+    println!("cargo:rerun-if-env-changed=ZYNC_PLUGIN_REGISTRY_ROOT_KEY");
+    println!("cargo:rerun-if-env-changed=ZYNC_PLUGIN_REGISTRY_ROOT_KEYS");
     println!("cargo:rerun-if-env-changed=PROFILE");
     let mut file_google_client_id: Option<String> = None;
     if let Ok(contents) = std::fs::read_to_string(".env") {
@@ -62,7 +65,8 @@ fn vendor_windows_conpty() {
         return;
     }
 
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let vendor_root = manifest_dir.join("vendor").join("conpty");
     let profile = std::env::var("PROFILE").unwrap_or_default();
     let require_pair = profile != "debug" && profile != "test";
@@ -84,14 +88,18 @@ fn vendor_windows_conpty() {
                 pair_dir.display()
             );
         }
-        println!(
-            "cargo:warning=ConPTY pair missing for {arch}; local Sixel may be stripped"
-        );
+        println!("cargo:warning=ConPTY pair missing for {arch}; local Sixel may be stripped");
         return;
     }
     println!("cargo:rustc-env=ZYNC_CONPTY_DIR={}", pair_dir.display());
-    println!("cargo:rerun-if-changed={}", pair_dir.join("conpty.dll").display());
-    println!("cargo:rerun-if-changed={}", pair_dir.join("OpenConsole.exe").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        pair_dir.join("conpty.dll").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        pair_dir.join("OpenConsole.exe").display()
+    );
 
     if let Err(err) = copy_conpty_next_to_profile_exe(&pair_dir) {
         if require_pair {
@@ -102,14 +110,18 @@ fn vendor_windows_conpty() {
 }
 
 fn conpty_arch_name() -> &'static str {
-    match std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default().as_str() {
+    match std::env::var("CARGO_CFG_TARGET_ARCH")
+        .unwrap_or_default()
+        .as_str()
+    {
         "aarch64" => "arm64",
         _ => "x64",
     }
 }
 
 const CONPTY_NUPKG_VERSION: &str = "1.24.260710001";
-const CONPTY_NUPKG_SHA256: &str = "175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e";
+const CONPTY_NUPKG_SHA256: &str =
+    "175640566a3b59c4b132070ee96c2c77e5ab7edd2e92732a5eb3610bbf63d90e";
 const CONPTY_PROVENANCE_FILE: &str = ".nupkg-sha256";
 
 fn conpty_pair_matches_pin(dir: &Path) -> bool {
@@ -164,7 +176,9 @@ fn extract_conpty_arch(vendor_root: &Path, arch: &str) -> Result<(), String> {
 
 fn fetch_conpty_nupkg(vendor_root: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(vendor_root).map_err(|e| format!("mkdir vendor/conpty: {e}"))?;
-    let nupkg = vendor_root.join(format!("Microsoft.Windows.Console.ConPTY.{CONPTY_NUPKG_VERSION}.nupkg"));
+    let nupkg = vendor_root.join(format!(
+        "Microsoft.Windows.Console.ConPTY.{CONPTY_NUPKG_VERSION}.nupkg"
+    ));
     if nupkg.is_file() && sha256_file(&nupkg)? == CONPTY_NUPKG_SHA256 {
         return Ok(nupkg);
     }
@@ -205,7 +219,10 @@ fn extract_zip_file(
 fn sha256_file(path: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    Ok(Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect())
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 fn copy_conpty_next_to_profile_exe(pair_dir: &Path) -> Result<(), String> {

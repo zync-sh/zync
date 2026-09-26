@@ -114,7 +114,7 @@ These are **product scope** limits today, not vulnerabilities:
 
 - **No team/org policy controls** — vault and sync are single-user oriented; shared/team vaults are deferred to later phases.
 - **No live bi-directional sync scheduling** — Google sync is manual upload/restore; there is no background auto-sync scheduler yet.
-- **Plugins** — marketplace plugins do **not** receive raw vault secrets by design; only explicit future export/copy flows could change that.
+- **Plugins** — marketplace plugins do **not** receive raw vault secrets by design. The target sandbox, permission, publisher, package, and marketplace model is documented in [PLUGINS.md](./PLUGINS.md). Standard plugins must use brokered credential operations rather than future raw-secret export/copy flows.
 - **Public URLs Beta** — no team/org sharing, no custom domains, no pricing plans in-app; GA hardening is deferred.
 
 ### AI credential policy
@@ -138,5 +138,6 @@ If you discover a vulnerability in Zync, report it privately to the maintainers 
 - [VAULT.md](./VAULT.md) — vault and sync architecture
 - [VAULT_ROADMAP.md](./VAULT_ROADMAP.md) — planned vault/sync work
 - [TUNNELS.md](./TUNNELS.md) — SSH port forwarding (separate from Public URLs)
+- [PLUGINS.md](./PLUGINS.md) — plugin trust tiers, sandbox, permissions, publisher identity, and marketplace architecture
 - [CHANGELOG.md](../CHANGELOG.md) — release history
 - Privacy Policy (marketing site) — `https://zync.thesudoer.in/privacy`

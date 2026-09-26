@@ -1654,10 +1654,7 @@ impl VaultService {
                 continue;
             }
             std::fs::remove_file(&path).map_err(|error| {
-                VaultError::InvalidData(format!(
-                    "failed to remove {}: {error}",
-                    path.display()
-                ))
+                VaultError::InvalidData(format!("failed to remove {}: {error}", path.display()))
             })?;
         }
 
@@ -2250,7 +2247,10 @@ mod tests {
             .service
             .unlock("correct horse battery staple", false)
             .expect_err("old passphrase must fail");
-        assert!(matches!(err, VaultError::WrongPassphrase | VaultError::Locked));
+        assert!(matches!(
+            err,
+            VaultError::WrongPassphrase | VaultError::Locked
+        ));
     }
 
     #[test]

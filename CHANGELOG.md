@@ -4,10 +4,42 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.33.0] - 2026-09-26
+
+### Added
+- **Plugin authoring SDK (beta):** Published `@zync-sh/plugin-sdk@2.1.0-beta.1` provides Manifest v2 and host-provided Worker/pane types, a manifest helper, pre-signing validation, a starter template, and automatic package/type/release checks. Manifest v2 engine ranges are enforced by Zync before install, load, and rollback. ([ea32a61], [cdda828], [e9aa6c8])
+- **Plugin API 2.1 SSH commands:** Pane-bound, permission-authorized remote commands with argument quoting, execution/output/concurrency limits, and stale-connection protection. ([e9aa6c8])
+- **Shared plugin UI (beta):** Published `@zync-sh/plugin-ui@0.1.0-beta.1` provides theme handling, keyboard-accessible dropdowns, tooltips, controls, and sandbox-safe DOM helpers. ([41eaaa2])
+- **Plugin sandbox v2:** Manifest v2 permissions, brokered native capabilities, isolated panes and workers, runtime health/safe mode, automatic rollback, publisher identity, and generic plugin pane splitting. ([93f3fc0], [7ccfe31])
+- **Signed plugin distribution:** Local signing tools, signed registry verification and publisher binding, revocation and root-key rotation support, and an operations runbook. ([2c21fc2])
+
+### Changed
+
+- **Optional plugin permissions:** Host-owned Allow/Deny prompts can approve an optional action without restarting the plugin; denial cancels the action and asks again on the next attempt. ([e9aa6c8], [c20e841])
+- **Demo cleanup:** Standalone demo sources are now test-only fixtures; developer guidance uses the SDK starter instead. ([e9aa6c8], [da6ac74])
+
+### Fixed
+
+- **Plugin workspace recovery:** Preserve pane identity and tab inventory during failures/reloads, provide recovery UI and host-owned SSH reconnect screens, and avoid stale pane bindings. ([c20e841])
+- **Sidebar and split resizing:** Pointer capture and cleanup keep left and AI sidebars resizable across plugin frames; pane dividers no longer lose drags to the iframe. ([c20e841])
+- **Theme selection and shell readiness:** Host-owned color-theme selection works independently of plugin workers, and shell discovery waits for a ready connection and retries safely after reconnect. ([c20e841])
+
+### Security
+
+- **Plugin shortcut authorization:** Untrusted shortcut messages are restricted by a host command allowlist; matching a binding is not treated as proof of a user keypress. Privileged actions remain host-controlled. ([c20e841])
+- **Permission runtime revalidation:** Optional-permission checks release the runtime lock before package/grant I/O and revalidate package identity before applying approval. ([e9aa6c8])
+- **Plugin registry release gate**: Added a bounded live staging/production registry check with HTTPS-only redirects, root-rotation signature verification, expiry and version floors, a protected staging workflow, and a production release preflight that rejects partial or invalid trust configuration and can require marketplace-enabled builds. ([da2b064])
+- **Plugin marketplace updates:** Marketplace package downgrades and same-version package replacement are rejected; explicit retained-version rollback remains available. ([ea32a61])
+- **Plugin beta releases:** Signed registry entries can publish stable and beta builds of one plugin. The marketplace keeps one listing and offers an opt-in beta switch per plugin; native inspection rejects beta installs without that opt-in. ([ea32a61], [79a6f73])
+- **Plugin and asset isolation:** The desktop CSP and Tauri asset protocol are restricted to approved plugin assets; plugin editor frames receive their own deny-by-default policy, and release notes no longer load local filesystem media. ([be3a109])
+- **Plugin Developer Mode boundary:** Local and legacy plugins now require an explicit, persisted Developer Mode that defaults off. Disabling it stops those plugins and revokes active runtime identities without affecting signed marketplace plugins. ([ea32a61], [79a6f73])
+- **Typed plugin broker boundary:** Manifest v2 messages now leave React composition code through a dedicated, generation-aware frontend broker before reaching the native policy engine; legacy bridge operations remain isolated behind Developer Mode. ([79a6f73])
+- **Plugin adversarial defenses:** Hostile package and permission tests now cover archive traversal and bombs, oversized pane content, unknown capability grants, malformed Worker messages, and network-scope smuggling. Unknown optional permissions remain denied, invalid wildcard scopes are rejected, and highly compressed archive entries fail before extraction. ([ea32a61], [79a6f73])
+
 ## [2.32.2] - 2026-09-24
 
 ### Changed
-- **Anonymous usage:** The daily report also includes how long the app was open, when it was opened and closed, the timezone, and counts for connections, sign-in method, tunnel starts, finished file transfers, snippets sent to a shell, and Files splits. Still no IP, hosts, paths, or commands. ([7c5509b], [69ce069])
+- **Anonymous usage:** The daily report also includes how long the app was open, when it was opened and closed, the timezone, and counts for connections, sign-in method, tunnel starts, finished file transfers, snippet insertion attempts, and Files splits. Still no IP, hosts, paths, or commands. ([7c5509b], [69ce069])
 
 ### Fixed
 - **SSH login banners and startup:** Authentication banners and the remote login MOTD now reach the first terminal instead of being consumed by metadata/SFTP setup. Deferred shell and working-directory startup uses generation-safe cached metadata, preserves Windows shell syntax, and will not inject commands after the user starts typing. Windows OpenSSH detects its configured default shell so CMD, PowerShell, explicit shell paths, and cross-drive navigation use the correct syntax. ([e3dab28], [2adf32b], [00e7e49])
@@ -1459,7 +1491,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [d3f4060]: https://github.com/zync-sh/zync/commit/d3f4060
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.32.2...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.33.0...HEAD
+[2.33.0]: https://github.com/zync-sh/zync/compare/v2.32.2...v2.33.0
 [2.32.2]: https://github.com/zync-sh/zync/compare/v2.32.1...v2.32.2
 [2.32.1]: https://github.com/zync-sh/zync/compare/v2.32.0...v2.32.1
 [2.32.0]: https://github.com/zync-sh/zync/compare/v2.31.0...v2.32.0
@@ -1473,6 +1506,10 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [13f5301]: https://github.com/zync-sh/zync/commit/13f5301
 [2857eaf]: https://github.com/zync-sh/zync/commit/2857eaf
 [b83c2f2]: https://github.com/zync-sh/zync/commit/b83c2f2
+[93f3fc0]: https://github.com/zync-sh/zync/commit/93f3fc0
+[7ccfe31]: https://github.com/zync-sh/zync/commit/7ccfe31
+[2c21fc2]: https://github.com/zync-sh/zync/commit/2c21fc2
+[be3a109]: https://github.com/zync-sh/zync/commit/be3a109
 [0a2a077]: https://github.com/zync-sh/zync/commit/0a2a077
 [df639a8]: https://github.com/zync-sh/zync/commit/df639a8
 [2fb21e6]: https://github.com/zync-sh/zync/commit/2fb21e6
@@ -1616,3 +1653,7 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [063c515]: https://github.com/zync-sh/zync/commit/063c515
 [e3dab28]: https://github.com/zync-sh/zync/commit/e3dab28
 [2adf32b]: https://github.com/zync-sh/zync/commit/2adf32b
+[e9aa6c8]: https://github.com/zync-sh/zync/commit/e9aa6c8
+[c20e841]: https://github.com/zync-sh/zync/commit/c20e841
+[41eaaa2]: https://github.com/zync-sh/zync/commit/41eaaa2
+[da6ac74]: https://github.com/zync-sh/zync/commit/da6ac74

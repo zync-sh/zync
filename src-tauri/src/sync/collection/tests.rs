@@ -1,3 +1,5 @@
+use super::super::profiles::now_secs;
+use super::super::types::{SyncCollectionManifest, SyncKeyPolicyMode, SyncProviderKind};
 use super::keyring::{
     collection_key_account, is_collection_key_cached, key_store, load_collection_key,
     load_collection_key_secret, save_collection_key_secret, SYNC_COLLECTION_KEY_CACHE_TTL_SECS,
@@ -11,10 +13,8 @@ use super::wrap::{
     unwrap_collection_key, RemoteCollectionKeyWrapV1, REMOTE_KEY_WRAP_VERSION,
     SYNC_RECOVERY_KEY_PREFIX,
 };
-use super::super::profiles::now_secs;
-use super::super::types::{SyncCollectionManifest, SyncKeyPolicyMode, SyncProviderKind};
-use uuid::Uuid;
 use base64::Engine;
+use uuid::Uuid;
 
 #[test]
 fn recovery_key_parser_preserves_url_safe_hyphens_inside_groups() {
@@ -540,9 +540,8 @@ fn unlock_rolls_back_cached_key_when_manifest_save_fails() {
     std::fs::remove_dir_all(&data_dir_path).expect("remove manifest directory");
     std::fs::write(&data_dir_path, "blocks directory creation").expect("create blocking file");
 
-    let error =
-        unlock_collection_key_with_passphrase(&data_dir_path, &mut manifest, passphrase)
-            .expect_err("manifest save should fail");
+    let error = unlock_collection_key_with_passphrase(&data_dir_path, &mut manifest, passphrase)
+        .expect_err("manifest save should fail");
 
     assert_eq!(error.code, "sync_collection_write_failed");
     assert_eq!(
@@ -597,7 +596,10 @@ fn apply_remote_key_wrap_rejects_partial_recovery_slot_atomically() {
     assert_eq!(manifest.key_policy_mode, initial_manifest.key_policy_mode);
     assert_eq!(manifest.key_wrap_salt, initial_manifest.key_wrap_salt);
     assert_eq!(manifest.key_wrap_nonce, initial_manifest.key_wrap_nonce);
-    assert_eq!(manifest.key_wrap_ciphertext, initial_manifest.key_wrap_ciphertext);
+    assert_eq!(
+        manifest.key_wrap_ciphertext,
+        initial_manifest.key_wrap_ciphertext
+    );
     assert_eq!(manifest.has_recovery_key, initial_manifest.has_recovery_key);
 }
 
@@ -733,7 +735,10 @@ fn apply_remote_key_wrap_applies_and_clears_recovery_slot_correctly() {
     apply_remote_key_wrap_to_manifest(&mut manifest, &wrap_with_recovery)
         .expect("wrap with recovery should apply");
 
-    assert_eq!(manifest.key_policy_mode, SyncKeyPolicyMode::CustomPassphrase);
+    assert_eq!(
+        manifest.key_policy_mode,
+        SyncKeyPolicyMode::CustomPassphrase
+    );
     assert!(manifest.has_recovery_key);
     assert!(manifest.recovery_key_wrap_salt.is_some());
     assert!(manifest.recovery_key_wrap_nonce.is_some());

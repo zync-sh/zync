@@ -1,7 +1,7 @@
 {
   "name": "zync",
   "private": true,
-  "version": "2.32.2",
+  "version": "2.33.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -13,6 +13,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "type-check": "tsc --noEmit",
+    "sdk:type-check": "node ./node_modules/typescript/bin/tsc -p packages/plugin-sdk/tsconfig.test.json",
+    "sdk:pack-check": "node tests/pluginSdkPackage.test.mjs",
+    "sdk:release-check": "node scripts/plugin-signing/sdk-release-check.mjs",
+    "plugin:validate": "node packages/plugin-sdk/bin/zync-plugin.mjs validate",
     "compile:agent-tests": "node ./node_modules/typescript/bin/tsc -p tsconfig.agent-tests.json",
     "test:ai-sidebar-resize": "npm run compile:agent-tests && node tests/aiSidebarResize.test.mjs",
     "test:codemirror-helpers": "npm run compile:agent-tests && node tests/codeMirrorHelpers.test.mjs",
@@ -51,6 +55,13 @@
     "test:update-notification": "node tests/updateNotificationAutoUpdateFlow.test.mjs",
     "test:updater-flow": "node tests/updaterFlow.test.mjs",
     "test:all-agent": "npm run compile:agent-tests && node tests/runAllAgentTests.mjs",
+    "plugin:keygen": "node scripts/plugin-signing/cli.mjs keygen",
+    "plugin:sign": "node scripts/plugin-signing/cli.mjs sign",
+    "plugin:verify": "node scripts/plugin-signing/cli.mjs verify",
+    "plugin:registry-keygen": "node scripts/plugin-signing/cli.mjs registry-keygen",
+    "plugin:registry-build": "node scripts/plugin-signing/cli.mjs registry-build",
+    "plugin:registry-verify": "node scripts/plugin-signing/cli.mjs registry-verify",
+    "plugin:registry-check": "node scripts/plugin-signing/cli.mjs registry-check",
     "test": "npm run test:all-agent"
   },
   "dependencies": {

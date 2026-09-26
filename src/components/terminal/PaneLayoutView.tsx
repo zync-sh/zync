@@ -32,6 +32,7 @@ import { PaneDivider } from './PaneDivider';
 import { FeaturePaneBody } from './FeaturePaneBody';
 import { useDockTabPointer, type DockTabPointerHandlers } from '../layout/tabDock';
 import { usePlugins } from '../../context/PluginContext';
+import { PluginIcon } from '../icons/PluginIcon';
 
 const EMPTY_TERMINAL_TABS: TerminalTab[] = [];
 
@@ -293,12 +294,14 @@ function FocusEdges({ edges }: { edges: InternalEdges }) {
 function PaneHeader({
     label,
     Icon,
+    icon,
     focused,
     onPointerDown,
     onClose,
 }: {
     label: string;
     Icon: LucideIcon;
+    icon?: ReactNode;
     focused: boolean;
     onPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
     onClose: () => void;
@@ -308,7 +311,7 @@ function PaneHeader({
             className="h-7 shrink-0 flex items-center gap-1.5 px-2 border-b border-app-border/60 bg-app-panel cursor-grab active:cursor-grabbing select-none"
             onPointerDown={onPointerDown}
         >
-            <Icon size={12} className={cn(focused ? 'text-app-accent' : 'text-app-muted')} />
+            {icon ?? <Icon size={12} className={cn(focused ? 'text-app-accent' : 'text-app-muted')} />}
             <span className="flex-1 truncate text-[11px] font-medium text-app-text">{label}</span>
             <button
                 type="button"
@@ -378,12 +381,13 @@ function FeaturePaneLeaf({
                 <PaneHeader
                     label={label}
                     Icon={Icon}
+                    icon={pluginId ? <PluginIcon panelId={pluginId} size={14} /> : undefined}
                     focused={focused}
                     onPointerDown={onHeaderPointerDown}
                     onClose={onClose}
                 />
             )}
-            <div className="flex-1 min-h-0 min-w-0">
+            <div className="relative flex-1 min-h-0 min-w-0">
                 <FeaturePaneBody
                     connectionId={connectionId}
                     featureId={featureId}
@@ -451,7 +455,9 @@ export function PaneLayoutView({
             if (isFeatureContent(node.content) || isPluginContent(node.content)) {
                 const content = node.content;
                 const featureId = isFeatureContent(content) ? content.featureId : undefined;
-                const featureInstanceId = isFeatureContent(content) ? content.instanceId : undefined;
+                const contentInstanceId = isFeatureContent(content) || isPluginContent(content)
+                    ? content.instanceId
+                    : undefined;
                 const pluginId = isPluginContent(content) ? content.pluginId : undefined;
                 const dockPayload = paneDockPayload(node);
                 return (
@@ -460,7 +466,7 @@ export function PaneLayoutView({
                         connectionId={connectionId}
                         paneId={node.id}
                         featureId={featureId}
-                        instanceId={featureInstanceId}
+                        instanceId={contentInstanceId}
                         pluginId={pluginId}
                         pluginLabel={pluginId ? pluginTitles.get(pluginId) : undefined}
                         focused={focused}

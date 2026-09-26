@@ -865,13 +865,9 @@ where
             manifest.provider
         )
     })?;
-    let remote_objects = list_collection_objects_cached(
-        provider_impl,
-        app,
-        kind,
-        &manifest.sync_collection_id,
-    )
-    .await?;
+    let remote_objects =
+        list_collection_objects_cached(provider_impl, app, kind, &manifest.sync_collection_id)
+            .await?;
 
     let mut scanned = 0u64;
     let mut skipped = 0u64;
@@ -1010,10 +1006,13 @@ fn credential_objects_for_restore(
                 .iter()
                 .map(|logical_id| {
                     let object_name = credential_object_name(collection_id, logical_id);
-                    by_name.get(&object_name).cloned().unwrap_or(ProviderCredentialObject {
-                        object_name,
-                        object_id: None,
-                    })
+                    by_name
+                        .get(&object_name)
+                        .cloned()
+                        .unwrap_or(ProviderCredentialObject {
+                            object_name,
+                            object_id: None,
+                        })
                 })
                 .collect();
         }
@@ -1118,13 +1117,8 @@ async fn collect_remote_host_records(
     let listed = if logical_id_filter.map(|f| !f.is_empty()).unwrap_or(false) {
         cached_listing(&manifest.sync_collection_id, provider).unwrap_or_default()
     } else {
-        list_collection_objects_cached(
-            provider_impl,
-            app,
-            provider,
-            &manifest.sync_collection_id,
-        )
-        .await?
+        list_collection_objects_cached(provider_impl, app, provider, &manifest.sync_collection_id)
+            .await?
     };
 
     let remote_objects =
@@ -1622,12 +1616,12 @@ async fn execute_hosts_restore_step(
     apply_host_records: bool,
 ) -> Result<SyncHostsRestoreResult, String> {
     let credential_ids = host_auth_credential_ids(&records);
-    let vault_ready_for_credentials = if include_referenced_credentials && !credential_ids.is_empty()
-    {
-        local_vault_ready_for_credential_restore(vault).await?
-    } else {
-        false
-    };
+    let vault_ready_for_credentials =
+        if include_referenced_credentials && !credential_ids.is_empty() {
+            local_vault_ready_for_credential_restore(vault).await?
+        } else {
+            false
+        };
     let credential_stats = if !include_referenced_credentials || credential_ids.is_empty() {
         CredentialRestoreStats::default()
     } else if vault_ready_for_credentials {
@@ -1737,22 +1731,18 @@ async fn restore_credentials_from_provider_records(
 ) -> Result<CredentialRestoreStats, String> {
     ensure_unlocked_vault_for_credential_restore(vault, "provider credentials").await?;
 
-    let listed = list_collection_objects_cached(
-        provider_impl,
-        app,
-        kind,
-        &manifest.sync_collection_id,
-    )
-    .await
-    .map_err(|message| {
-        record_sync_error(
-            provider_data_dir,
-            kind,
-            "sync_credentials_list_failed",
-            message.clone(),
-        );
-        message
-    })?;
+    let listed =
+        list_collection_objects_cached(provider_impl, app, kind, &manifest.sync_collection_id)
+            .await
+            .map_err(|message| {
+                record_sync_error(
+                    provider_data_dir,
+                    kind,
+                    "sync_credentials_list_failed",
+                    message.clone(),
+                );
+                message
+            })?;
 
     let remote_objects =
         credential_objects_for_restore(&manifest.sync_collection_id, requested_logical_ids, listed);
@@ -2759,14 +2749,9 @@ async fn preview_bundled_tunnel_counts_for_hosts(
     secret_key: &SecretKey,
     eligible_host_ids: &HashSet<String>,
 ) -> Result<BundledDomainRestoreCounts, String> {
-    let collected = load_tunnels_for_connections_restore(
-        provider_impl,
-        app,
-        kind,
-        manifest,
-        secret_key,
-    )
-    .await?;
+    let collected =
+        load_tunnels_for_connections_restore(provider_impl, app, kind, manifest, secret_key)
+            .await?;
     let normalized = normalize_tunnel_records(collected.records);
     let (filtered, skipped_orphaned) =
         filter_tunnel_records_for_hosts(normalized, eligible_host_ids);
@@ -2785,14 +2770,9 @@ async fn preview_bundled_host_snippet_counts_for_hosts(
     secret_key: &SecretKey,
     eligible_host_ids: &HashSet<String>,
 ) -> Result<BundledDomainRestoreCounts, String> {
-    let collected = load_snippets_for_connections_restore(
-        provider_impl,
-        app,
-        kind,
-        manifest,
-        secret_key,
-    )
-    .await?;
+    let collected =
+        load_snippets_for_connections_restore(provider_impl, app, kind, manifest, secret_key)
+            .await?;
     let normalized = normalize_snippet_records(collected.records);
     let (filtered, skipped_orphaned) =
         filter_host_scoped_snippet_records(normalized, eligible_host_ids);

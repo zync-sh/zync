@@ -197,9 +197,7 @@ impl ApiClient {
                 .as_ref()
                 .and_then(|u| u.avatar_url.clone())
                 .filter(|s| !s.trim().is_empty()),
-            quota_max: normalize_quota_max(
-                raw.entitlement.and_then(|e| e.max_active_shares),
-            ),
+            quota_max: normalize_quota_max(raw.entitlement.and_then(|e| e.max_active_shares)),
         })
     }
 
@@ -226,8 +224,7 @@ impl ApiClient {
         access_token: &str,
         body: &CreateShareBody,
     ) -> Result<ShareRecord, String> {
-        self.post_json("/v1/shares", body, Some(access_token))
-            .await
+        self.post_json("/v1/shares", body, Some(access_token)).await
     }
 
     pub async fn stop_share(&self, access_token: &str, id: &str) -> Result<ShareRecord, String> {
@@ -283,10 +280,7 @@ impl ApiClient {
         body: &B,
         access_token: Option<&str>,
     ) -> Result<T, String> {
-        let mut req = self
-            .http
-            .post(self.config.api_url(path))
-            .json(body);
+        let mut req = self.http.post(self.config.api_url(path)).json(body);
         if let Some(token) = access_token {
             req = req.bearer_auth(token);
         }

@@ -1,0 +1,77 @@
+name: Plugin registry staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      minimum_registry_version:
+        description: Lowest registry version this smoke test may accept
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  staging-smoke:
+    name: Verify staging registry and client trust
+    runs-on: ubuntu-22.04
+    environment: plugin-staging
+    env:
+      REGISTRY_URL: ${{ vars.ZYNC_PLUGIN_STAGING_REGISTRY_URL || secrets.ZYNC_PLUGIN_STAGING_REGISTRY_URL }}
+      REGISTRY_ROOT_KEYS: ${{ vars.ZYNC_PLUGIN_STAGING_REGISTRY_ROOT_KEYS || secrets.ZYNC_PLUGIN_STAGING_REGISTRY_ROOT_KEYS }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Node.js setup
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Install frontend dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Require staging configuration
+        shell: bash
+        run: |
+          if [ -z "$REGISTRY_URL" ] || [ -z "$REGISTRY_ROOT_KEYS" ]; then
+            echo "Configure the plugin-staging environment URL and public root keys before running this workflow."
+            exit 1
+          fi
+
+      - name: Verify published staging metadata
+        run: |
+          npm run plugin:registry-check -- \
+            --url "$REGISTRY_URL" \
+            --root-keys "$REGISTRY_ROOT_KEYS" \
+            --minimum-version "${{ inputs.minimum_registry_version }}" \
+            --min-valid-for-hours 24
+
+      - name: Verify signing and release-check tooling
+        run: |
+          node tests/pluginRegistrySigningTool.test.mjs
+          node tests/pluginRegistryReleaseCheck.test.mjs
+
+      - name: Verify native registry trust rules
+        env:
+          ZYNC_PLUGIN_REGISTRY_URL: ${{ env.REGISTRY_URL }}
+          ZYNC_PLUGIN_REGISTRY_ROOT_KEYS: ${{ env.REGISTRY_ROOT_KEYS }}
+        working-directory: src-tauri
+        run: cargo test --no-default-features plugins::registry::
+
+      - name: Build the frontend
+        env:
+          ZYNC_PLUGIN_REGISTRY_URL: ${{ env.REGISTRY_URL }}
+          ZYNC_PLUGIN_REGISTRY_ROOT_KEYS: ${{ env.REGISTRY_ROOT_KEYS }}
+        run: npm run build

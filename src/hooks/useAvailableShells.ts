@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShellEntry } from '../lib/shells/types';
 import { loadRemoteShellCache, saveRemoteShellCache } from '../lib/shells/cache';
+import { ShellDiscoveryGate } from '../lib/shells/discoveryGate';
 
 /** Local platform shell cache (single machine, single app run). */
 const localCache: { windows: ShellEntry[] | null; unix: ShellEntry[] | null } = {
@@ -11,6 +12,7 @@ const localCache: { windows: ShellEntry[] | null; unix: ShellEntry[] | null } = 
 interface UseAvailableShellsArgs {
     isWindows: boolean;
     connectionId?: string;
+    remoteReady?: boolean;
 }
 
 export interface UseAvailableShellsResult {
@@ -39,7 +41,7 @@ function formatShellFetchError(err: unknown): string {
  * picker dropdown is opened). Results are cached per-connection in
  * localStorage so subsequent app launches show the list instantly.
  */
-export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAvailableShellsArgs): UseAvailableShellsResult {
+export function useAvailableShells({ isWindows, connectionId = 'local', remoteReady = false }: UseAvailableShellsArgs): UseAvailableShellsResult {
     const isLocal = connectionId === 'local';
     const localCacheKey = isWindows ? 'windows' : 'unix';
     const scopeKey = `${isLocal ? 'local' : 'remote'}:${localCacheKey}:${connectionId}`;
@@ -52,6 +54,7 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
     const inFlightRef = useRef<Promise<void> | null>(null);
     const scopeKeyRef = useRef(scopeKey);
     const isMountedRef = useRef(true);
+    const discoveryGate = useRef(new ShellDiscoveryGate(scopeKey, isLocal || remoteReady));
 
     useEffect(() => {
         isMountedRef.current = true;
@@ -60,22 +63,19 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
         };
     }, []);
 
-    useEffect(() => {
-        if (scopeKeyRef.current === scopeKey) return;
-        scopeKeyRef.current = scopeKey;
-        inFlightRef.current = null;
-        if (!isMountedRef.current) return;
-        setShells(initialShells(isLocal, localCacheKey, connectionId));
-        setError(null);
-        setIsLoading(false);
-    }, [connectionId, isLocal, localCacheKey, scopeKey]);
-
     const fetchShells = useCallback(async () => {
+        const gate = discoveryGate.current;
+        if (!isMountedRef.current || gate.scope !== scopeKey) return;
+        const generation = gate.request();
+        // Remember picker demand, but never invoke remote discovery while offline.
+        if (generation === null) return;
         if (inFlightRef.current) return inFlightRef.current;
         const fetchScopeKey = scopeKey;
+        const isCurrent = () => isMountedRef.current
+            && scopeKeyRef.current === fetchScopeKey && gate.isCurrent(generation);
 
         const task = (async () => {
-            if (!isMountedRef.current || scopeKeyRef.current !== fetchScopeKey) return;
+            if (!isCurrent()) return;
             setIsLoading(true);
             setError(null);
             try {
@@ -86,7 +86,7 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
                     ? await window.ipcRenderer.invoke(command)
                     : await window.ipcRenderer.invoke(command, { connectionId });
 
-                if (!isMountedRef.current || scopeKeyRef.current !== fetchScopeKey) return;
+                if (!isCurrent()) return;
 
                 setShells(detected);
                 if (isLocal) {
@@ -95,14 +95,14 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
                     saveRemoteShellCache(connectionId, detected);
                 }
             } catch (err) {
-                if (!isMountedRef.current || scopeKeyRef.current !== fetchScopeKey) return;
+                if (!isCurrent()) return;
                 // On failure keep whatever we already have visible (cached or empty).
                 // The caller can re-invoke refetch() — typically the next time the
                 // user reopens the dropdown.
                 console.warn('[useAvailableShells] fetch failed:', err);
                 setError(formatShellFetchError(err));
             } finally {
-                if (isMountedRef.current && scopeKeyRef.current === fetchScopeKey) {
+                if (isCurrent()) {
                     setIsLoading(false);
                     inFlightRef.current = null;
                 }
@@ -112,6 +112,21 @@ export function useAvailableShells({ isWindows, connectionId = 'local' }: UseAva
         inFlightRef.current = task;
         return task;
     }, [isLocal, isWindows, connectionId, localCacheKey, scopeKey]);
+
+    useEffect(() => {
+        const scopeChanged = scopeKeyRef.current !== scopeKey;
+        const changed = discoveryGate.current.update(scopeKey, isLocal || remoteReady);
+        scopeKeyRef.current = scopeKey;
+        if (changed) {
+            inFlightRef.current = null;
+            if (scopeChanged) setShells(initialShells(isLocal, localCacheKey, connectionId));
+            setError(null);
+            setIsLoading(false);
+        }
+        // A picker opened while offline resumes once ready. After a reconnect,
+        // refresh only if discovery was previously requested for this host.
+        if (!isLocal && changed && discoveryGate.current.shouldRetry()) void fetchShells();
+    }, [scopeKey, isLocal, remoteReady, connectionId, localCacheKey, fetchShells]);
 
     // Local shells: auto-fetch on mount (cheap, used for the `+` default).
     // Remote shells: stay lazy — caller drives via refetch().

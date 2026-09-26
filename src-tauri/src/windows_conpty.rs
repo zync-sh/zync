@@ -29,7 +29,13 @@ pub fn conpty_search_dirs() -> Vec<PathBuf> {
             dirs.push(exe_dir.to_path_buf());
             dirs.push(exe_dir.join("conpty").join(arch));
             dirs.push(exe_dir.join("resources").join("conpty").join(arch));
-            dirs.push(exe_dir.join("resources").join("vendor").join("conpty").join(arch));
+            dirs.push(
+                exe_dir
+                    .join("resources")
+                    .join("vendor")
+                    .join("conpty")
+                    .join(arch),
+            );
             dirs.push(exe_dir.join("vendor").join("conpty").join(arch));
         }
     }
@@ -38,9 +44,9 @@ pub fn conpty_search_dirs() -> Vec<PathBuf> {
 }
 
 pub fn find_conpty_dir() -> Option<PathBuf> {
-    conpty_search_dirs().into_iter().find(|dir| {
-        dir.join("conpty.dll").is_file() && dir.join("OpenConsole.exe").is_file()
-    })
+    conpty_search_dirs()
+        .into_iter()
+        .find(|dir| dir.join("conpty.dll").is_file() && dir.join("OpenConsole.exe").is_file())
 }
 
 /// Load `conpty.dll` from the vendor pair before the first local PTY spawn.
@@ -48,7 +54,10 @@ pub fn preload_sideloaded_conpty() {
     match find_conpty_dir() {
         Some(dir) => {
             if let Err(err) = load_library(&dir.join("conpty.dll")) {
-                log::warn!("[pty] failed to sideload ConPTY from {}: {err}", dir.display());
+                log::warn!(
+                    "[pty] failed to sideload ConPTY from {}: {err}",
+                    dir.display()
+                );
             }
         }
         None => {
@@ -62,7 +71,11 @@ pub fn preload_sideloaded_conpty() {
 fn load_library(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
 
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     #[link(name = "kernel32")]
     extern "system" {
@@ -93,9 +106,14 @@ mod tests {
     fn search_dirs_include_exe_and_resources() {
         let dirs = conpty_search_dirs();
         assert!(!dirs.is_empty());
-        let rendered: Vec<String> = dirs.iter().map(|d| d.to_string_lossy().replace('\\', "/")).collect();
+        let rendered: Vec<String> = dirs
+            .iter()
+            .map(|d| d.to_string_lossy().replace('\\', "/"))
+            .collect();
         assert!(
-            rendered.iter().any(|d| d.contains("/conpty/") || d.ends_with("/conpty") || d.contains("vendor/conpty")),
+            rendered.iter().any(|d| d.contains("/conpty/")
+                || d.ends_with("/conpty")
+                || d.contains("vendor/conpty")),
             "expected a conpty vendor path, got {rendered:?}"
         );
     }

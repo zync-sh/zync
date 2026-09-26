@@ -22,6 +22,7 @@ import {
     PANE_LAYOUT_VERSION,
     featurePaneContent,
     isSplitFeatureId,
+    pluginPaneContent,
     termPaneContent,
     type DockEdge,
     type PaneContent,
@@ -50,10 +51,10 @@ export function singleFeaturePane(featureId: SplitFeatureId, paneId = createPane
     };
 }
 
-export function singlePluginPane(pluginId: string, paneId = createPaneId()): PaneLayout {
+export function singlePluginPane(pluginId: string, paneId = createPaneId(), instanceId?: string): PaneLayout {
     return {
         version: PANE_LAYOUT_VERSION,
-        root: { type: 'pane', id: paneId, content: { kind: 'plugin', pluginId } },
+        root: { type: 'pane', id: paneId, content: pluginPaneContent(pluginId, instanceId) },
         activePaneId: paneId,
     };
 }

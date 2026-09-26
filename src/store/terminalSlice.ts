@@ -251,7 +251,12 @@ function sourcePaneIdForPayload(
             ) {
                 return leaf.id;
             }
-            if (payload.kind === 'plugin' && isPluginContent(leaf.content) && leaf.content.pluginId === payload.pluginId) {
+            if (
+                payload.kind === 'plugin'
+                && isPluginContent(leaf.content)
+                && leaf.content.pluginId === payload.pluginId
+                && (!payload.instanceId || leaf.content.instanceId === payload.instanceId)
+            ) {
                 return leaf.id;
             }
         }
@@ -1119,7 +1124,11 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                         }
                         targetLayout = singleFeaturePane(targetContent.featureId, undefined, instanceId);
                     } else if (targetContent.kind === 'plugin') {
-                        targetLayout = singlePluginPane(targetContent.pluginId);
+                        targetLayout = singlePluginPane(
+                            targetContent.pluginId,
+                            undefined,
+                            targetContent.instanceId,
+                        );
                     } else if (targetContent.kind === 'term') {
                         targetLayout = singlePane(targetContent.termId);
                     }
@@ -1212,7 +1221,11 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 }
                 targetLayout = singleFeaturePane(targetContent.featureId, undefined, instanceId);
             } else if (!targetLayout && targetContent?.kind === 'plugin') {
-                targetLayout = singlePluginPane(targetContent.pluginId);
+                targetLayout = singlePluginPane(
+                    targetContent.pluginId,
+                    undefined,
+                    targetContent.instanceId,
+                );
             } else if (!targetLayout && owner !== WORKSPACE_PANE_OWNER) {
                 targetLayout = singlePane(owner);
             }
@@ -1305,6 +1318,7 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
 
         const existingLayout = groups?.[owner];
         let layout = existingLayout;
+        let seededFromPluginPayload = false;
         if (!layout) {
             // A split command from a shell tab must start with that shell as the
             // canvas. Starting with the incoming feature/plugin would duplicate
@@ -1318,9 +1332,10 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 }
                 layout = singleFeaturePane(targetContent.featureId, undefined, baseInstanceId);
             } else if (targetContent?.kind === 'plugin') {
-                layout = singlePluginPane(targetContent.pluginId);
+                layout = singlePluginPane(targetContent.pluginId, undefined, targetContent.instanceId);
             } else if (payload.kind === 'plugin') {
-                layout = singlePluginPane(payload.pluginId);
+                layout = singlePluginPane(payload.pluginId, undefined, payload.instanceId);
+                seededFromPluginPayload = true;
             } else if (payload.kind === 'feature') {
                 const baseInstanceId = payload.instanceId ?? newFeatureInstanceId(payload.featureId);
                 if (payload.featureId === 'files') {
@@ -1343,8 +1358,16 @@ export const createTerminalSlice: StateCreator<AppStore, [], [], TerminalSlice> 
                 && targetContent.featureId === payload.featureId
                 && targetContent.instanceId === payload.instanceId)
         );
+        const duplicatePlugin = payload.kind === 'plugin' && (
+            seededFromPluginPayload
+            || Boolean(sourcePaneId && paneId && sourcePaneId === paneId)
+            || (!existingLayout
+                && targetContent?.kind === 'plugin'
+                && targetContent.pluginId === payload.pluginId
+                && targetContent.instanceId === payload.instanceId)
+        );
         let content = payload.kind === 'plugin'
-            ? pluginPaneContent(payload.pluginId)
+            ? pluginPaneContent(payload.pluginId, duplicatePlugin ? undefined : payload.instanceId)
             : featurePaneContent(
                 payload.featureId,
                 duplicateFeature

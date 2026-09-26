@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 
 const MIN_SIDEBAR_WIDTH = 250;
 const MAX_SIDEBAR_WIDTH = 800;
@@ -26,43 +26,68 @@ export function useAiSidebarResize() {
     const [skipAnimation, setSkipAnimation] = useState(false);
     const sidebarOuterRef = useRef<HTMLElement>(null);
     const sidebarInnerRef = useRef<HTMLDivElement>(null);
-    const dragMoveRef = useRef<((event: MouseEvent) => void) | null>(null);
-    const dragUpRef = useRef<(() => void) | null>(null);
+    const dragRef = useRef<{ node: HTMLDivElement; pointerId: number; startX: number; startWidth: number; liveWidth: number; cursor: string } | null>(null);
+    const paintFrameRef = useRef(0);
+    const animationFrameRef = useRef(0);
 
-    useEffect(() => () => {
-        if (dragMoveRef.current) document.removeEventListener('mousemove', dragMoveRef.current);
-        if (dragUpRef.current) document.removeEventListener('mouseup', dragUpRef.current);
+    const paintWidth = useCallback((nextWidth: number) => {
+        if (sidebarOuterRef.current) sidebarOuterRef.current.style.width = `${nextWidth}px`;
+        if (sidebarInnerRef.current) sidebarInnerRef.current.style.width = `${nextWidth}px`;
     }, []);
 
-    const handleMouseDown = useCallback((event: React.MouseEvent) => {
-        event.preventDefault();
-        const startX = event.clientX;
-        const startWidth = width;
-        let liveWidth = startWidth;
+    const finishDrag = useCallback((commit: boolean) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        dragRef.current = null;
+        cancelAnimationFrame(paintFrameRef.current);
+        paintFrameRef.current = 0;
+        if (drag.node.hasPointerCapture(drag.pointerId)) drag.node.releasePointerCapture(drag.pointerId);
+        document.body.style.cursor = drag.cursor;
+        if (commit) {
+            paintWidth(drag.liveWidth);
+            setWidth(drag.liveWidth);
+            try { localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(drag.liveWidth)); } catch { /* Resize still works when storage is unavailable. */ }
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = requestAnimationFrame(() => setSkipAnimation(false));
+        }
+        window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
+    }, [paintWidth]);
 
-        const onMove = (moveEvent: MouseEvent) => {
-            liveWidth = clampAiSidebarWidth(startWidth + (startX - moveEvent.clientX));
-            if (sidebarOuterRef.current) sidebarOuterRef.current.style.width = `${liveWidth}px`;
-            if (sidebarInnerRef.current) sidebarInnerRef.current.style.width = `${liveWidth}px`;
+    useEffect(() => {
+        const onBlur = () => finishDrag(true);
+        window.addEventListener('blur', onBlur);
+        return () => {
+            window.removeEventListener('blur', onBlur);
+            finishDrag(false);
+            cancelAnimationFrame(animationFrameRef.current);
         };
+    }, [finishDrag]);
 
-        const onUp = () => {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            dragMoveRef.current = null;
-            dragUpRef.current = null;
+    const resizeHandlers = {
+        onPointerDown(event: PointerEvent<HTMLDivElement>) {
+            if (dragRef.current || event.button !== 0 || !event.isPrimary) return;
+            event.preventDefault();
+            const node = event.currentTarget;
+            node.setPointerCapture(event.pointerId);
+            dragRef.current = { node, pointerId: event.pointerId, startX: event.clientX, startWidth: width, liveWidth: width, cursor: document.body.style.cursor };
+            cancelAnimationFrame(animationFrameRef.current);
             setSkipAnimation(true);
-            setWidth(liveWidth);
-            localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(liveWidth));
-            requestAnimationFrame(() => setSkipAnimation(false));
-            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
-        };
-
-        dragMoveRef.current = onMove;
-        dragUpRef.current = onUp;
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-    }, [width]);
+            document.body.style.cursor = 'col-resize';
+            window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
+        },
+        onPointerMove(event: PointerEvent<HTMLDivElement>) {
+            const drag = dragRef.current;
+            if (!drag || drag.pointerId !== event.pointerId) return;
+            drag.liveWidth = clampAiSidebarWidth(drag.startWidth + drag.startX - event.clientX);
+            if (!paintFrameRef.current) paintFrameRef.current = requestAnimationFrame(() => {
+                paintFrameRef.current = 0;
+                if (dragRef.current) paintWidth(dragRef.current.liveWidth);
+            });
+        },
+        onPointerUp(event: PointerEvent<HTMLDivElement>) { if (dragRef.current?.pointerId === event.pointerId) finishDrag(true); },
+        onPointerCancel(event: PointerEvent<HTMLDivElement>) { if (dragRef.current?.pointerId === event.pointerId) finishDrag(true); },
+        onLostPointerCapture(event: PointerEvent<HTMLDivElement>) { if (dragRef.current?.pointerId === event.pointerId) finishDrag(true); },
+    };
 
     const transition = skipAnimation
         ? { duration: 0 }
@@ -84,7 +109,7 @@ export function useAiSidebarResize() {
         transition,
         sidebarOuterRef,
         sidebarInnerRef,
-        handleMouseDown,
+        resizeHandlers,
         handleAnimationStart,
         handleAnimationComplete,
     };

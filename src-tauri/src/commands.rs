@@ -12,7 +12,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_store::StoreExt;
 use tokio::sync::Mutex;
@@ -49,8 +49,6 @@ fn is_transient_data_dir_error(error: &std::io::Error) -> bool {
         ErrorKind::PermissionDenied | ErrorKind::Interrupted | ErrorKind::WouldBlock
     )
 }
-static PLUGIN_WINDOW_TEMP_FILES: LazyLock<StdMutex<HashMap<String, std::path::PathBuf>>> =
-    LazyLock::new(|| StdMutex::new(HashMap::new()));
 static SETTINGS_MUTATION_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 static NEXT_CONNECT_TASK_ID: AtomicU64 = AtomicU64::new(1);
@@ -7088,13 +7086,26 @@ pub async fn app_get_exe_dir() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn app_exit(app: tauri::AppHandle) {
+pub async fn app_exit(
+    app: tauri::AppHandle,
+    recovery: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+) -> Result<(), String> {
+    if let Err(error) = recovery.mark_clean_exit() {
+        log::warn!("[Plugins] Failed to record a clean app exit: {error}");
+    }
     app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn app_relaunch(app: tauri::AppHandle) {
-    app.restart();
+pub async fn app_relaunch(
+    app: tauri::AppHandle,
+    recovery: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+) -> Result<(), String> {
+    if let Err(error) = recovery.mark_clean_exit() {
+        log::warn!("[Plugins] Failed to record a clean app relaunch: {error}");
+    }
+    app.restart()
 }
 
 #[tauri::command]
@@ -7103,33 +7114,730 @@ pub async fn plugins_load(app: AppHandle) -> Result<Vec<crate::plugins::Plugin>,
 }
 
 #[tauri::command]
+pub async fn plugins_developer_mode_get(app: AppHandle) -> Result<bool, String> {
+    crate::plugins::PluginScanner::developer_mode_enabled(&app).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_developer_mode_set(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::set_developer_mode(&app, enabled)
+        .map_err(|error| error.to_string())?;
+    // Mode changes invalidate every runtime identity. The renderer reloads eligible
+    // plugins after this command, while stale workers lose native broker authority now.
+    broker.reset();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn plugins_registry_load(
+    app: AppHandle,
+) -> Result<crate::plugins::registry::TrustedRegistrySnapshot, String> {
+    crate::plugins::registry::load(&app)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_beta_plugins_get(app: AppHandle) -> Result<Vec<String>, String> {
+    crate::plugins::PluginScanner::beta_plugins(&app).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_beta_plugin_set(
+    app: AppHandle,
+    plugin_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::set_beta_enabled(&app, &plugin_id, enabled)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn plugins_toggle(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
     crate::plugins::PluginScanner::save_state(&app, id, enabled).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn plugins_install(app: AppHandle, url: String) -> Result<String, String> {
-    crate::plugins::PluginScanner::install_plugin(&app, &url)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn plugins_install_local(app: AppHandle, path: String) -> Result<String, String> {
+pub async fn plugins_inspect_local(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::plugins::install::PluginInstallInspection, String> {
     let app_handle = app.clone();
     let local_path = path.clone();
 
     tokio::task::spawn_blocking(move || {
-        crate::plugins::PluginScanner::install_plugin_from_local_path(&app_handle, &local_path)
+        crate::plugins::PluginScanner::inspect_local_plugin(&app_handle, &local_path)
     })
     .await
-    .map_err(|e| format!("Local plugin install task failed: {e}"))?
+    .map_err(|e| format!("Local plugin inspection task failed: {e}"))?
     .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn plugins_uninstall(app: AppHandle, id: String) -> Result<(), String> {
-    crate::plugins::PluginScanner::uninstall_plugin(&app, &id).map_err(|e| e.to_string())
+pub async fn plugins_inspect_marketplace(
+    app: AppHandle,
+    plugin_id: String,
+    version: String,
+) -> Result<crate::plugins::install::PluginInstallInspection, String> {
+    crate::plugins::PluginScanner::inspect_marketplace_plugin(&app, &plugin_id, &version)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_install_inspected(
+    app: AppHandle,
+    inspection_id: String,
+    package_digest: String,
+    optional_permission_ids: Vec<String>,
+) -> Result<crate::plugins::install::PluginActivationTransaction, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::PluginScanner::install_inspected_plugin(
+            &app,
+            &inspection_id,
+            &package_digest,
+            optional_permission_ids,
+        )
+    })
+    .await
+    .map_err(|e| format!("Plugin activation task failed: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_commit_activation(
+    app: AppHandle,
+    activation_id: String,
+) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::PluginScanner::commit_plugin_activation(&app, &activation_id)
+    })
+    .await
+    .map_err(|e| format!("Plugin activation commit task failed: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_rollback_version(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    plugin_id: String,
+) -> Result<crate::plugins::rollback::PluginRollbackResult, String> {
+    broker.stop_plugin(&plugin_id);
+    tokio::task::spawn_blocking(move || crate::plugins::rollback::rollback(&app, &plugin_id))
+        .await
+        .map_err(|e| format!("Plugin version rollback task failed: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_rollback_activation(
+    app: AppHandle,
+    activation_id: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::PluginScanner::rollback_plugin_activation(&app, &activation_id)
+    })
+    .await
+    .map_err(|e| format!("Plugin rollback task failed: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_discard_inspection(
+    app: AppHandle,
+    inspection_id: String,
+) -> Result<(), String> {
+    crate::plugins::PluginScanner::discard_plugin_inspection(&app, &inspection_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_start(
+    app: AppHandle,
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    plugin_id: String,
+) -> Result<crate::plugins::broker::PluginRuntimeRegistration, String> {
+    state
+        .start_runtime(&app, &plugin_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_authorize(
+    app: AppHandle,
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    capability: String,
+) -> Result<(), String> {
+    state
+        .authorize(&app, &runtime_instance_id, &capability)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_register_command(
+    app: AppHandle,
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    command_id: String,
+    title: String,
+) -> Result<(), String> {
+    state
+        .authorize_command_registration(&app, &runtime_instance_id, &command_id, &title)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_register_pane(
+    app: AppHandle,
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    pane_kind_id: String,
+) -> Result<Option<crate::plugins::broker::PluginPaneRegistration>, String> {
+    state
+        .register_pane(&app, &runtime_instance_id, &pane_kind_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_storage_get(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    runtime_instance_id: String,
+    key: String,
+) -> Result<Option<String>, String> {
+    let principal = broker
+        .authorize_principal(&app, &runtime_instance_id, "filesystem.pluginData.read")
+        .map_err(|error| error.to_string())?;
+    storage
+        .get(&app, &principal, &key)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_storage_keys(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    runtime_instance_id: String,
+) -> Result<Vec<String>, String> {
+    let principal = broker
+        .authorize_principal(&app, &runtime_instance_id, "filesystem.pluginData.read")
+        .map_err(|error| error.to_string())?;
+    storage
+        .keys(&app, &principal)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_storage_set(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    runtime_instance_id: String,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    let principal = broker
+        .authorize_principal(&app, &runtime_instance_id, "filesystem.pluginData.write")
+        .map_err(|error| error.to_string())?;
+    storage
+        .set(&app, &principal, &key, &value)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_storage_delete(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    runtime_instance_id: String,
+    key: String,
+) -> Result<bool, String> {
+    let principal = broker
+        .authorize_principal(&app, &runtime_instance_id, "filesystem.pluginData.write")
+        .map_err(|error| error.to_string())?;
+    storage
+        .delete(&app, &principal, &key)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_filesystem_pick(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+    request: crate::plugins::filesystem::PluginFilesystemPickRequest,
+) -> Result<Option<crate::plugins::filesystem::PluginFilesystemHandle>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    broker
+        .authorize(&app, &runtime_instance_id, "filesystem.external.read")
+        .map_err(|error| error.to_string())?;
+    let kind = request.kind;
+    let app_for_picker = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || match kind {
+        crate::plugins::filesystem::PluginFilesystemPickKind::File => {
+            app_for_picker.dialog().file().blocking_pick_file()
+        }
+        crate::plugins::filesystem::PluginFilesystemPickKind::Directory => {
+            app_for_picker.dialog().file().blocking_pick_folder()
+        }
+    })
+    .await
+    .map_err(|error| format!("Plugin file picker task failed: {error}"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    filesystem
+        .issue_handle(
+            &app,
+            &runtime_instance_id,
+            &std::path::PathBuf::from(selected.to_string()),
+            kind,
+        )
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_optional_permission(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    capability: String,
+    approved_digest: Option<String>,
+) -> Result<Option<crate::plugins::broker::OptionalPermissionPrompt>, String> {
+    broker
+        .optional_permission(
+            &app,
+            &runtime_instance_id,
+            &capability,
+            approved_digest.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_filesystem_pick_write_file(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+) -> Result<Option<crate::plugins::filesystem::PluginFilesystemHandle>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    broker
+        .authorize(&app, &runtime_instance_id, "filesystem.external.write")
+        .map_err(|error| error.to_string())?;
+    let app_for_picker = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app_for_picker.dialog().file().blocking_save_file()
+    })
+    .await
+    .map_err(|error| format!("Plugin save picker task failed: {error}"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    filesystem
+        .issue_write_file_handle(
+            &app,
+            &runtime_instance_id,
+            &std::path::PathBuf::from(selected.to_string()),
+        )
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_filesystem_read_text(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+    handle: String,
+    relative_path: Option<String>,
+) -> Result<String, String> {
+    broker
+        .authorize(&app, &runtime_instance_id, "filesystem.external.read")
+        .map_err(|error| error.to_string())?;
+    filesystem
+        .read_text(
+            &app,
+            &runtime_instance_id,
+            &handle,
+            relative_path.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_filesystem_write_text(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+    handle: String,
+    content: String,
+) -> Result<(), String> {
+    broker
+        .authorize(&app, &runtime_instance_id, "filesystem.external.write")
+        .map_err(|error| error.to_string())?;
+    filesystem
+        .write_text(&app, &runtime_instance_id, &handle, &content)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_filesystem_list(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+    handle: String,
+    relative_path: Option<String>,
+) -> Result<Vec<crate::plugins::filesystem::PluginFilesystemEntry>, String> {
+    broker
+        .authorize(&app, &runtime_instance_id, "filesystem.external.read")
+        .map_err(|error| error.to_string())?;
+    filesystem
+        .list(
+            &app,
+            &runtime_instance_id,
+            &handle,
+            relative_path.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+const MAX_PLUGIN_SSH_PATH_BYTES: usize = 1024;
+const MAX_PLUGIN_SSH_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_PLUGIN_SSH_DIRECTORY_ENTRIES: usize = 500;
+
+fn validate_plugin_ssh_relative_path(path: &str, allow_empty: bool) -> Result<Vec<&str>, String> {
+    if (!allow_empty && path.trim().is_empty()) || path.len() > MAX_PLUGIN_SSH_PATH_BYTES {
+        return Err("Server filesystem relative path is invalid".into());
+    }
+    if path.contains('\0') || path.starts_with('/') || path.starts_with('\\') {
+        return Err("Server filesystem paths must be relative to the server home folder".into());
+    }
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." || component.contains('\\') {
+            return Err("Server filesystem paths cannot leave the server home folder".into());
+        }
+        components.push(component);
+    }
+    if !allow_empty && components.is_empty() {
+        return Err("Server filesystem relative path is required".into());
+    }
+    Ok(components)
+}
+
+#[cfg(test)]
+mod plugin_ssh_filesystem_path_tests {
+    use super::validate_plugin_ssh_relative_path;
+
+    #[test]
+    fn accepts_only_home_relative_paths() {
+        assert!(validate_plugin_ssh_relative_path("", true).is_ok());
+        assert!(validate_plugin_ssh_relative_path("projects/zync/README.md", false).is_ok());
+        assert!(validate_plugin_ssh_relative_path("../secret", false).is_err());
+        assert!(validate_plugin_ssh_relative_path("/etc/passwd", false).is_err());
+        assert!(validate_plugin_ssh_relative_path("projects\\secret", false).is_err());
+    }
+}
+
+async fn resolve_plugin_ssh_path(
+    sftp: &russh_sftp::client::SftpSession,
+    relative_path: &str,
+    allow_empty: bool,
+) -> Result<String, String> {
+    let components = validate_plugin_ssh_relative_path(relative_path, allow_empty)?;
+    let home = tokio::time::timeout(Duration::from_secs(10), sftp.canonicalize("."))
+        .await
+        .map_err(|_| "DISCONNECTED: SFTP cwd timed out after 10s".to_string())?
+        .map_err(|error| error.to_string())?;
+    let requested = components
+        .into_iter()
+        .fold(home.clone(), |mut path, component| {
+            if !path.ends_with('/') {
+                path.push('/');
+            }
+            path.push_str(component);
+            path
+        });
+    let resolved = tokio::time::timeout(Duration::from_secs(10), sftp.canonicalize(&requested))
+        .await
+        .map_err(|_| "DISCONNECTED: SFTP path resolution timed out after 10s".to_string())?
+        .map_err(|error| error.to_string())?;
+    let home_prefix = if home.ends_with('/') {
+        home
+    } else {
+        format!("{home}/")
+    };
+    if resolved != home_prefix.trim_end_matches('/') && !resolved.starts_with(&home_prefix) {
+        return Err("Server filesystem path resolves outside the server home folder".into());
+    }
+    Ok(resolved)
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_bind_pane(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    pane_kind_id: String,
+    pane_instance_id: String,
+    connection_id: String,
+) -> Result<(), String> {
+    broker
+        .authorize(&app, &runtime_instance_id, "ui.pane.register")
+        .map_err(|error| error.to_string())?;
+    broker
+        .bind_pane_connection(
+            &runtime_instance_id,
+            &pane_kind_id,
+            &pane_instance_id,
+            &connection_id,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_unbind_pane(
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    pane_instance_id: String,
+) -> Result<(), String> {
+    broker.unbind_pane_connection(&runtime_instance_id, &pane_instance_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn plugins_ssh_filesystem_list(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    state: State<'_, AppState>,
+    runtime_instance_id: String,
+    pane_instance_id: String,
+    relative_path: Option<String>,
+) -> Result<Vec<crate::plugins::ssh_filesystem::PluginSshFilesystemEntry>, String> {
+    let connection_id = broker
+        .authorize_pane_connection(
+            &app,
+            &runtime_instance_id,
+            &pane_instance_id,
+            "ssh.filesystem.read",
+        )
+        .map_err(|error| error.to_string())?;
+    if connection_id == "local" {
+        return Err("This pane is local. Use the local filesystem picker instead.".into());
+    }
+    let requested_path = relative_path.unwrap_or_default();
+    let (sftp, identity_cache) = sftp_list_ctx(&state, &connection_id).await?;
+    let resolved_path = resolve_plugin_ssh_path(&sftp, &requested_path, true).await?;
+    let entries = tokio::time::timeout(
+        Duration::from_secs(10),
+        state
+            .file_system
+            .list_remote(&sftp, &resolved_path, &identity_cache),
+    )
+    .await
+    .map_err(|_| "DISCONNECTED: SFTP listing timed out after 10s".to_string())?
+    .map_err(|error| error.to_string())?;
+    if entries.len() > MAX_PLUGIN_SSH_DIRECTORY_ENTRIES {
+        return Err(format!(
+            "Server folder contains more than {MAX_PLUGIN_SSH_DIRECTORY_ENTRIES} visible entries"
+        ));
+    }
+    Ok(entries
+        .into_iter()
+        .map(crate::plugins::ssh_filesystem::PluginSshFilesystemEntry::from)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn plugins_ssh_filesystem_read_text(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    state: State<'_, AppState>,
+    runtime_instance_id: String,
+    pane_instance_id: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let connection_id = broker
+        .authorize_pane_connection(
+            &app,
+            &runtime_instance_id,
+            &pane_instance_id,
+            "ssh.filesystem.read",
+        )
+        .map_err(|error| error.to_string())?;
+    if connection_id == "local" {
+        return Err("This pane is local. Use the local filesystem picker instead.".into());
+    }
+    let sftp = get_sftp_or_reconnect(&state, &connection_id).await?;
+    let resolved_path = resolve_plugin_ssh_path(&sftp, &relative_path, false).await?;
+    let metadata = tokio::time::timeout(Duration::from_secs(10), sftp.metadata(&resolved_path))
+        .await
+        .map_err(|_| "DISCONNECTED: SFTP metadata timed out after 10s".to_string())?
+        .map_err(|error| error.to_string())?;
+    if metadata.size.unwrap_or(MAX_PLUGIN_SSH_TEXT_BYTES + 1) > MAX_PLUGIN_SSH_TEXT_BYTES {
+        return Err(format!(
+            "Server file exceeds the {MAX_PLUGIN_SSH_TEXT_BYTES}-byte text limit"
+        ));
+    }
+    let text = read_remote_connection_file(&state, &connection_id, &resolved_path, 10).await?;
+    if text.len() > MAX_PLUGIN_SSH_TEXT_BYTES as usize {
+        return Err(format!(
+            "Server file exceeds the {MAX_PLUGIN_SSH_TEXT_BYTES}-byte text limit"
+        ));
+    }
+    Ok(text)
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_stop(
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+    runtime_instance_id: String,
+) -> Result<(), String> {
+    filesystem.revoke_runtime(&runtime_instance_id);
+    state.stop_runtime(&runtime_instance_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn plugins_runtime_reset(
+    state: State<'_, crate::plugins::broker::PluginBrokerState>,
+    filesystem: State<'_, crate::plugins::filesystem::PluginFilesystemState>,
+) -> Result<(), String> {
+    filesystem.reset();
+    state.reset();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn plugins_network_fetch(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    request: crate::plugins::network::PluginNetworkFetchRequest,
+) -> Result<crate::plugins::network::PluginNetworkFetchResponse, String> {
+    let grant = broker
+        .authorize_network_fetch(&app, &runtime_instance_id)
+        .map_err(|error| error.to_string())?;
+    crate::plugins::network::fetch(&grant, request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_recovery_status(
+    state: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+) -> Result<crate::plugins::recovery::PluginRecoveryStatus, String> {
+    state.status().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_recovery_record_failure(
+    state: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+    plugin_id: String,
+    kind: String,
+) -> Result<(), String> {
+    state
+        .record_failure(&plugin_id, &kind)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_recovery_clear_safe_mode(
+    state: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+) -> Result<(), String> {
+    state.clear_safe_mode().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_recovery_clear_plugin_failures(
+    state: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+    plugin_id: String,
+) -> Result<(), String> {
+    state
+        .clear_plugin_failures(&plugin_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_management_details(
+    app: AppHandle,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    plugin_id: String,
+) -> Result<crate::plugins::management::PluginManagementDetails, String> {
+    crate::plugins::management::details(&app, &storage, &plugin_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_management_set_optional_permissions(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    plugin_id: String,
+    optional_permission_ids: Vec<String>,
+) -> Result<crate::plugins::management::PluginGrantSummary, String> {
+    let result = crate::plugins::management::set_optional_permissions(
+        &app,
+        &plugin_id,
+        optional_permission_ids,
+    )
+    .map_err(|error| error.to_string())?;
+    // In-flight commands must lose their leases immediately, not just after the
+    // frontend notices the permission change and replaces the worker.
+    broker.stop_plugin(&plugin_id);
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn plugins_management_clear_storage(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    plugin_id: String,
+) -> Result<bool, String> {
+    // Revoke the live native identity before deleting data so a still-closing Worker
+    // cannot immediately recreate the store after this command returns.
+    broker.stop_plugin(&plugin_id);
+    crate::plugins::management::clear_storage(&app, &storage, &plugin_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn plugins_uninstall(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    recovery: State<'_, crate::plugins::recovery::PluginRecoveryState>,
+    storage: State<'_, crate::plugins::storage::PluginStorageState>,
+    id: String,
+    delete_data: Option<bool>,
+) -> Result<crate::plugins::management::PluginUninstallResult, String> {
+    broker.stop_plugin(&id);
+    let result =
+        crate::plugins::management::uninstall(&app, &storage, &id, delete_data.unwrap_or(false))
+            .map_err(|error| error.to_string())?;
+    if let Err(error) = recovery.clear_plugin_failures(&id) {
+        log::warn!("[Plugins] Failed to clear recovery diagnostics after uninstall: {error}");
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -7181,148 +7889,6 @@ pub async fn plugin_fs_create_dir(path: String, state: State<'_, AppState>) -> R
         .create_dir("local", &path)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn plugin_window_create(
-    app: AppHandle,
-    url: Option<String>,
-    html: Option<String>,
-    title: Option<String>,
-    width: Option<f64>,
-    height: Option<f64>,
-) -> Result<(), String> {
-    use tauri::WebviewWindowBuilder;
-    let label = format!("plugin-window-{}", uuid::Uuid::new_v4());
-    let mut temp_html_path: Option<std::path::PathBuf> = None;
-    let mut builder = WebviewWindowBuilder::new(
-        &app,
-        &label,
-        if let Some(u) = url {
-            tauri::WebviewUrl::External(u.parse().map_err(|e: url::ParseError| e.to_string())?)
-        } else if let Some(h) = html {
-            let cache_dir = app
-                .path()
-                .app_cache_dir()
-                .map_err(|e| format!("Failed to resolve app cache dir: {}", e))?
-                .join("plugin-window-html");
-            if !cache_dir.exists() {
-                std::fs::create_dir_all(&cache_dir)
-                    .map_err(|e| format!("Failed to create plugin cache dir: {}", e))?;
-            }
-            let file_path =
-                cache_dir.join(format!("zync-plugin-window-{}.html", uuid::Uuid::new_v4()));
-            std::fs::write(&file_path, h)
-                .map_err(|e| format!("Failed to write temporary plugin HTML file: {}", e))?;
-            temp_html_path = Some(file_path.clone());
-            let file_url = url::Url::from_file_path(&file_path)
-                .map_err(|_| format!("Failed to create file URL for {}", file_path.display()))?;
-            tauri::WebviewUrl::External(file_url)
-        } else {
-            return Err("Must provide url or html".into());
-        },
-    );
-
-    if let Some(t) = title {
-        builder = builder.title(t);
-    }
-    if let Some(w) = width {
-        builder = builder.inner_size(w, height.unwrap_or(600.0));
-    }
-
-    if let Err(error) = builder.build() {
-        if let Some(path) = temp_html_path.as_ref() {
-            let _ = std::fs::remove_file(path);
-        }
-        return Err(error.to_string());
-    }
-    if let Some(file_path) = temp_html_path {
-        match PLUGIN_WINDOW_TEMP_FILES.lock() {
-            Ok(mut files) => {
-                files.insert(label, file_path);
-            }
-            Err(lock_error) => {
-                eprintln!(
-                    "Failed to register plugin window temp file for cleanup: {}",
-                    lock_error
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn cleanup_plugin_window_temp_file(window_label: &str) {
-    let maybe_path = if let Ok(mut files) = PLUGIN_WINDOW_TEMP_FILES.lock() {
-        files.remove(window_label)
-    } else {
-        None
-    };
-    if let Some(path) = maybe_path {
-        if let Err(error) = std::fs::remove_file(&path) {
-            eprintln!(
-                "[plugin-window] Failed to remove temporary HTML file {}: {}",
-                path.display(),
-                error
-            );
-        }
-    }
-}
-
-pub fn cleanup_stale_plugin_window_temp_files(app: &AppHandle) {
-    let cache_dir = match app.path().app_cache_dir() {
-        Ok(dir) => dir.join("plugin-window-html"),
-        Err(error) => {
-            eprintln!("[plugin-window] Failed to resolve cache dir: {}", error);
-            return;
-        }
-    };
-
-    if !cache_dir.exists() {
-        return;
-    }
-
-    let stale_after = Duration::from_secs(60 * 60 * 24);
-    let now = SystemTime::now();
-    let entries = match std::fs::read_dir(&cache_dir) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!(
-                "[plugin-window] Failed to scan temp cache dir {}: {}",
-                cache_dir.display(),
-                error
-            );
-            return;
-        }
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("html") {
-            continue;
-        }
-
-        let should_remove = entry
-            .metadata()
-            .ok()
-            .and_then(|meta| meta.modified().ok())
-            .and_then(|modified| now.duration_since(modified).ok())
-            .map(|age| age > stale_after)
-            .unwrap_or(true);
-
-        if should_remove {
-            if let Err(error) = std::fs::remove_file(&path) {
-                eprintln!(
-                    "[plugin-window] Failed to remove stale HTML file {}: {}",
-                    path.display(),
-                    error
-                );
-            }
-        }
-    }
 }
 
 #[tauri::command]

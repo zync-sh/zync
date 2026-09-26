@@ -58,6 +58,16 @@ assert.ok(
   shellBaseIndex < pluginBranchIndex,
   'the shell base pane must be chosen before constructing a feature/plugin-only canvas',
 );
+assert.match(
+  source,
+  /let seededFromPluginPayload = false;[\s\S]*?layout = singlePluginPane\(payload\.pluginId, undefined, payload\.instanceId\);[\s\S]*?seededFromPluginPayload = true;/,
+  'a plugin-seeded canvas must record that its first pane already owns the payload identity',
+);
+assert.match(
+  source,
+  /const duplicatePlugin = payload\.kind === 'plugin' && \([\s\S]*?seededFromPluginPayload/,
+  'docking into a plugin-seeded canvas must allocate a distinct pane instance',
+);
 
 const resolveOwnerStart = source.indexOf('function resolveDockOwner(');
 const resolveOwnerEnd = source.indexOf('/** Header drags send sourcePaneId', resolveOwnerStart);

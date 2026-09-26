@@ -43,9 +43,18 @@ pub fn remote_key_wrap_from_manifest(
 ) -> Option<RemoteCollectionKeyWrapV1> {
     let (recovery_salt, recovery_nonce, recovery_ciphertext) = if has_recovery_key_slot(manifest) {
         (
-            manifest.recovery_key_wrap_salt.as_ref().map(|v| v.as_str().to_string()),
-            manifest.recovery_key_wrap_nonce.as_ref().map(|v| v.as_str().to_string()),
-            manifest.recovery_key_wrap_ciphertext.as_ref().map(|v| v.as_str().to_string()),
+            manifest
+                .recovery_key_wrap_salt
+                .as_ref()
+                .map(|v| v.as_str().to_string()),
+            manifest
+                .recovery_key_wrap_nonce
+                .as_ref()
+                .map(|v| v.as_str().to_string()),
+            manifest
+                .recovery_key_wrap_ciphertext
+                .as_ref()
+                .map(|v| v.as_str().to_string()),
         )
     } else {
         (None, None, None)

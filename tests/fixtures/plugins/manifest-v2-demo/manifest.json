@@ -1,0 +1,79 @@
+{
+  "manifestVersion": 2,
+  "id": "dev.zync.examples.manifest-v2-demo",
+  "name": "Manifest v2 Demo",
+  "version": "1.4.0",
+  "description": "A minimal local plugin for testing Zync manifest v2 installation and activation.",
+  "publisher": "dev.zync.examples",
+  "license": "MIT",
+  "engines": {
+    "zync": ">=2.32.1",
+    "pluginApi": "^2.0.0"
+  },
+  "runtime": {
+    "entry": "worker.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "manifest-v2-demo.hello",
+        "title": "Manifest v2 Demo: Say hello"
+      }
+    ],
+    "paneKinds": [
+      {
+        "id": "demo.counter",
+        "title": "Manifest v2 Demo",
+        "entry": "ui/counter.html",
+        "allowMultiple": true
+      }
+    ]
+  },
+  "permissions": {
+    "required": [
+      {
+        "id": "ui.commands.register",
+        "reason": "Register the demo command in Zync's command palette."
+      },
+      {
+        "id": "ui.pane.register",
+        "reason": "Add the isolated demo pane to the workspace."
+      },
+      {
+        "id": "filesystem.pluginData.read",
+        "reason": "Read the demo command's private run counter."
+      },
+      {
+        "id": "filesystem.pluginData.write",
+        "reason": "Persist the demo command's private run counter."
+      }
+    ],
+    "optional": [
+      {
+        "id": "ui.notifications.emit",
+        "reason": "Show confirmation when the demo command runs."
+      },
+      {
+        "id": "ui.dialog.confirm",
+        "reason": "Ask before completing the demo confirmation action."
+      },
+      {
+        "id": "network.fetch",
+        "reason": "Test Zync's public HTTPS broker against the GitHub API.",
+        "hosts": ["api.github.com"]
+      },
+      {
+        "id": "filesystem.external.read",
+        "reason": "Read a text file or list a folder only after you select it in Zync."
+      },
+      {
+        "id": "filesystem.external.write",
+        "reason": "Write demo text only to the exact file destination you select in Zync."
+      },
+      {
+        "id": "ssh.filesystem.read",
+        "reason": "List the home folder on the SSH server attached to this plugin pane."
+      }
+    ]
+  }
+}

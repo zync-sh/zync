@@ -358,7 +358,8 @@ export function EditorPluginFrame({
   const fullHtml = (plugin.editorHtml || plugin.style || plugin.script)
     ? (() => {
         let html = plugin.editorHtml || '<html><head></head><body></body></html>';
-        const headInjection = `${shimScript}${plugin.style ? `<style>${plugin.style}</style>` : ''}${plugin.script ? `<script>${plugin.script}</script>` : ''}`;
+        const securityMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' asset: http://asset.localhost; style-src 'unsafe-inline' asset: http://asset.localhost; img-src data: blob: asset: http://asset.localhost; connect-src 'none'; font-src data: asset: http://asset.localhost; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`;
+        const headInjection = `${securityMeta}${shimScript}${plugin.style ? `<style>${plugin.style}</style>` : ''}${plugin.script ? `<script>${plugin.script}</script>` : ''}`;
 
         // Hardening: rewrite common relative asset tags into file-backed asset URLs.
         // This avoids 404s when the iframe is loaded via srcDoc (about:srcdoc).

@@ -98,6 +98,7 @@ export {
     featurePaneContent,
     newFeatureInstanceId,
     newFilesInstanceId,
+    newPluginInstanceId,
     paneDockPayload,
     isSplitFeatureId,
     pluginPaneContent,

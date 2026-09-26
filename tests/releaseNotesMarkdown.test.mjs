@@ -5,10 +5,7 @@ import {
   hasPathTraversal,
   isAllowedMediaUrl,
   isGithubAttachmentUrl,
-  isLocalMediaPath,
-  rewriteLocalMediaSrc,
-  rewriteMarkdownLocalMedia,
-  toFilesystemPath,
+  rewriteMarkdownMediaUrls,
 } from '../.tmp-agent-tests/src/lib/releaseNotes/mediaUrls.js';
 import { matchAlertPrefix, stripAlertPrefixFromParts } from '../.tmp-agent-tests/src/lib/releaseNotes/alerts.js';
 import {
@@ -63,19 +60,16 @@ runTest('allows https CDN media and embeds a bare Demo GIF URL', () => {
   const gif = 'https://pub-f5d307b0347348988dccc997da10756a.r2.dev/export-1788007096421.gif';
   assert.equal(isAllowedMediaUrl(gif), true);
   assert.equal(classifyMediaUrl(gif), 'image');
-  const out = rewriteMarkdownLocalMedia(`## Demo\n\n${gif}\n`);
+  const out = rewriteMarkdownMediaUrls(`## Demo\n\n${gif}\n`);
   assert.match(out, /!\[\]\(https:\/\/pub-f5d307b0347348988dccc997da10756a\.r2\.dev\/export-1788007096421\.gif\)/);
 });
 
-runTest('allows absolute local image paths and rejects traversal', () => {
+runTest('rejects absolute local image paths and traversal', () => {
   const winPath = 'C:\\Users\\gajen\\AppData\\Local\\Temp\\waveterm-3125566605\\waveterm_paste_1788887604406_wsbwrk.png';
-  assert.equal(isLocalMediaPath(winPath), true);
-  assert.equal(isAllowedMediaUrl(winPath), true);
-  assert.equal(classifyMediaUrl(winPath), 'image');
-  const fileUrl = rewriteLocalMediaSrc(winPath);
-  assert.ok(fileUrl && fileUrl.startsWith('file:'));
-  assert.equal(toFilesystemPath(fileUrl).toLowerCase().endsWith('wsbwrk.png'), true);
-  assert.equal(isAllowedMediaUrl('/tmp/demo.gif'), true);
+  assert.equal(isAllowedMediaUrl(winPath), false);
+  assert.equal(classifyMediaUrl(winPath), 'unknown');
+  assert.equal(isAllowedMediaUrl('/tmp/demo.gif'), false);
+  assert.equal(isAllowedMediaUrl('file:///C:/Users/gajen/shot.png'), false);
   assert.equal(isAllowedMediaUrl('C:\\Windows\\notepad.exe'), false);
   assert.equal(isAllowedMediaUrl('C:\\Users\\gajen\\..\\secret.png'), false);
   assert.equal(hasPathTraversal('C:\\Users\\gajen\\..\\secret.png'), true);
@@ -89,20 +83,20 @@ runTest('stripAlertPrefixFromParts keeps later markup nodes', () => {
   assert.deepEqual(stripAlertPrefixFromParts(['[!TIP]', { href: '/x' }]), [{ href: '/x' }]);
 });
 
-runTest('rewriteMarkdownLocalMedia embeds a bare Windows paste path', () => {
+runTest('rewriteMarkdownMediaUrls does not embed a bare Windows path', () => {
   const winPath = 'C:\\Users\\gajen\\AppData\\Local\\Temp\\waveterm-3125566605\\waveterm_paste_1788887604406_wsbwrk.png';
-  const out = rewriteMarkdownLocalMedia(`See this:\n\n${winPath}\n`);
-  assert.match(out, /!\[\]\(<file:\/\/\/C:\/Users\/gajen\/AppData\/Local\/Temp\/waveterm-3125566605\/waveterm_paste_1788887604406_wsbwrk.png>\)/);
+  const out = rewriteMarkdownMediaUrls(`See this:\n\n${winPath}\n`);
+  assert.equal(out, `See this:\n\n${winPath}\n`);
 });
 
-runTest('rewriteMarkdownLocalMedia rewrites ![](C:\\…) before parse', () => {
-  const out = rewriteMarkdownLocalMedia('![paste](C:\\Temp\\shot.gif)');
-  assert.equal(out, '![paste](<file:///C:/Temp/shot.gif>)');
+runTest('rewriteMarkdownMediaUrls leaves local markdown images for the protocol gate to reject', () => {
+  const out = rewriteMarkdownMediaUrls('![paste](C:\\Temp\\shot.gif)');
+  assert.equal(out, '![paste](C:\\Temp\\shot.gif)');
 });
 
-runTest('rewriteMarkdownLocalMedia leaves fenced paths alone', () => {
+runTest('rewriteMarkdownMediaUrls leaves fenced paths alone', () => {
   const fenced = '```\nC:\\Temp\\shot.png\n```';
-  assert.equal(rewriteMarkdownLocalMedia(fenced), fenced);
+  assert.equal(rewriteMarkdownMediaUrls(fenced), fenced);
 });
 
 runTest('allows githubusercontent subdomains and shields badges', () => {
@@ -158,12 +152,4 @@ runTest('buildHeadingIdLookup keeps the first TOC id for duplicate texts', () =>
   assert.equal(lookup.get(headingLookupKey(2, 'Added')), 'added');
   assert.equal(lookup.get(headingLookupKey(2, 'Fixed')), 'fixed');
   assert.equal(lookup.get('2:Added'), 'added');
-});
-
-runTest('toFilesystemPath keeps UNC host from file URLs', () => {
-  const unc = '\\\\fileserver\\share\\demo.gif';
-  const fileUrl = rewriteLocalMediaSrc(unc);
-  assert.ok(fileUrl);
-  const fsPath = toFilesystemPath(fileUrl);
-  assert.match(fsPath.toLowerCase(), /^\\\\fileserver\\share\\demo\.gif$/);
 });

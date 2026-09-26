@@ -25,6 +25,7 @@ export function PaneDivider({
     onEqualize: () => void;
 }) {
     const dragging = useRef(false);
+    const pointerCapture = useRef<{ node: HTMLDivElement; id: number } | null>(null);
     const dragHold = useRef<ReturnType<typeof beginPaneDividerDrag> | null>(null);
     const wheelHold = useRef<ReturnType<typeof beginPaneDividerDrag> | null>(null);
     const wheelHeld = useRef(false);
@@ -50,6 +51,11 @@ export function PaneDivider({
     const stopDrag = useCallback((commit: boolean) => {
         if (!dragging.current) return;
         dragging.current = false;
+        const capture = pointerCapture.current;
+        pointerCapture.current = null;
+        if (capture?.node.hasPointerCapture(capture.id)) {
+            capture.node.releasePointerCapture(capture.id);
+        }
         setHeld(false);
         if (listeners.current) {
             window.removeEventListener('pointermove', listeners.current.move, true);
@@ -127,6 +133,9 @@ export function PaneDivider({
         stopDrag(false);
         onDragStartRef.current?.();
         dragging.current = true;
+        // Keep receiving movement when the pointer crosses a plugin iframe.
+        event.currentTarget.setPointerCapture(event.pointerId);
+        pointerCapture.current = { node: event.currentTarget, id: event.pointerId };
         setHeld(true);
         dragHold.current = beginPaneDividerDrag();
         const vertical = direction === 'vertical';
@@ -183,6 +192,7 @@ export function PaneDivider({
             aria-label="Resize panes"
             title="Drag, scroll, or arrow keys to resize · double-click or Enter to even panes"
             onPointerDown={onPointerDown}
+            onLostPointerCapture={() => stopDrag(true)}
             onKeyDown={onKeyDown}
             style={splitSashStyle(stacked, firstRatio)}
             className={cn(

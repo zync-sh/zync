@@ -4,7 +4,7 @@ import type { FeatureId } from '../featureMeta';
 
 export type WorkspaceOpenGroup = 'create' | 'shells' | 'open';
 
-export type WorkspaceOpenKind = 'new-shell' | 'other-shells' | 'shell' | 'feature' | 'split-feature';
+export type WorkspaceOpenKind = 'new-shell' | 'other-shells' | 'shell' | 'feature' | 'split-feature' | 'plugin';
 
 export type WorkspaceOpenView = 'root' | 'shells';
 
@@ -21,6 +21,13 @@ export type WorkspaceOpenItem = {
     hint?: string;
     shell?: ShellEntry;
     featureId?: FeatureId;
+    pluginId?: string;
+};
+
+export type WorkspaceOpenPluginState = {
+    id: string;
+    title: string;
+    isOpen: boolean;
 };
 
 export type WorkspaceOpenFeatureState = {

@@ -100,7 +100,9 @@ Use the same passphrase that was used when these Drive records were created. \
 If a previous attempt on this PC was accepted by mistake, try that password instead.",
         )
     };
-    let recovery_secret = recovery_key.map(str::trim).filter(|value| !value.is_empty());
+    let recovery_secret = recovery_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let collection_key = if let Some(recovery_secret) = recovery_secret {
         if !has_recovery_key_slot(&unwrap_manifest) {
             return Err(SyncError::new(
@@ -149,9 +151,8 @@ Enter the original passphrase, or recover from a device that still has the key."
     };
 
     let linking_existing_backup = remote_key_wrap.is_some();
-    let preserve_existing_passphrase_wrap = recovery_secret.is_some()
-        && passphrase.trim().is_empty()
-        && wrap_present;
+    let preserve_existing_passphrase_wrap =
+        recovery_secret.is_some() && passphrase.trim().is_empty() && wrap_present;
     if !linking_existing_backup && !preserve_existing_passphrase_wrap {
         let (key_wrap_salt, key_wrap_nonce, key_wrap_ciphertext) =
             wrap_collection_key(&manifest, &collection_key, passphrase)?;
@@ -176,8 +177,7 @@ Enter the original passphrase, or recover from a device that still has the key."
         manifest.recovery_key_wrap_ciphertext = Some(base64_data(ciphertext)?);
         manifest.has_recovery_key = true;
         Some(recovery_key)
-    } else if recovery_slot_present
-        && (linking_existing_backup || unlocked_with_existing_recovery)
+    } else if recovery_slot_present && (linking_existing_backup || unlocked_with_existing_recovery)
     {
         // Keep the existing recovery slot unless the user asked to rotate it.
         // This covers Drive relink and recovery-key unlock even when the UI

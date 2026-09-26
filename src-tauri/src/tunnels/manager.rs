@@ -519,10 +519,7 @@ impl TunnelManager {
         for (key, bind, port) in leftovers {
             let cancel_ok = if let Some(session) = &session {
                 let handle = session.lock().await;
-                match handle
-                    .cancel_tcpip_forward(bind.clone(), port as u32)
-                    .await
-                {
+                match handle.cancel_tcpip_forward(bind.clone(), port as u32).await {
                     Ok(()) => true,
                     Err(e) => {
                         warn!(

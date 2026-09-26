@@ -189,6 +189,14 @@ Priorities hide the one-owner rule. A claim API duplicates DOM focus and desyncs
 
 ## 9. Implementation
 
+Plugin panes are opaque-origin iframes, so their key events do not bubble to the host.
+`pluginShortcuts.ts` injects a shared chrome-navigation bridge into every plugin pane.
+It uses the catalog and current user overrides, leaves editing/copy/paste and plugin-local
+keys alone, and ignores composition/repeated/synthetic key events. The host validates the
+focused frame and re-matches the key against its current navigation-only allowlist.
+This channel does not grant terminal input, SSH/session creation or filesystem authority.
+The iframe sandbox remains unchanged.
+
 | Path | Role |
 |------|------|
 | `src/lib/shortcuts.ts` | Match / format / `isXtermKeyboardTarget` |

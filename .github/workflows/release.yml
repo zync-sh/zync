@@ -20,8 +20,54 @@ env:
   RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
 
 jobs:
+  plugin-registry-preflight:
+    name: Verify production plugin registry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REGISTRY_URL: ${{ vars.ZYNC_PLUGIN_REGISTRY_URL || secrets.ZYNC_PLUGIN_REGISTRY_URL }}
+      REGISTRY_ROOT_KEYS: ${{ vars.ZYNC_PLUGIN_REGISTRY_ROOT_KEYS || secrets.ZYNC_PLUGIN_REGISTRY_ROOT_KEYS || secrets.ZYNC_PLUGIN_REGISTRY_ROOT_KEY }}
+      REGISTRY_MINIMUM_VERSION: ${{ vars.ZYNC_PLUGIN_REGISTRY_MIN_VERSION }}
+      REGISTRY_REQUIRED: ${{ vars.ZYNC_PLUGIN_REGISTRY_REQUIRED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Node.js setup
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Validate marketplace configuration
+        shell: bash
+        run: |
+          if [ -z "$REGISTRY_URL" ] && [ -z "$REGISTRY_ROOT_KEYS" ]; then
+            if [ "$REGISTRY_REQUIRED" = "true" ]; then
+              echo "The trusted marketplace is required, but its URL and public root keys are missing."
+              exit 1
+            fi
+            echo "Trusted marketplace is intentionally disabled for this release."
+            exit 0
+          fi
+          if [ -z "$REGISTRY_URL" ] || [ -z "$REGISTRY_ROOT_KEYS" ]; then
+            echo "Registry URL and public root keys must be configured together."
+            exit 1
+          fi
+
+      - name: Verify published metadata
+        if: ${{ env.REGISTRY_URL != '' && env.REGISTRY_ROOT_KEYS != '' }}
+        shell: bash
+        run: |
+          npm run plugin:registry-check -- \
+            --url "$REGISTRY_URL" \
+            --root-keys "$REGISTRY_ROOT_KEYS" \
+            --minimum-version "${REGISTRY_MINIMUM_VERSION:-1}" \
+            --min-valid-for-hours 24
+
   create-release:
     name: Create draft release
+    needs: plugin-registry-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -109,6 +155,12 @@ jobs:
           # Public URLs hosts in source. Set these repo secrets before tagging.
           ZYNC_SHARE_API_BASE: ${{ secrets.ZYNC_SHARE_API_BASE }}
           ZYNC_SHARE_RELAY_URL: ${{ secrets.ZYNC_SHARE_RELAY_URL }}
+          # The marketplace root private key stays offline. Release builds receive
+          # only the registry endpoint and raw Ed25519 public key.
+          ZYNC_PLUGIN_REGISTRY_URL: ${{ vars.ZYNC_PLUGIN_REGISTRY_URL || secrets.ZYNC_PLUGIN_REGISTRY_URL }}
+          # A comma-separated old,new bundle permits a staged root-key rotation.
+          # The singular secret remains a backwards-compatible fallback.
+          ZYNC_PLUGIN_REGISTRY_ROOT_KEYS: ${{ vars.ZYNC_PLUGIN_REGISTRY_ROOT_KEYS || secrets.ZYNC_PLUGIN_REGISTRY_ROOT_KEYS || secrets.ZYNC_PLUGIN_REGISTRY_ROOT_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:

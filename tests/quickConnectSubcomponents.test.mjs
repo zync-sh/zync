@@ -20,22 +20,26 @@ function ensureNoExtShim(basePath, targetFile) {
   }
 }
 
+function ensureFileContent(filePath, content) {
+  if (!fs.existsSync(filePath) || fs.readFileSync(filePath, 'utf8') !== content) {
+    fs.writeFileSync(filePath, content, 'utf8');
+  }
+}
+
 const tmpRoot = path.resolve('.tmp-agent-tests/src');
 ensureNoExtShim(path.join(tmpRoot, 'components/icons/OSIcon'), 'OSIcon.js');
 ensureNoExtShim(path.join(tmpRoot, 'lib/utils'), 'utils.js');
 const displayLabelsDir = path.join(tmpRoot, 'features/connections/presentation');
 fs.mkdirSync(displayLabelsDir, { recursive: true });
-fs.writeFileSync(
+ensureFileContent(
   path.join(displayLabelsDir, 'useConnectionDisplayLabels.test-shim.js'),
   `export function useConnectionDisplayLabels(conn) {
     return { primary: conn.name || conn.host, secondary: conn.username || '' };
   }\n`,
-  'utf8',
 );
-fs.writeFileSync(
+ensureFileContent(
   path.join(displayLabelsDir, 'useConnectionDisplayLabels'),
   "export * from './useConnectionDisplayLabels.test-shim.js';\n",
-  'utf8',
 );
 
 const { AuthPanel } = await import('../.tmp-agent-tests/src/components/dashboard/welcome/quick-connect/AuthPanel.js');

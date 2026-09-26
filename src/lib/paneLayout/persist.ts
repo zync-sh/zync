@@ -5,6 +5,7 @@ import {
     PANE_LAYOUT_VERSION,
     featurePaneContent,
     isSplitFeatureId,
+    pluginPaneContent,
     termPaneContent,
     type PaneContent,
     type PaneLayout,
@@ -29,7 +30,8 @@ function parseContent(raw: unknown): PaneContent | null {
     }
     if (raw.kind === 'plugin') {
         if (typeof raw.pluginId !== 'string' || !raw.pluginId) return null;
-        return { kind: 'plugin', pluginId: raw.pluginId };
+        const instanceId = typeof raw.instanceId === 'string' && raw.instanceId ? raw.instanceId : undefined;
+        return pluginPaneContent(raw.pluginId, instanceId);
     }
     return null;
 }

@@ -1,12 +1,17 @@
 import { RefreshCw } from 'lucide-react';
 import { Marketplace } from '../../Marketplace';
+import type { RegistryPlugin } from '../../../../features/plugins/types';
 
 interface PluginsMarketplaceTabProps {
     isLoadingRegistry: boolean;
-    onInstallSuccess: () => void;
+    registry: RegistryPlugin[];
+    selectedRegistry: RegistryPlugin[];
+    betaPluginIds: ReadonlySet<string>;
+    onSetPluginBeta: (pluginId: string, enabled: boolean) => Promise<void>;
+    onInspectPlugin: (plugin: RegistryPlugin) => Promise<void>;
 }
 
-export function PluginsMarketplaceTab({ isLoadingRegistry, onInstallSuccess }: PluginsMarketplaceTabProps) {
+export function PluginsMarketplaceTab({ isLoadingRegistry, registry, selectedRegistry, betaPluginIds, onSetPluginBeta, onInspectPlugin }: PluginsMarketplaceTabProps) {
     if (isLoadingRegistry) {
         return (
             <div
@@ -23,7 +28,7 @@ export function PluginsMarketplaceTab({ isLoadingRegistry, onInstallSuccess }: P
 
     return (
         <div className="h-full">
-            <Marketplace onInstallSuccess={onInstallSuccess} />
+            <Marketplace registry={registry} selectedRegistry={selectedRegistry} betaPluginIds={betaPluginIds} onSetPluginBeta={onSetPluginBeta} onInspectPlugin={onInspectPlugin} />
         </div>
     );
 }

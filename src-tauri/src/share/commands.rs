@@ -125,7 +125,10 @@ pub async fn share_create(
 ) -> Result<ShareRecord, String> {
     require_share_config(&state)?;
     if !(1..=65535).contains(&port) {
-        return Err(super::err("invalid_port", "Local port must be between 1 and 65535"));
+        return Err(super::err(
+            "invalid_port",
+            "Local port must be between 1 and 65535",
+        ));
     }
     let access = state.auth.ensure_access_token(&state.config).await?;
     let client = ApiClient::new(state.config.clone());

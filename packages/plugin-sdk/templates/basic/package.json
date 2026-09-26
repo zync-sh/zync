@@ -1,0 +1,10 @@
+{
+  "name": "zync-plugin-starter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "validate": "npm run build && zync-plugin validate dist"
+  }
+}

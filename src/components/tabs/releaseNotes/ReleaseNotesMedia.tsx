@@ -1,24 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { convertFileSrc } from '@tauri-apps/api/core';
 import { X } from 'lucide-react';
 import {
   classifyMediaUrl,
   coerceHtmlBoolean,
   isAllowedMediaUrl,
   isGithubAttachmentUrl,
-  isLocalMediaPath,
-  toFilesystemPath,
 } from '../../../lib/releaseNotes/mediaUrls';
-
-function toWebviewSrc(src: string): string {
-  if (!isLocalMediaPath(src)) return src;
-  try {
-    return convertFileSrc(toFilesystemPath(src));
-  } catch {
-    return src;
-  }
-}
 
 function firstSourceSrc(children: ReactNode): string | undefined {
   if (!Array.isArray(children) && !children) return undefined;
@@ -55,8 +43,8 @@ export function ReleaseNotesVideo({
   }
 
   const caption = title?.trim();
-  const displaySrc = toWebviewSrc(resolved);
-  const displayPoster = poster && isAllowedMediaUrl(poster) ? toWebviewSrc(poster) : undefined;
+  const displaySrc = resolved;
+  const displayPoster = poster && isAllowedMediaUrl(poster) ? poster : undefined;
 
   return (
     <figure className="my-5">
@@ -152,7 +140,7 @@ export function ReleaseNotesImage({
   }
 
   if (failed) {
-    if (!isLocalMediaPath(src) && (isGithubAttachmentUrl(src) || classifyMediaUrl(src) === 'unknown')) {
+    if (isGithubAttachmentUrl(src) || classifyMediaUrl(src) === 'unknown') {
       return <ReleaseNotesVideo src={src} title={alt || title} />;
     }
     return (
@@ -163,7 +151,7 @@ export function ReleaseNotesImage({
   }
 
   const caption = (alt || '').trim();
-  const displaySrc = toWebviewSrc(src);
+  const displaySrc = src;
 
   return (
     <figure className="my-5">
@@ -178,7 +166,7 @@ export function ReleaseNotesImage({
           title={title}
           loading="lazy"
           onError={() => {
-            if (!isLocalMediaPath(src) && (isGithubAttachmentUrl(src) || classifyMediaUrl(src) === 'unknown')) {
+            if (isGithubAttachmentUrl(src) || classifyMediaUrl(src) === 'unknown') {
               setAsVideo(true);
               return;
             }

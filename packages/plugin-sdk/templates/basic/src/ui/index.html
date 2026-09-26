@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Starter Pane</title></head>
+<body>
+  <h1>Starter Pane</h1>
+  <button id="ping" type="button">Ask the Worker</button>
+  <p id="reply" aria-live="polite">Ready</p>
+  <script>
+    document.getElementById('ping').addEventListener('click', () => {
+      window.zync.pane.postMessage({ type: 'ping' });
+    });
+    window.zync.pane.onMessage(message => {
+      if (message?.type === 'pong') document.getElementById('reply').textContent = message.text;
+    });
+  </script>
+</body>
+</html>

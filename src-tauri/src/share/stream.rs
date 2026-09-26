@@ -34,9 +34,7 @@ impl Stream {
 
     /// Clone the active uplink sender so callers can release locks before awaiting.
     pub fn data_sender(&self) -> mpsc::Sender<Bytes> {
-        self.req_tx
-            .clone()
-            .unwrap_or_else(|| self.extra_tx.clone())
+        self.req_tx.clone().unwrap_or_else(|| self.extra_tx.clone())
     }
 
     /// First close completes the HTTP request body. Later close aborts the stream.

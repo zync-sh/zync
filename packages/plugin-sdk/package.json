@@ -1,0 +1,26 @@
+{
+  "name": "@zync-sh/plugin-sdk",
+  "version": "2.1.0-beta.1",
+  "description": "Manifest v2 authoring types and preflight validation for Zync plugins",
+  "type": "module",
+  "dependencies": { "semver": "^7.0.0" },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zync-sh/zync.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "engines": { "node": ">=20" },
+  "sideEffects": false,
+  "files": ["index.js", "index.d.ts", "worker.d.ts", "pane.d.ts", "validate.js", "validate.d.ts", "bin/zync-plugin.mjs", "templates/basic", "README.md", "RELEASE.md", "LICENSE"],
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" },
+    "./validate": { "types": "./validate.d.ts", "default": "./validate.js" },
+    "./worker": { "types": "./worker.d.ts" },
+    "./pane": { "types": "./pane.d.ts" }
+  },
+  "bin": { "zync-plugin": "bin/zync-plugin.mjs" },
+  "types": "./index.d.ts",
+  "scripts": { "prepublishOnly": "node ../../scripts/plugin-signing/sdk-release-check.mjs" },
+  "publishConfig": { "access": "public" }
+}

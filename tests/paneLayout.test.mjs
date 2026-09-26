@@ -799,6 +799,30 @@ runTest('dockIntoLayout can place a plugin pane beside a shell', () => {
   assert.equal(leafCount(again.layout.root), 3);
 });
 
+runTest('plugin self-split creates independent instance identities and restores them', () => {
+  const solo = singlePluginPane('clock', 'pane-clock', 'clock-instance-a');
+  const split = dockIntoLayout(
+    solo,
+    { kind: 'plugin', pluginId: 'clock', instanceId: 'clock-instance-b' },
+    'right',
+    undefined,
+    'pane-clock',
+  );
+  assert.equal(split.ok, true);
+  if (!split.ok) return;
+
+  const contents = split.layout.root.children.map(child => child.content);
+  assert.deepEqual(contents.map(content => content.pluginId), ['clock', 'clock']);
+  assert.deepEqual(contents.map(content => content.instanceId), ['clock-instance-a', 'clock-instance-b']);
+
+  const restored = parsePaneLayout(JSON.parse(JSON.stringify(split.layout)), new Set());
+  assert.ok(restored);
+  assert.deepEqual(
+    restored.root.children.map(child => child.content.instanceId),
+    ['clock-instance-a', 'clock-instance-b'],
+  );
+});
+
 runTest('singleFeaturePane can split into two Files panes without a shell', () => {
   const solo = singleFeaturePane('files', 'pane-files', 'files-a');
   const split = dockIntoLayout(solo, { kind: 'feature', featureId: 'files', instanceId: 'files-b' }, 'right');

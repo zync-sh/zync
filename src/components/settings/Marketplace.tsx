@@ -1,35 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Search, Download, Trash2, Loader2, Package, Plug, Activity, Cpu, Gauge, Layers, Globe, Zap, Shield, Lock, Monitor, FileText, Settings as SettingsIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePlugins } from '../../context/PluginContext';
 import { formatEditorCapabilities, getPluginCategory, getPluginCategoryLabel, type PluginCategory } from '../editor/providers';
 import { ipcRenderer } from '../../lib/tauri-ipc';
 import { Select } from '../ui/Select';
-
-// Registry Data Type
-interface RegistryPlugin {
-    id: string;
-    name: string;
-    version: string;
-    description: string;
-    author: string;
-    downloadUrl: string;
-    thumbnailUrl?: string; // Optional
-    icon?: string; // Lucide icon name
-    mode?: 'dark' | 'light';
-    type?: 'theme' | 'tool' | 'editor-provider' | 'icon-theme';
-    editor?: {
-        displayName?: string;
-        supports?: string[];
-    };
-}
+import type { RegistryPlugin } from '../../features/plugins/types';
+import { compareVersion } from '../../features/plugins/marketplace/releases';
 
 interface MarketplaceProps {
-    onInstallSuccess?: () => void;
+    registry: RegistryPlugin[];
+    selectedRegistry: RegistryPlugin[];
+    betaPluginIds: ReadonlySet<string>;
+    onSetPluginBeta: (pluginId: string, enabled: boolean) => Promise<void>;
+    onInspectPlugin: (plugin: RegistryPlugin) => Promise<void>;
 }
-
-// Registry URL (Make this configurable later)
-const REGISTRY_URL = "https://raw.githubusercontent.com/zync-sh/zync-extensions/main/marketplace.json";
 
 // Icon Resolver Helper
 const IconResolver = ({ name, size = 16, className = "" }: { name?: string, size?: number, className?: string }) => {
@@ -63,48 +48,17 @@ const PluginImage = ({ url, icon, name, size = 20 }: { url?: string, icon?: stri
     );
 };
 
-export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
-    const { plugins: installedPlugins } = usePlugins();
-    const [registry, setRegistry] = useState<RegistryPlugin[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+export function Marketplace({ registry, selectedRegistry, betaPluginIds, onSetPluginBeta, onInspectPlugin }: MarketplaceProps) {
+    const { plugins: installedPlugins, reloadPlugins } = usePlugins();
     const [installingId, setInstallingId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [categoryFilter, setCategoryFilter] = useState<'all' | PluginCategory>('all');
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        fetchRegistry();
-    }, []);
-
-    const fetchRegistry = async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            // Try fetching from real URL
-            const res = await fetch(REGISTRY_URL);
-            if (!res.ok) throw new Error('Failed to fetch registry');
-            const data = await res.json();
-            setRegistry(data.plugins || []);
-        } catch (err) {
-            console.error(err);
-            // If fetch fails, we just show empty list since mock is empty now
-            // But we might want to show the error to the user so they know to check their connection/URL
-            setError("Failed to load marketplace registry.");
-            setRegistry([]);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    const registryTrust = registry.some(plugin => plugin.registryVerified) ? 'trusted' : 'legacy';
 
     const handleInstall = async (plugin: RegistryPlugin) => {
         setInstallingId(plugin.id);
         try {
-            // 1. Install via Backend
-            // We use the downloadUrl. If it's a mock URL, this will fail in the backend unless we mock that too.
-            // For the mock "Oceanic", let's assume it might fail if the URL isn't real.
-            // But the flow is correct.
-            await ipcRenderer.invoke('plugins_install', { url: plugin.downloadUrl });
-            await refreshInstalledPlugins();
+            await onInspectPlugin(plugin);
         } catch (err: any) {
             console.error(err);
             alert(`Failed to install: ${err.message || err}`);
@@ -113,21 +67,15 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
         }
     };
 
-    const refreshInstalledPlugins = async () => {
-        await ipcRenderer.invoke('plugins:load');
-        if (onInstallSuccess) {
-            onInstallSuccess();
-        } else {
-            window.location.reload();
-        }
-    };
-
     const handleUninstall = async (id: string) => {
         if (!confirm("Are you sure you want to uninstall this plugin?")) return;
         setInstallingId(id); // Use same loading state
         try {
             await ipcRenderer.invoke('plugins_uninstall', { id });
-            window.location.reload(); // Refresh to update list
+            const reloaded = await reloadPlugins();
+            if (!reloaded) {
+                throw new Error('Plugin uninstalled, but its runtime could not be reloaded');
+            }
         } catch (err: any) {
             console.error(err);
             alert(`Failed to uninstall: ${err.message || err}`);
@@ -145,7 +93,7 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
         return p?.manifest.version;
     };
 
-    const filteredPlugins = registry.filter(p =>
+    const filteredPlugins = selectedRegistry.filter(p =>
         (categoryFilter === 'all' || getPluginCategory(p) === categoryFilter) &&
         (
             p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -189,18 +137,13 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
 
             {/* List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {isLoading ? (
-                    <div className="flex items-center justify-center h-full text-[var(--color-app-muted)] gap-2">
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>Loading registry...</span>
-                    </div>
-                ) : error ? (
-                    <div className="text-red-500 text-center py-8">{error}</div>
-                ) : (
-                    filteredPlugins.map(plugin => {
+                {filteredPlugins.map(plugin => {
                         const installed = isInstalled(plugin.id);
                         const localVersion = getInstalledVersion(plugin.id);
                         const processing = installingId === plugin.id;
+                        const revoked = Boolean(plugin.revokedReason);
+                        const betaAvailable = registry.some(release => release.id === plugin.id && release.channel === 'beta' && !release.revokedReason);
+                        const betaEnabled = betaPluginIds.has(plugin.id);
                         const categoryLabel = getPluginCategoryLabel(getPluginCategory(plugin));
 
                         return (
@@ -226,19 +169,30 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                                                     {categoryLabel}
                                                 </span>
                                             </div>
-                                            <p className="text-[10px] text-[var(--color-app-muted)] mt-0.5">v{plugin.version} • by {plugin.author}</p>
+                                            <p className="text-[10px] text-[var(--color-app-muted)] mt-0.5">v{plugin.version} {plugin.channel === 'beta' ? '· Beta' : '· Stable'} • by {plugin.publisher ?? plugin.author ?? 'Unknown publisher'}</p>
+                                            <p className={clsx(
+                                                "mt-0.5 text-[9px]",
+                                                revoked ? "text-red-500" : plugin.registryVerified ? "text-emerald-500" : "text-amber-500",
+                                            )}>
+                                                {revoked
+                                                    ? `Revoked · ${plugin.revokedReason}`
+                                                    : plugin.registryVerified
+                                                    ? plugin.publisherVerified ? 'Verified publisher' : 'Signed community publisher'
+                                                    : 'Legacy catalog · publisher not verified'}
+                                            </p>
                                         </div>
                                         {/* Action Button */}
                                         {installed ? (
                                             <div className="flex items-center gap-2">
-                                                {localVersion && plugin.version !== localVersion && (
+                                                {localVersion && compareVersion(plugin.version, localVersion) > 0 && (
                                                     <button
                                                         onClick={() => handleInstall(plugin)}
-                                                        disabled={processing}
+                                                        disabled={processing || !plugin.registryVerified || revoked}
+                                                        title={revoked ? plugin.revokedReason : plugin.registryVerified ? 'Review update permissions' : 'A signed marketplace is required'}
                                                         className={clsx(
                                                             "px-2 py-1 rounded text-[10px] font-medium flex items-center gap-1.5 transition-colors",
                                                             "bg-blue-500 text-white hover:opacity-90",
-                                                            processing && "opacity-50 cursor-not-allowed"
+                                                            (processing || !plugin.registryVerified || revoked) && "opacity-50 cursor-not-allowed"
                                                         )}
                                                     >
                                                         {processing && installingId === plugin.id ? (
@@ -265,21 +219,36 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                                         ) : (
                                             <button
                                                 onClick={() => handleInstall(plugin)}
-                                                disabled={processing}
+                                                disabled={processing || !plugin.registryVerified || revoked}
+                                                title={revoked ? plugin.revokedReason : plugin.registryVerified ? 'Review plugin permissions' : 'A signed marketplace is required'}
                                                 className={clsx(
                                                     "px-2.5 py-1.5 rounded text-[10px] font-medium flex items-center gap-1.5 transition-colors",
                                                     "bg-[var(--color-app-accent)] text-white hover:opacity-90",
-                                                    processing && "opacity-50 cursor-not-allowed"
+                                                    (processing || !plugin.registryVerified || revoked) && "opacity-50 cursor-not-allowed"
                                                 )}
                                             >
                                                 {processing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                                                Install
+                                                {revoked ? 'Revoked' : plugin.registryVerified ? 'Install' : 'Unavailable'}
                                             </button>
                                         )}
                                     </div>
                                     <p className="text-[11px] text-[var(--color-app-muted)] mt-1 line-clamp-1 opacity-80">
                                         {plugin.description}
                                     </p>
+                                    {plugin.registryVerified && betaAvailable && (
+                                        <label className="mt-2 inline-flex items-center gap-1.5 text-[10px] text-[var(--color-app-muted)] cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={betaEnabled}
+                                                onChange={event => { void onSetPluginBeta(plugin.id, event.target.checked); }}
+                                                aria-label={`Receive beta releases for ${plugin.name}`}
+                                            />
+                                            Receive beta releases
+                                        </label>
+                                    )}
+                                    {installed && localVersion?.includes('-') && !betaEnabled && (
+                                        <p className="mt-1 text-[10px] text-[var(--color-app-muted)]">Beta updates are off. This installed beta remains until a newer stable release is available.</p>
+                                    )}
                                     {getPluginCategory(plugin) === 'editor-provider' && plugin.editor?.supports?.length ? (
                                         <p className="mt-1 text-[10px] text-[var(--color-app-muted)]">
                                             Capabilities: {formatEditorCapabilities(plugin.editor.supports, 4)}
@@ -288,10 +257,9 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
                                 </div>
                             </div>
                         );
-                    })
-                )}
+                    })}
 
-                {!isLoading && filteredPlugins.length === 0 && (
+                {filteredPlugins.length === 0 && (
                     <div className="text-center py-12 text-[var(--color-app-muted)]">
                         <p>No results found for "{searchQuery}"</p>
                     </div>
@@ -300,7 +268,7 @@ export function Marketplace({ onInstallSuccess }: MarketplaceProps) {
 
             {/* Footer */}
             <div className="p-3 border-t border-[var(--color-app-border)] text-[10px] text-[var(--color-app-muted)] flex justify-between">
-                <span>Registry: GitHub (Static)</span>
+                <span>{registryTrust === 'trusted' ? 'Registry: signed and verified' : 'Registry: legacy catalog'}</span>
                 {/* <button className="hover:text-[var(--color-app-text)] flex items-center gap-1">
                     <GitBranch className="w-3 h-3" />
                     Submit Plugin
