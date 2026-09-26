@@ -4,13 +4,30 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.33.0] - 2026-09-26
+
 ### Added
-- **Plugin authoring SDK (beta):** A separately versioned local npm package with Manifest v2 and host-provided Worker/pane types, a manifest helper, pre-signing validation, a starter template, and automatic package/type/release checks. Manifest v2 engine ranges are enforced by Zync before install, load, and rollback. The SDK is not yet published to npm. ([ea32a61], [cdda828])
+- **Plugin authoring SDK (beta):** Published `@zync-sh/plugin-sdk@2.1.0-beta.1` provides Manifest v2 and host-provided Worker/pane types, a manifest helper, pre-signing validation, a starter template, and automatic package/type/release checks. Manifest v2 engine ranges are enforced by Zync before install, load, and rollback. ([ea32a61], [cdda828], [e9aa6c8])
+- **Plugin API 2.1 SSH commands:** Pane-bound, permission-authorized remote commands with argument quoting, execution/output/concurrency limits, and stale-connection protection. ([e9aa6c8])
+- **Shared plugin UI (beta):** Published `@zync-sh/plugin-ui@0.1.0-beta.1` provides theme handling, keyboard-accessible dropdowns, tooltips, controls, and sandbox-safe DOM helpers. ([41eaaa2])
 - **Plugin sandbox v2:** Manifest v2 permissions, brokered native capabilities, isolated panes and workers, runtime health/safe mode, automatic rollback, publisher identity, and generic plugin pane splitting. ([93f3fc0], [7ccfe31])
-- **Signed plugin distribution:** Local signing tools, signed registry verification and publisher binding, revocation and root-key rotation support, an operations runbook, and a testable manifest v2 demo plugin. ([2c21fc2])
+- **Signed plugin distribution:** Local signing tools, signed registry verification and publisher binding, revocation and root-key rotation support, and an operations runbook. ([2c21fc2])
+
+### Changed
+
+- **Optional plugin permissions:** Host-owned Allow/Deny prompts can approve an optional action without restarting the plugin; denial cancels the action and asks again on the next attempt. ([e9aa6c8], [c20e841])
+- **Demo cleanup:** Standalone demo sources are now test-only fixtures; developer guidance uses the SDK starter instead. ([e9aa6c8], [da6ac74])
+
+### Fixed
+
+- **Plugin workspace recovery:** Preserve pane identity and tab inventory during failures/reloads, provide recovery UI and host-owned SSH reconnect screens, and avoid stale pane bindings. ([c20e841])
+- **Sidebar and split resizing:** Pointer capture and cleanup keep left and AI sidebars resizable across plugin frames; pane dividers no longer lose drags to the iframe. ([c20e841])
+- **Theme selection and shell readiness:** Host-owned color-theme selection works independently of plugin workers, and shell discovery waits for a ready connection and retries safely after reconnect. ([c20e841])
 
 ### Security
 
+- **Plugin shortcut authorization:** Untrusted shortcut messages are restricted by a host command allowlist; matching a binding is not treated as proof of a user keypress. Privileged actions remain host-controlled. ([c20e841])
+- **Permission runtime revalidation:** Optional-permission checks release the runtime lock before package/grant I/O and revalidate package identity before applying approval. ([e9aa6c8])
 - **Plugin registry release gate**: Added a bounded live staging/production registry check with HTTPS-only redirects, root-rotation signature verification, expiry and version floors, a protected staging workflow, and a production release preflight that rejects partial or invalid trust configuration and can require marketplace-enabled builds. ([da2b064])
 - **Plugin marketplace updates:** Marketplace package downgrades and same-version package replacement are rejected; explicit retained-version rollback remains available. ([ea32a61])
 - **Plugin beta releases:** Signed registry entries can publish stable and beta builds of one plugin. The marketplace keeps one listing and offers an opt-in beta switch per plugin; native inspection rejects beta installs without that opt-in. ([ea32a61], [79a6f73])
@@ -1474,7 +1491,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [d3f4060]: https://github.com/zync-sh/zync/commit/d3f4060
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.32.2...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.33.0...HEAD
+[2.33.0]: https://github.com/zync-sh/zync/compare/v2.32.2...v2.33.0
 [2.32.2]: https://github.com/zync-sh/zync/compare/v2.32.1...v2.32.2
 [2.32.1]: https://github.com/zync-sh/zync/compare/v2.32.0...v2.32.1
 [2.32.0]: https://github.com/zync-sh/zync/compare/v2.31.0...v2.32.0
@@ -1635,3 +1653,7 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [063c515]: https://github.com/zync-sh/zync/commit/063c515
 [e3dab28]: https://github.com/zync-sh/zync/commit/e3dab28
 [2adf32b]: https://github.com/zync-sh/zync/commit/2adf32b
+[e9aa6c8]: https://github.com/zync-sh/zync/commit/e9aa6c8
+[c20e841]: https://github.com/zync-sh/zync/commit/c20e841
+[41eaaa2]: https://github.com/zync-sh/zync/commit/41eaaa2
+[da6ac74]: https://github.com/zync-sh/zync/commit/da6ac74
