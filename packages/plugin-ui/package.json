@@ -1,0 +1,19 @@
+{
+  "name": "@zync-sh/plugin-ui",
+  "version": "0.1.0-beta.1",
+  "description": "Sandbox-safe themed UI primitives for Zync plugins",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/zync-sh/zync.git", "directory": "packages/plugin-ui" },
+  "engines": { "node": ">=20" },
+  "sideEffects": ["./styles.css"],
+  "files": ["index.js", "index.d.ts", "theme.js", "select.js", "tooltips.js", "styles.css", "README.md", "LICENSE"],
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.js" },
+    "./styles.css": "./styles.css",
+    "./package.json": "./package.json"
+  },
+  "types": "./index.d.ts",
+  "scripts": { "prepublishOnly": "node ../../scripts/plugin-signing/ui-release-check.mjs" },
+  "publishConfig": { "access": "public", "tag": "beta" }
+}
