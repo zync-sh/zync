@@ -705,7 +705,7 @@ mod tests {
             std::env::temp_dir().join(format!("zync-marketplace-review-{}", uuid::Uuid::new_v4()));
         copy_directory(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../examples/plugins/manifest-v2-demo")
+                .join("../tests/fixtures/plugins/manifest-v2-demo")
                 .as_path(),
             &root,
         )
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn optional_approval_accepts_only_declared_permissions() {
         let manifest: Manifest = serde_json::from_str(include_str!(
-            "../../../../examples/plugins/manifest-v2-demo/manifest.json"
+            "../../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
         ))
         .expect("parse example manifest");
 

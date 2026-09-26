@@ -12,6 +12,7 @@ pub(crate) mod recovery;
 pub(crate) mod registry;
 pub(crate) mod rollback;
 pub(crate) mod ssh_filesystem;
+pub(crate) mod ssh_command;
 pub(crate) mod storage;
 
 pub use self::manifest::{EditorManifest, Manifest, ManifestExtensions};

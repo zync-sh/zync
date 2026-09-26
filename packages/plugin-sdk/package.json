@@ -1,6 +1,6 @@
 {
   "name": "@zync-sh/plugin-sdk",
-  "version": "2.0.0-beta.1",
+  "version": "2.1.0-beta.1",
   "description": "Manifest v2 authoring types and preflight validation for Zync plugins",
   "type": "module",
   "dependencies": { "semver": "^7.0.0" },

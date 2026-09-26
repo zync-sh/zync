@@ -18,7 +18,7 @@ export const knownPermissionIds = Object.freeze([
 ]);
 
 const knownPermissions = new Set(knownPermissionIds);
-export const pluginApiVersion = '2.0.0';
+export const pluginApiVersion = '2.1.0';
 const identifierPattern = /^[A-Za-z0-9_.-]+$/;
 const semverPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const contributionPermissions = {

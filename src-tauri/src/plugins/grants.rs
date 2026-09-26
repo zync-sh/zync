@@ -168,6 +168,35 @@ pub fn set_optional_permissions(
     package_digest: &str,
     selected: Vec<String>,
 ) -> Result<PluginGrantSummary> {
+    update_optional_permissions(app, manifest, package_digest, selected, false)
+}
+
+pub fn add_optional_permission(
+    app: &AppHandle,
+    manifest: &Manifest,
+    package_digest: &str,
+    capability: &str,
+) -> Result<PluginGrantSummary> {
+    update_optional_permissions(
+        app,
+        manifest,
+        package_digest,
+        vec![capability.to_string()],
+        true,
+    )
+}
+
+fn update_optional_permissions(
+    app: &AppHandle,
+    manifest: &Manifest,
+    package_digest: &str,
+    selected: Vec<String>,
+    append: bool,
+) -> Result<PluginGrantSummary> {
+    static UPDATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = UPDATE_LOCK
+        .lock()
+        .map_err(|_| anyhow!("Plugin grant store is unavailable"))?;
     let selected = validate_optional_selection(manifest, selected)?;
 
     let path = grant_store_path(app)?;
@@ -184,7 +213,15 @@ pub fn set_optional_permissions(
             "Plugin package changed; reinstall it before changing permissions"
         ));
     }
-    grant.optional_permissions = selected;
+    if append {
+        for permission in selected {
+            if !grant.optional_permissions.contains(&permission) {
+                grant.optional_permissions.push(permission);
+            }
+        }
+    } else {
+        grant.optional_permissions = selected;
+    }
     let summary = PluginGrantSummary {
         required_permissions: grant.required_permissions.clone(),
         optional_permissions: grant.optional_permissions.clone(),

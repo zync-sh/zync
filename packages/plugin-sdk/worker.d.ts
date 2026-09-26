@@ -69,4 +69,12 @@ export interface ZyncWorkerApi {
     list(paneInstanceId: string, relativePath?: string): Promise<PluginFileEntry[]>;
     readText(paneInstanceId: string, relativePath: string): Promise<string>;
   };
+  /** Requires ssh.command.execute. Runs with the SSH account's full authority on POSIX servers.
+   * Arguments are quoted individually; no shell expansion. One command per pane, 20s, 2 MiB output.
+   * Closing/rebinding a pane cancels the channel, not necessarily remote side effects. */
+  sshCommand: {
+    execute(paneInstanceId: string, request: { program: string; args: string[]; expectedConnectionToken?: string }): Promise<{
+      stdout: string; stderr: string; exitCode: number; connectionToken: string;
+    }>;
+  };
 }

@@ -14,7 +14,7 @@ pub(crate) fn is_known_permission_id(permission_id: &str) -> bool {
 
 const LEGACY_MANIFEST_VERSION: u32 = 1;
 const CURRENT_MANIFEST_VERSION: u32 = 2;
-pub const PLUGIN_API_VERSION: &str = "2.0.0";
+pub const PLUGIN_API_VERSION: &str = "2.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EditorManifest {

@@ -28,6 +28,16 @@ worker.on('ready', async () => {
 
 pane.pane.onMessage(message => pane.pane.postMessage(message));
 
+worker.sshCommand.execute('pane-instance', { program: 'pm2', args: ['jlist'] }).then(result => {
+  result.exitCode satisfies number;
+  result.connectionToken satisfies string;
+  return worker.sshCommand.execute('pane-instance', {
+    program: 'pm2', args: ['restart', '0'], expectedConnectionToken: result.connectionToken,
+  });
+});
+// @ts-expect-error a plugin cannot choose a server connection
+worker.sshCommand.execute('pane-instance', { program: 'pm2', args: [], connectionId: 'other-server' });
+
 const issue: ValidationIssue | undefined = validateManifest(manifest).issues[0];
 if (issue) issue.severity satisfies 'error' | 'warning';
 

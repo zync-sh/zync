@@ -7,7 +7,7 @@ fn parse_manifest(json: &str) -> Manifest {
 #[test]
 fn repository_manifest_v2_example_stays_installable() {
     let manifest = parse_manifest(include_str!(
-        "../../../../examples/plugins/manifest-v2-demo/manifest.json"
+        "../../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
     ));
 
     manifest
@@ -22,7 +22,7 @@ fn repository_manifest_v2_example_stays_installable() {
 #[test]
 fn host_rejects_incompatible_or_malformed_engine_ranges() {
     let mut manifest = parse_manifest(include_str!(
-        "../../../../examples/plugins/manifest-v2-demo/manifest.json"
+        "../../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
     ));
     let host = semver::Version::parse("2.32.2").unwrap();
     let api = semver::Version::parse(PLUGIN_API_VERSION).unwrap();

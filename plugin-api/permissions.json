@@ -81,7 +81,7 @@
     "id": "ssh.command.execute",
     "risk": "command-execution",
     "title": "Run SSH commands",
-    "description": "Execute approved commands on granted SSH connections."
+    "description": "Run arbitrary commands with your SSH account's authority on servers where you open this plugin. Commands can read, change, or delete server data."
   },
   {
     "id": "filesystem.pluginData.read",

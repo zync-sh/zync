@@ -79,7 +79,7 @@ const nativeSshFilesystemSource = fs.readFileSync(
   'utf8',
 );
 const demoWorkerSource = fs.readFileSync(
-  path.join(process.cwd(), 'examples', 'plugins', 'manifest-v2-demo', 'worker.js'),
+  path.join(process.cwd(), 'tests', 'fixtures', 'plugins', 'manifest-v2-demo', 'worker.js'),
   'utf8',
 );
 const pluginDetailsSource = fs.readFileSync(

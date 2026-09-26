@@ -7408,6 +7408,24 @@ pub async fn plugins_filesystem_pick(
 }
 
 #[tauri::command]
+pub async fn plugins_runtime_optional_permission(
+    app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
+    runtime_instance_id: String,
+    capability: String,
+    approved_digest: Option<String>,
+) -> Result<Option<crate::plugins::broker::OptionalPermissionPrompt>, String> {
+    broker
+        .optional_permission(
+            &app,
+            &runtime_instance_id,
+            &capability,
+            approved_digest.as_deref(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn plugins_filesystem_pick_write_file(
     app: AppHandle,
     broker: State<'_, crate::plugins::broker::PluginBrokerState>,
@@ -7773,11 +7791,20 @@ pub async fn plugins_management_details(
 #[tauri::command]
 pub async fn plugins_management_set_optional_permissions(
     app: AppHandle,
+    broker: State<'_, crate::plugins::broker::PluginBrokerState>,
     plugin_id: String,
     optional_permission_ids: Vec<String>,
 ) -> Result<crate::plugins::management::PluginGrantSummary, String> {
-    crate::plugins::management::set_optional_permissions(&app, &plugin_id, optional_permission_ids)
-        .map_err(|error| error.to_string())
+    let result = crate::plugins::management::set_optional_permissions(
+        &app,
+        &plugin_id,
+        optional_permission_ids,
+    )
+    .map_err(|error| error.to_string())?;
+    // In-flight commands must lose their leases immediately, not just after the
+    // frontend notices the permission change and replaces the worker.
+    broker.stop_plugin(&plugin_id);
+    Ok(result)
 }
 
 #[tauri::command]

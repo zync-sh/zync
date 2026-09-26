@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { knownPermissionIds, pluginApiVersion, validateManifest, validatePackageDirectory } from '../packages/plugin-sdk/validate.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const demo = path.join(root, 'examples', 'plugins', 'manifest-v2-demo');
+const demo = path.join(root, 'tests', 'fixtures', 'plugins', 'manifest-v2-demo');
 const base = JSON.parse(fs.readFileSync(path.join(demo, 'manifest.json'), 'utf8'));
 const clone = value => structuredClone(value);
 const messages = result => result.issues.map(issue => `${issue.path}: ${issue.message}`).join('\n');
@@ -15,7 +15,11 @@ const messages = result => result.issues.map(issue => `${issue.path}: ${issue.me
 assert.equal(validateManifest(base).valid, true, messages(validateManifest(base)));
 assert.equal(validatePackageDirectory(demo).valid, true, messages(validatePackageDirectory(demo)));
 assert.equal(validateManifest(base, { zyncVersion: '2.32.2' }).valid, true);
-assert.equal(pluginApiVersion, '2.0.0');
+assert.equal(pluginApiVersion, '2.1.0');
+const sshCommandManifest = clone(base);
+sshCommandManifest.engines.pluginApi = '^2.1.0';
+assert.equal(validateManifest(sshCommandManifest, { pluginApiVersion: '2.0.0' }).valid, false);
+assert.equal(validateManifest(sshCommandManifest).valid, true);
 const nativeManifestSource = fs.readFileSync(path.join(root, 'src-tauri', 'src', 'plugins', 'manifest', 'mod.rs'), 'utf8');
 assert.match(nativeManifestSource, new RegExp(`PLUGIN_API_VERSION: &str = "${pluginApiVersion.replaceAll('.', '\\.')}"`));
 for (const [target, expectedPath] of [

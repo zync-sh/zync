@@ -2,18 +2,18 @@
 
 Public authoring types for Manifest v2 plugins. This package lives in the Zync repository but has its own npm version and release lifecycle.
 
-Install the prerelease as a development dependency:
+The working tree now targets API **2.1** (`2.1.0-beta.1`, not yet published). It adds `sshCommand.execute(paneInstanceId, { program, args, expectedConnectionToken? })`, requiring `ssh.command.execute` and `engines.pluginApi: "^2.1.0"`. The returned `connectionToken` must be carried into commands following a confirmation so reconnect/rebind cannot silently change their destination. Commands use the SSH account's full authority; this is not a read-only or PM2-only permission. API 2.0 hosts reject plugins requiring this addition.
 
-```sh
-npm install --save-dev @zync-sh/plugin-sdk@beta
-```
-
-This first npm release is a beta. npm also initialized its `latest` tag to this version, so use `@beta` explicitly until a stable release is promoted.
-
-To try the local package from another project, install it by path:
+While API 2.1 is unpublished, install the local SDK as a development dependency:
 
 ```sh
 npm install --save-dev /path/to/zync/packages/plugin-sdk
+```
+
+The published `@beta` release is currently **2.0.0-beta.1** and does not include the 2.1 SSH command API. Once SDK 2.1 is published and the `beta` tag points to it, use:
+
+```sh
+npm install --save-dev @zync-sh/plugin-sdk@beta
 ```
 
 Zync supplies the `zync` object when it starts a plugin worker or pane. Do not bundle an SDK runtime into the plugin.
@@ -52,7 +52,7 @@ Run the packaged CLI against the **built plugin directory** (the one containing 
 npx zync-plugin validate ./dist/my-plugin --zync-version 2.32.2
 ```
 
-In this repository, the same check is available as `npm run plugin:validate -- ./examples/plugins/manifest-v2-demo`. For programmatic checks, import `validateManifest` or `validatePackageDirectory` from `@zync-sh/plugin-sdk/validate`. Validation returns `{ valid, issues }`; warnings do not fail the check.
+In this repository, the same check is available as `npm run plugin:validate -- ./dist/my-plugin`. For programmatic checks, import `validateManifest` or `validatePackageDirectory` from `@zync-sh/plugin-sdk/validate`. Validation returns `{ valid, issues }`; warnings do not fail the check.
 
 The preflight checks Manifest v2 fields, publisher namespace, semantic plugin version, contribution/permission declarations, known permissions, network host declarations, referenced files, basic package limits, and plugin API compatibility. Pass `--zync-version` to check compatibility with a specific app build; without it, the Zync range is syntax-checked only. Unknown optional permissions produce warnings because the host denies them until supported. The preflight does **not** validate signatures, inspect executable behavior, or replace native install-time validation. The signing tool and native host retain their own package and security checks.
 
@@ -78,4 +78,4 @@ For an isolated pane, use `import type { ZyncPaneApi } from '@zync-sh/plugin-sdk
 
 The typed worker interface covers the Manifest v2 broker APIs only. Legacy plugin APIs are deliberately absent. Every host operation is still checked against the installed manifest, current grant, runtime identity, and applicable scope. The SDK version does not replace the manifest's `engines.pluginApi` compatibility declaration.
 
-See the [plugin architecture](https://github.com/zync-sh/zync/blob/main/docs/PLUGINS.md) and [Manifest v2 demo](https://github.com/zync-sh/zync/tree/main/examples/plugins/manifest-v2-demo) for package format, permissions, signing, and manual testing.
+See the [plugin architecture](https://github.com/zync-sh/zync/blob/main/docs/PLUGINS.md) and [basic starter template](templates/basic/README.md) for package format, permissions, signing, and manual testing.

@@ -5,7 +5,10 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
@@ -44,13 +47,34 @@ struct RuntimeRecord {
     manifest: Manifest,
     window_started: Instant,
     requests_in_window: u32,
-    pane_connections: HashMap<String, String>,
+    pane_connections: HashMap<String, PaneConnection>,
+}
+
+struct PaneConnection {
+    connection_id: String,
+    token: String,
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for PaneConnection {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginRuntimeRegistration {
     pub runtime_instance_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OptionalPermissionPrompt {
+    pub plugin_name: String,
+    pub capability: String,
+    pub reason: String,
+    pub package_digest: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +157,16 @@ impl PluginBrokerState {
         runtime_instance_id: &str,
         capability: &str,
     ) -> Result<()> {
+        self.authorize_internal(app, runtime_instance_id, capability, true)
+    }
+
+    fn authorize_internal(
+        &self,
+        app: &AppHandle,
+        runtime_instance_id: &str,
+        capability: &str,
+        charge_request: bool,
+    ) -> Result<()> {
         let (plugin_id, plugin_path, expected_digest, manifest, digest_recheck_due) = {
             let mut runtimes = self
                 .runtimes
@@ -141,7 +175,9 @@ impl PluginBrokerState {
             let runtime = runtimes
                 .get_mut(runtime_instance_id)
                 .ok_or_else(|| anyhow!("Plugin runtime is no longer active"))?;
-            consume_request_budget(runtime)?;
+            if charge_request {
+                consume_request_budget(runtime)?;
+            }
             (
                 runtime.plugin_id.clone(),
                 runtime.plugin_path.clone(),
@@ -209,6 +245,101 @@ impl PluginBrokerState {
             PluginScanner::developer_mode_enabled(app)?,
         ) {
             return Err(anyhow!("Plugin permission is not granted: {capability}"));
+        }
+        Ok(())
+    }
+
+    /// Only the host may approve this request. Revalidate the live runtime and
+    /// complete package on both sides of the asynchronous approval dialog.
+    pub fn optional_permission(
+        &self,
+        app: &AppHandle,
+        runtime_instance_id: &str,
+        capability: &str,
+        approved_digest: Option<&str>,
+    ) -> Result<Option<OptionalPermissionPrompt>> {
+        // Granted actions are charged by their actual operation, not twice by
+        // this preflight. Missing-permission requests have their own budget.
+        match self.authorize_internal(app, runtime_instance_id, capability, false) {
+            Ok(()) => return Ok(None),
+            Err(error)
+                if error.to_string()
+                    == format!("Plugin permission is not granted: {capability}") => {}
+            Err(error) => return Err(error),
+        }
+        let (plugin_id, plugin_path, expected_digest, manifest, reason) = {
+            let mut runtimes = self
+                .runtimes
+                .lock()
+                .map_err(|_| anyhow!("Plugin broker state is unavailable"))?;
+            let runtime = runtimes
+                .get_mut(runtime_instance_id)
+                .ok_or_else(|| anyhow!("Plugin runtime is no longer active"))?;
+            consume_request_budget(runtime)?;
+            let permission = runtime
+                .manifest
+                .extensions
+                .permissions
+                .as_ref()
+                .and_then(|permissions| {
+                    permissions
+                        .optional
+                        .iter()
+                        .find(|permission| permission.id == capability)
+                })
+                .ok_or_else(|| anyhow!("Only declared optional permissions can be requested"))?;
+            (
+                runtime.plugin_id.clone(),
+                runtime.plugin_path.clone(),
+                runtime.package_digest.clone(),
+                runtime.manifest.clone(),
+                permission.reason.clone(),
+            )
+        };
+        // Filesystem and grant-store I/O must not hold the global runtime lock.
+        if manifest.manifest_version() < 2 || !PluginScanner::is_enabled(app, &plugin_id)? {
+            return Err(anyhow!("Plugin is disabled or uses legacy permissions"));
+        }
+        let digest = runtime_package_digest(&plugin_path, &plugin_id, &manifest.version)?;
+        if digest != expected_digest {
+            return Err(anyhow!(
+                "Plugin package changed; reinstall it before changing permissions"
+            ));
+        }
+        if let Some(approved) = approved_digest {
+            if approved != digest {
+                return Err(anyhow!("Plugin package changed during permission approval"));
+            }
+            self.ensure_runtime_package(runtime_instance_id, &expected_digest)?;
+            super::grants::add_optional_permission(app, &manifest, &digest, capability)?;
+            self.ensure_runtime_package(runtime_instance_id, &expected_digest)?;
+            return Ok(None);
+        }
+        self.ensure_runtime_package(runtime_instance_id, &expected_digest)?;
+        Ok(Some(OptionalPermissionPrompt {
+            plugin_name: manifest.name,
+            capability: capability.to_string(),
+            reason,
+            package_digest: digest,
+        }))
+    }
+
+    fn ensure_runtime_package(
+        &self,
+        runtime_instance_id: &str,
+        expected_digest: &str,
+    ) -> Result<()> {
+        let runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|_| anyhow!("Plugin broker state is unavailable"))?;
+        let runtime = runtimes
+            .get(runtime_instance_id)
+            .ok_or_else(|| anyhow!("Plugin runtime is no longer active"))?;
+        if runtime.package_digest != expected_digest {
+            return Err(anyhow!(
+                "Plugin runtime package changed during permission approval"
+            ));
         }
         Ok(())
     }
@@ -383,9 +514,20 @@ impl PluginBrokerState {
                 return Err(anyhow!("Plugin pane kind is not declared"));
             }
         }
-        runtime
+        if !runtime
             .pane_connections
-            .insert(pane_instance_id.to_string(), connection_id.to_string());
+            .get(pane_instance_id)
+            .is_some_and(|binding| binding.connection_id == connection_id)
+        {
+            runtime.pane_connections.insert(
+                pane_instance_id.to_string(),
+                PaneConnection {
+                    connection_id: connection_id.to_string(),
+                    token: uuid::Uuid::new_v4().to_string(),
+                    active: Arc::new(AtomicBool::new(true)),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -415,8 +557,28 @@ impl PluginBrokerState {
         runtime
             .pane_connections
             .get(pane_instance_id)
-            .cloned()
+            .map(|binding| binding.connection_id.clone())
             .ok_or_else(|| anyhow!("Plugin pane is not bound to a live connection"))
+    }
+
+    /// A command keeps this lease, not the runtime lock. Rebind, close and revoke
+    /// invalidate it even if a pane later returns to the same connection.
+    pub fn pane_connection_lease(
+        &self,
+        runtime_id: &str,
+        pane_id: &str,
+        connection_id: &str,
+    ) -> Result<(String, Arc<AtomicBool>)> {
+        let runtimes = self
+            .runtimes
+            .lock()
+            .map_err(|_| anyhow!("Plugin broker state is unavailable"))?;
+        runtimes
+            .get(runtime_id)
+            .and_then(|runtime| runtime.pane_connections.get(pane_id))
+            .filter(|binding| binding.connection_id == connection_id)
+            .map(|binding| (binding.token.clone(), binding.active.clone()))
+            .ok_or_else(|| anyhow!("Plugin pane connection changed"))
     }
 }
 
@@ -497,7 +659,7 @@ mod tests {
             package_digest: "sha256:test".into(),
             package_digest_verified_at: Instant::now(),
             manifest: serde_json::from_str(include_str!(
-                "../../../examples/plugins/manifest-v2-demo/manifest.json"
+                "../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
             ))
             .expect("parse manifest"),
             window_started: Instant::now(),
@@ -525,7 +687,7 @@ mod tests {
                 package_digest: "sha256:test".into(),
                 package_digest_verified_at: Instant::now(),
                 manifest: serde_json::from_str(include_str!(
-                    "../../../examples/plugins/manifest-v2-demo/manifest.json"
+                    "../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
                 ))
                 .expect("parse manifest"),
                 window_started: Instant::now(),
@@ -550,7 +712,33 @@ mod tests {
                 "connection-b",
             )
             .is_err());
+        let (token, lease) = broker
+            .pane_connection_lease(runtime_instance_id, "pane-a", "connection-a")
+            .unwrap();
+        assert!(lease.load(Ordering::Acquire));
+        assert!(broker
+            .pane_connection_lease("other-runtime", "pane-a", "connection-a")
+            .is_err());
+        assert!(broker
+            .pane_connection_lease(runtime_instance_id, "pane-a", "connection-b")
+            .is_err());
+        broker
+            .bind_pane_connection(
+                runtime_instance_id,
+                "dev.zync.examples.manifest-v2-demo:demo.counter",
+                "pane-a",
+                "connection-a",
+            )
+            .unwrap();
+        assert_eq!(
+            token,
+            broker
+                .pane_connection_lease(runtime_instance_id, "pane-a", "connection-a")
+                .unwrap()
+                .0
+        );
         broker.unbind_pane_connection(runtime_instance_id, "pane-a");
+        assert!(!lease.load(Ordering::Acquire));
         assert!(broker
             .runtimes
             .lock()
@@ -559,6 +747,20 @@ mod tests {
             .expect("runtime")
             .pane_connections
             .is_empty());
+        broker
+            .bind_pane_connection(
+                runtime_instance_id,
+                "dev.zync.examples.manifest-v2-demo:demo.counter",
+                "pane-a",
+                "connection-a",
+            )
+            .unwrap();
+        let (new_token, new_lease) = broker
+            .pane_connection_lease(runtime_instance_id, "pane-a", "connection-a")
+            .unwrap();
+        assert_ne!(token, new_token);
+        broker.stop_plugin("dev.zync.examples.manifest-v2-demo");
+        assert!(!new_lease.load(Ordering::Acquire));
     }
 
     #[test]
@@ -584,9 +786,51 @@ mod tests {
     }
 
     #[test]
+    fn permission_revalidation_rejects_changed_and_retired_runtimes() {
+        let state = PluginBrokerState::new();
+        let manifest: Manifest = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
+        ))
+        .expect("parse manifest");
+        state.runtimes.lock().expect("runtime lock").insert(
+            "review-runtime".into(),
+            RuntimeRecord {
+                plugin_id: manifest.id.clone(),
+                plugin_path: "unused-test-path".into(),
+                package_digest: "reviewed-digest".into(),
+                package_digest_verified_at: Instant::now(),
+                manifest,
+                window_started: Instant::now(),
+                requests_in_window: 0,
+                pane_connections: HashMap::new(),
+            },
+        );
+        assert!(state
+            .ensure_runtime_package("review-runtime", "reviewed-digest")
+            .is_ok());
+        assert!(state
+            .ensure_runtime_package("review-runtime", "different-digest")
+            .is_err());
+        state
+            .runtimes
+            .lock()
+            .expect("runtime lock")
+            .get_mut("review-runtime")
+            .expect("runtime")
+            .package_digest = "changed-digest".into();
+        assert!(state
+            .ensure_runtime_package("review-runtime", "reviewed-digest")
+            .is_err());
+        state.stop_runtime("review-runtime");
+        assert!(state
+            .ensure_runtime_package("review-runtime", "changed-digest")
+            .is_err());
+    }
+
+    #[test]
     fn command_registration_must_match_the_manifest_contribution() {
         let manifest: Manifest = serde_json::from_str(include_str!(
-            "../../../examples/plugins/manifest-v2-demo/manifest.json"
+            "../../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
         ))
         .expect("parse manifest");
         assert!(manifest_allows_command(
@@ -609,7 +853,7 @@ mod tests {
     #[test]
     fn pane_entry_is_loaded_from_the_package_not_the_worker_message() {
         let plugin_root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins/manifest-v2-demo");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/plugins/manifest-v2-demo");
         let html = read_pane_entry(&plugin_root, "ui/counter.html").expect("read pane entry");
         assert!(html.contains("Isolated plugin pane"));
         assert!(read_pane_entry(&plugin_root, "../manifest.json").is_err());
