@@ -2,11 +2,13 @@ import { useState, useRef, useEffect, useMemo, useCallback, memo, type DragEvent
 import { useAppStore } from '../../store/useAppStore';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '../../lib/utils';
-import { FolderOpen, Plus, X, Plug, PanelRight, Terminal as TerminalIcon } from 'lucide-react';
+import { pluginTabInventory } from './featureTabInventory';
+import { FolderOpen, Plus, X, PanelRight, Terminal as TerminalIcon } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
 import type { ShellEntry } from '../../lib/shells/types';
 import { ShellIcon } from '../icons/ShellIcon';
+import { PluginIcon } from '../icons/PluginIcon';
 import { FEATURE_META, type FeatureId, type WorkspaceFeatureTab } from './featureMeta';
 import { formatShortcutLabel } from '../../lib/shortcuts';
 import { SHORTCUT_CATALOG } from '../../features/shortcuts/catalog';
@@ -383,7 +385,7 @@ export const CombinedTabBar = memo(function CombinedTabBar({
         .map(term => term.id)
         .filter(termId => isSplitLayout(paneGroups?.[termId]));
     const terminalSplitOwnerSet = new Set(terminalSplitOwners);
-    const pluginInventory = openFeatures.filter(featureId => featureId.startsWith('plugin:'));
+    const pluginInventory = pluginTabInventory(openFeatures, pinnedFeatures, activeView);
     const featureAnchorOwnerByTabId = new Map<string, string>();
     const featureAnchorTabIdByOwner = new Map<string, string>();
     const pluginAnchorOwnerById = new Map<string, string>();
@@ -687,8 +689,7 @@ export const CombinedTabBar = memo(function CombinedTabBar({
                         return renderSplitTab(anchoredOwner, anchoredLayout);
                     }
                     if (extraLeafPluginIds.has(panelId)) return null;
-                    const panel = pluginPanels.find(p => p.id === panelId);
-                    if (!panel) return null;
+                    const panel = pluginPanels.find(p => p.id === panelId) ?? { id: panelId, title: 'Plugin' };
                     const isActive = activeView === featureId;
                     return (
                         <div
@@ -712,7 +713,7 @@ export const CombinedTabBar = memo(function CombinedTabBar({
                                     : "text-app-muted hover:bg-app-surface/50 hover:text-app-text"
                             )}
                         >
-                            <Plug size={12} className={cn(isActive ? "text-app-accent" : "text-app-muted")} />
+                            <PluginIcon panelId={panelId} size={14} className={cn(isActive ? "text-app-accent" : "text-app-muted")} />
                             <span className="truncate flex-1">{panel.title}</span>
                             <button
                                 onClick={(e) => { e.stopPropagation(); onFeatureClose(featureId); }}
@@ -778,7 +779,7 @@ export const CombinedTabBar = memo(function CombinedTabBar({
                         plugins={pluginPanels.map(panel => ({
                             id: panel.id,
                             title: panel.title,
-                            isOpen: openFeatures.includes(`plugin:${panel.id}`),
+                            isOpen: pluginInventory.includes(`plugin:${panel.id}`),
                         }))}
                         onNewShell={onNewTerminal}
                         onOpenFeature={onOpenFeature}

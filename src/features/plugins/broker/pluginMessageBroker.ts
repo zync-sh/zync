@@ -4,6 +4,7 @@ import {
     registerNativePluginPane,
 } from '../runtime/nativePluginRuntime';
 import { handlePluginFilesystemMessage } from '../runtime/pluginFilesystem';
+import { handlePluginSshCommandMessage } from '../runtime/pluginSshCommand';
 import { fetchPluginNetworkResource } from '../runtime/pluginNetwork';
 import { validatePluginPaneMessage } from '../runtime/paneMessages';
 import {
@@ -14,6 +15,40 @@ import {
 } from '../runtime/pluginStorage';
 import { handlePluginNotificationMessage } from './pluginNotificationBroker';
 import type { PluginBrokerWorker, PluginMessageBrokerDependencies } from './types';
+import { ipcRenderer } from '../../../lib/tauri-ipc';
+import { useAppStore } from '../../../store/useAppStore';
+import { createOptionalPermissionRequester } from '../runtime/pluginOptionalPermission';
+
+const requestOptionalPermission = createOptionalPermissionRequester({
+    inspect: (runtimeInstanceId, capability, approvedDigest) => ipcRenderer.invoke(
+        'plugins:runtime_optional_permission', { runtimeInstanceId, capability, approvedDigest },
+    ),
+    confirm: prompt => useAppStore.getState().showConfirmDialog({
+        title: 'Allow plugin permission?',
+        message: `${prompt.pluginName} requests ${prompt.capability}.\n\n${prompt.reason}${prompt.capability === 'ssh.command.execute' ? '\n\nThis allows commands to run with the connected SSH account’s privileges.' : ''}\n\nAllow saves this permission. You can revoke it in Settings → Plugins. Deny cancels this action; the next attempt will ask again.`,
+        confirmText: 'Allow',
+        cancelText: 'Deny',
+        variant: 'danger',
+    }),
+});
+
+const ACTION_PERMISSIONS: Record<string, string> = {
+    'api:filesystem:pick': 'filesystem.external.read',
+    'api:filesystem:pick-write-file': 'filesystem.external.write',
+    'api:filesystem:read-text': 'filesystem.external.read',
+    'api:filesystem:write-text': 'filesystem.external.write',
+    'api:filesystem:list': 'filesystem.external.read',
+    'api:ssh-filesystem:list': 'ssh.filesystem.read',
+    'api:ssh-filesystem:read-text': 'ssh.filesystem.read',
+    'api:ssh-command:execute': 'ssh.command.execute',
+    'api:network:fetch': 'network.fetch',
+    'api:storage:get': 'filesystem.pluginData.read',
+    'api:storage:keys': 'filesystem.pluginData.read',
+    'api:storage:set': 'filesystem.pluginData.write',
+    'api:storage:delete': 'filesystem.pluginData.write',
+    'api:ui:confirm': 'ui.dialog.confirm',
+    'api:ui:notify': 'ui.notifications.emit',
+};
 
 export interface PluginMessageBroker<W extends PluginBrokerWorker> {
     handleMessage(pluginId: string, type: unknown, payload: unknown, requester: W): Promise<boolean>;
@@ -55,12 +90,29 @@ export function createPluginMessageBroker<W extends PluginBrokerWorker>(
                 && dependencies.runtime.isCurrentWorker(pluginId, requester)
                 && dependencies.runtime.isCurrentRuntime(pluginId, runtimeInstanceId!);
 
+            const capability = ACTION_PERMISSIONS[type];
+            if (capability && runtimeInstanceId) {
+                try {
+                    if (!await requestOptionalPermission(runtimeInstanceId, capability, current)) {
+                        if (current()) reply({ requestId: payload?.requestId, error: `Permission denied: ${capability}` });
+                        return true;
+                    }
+                } catch (error) {
+                    if (current()) reply({ requestId: payload?.requestId, error: error instanceof Error ? error.message : String(error) });
+                    return true;
+                }
+            }
+
             if (await handlePluginFilesystemMessage({
                 type,
                 payload,
                 runtimeInstanceId,
                 isCurrent: current,
                 respond: reply,
+            })) return true;
+
+            if (await handlePluginSshCommandMessage({
+                type, payload, runtimeInstanceId, isCurrent: current, respond: reply,
             })) return true;
 
             if (await handlePluginNotificationMessage(

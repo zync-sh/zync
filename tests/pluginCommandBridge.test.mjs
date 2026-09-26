@@ -4,11 +4,19 @@ import path from 'node:path';
 import {
   filterUnsupportedHostThemes,
   filterTrustedBuiltinThemeChoices,
+  getBuiltinThemeChoices,
   handlePanelPluginCommand,
   handleWorkerTerminalCommand,
   isTrustedBuiltinTheme,
   postCurrentWorkerResponse,
 } from '../.tmp-agent-tests/src/features/plugins/pluginCommandBridge.js';
+
+assert.deepEqual(getBuiltinThemeChoices([]).map(item => item.id), ['system', 'dark']);
+assert.deepEqual(getBuiltinThemeChoices([
+  { path: 'builtin://light', manifest: { id: 'com.zync.theme.light', name: 'Light Theme', mode: 'light' } },
+  { path: 'builtin://theme-manager', manifest: { id: 'com.zync.theme.manager' } },
+  { path: 'C:/plugins/theme', manifest: { id: 'com.zync.theme.fake', name: 'Fake Theme' } },
+]).map(item => item.id), ['system', 'dark', 'light']);
 
 function deferred() {
   let resolve;

@@ -170,7 +170,7 @@ export function AiSidebar({ connectionId, activeTermId: activeTermIdProp, onRunC
         transition,
         sidebarOuterRef,
         sidebarInnerRef,
-        handleMouseDown,
+        resizeHandlers,
         handleAnimationStart,
         handleAnimationComplete,
     } = useAiSidebarResize();
@@ -428,7 +428,9 @@ export function AiSidebar({ connectionId, activeTermId: activeTermIdProp, onRunC
                     {/* Drag handle */}
                     <div
                         className="absolute top-0 bottom-0 left-0 w-1 cursor-col-resize z-[60] hover:bg-app-accent/60 transition-colors"
-                        onMouseDown={handleMouseDown}
+                        {...resizeHandlers}
+                        style={{ touchAction: 'none' }}
+                        aria-label="Resize AI panel"
                     />
 
                         {/* Inner panel */}

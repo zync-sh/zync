@@ -30,10 +30,10 @@ import {
     type NativePluginRecoveryStatus,
     type PluginRuntimeFailureKind,
 } from '../features/plugins/runtime/nativePluginRuntime';
-import { PluginPaneBindingQueue } from '../features/plugins/runtime/pluginPaneBindingQueue';
+import { PluginPaneBindingQueue, postAfterPaneBinding } from '../features/plugins/runtime/pluginPaneBindingQueue';
 import { PluginMessageRateLimiter } from '../features/plugins/runtime/pluginMessageRateLimiter';
 import { parsePluginWorkerMessage } from '../features/plugins/runtime/pluginMessageEnvelope';
-import { createPluginReloadQueue } from '../features/plugins/runtime/pluginReloadQueue';
+import { createPluginReloadQueue, PluginLifecycleGeneration } from '../features/plugins/runtime/pluginReloadQueue';
 import {
     PluginRuntimeSupervisor,
     type PluginRuntimeHealth,
@@ -269,6 +269,12 @@ const zync = {
             relativePath,
         }),
     },
+    sshCommand: {
+        execute: (paneInstanceId, request) => zync.request('api:ssh-command:execute', {
+            paneInstanceId,
+            request,
+        }),
+    },
     
     theme: {
         set: (themeName) => {
@@ -389,6 +395,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const paneMessageTargets = useRef(new Map<string, {
         panelId: string;
         post: (message: unknown) => void;
+        ready: Promise<void>;
     }>());
     const paneBindingQueue = useRef(new PluginPaneBindingQueue());
     const trustedBuiltinThemes = useRef<Plugin[]>([]);
@@ -419,6 +426,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }), []);
     const reloadPluginsRef = useRef<(healthCheckPluginId?: string) => Promise<boolean>>(async () => false);
     const reloadQueue = useRef(createPluginReloadQueue());
+    const lifecycleGeneration = useRef(new PluginLifecycleGeneration());
     const autoRollbackInFlight = useRef(new Set<string>());
     const autoRollbackAttemptedVersions = useRef(new Set<string>());
     const editorProviders = useMemo(
@@ -505,8 +513,10 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 cleanUpFailedRuntime(pluginId, runtimeInstanceId, 'heartbeat-timeout');
             });
         }, PLUGIN_HEARTBEAT_INTERVAL_MS);
+        lifecycleGeneration.current.begin();
         void reloadPlugins();
         return () => {
+            lifecycleGeneration.current.invalidate();
             window.clearInterval(heartbeatTimer);
             rejectAllPendingPluginNotifyActions('Plugins shutting down');
             runtimeSupervisor.current.stopAll(pluginId => {
@@ -515,7 +525,8 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             paneMessageTargets.current.clear();
             paneBindingQueue.current.clear();
             unsubscribeHealth();
-            void resetNativePluginRuntimes().catch((error) => {
+            // Let an in-flight start release its lease before resetting the broker.
+            void reloadQueue.current(() => resetNativePluginRuntimes()).catch((error) => {
                 console.error('[Plugins] Failed to reset native runtimes during shutdown:', error);
             });
             trustedBuiltinThemes.current = [];
@@ -523,12 +534,14 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         };
     }, []);
 
-    const reloadPluginsUnsafe = async (healthCheckPluginId?: string): Promise<boolean> => {
+    const reloadPluginsUnsafe = async (healthCheckPluginId: string | undefined, isCurrent: () => boolean): Promise<boolean> => {
         try {
-            await resetNativePluginRuntimes();
+            if (!isCurrent()) return false;
             runtimeSupervisor.current.stopAll(pluginId => {
                 rejectPendingPluginNotifyActionsForPlugin(pluginId, 'Plugin reloaded');
             });
+            await resetNativePluginRuntimes();
+            if (!isCurrent()) return false;
             if (healthCheckPluginId) {
                 // An explicit activation check is a fresh generation. Old crash-loop state
                 // must not prevent the package the user just installed or restored from starting.
@@ -536,6 +549,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 runtimeSupervisor.current.clearQuarantine(healthCheckPluginId);
             }
             const loadedPlugins: Plugin[] = await ipcRenderer.invoke('plugins:load');
+            if (!isCurrent()) return false;
             let recovery: NativePluginRecoveryStatus;
             try {
                 recovery = await getNativePluginRecoveryStatus();
@@ -545,6 +559,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 console.error('[Plugins] Failed to read runtime recovery state:', error);
                 recovery = { safeMode: true, diagnostics: [] };
             }
+            if (!isCurrent()) return false;
             setPluginSafeMode(recovery.safeMode);
             recovery.diagnostics.forEach(diagnostic => {
                 runtimeSupervisor.current.restoreFailures(
@@ -616,6 +631,10 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 let runtimeInstanceId: string | null = null;
                 try {
                     runtimeInstanceId = await startNativePluginRuntime(plugin.manifest.id);
+                    if (!isCurrent()) {
+                        await stopNativePluginRuntime(runtimeInstanceId);
+                        return false;
+                    }
                     // Combine bootstrap + user script
                     const blobContent = [WORKER_BOOTSTRAP, '\n\n// USER SCRIPT START\n\n', plugin.script];
                     const blob = new Blob(blobContent, { type: 'application/javascript' });
@@ -699,6 +718,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                             window.setTimeout(() => resolve(false), PLUGIN_ACTIVATION_TIMEOUT_MS);
                         });
                         const runtimeHealthy = await Promise.race([activationCheck, timeout]);
+                        if (!isCurrent()) return false;
                         targetRuntimeCheck = runtimeHealthy ? 'healthy' : 'failed';
                         if (!runtimeHealthy && runtimeSupervisor.current.isCurrentWorker(
                             plugin.manifest.id,
@@ -720,6 +740,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     }
 
                 } catch (err) {
+                    if (!isCurrent()) return false;
                     console.error(`[Plugin] Failed to start ${plugin.manifest.id}:`, err);
                     runtimeSupervisor.current.markStartFailure(plugin.manifest.id, err);
                     persistFailureAndRecover(plugin.manifest.id, 'start-failure');
@@ -732,6 +753,7 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 }
             }
 
+            if (!isCurrent()) return false;
             setLoaded(true);
             // Recovery state can restore a crash-loop quarantine before any new Worker starts.
             // Defer rollback until this reload has fully released the current generation.
@@ -747,8 +769,10 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     };
 
-    const reloadPlugins = (healthCheckPluginId?: string): Promise<boolean> =>
-        reloadQueue.current(() => reloadPluginsUnsafe(healthCheckPluginId));
+    const reloadPlugins = (healthCheckPluginId?: string): Promise<boolean> => {
+        const isCurrent = lifecycleGeneration.current.capture();
+        return reloadQueue.current(() => reloadPluginsUnsafe(healthCheckPluginId, isCurrent));
+    };
 
     const respond = (requester: Worker, pluginId: string, type: string, payload: Record<string, unknown>) => {
         postCurrentWorkerResponse(
@@ -933,11 +957,19 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const postPaneMessage = useCallback((pluginId: string, panelId: string, paneInstanceId: string, message: unknown): boolean => {
         const worker = runtimeSupervisor.current.getWorker(pluginId);
-        if (!worker) return false;
-        worker.postMessage({
-            type: 'pane:message',
-            payload: { panelId, paneInstanceId, message },
-        });
+        const key = `${pluginId}\0${paneInstanceId}`;
+        const target = paneMessageTargets.current.get(key);
+        if (!worker || !target || target.panelId !== panelId) return false;
+        // A frame can start before native binding finishes, or disappear during a split.
+        void postAfterPaneBinding(
+            target.ready,
+            () => paneMessageTargets.current.get(key) === target
+                && runtimeSupervisor.current.isCurrentWorker(pluginId, worker),
+            () => worker.postMessage({
+                type: 'pane:message',
+                payload: { panelId, paneInstanceId, message },
+            }),
+        ).catch(error => console.error('[Plugins] Pane connection is unavailable:', error));
         return true;
     }, [cleanUpFailedRuntime]);
 
@@ -949,16 +981,24 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         post: (message: unknown) => void,
     ) => {
         const key = `${pluginId}\0${paneInstanceId}`;
-        const target = { panelId, post };
+        const target = { panelId, post, ready: Promise.resolve() };
         paneMessageTargets.current.set(key, target);
         const runtimeInstanceId = runtimeSupervisor.current.getRuntimeInstanceId(pluginId);
         if (runtimeInstanceId) {
-            void paneBindingQueue.current.enqueue(key, () => bindNativePluginPaneConnection(
-                runtimeInstanceId,
-                panelId,
-                paneInstanceId,
-                connectionId,
-            )).catch(error => console.error('[Plugins] Failed to bind pane connection:', error));
+            target.ready = paneBindingQueue.current.enqueue(key, async () => {
+                if (!runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) return;
+                try {
+                    await bindNativePluginPaneConnection(
+                        runtimeInstanceId,
+                        panelId,
+                        paneInstanceId,
+                        connectionId,
+                    );
+                } catch (error) {
+                    if (runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) throw error;
+                }
+            });
+            void target.ready.catch(error => console.error('[Plugins] Failed to bind pane connection:', error));
         }
         return () => {
             if (paneMessageTargets.current.get(key) === target) {

@@ -1,10 +1,27 @@
 import assert from 'node:assert/strict';
+import { resolvePluginPanelOwner } from '../.tmp-agent-tests/src/features/plugins/pluginPanelOwner.js';
 import { singleFeaturePane, singlePane, splitPane } from '../.tmp-agent-tests/src/lib/paneLayout/index.js';
 import {
   featureTabsFromPaneGroups,
   initialFeatureTabsForView,
   mergeFeatureTabs,
+  pluginTabInventory,
+  stablePluginPanelInventory,
 } from '../.tmp-agent-tests/src/components/layout/featureTabInventory.js';
+
+assert.deepEqual(pluginTabInventory([], ['plugin:pm2'], 'plugin:pm2'), ['plugin:pm2']);
+assert.deepEqual(pluginTabInventory([], [], 'plugin:pm2'), ['plugin:pm2']);
+assert.deepEqual(pluginTabInventory(['plugin:pm2', 'files'], ['plugin:pm2', 'plugin:editor'], 'terminal'), ['plugin:pm2', 'plugin:editor']);
+assert.deepEqual(pluginTabInventory([], [], 'terminal'), []);
+const installedPlugin = { manifest: { id: 'com.zync.pm2', contributes: { paneKinds: [{ id: 'pm2', title: 'PM2 Monitor', entry: 'private.html' }] } } };
+assert.deepEqual(stablePluginPanelInventory([], [installedPlugin]), [{ id: 'com.zync.pm2:pm2', title: 'PM2 Monitor' }]);
+assert.deepEqual(stablePluginPanelInventory([{ id: 'com.zync.pm2:pm2', title: 'Active title', html: 'never copy this' }], [installedPlugin]), [{ id: 'com.zync.pm2:pm2', title: 'Active title' }]);
+assert.equal(stablePluginPanelInventory([], [installedPlugin, { manifest: { id: 'other', contributes: installedPlugin.manifest.contributes } }]).length, 2, 'Different plugins may use the same local pane id');
+assert.deepEqual(stablePluginPanelInventory([], []), []);
+assert.equal(resolvePluginPanelOwner('com.zync.pm2:pm2', [], [installedPlugin]), 'com.zync.pm2', 'Stopped plugin panes keep their icon owner');
+assert.equal(resolvePluginPanelOwner('com.zync.pm2:pm2', [{ id: 'com.zync.pm2:pm2', pluginId: 'registered' }], [installedPlugin]), 'registered', 'Registered owner takes precedence');
+assert.equal(resolvePluginPanelOwner('com.zync.pm2', [], [installedPlugin]), 'com.zync.pm2', 'Direct plugin IDs retain their fallback');
+assert.equal(resolvePluginPanelOwner('unknown:pane', [], [installedPlugin]), 'unknown:pane', 'Unknown panels retain the original fallback');
 
 function runTest(name, fn) {
   try {

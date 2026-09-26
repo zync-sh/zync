@@ -16,3 +16,12 @@ export class PluginPaneBindingQueue {
         this.pending.clear();
     }
 }
+
+export async function postAfterPaneBinding(
+    ready: Promise<void>,
+    isCurrent: () => boolean,
+    post: () => void,
+): Promise<void> {
+    await ready;
+    if (isCurrent()) post();
+}

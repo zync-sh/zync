@@ -8,3 +8,23 @@ export function createPluginReloadQueue() {
         return result;
     };
 }
+
+export class PluginLifecycleGeneration {
+    private generation = 0;
+    private active = false;
+
+    begin(): void {
+        this.generation += 1;
+        this.active = true;
+    }
+
+    invalidate(): void {
+        this.generation += 1;
+        this.active = false;
+    }
+
+    capture(): () => boolean {
+        const generation = this.generation;
+        return () => this.active && generation === this.generation;
+    }
+}

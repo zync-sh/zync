@@ -8,6 +8,7 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { buildTree } from './sidebar/buildTree';
 import { SidebarSection } from './sidebar/SidebarSection';
+import { useSidebarResize } from './sidebar/useSidebarResize';
 import { ConnectionItem } from './sidebar/ConnectionItem';
 import { ConnectedHostsGroup } from './sidebar/ConnectedHostsGroup';
 import { FolderItem } from './sidebar/FolderItem';
@@ -107,58 +108,12 @@ export function Sidebar({ className }: { className?: string }) {
         connections: Connection[];
     } | null>(null);
 
-    // Resize Logic
-    const [width, setWidth] = useState(settings.sidebarWidth || 288);
-    const [isResizing, setIsResizing] = useState(false);
-    const widthRef = useRef(width);
-
-    useEffect(() => {
-        widthRef.current = width;
-    }, [width]);
+    const { width, isResizing, handlers: resizeHandlers } = useSidebarResize(
+        settings.sidebarWidth || 288, nextWidth => updateSettings({ sidebarWidth: nextWidth }),
+    );
 
     const sidebarRef = useRef<HTMLDivElement>(null);
 
-    // Sync width if settings change externally (e.g. via reset)
-    useEffect(() => {
-        if (settings.sidebarWidth && !isResizing) {
-            setWidth(settings.sidebarWidth);
-            widthRef.current = settings.sidebarWidth;
-        }
-    }, [settings.sidebarWidth, isResizing]);
-
-    const startResizing = useCallback((e: React.MouseEvent) => {
-        setIsResizing(true);
-        e.preventDefault();
-        document.body.style.cursor = 'col-resize';
-        window.dispatchEvent(new CustomEvent('zync:layout-transition-start'));
-    }, []);
-
-    useEffect(() => {
-        if (!isResizing) return;
-
-        const resize = (e: MouseEvent) => {
-            const newWidth = Math.max(200, Math.min(e.clientX, 600)); // Clamp between 200px and 600px
-            widthRef.current = newWidth;
-            setWidth(newWidth);
-        };
-
-        const stopResizing = () => {
-            setIsResizing(false);
-            document.body.style.cursor = '';
-            // Save final width
-            updateSettings({ sidebarWidth: widthRef.current });
-            // Notify terminal that layout is now stable
-            window.dispatchEvent(new CustomEvent('zync:layout-transition-end'));
-        };
-
-        window.addEventListener('mousemove', resize);
-        window.addEventListener('mouseup', stopResizing);
-
-        return () => {
-            window.removeEventListener('mousemove', resize);
-            window.removeEventListener('mouseup', stopResizing);
-        };
-    }, [isResizing, updateSettings]);
 
     const hostCatalog = useHostCatalog(connections, searchTerm);
     const {
@@ -869,7 +824,7 @@ export function Sidebar({ className }: { className?: string }) {
         <div
             ref={sidebarRef}
             className={cn(
-                "bg-app-panel flex flex-col h-full shrink-0 relative z-50 overflow-hidden",
+                "bg-app-panel flex flex-col h-full min-h-0 shrink-0 relative z-50 overflow-hidden",
                 !isCollapsed && "border-r border-app-border/50",
                 !isResizing ? "transition-[width] duration-300 ease-[cubic-bezier(0.2,0,0,1)]" : "",
                 className
@@ -883,7 +838,15 @@ export function Sidebar({ className }: { className?: string }) {
             {!isCollapsed && width >= 40 && (
                 <div
                     className="absolute right-0 top-0 bottom-0 w-1 hover:w-1.5 cursor-col-resize hover:bg-app-accent/50 transition-all z-[100] group"
-                    onMouseDown={startResizing}
+                    {...resizeHandlers}
+                    role="separator"
+                    aria-label="Resize sidebar"
+                    aria-orientation="vertical"
+                    aria-valuemin={200}
+                    aria-valuemax={600}
+                    aria-valuenow={width}
+                    tabIndex={0}
+                    style={{ touchAction: 'none' }}
                 >
                     <div className="absolute inset-y-0 right-0 w-4 -z-10" /> {/* Larger hit area */}
                 </div>
@@ -892,7 +855,7 @@ export function Sidebar({ className }: { className?: string }) {
             {/* Content Wrapper */}
             <div
                 style={{ width: width, minWidth: width }}
-                className="flex flex-col h-full pt-1.5"
+                className="flex flex-col flex-1 min-h-0 pt-1.5"
             >
                 {/* System Actions Column — top nav matches Terminal / Port Forwarding / Vault */}
                 <div className={cn(compactMode ? "px-3 pt-2 mb-2" : "px-4 pt-3 mb-2")}>

@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { ShellDiscoveryGate } from '../.tmp-agent-tests/src/lib/shells/discoveryGate.js';
+
+const gate = new ShellDiscoveryGate('host-a', false);
+assert.equal(gate.request(), null, 'Disconnected picker requests must not invoke SSH');
+assert.equal(gate.request(), null, 'Repeated offline requests remain deferred');
+assert.equal(gate.shouldRetry(), false);
+assert.equal(gate.update('host-a', true), true);
+assert.equal(gate.shouldRetry(), true, 'A deferred request resumes on connection readiness');
+const generation = gate.request();
+assert.equal(gate.isCurrent(generation), true);
+assert.equal(gate.update('host-a', true), false, 'Repeated ready renders do not trigger discovery again');
+gate.update('host-a', false);
+assert.equal(gate.isCurrent(generation), false, 'Disconnect invalidates in-flight replies');
+gate.update('host-a', true);
+assert.equal(gate.shouldRetry(), true, 'Reconnect retries previously requested discovery');
+assert.equal(gate.isCurrent(generation), false, 'Old ready-session replies stay invalid after reconnect');
+gate.update('host-b', true);
+assert.equal(gate.shouldRetry(), false, 'Switching hosts must not inherit another host’s discovery request');
+assert.notEqual(gate.request(), null);
+const lazy = new ShellDiscoveryGate('never-opened', false);
+lazy.update('never-opened', true);
+assert.equal(lazy.shouldRetry(), false, 'Connected hosts remain lazy until the picker is requested');
+const local = new ShellDiscoveryGate('local', true);
+assert.notEqual(local.request(), null, 'Local discovery does not depend on SSH');
+console.log('Shell discovery readiness and reconnect tests passed');

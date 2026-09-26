@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { Braces, ChevronLeft, ChevronRight, FolderOpen, LayoutDashboard, Loader2, Plug, Plus, RotateCw, Search, Terminal as TerminalIcon, Waypoints } from 'lucide-react';
+import { Braces, ChevronLeft, ChevronRight, FolderOpen, LayoutDashboard, Loader2, Plus, RotateCw, Search, Terminal as TerminalIcon, Waypoints } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { ShellIcon } from '../../icons/ShellIcon';
+import { PluginIcon } from '../../icons/PluginIcon';
 import { TopbarDropdown } from '../../ui/TopbarDropdown';
 import { FEATURE_META, formatFeatureShortcut, type FeatureId } from '../featureMeta';
 import type { ShellEntry } from '../../../lib/shells/types';
@@ -426,6 +427,6 @@ function WorkspaceOpenIcon({ item }: { item: WorkspaceOpenItem }): ReactNode {
         const Icon = FEATURE_ICON[item.featureId];
         return <Icon size={12} />;
     }
-    if (item.kind === 'plugin') return <Plug size={12} />;
+    if (item.kind === 'plugin' && item.pluginId) return <PluginIcon panelId={item.pluginId} size={14} />;
     return <TerminalIcon size={12} />;
 }

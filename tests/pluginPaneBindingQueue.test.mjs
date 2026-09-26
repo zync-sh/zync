@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { PluginPaneBindingQueue } from '../.tmp-agent-tests/src/features/plugins/runtime/pluginPaneBindingQueue.js';
+import { PluginPaneBindingQueue, postAfterPaneBinding } from '../.tmp-agent-tests/src/features/plugins/runtime/pluginPaneBindingQueue.js';
 
 const queue = new PluginPaneBindingQueue();
 const events = [];
@@ -31,5 +31,20 @@ assert.deepEqual(events, [
   'unbind:first',
   'bind:replacement',
 ]);
+
+let releaseBinding;
+const binding = new Promise(resolve => { releaseBinding = resolve; });
+let current = true;
+let posted = 0;
+const firstMessage = postAfterPaneBinding(binding, () => current, () => posted++);
+assert.equal(posted, 0, 'startup messages must wait for native binding');
+current = false;
+releaseBinding();
+await firstMessage;
+assert.equal(posted, 0, 'a remounted frame must not dispatch stale messages');
+await postAfterPaneBinding(Promise.resolve(), () => true, () => posted++);
+assert.equal(posted, 1);
+await assert.rejects(postAfterPaneBinding(Promise.reject(new Error('bind failed')), () => true, () => posted++));
+assert.equal(posted, 1, 'failed binding must not reach the worker');
 
 console.log('Plugin pane binding queue tests passed.');

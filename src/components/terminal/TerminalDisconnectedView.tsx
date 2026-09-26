@@ -7,7 +7,7 @@ import { useConnectionDisplayLabels } from '../../features/connections/presentat
 import { formatLastConnectedLabel } from '../../lib/relativeTime';
 import { cn } from '../../lib/utils.js';
 
-export type DisconnectSurface = 'terminal' | 'files';
+export type DisconnectSurface = 'terminal' | 'files' | 'plugin';
 
 export interface TerminalDisconnectedViewProps {
   connection: Connection | null | undefined;
@@ -127,6 +127,7 @@ export const TerminalDisconnectedView = memo(function TerminalDisconnectedView({
           : 'Failed to establish the SSH session. Check credentials and network, then try again.';
     }
     if (kind === 'restored') {
+      if (surface === 'plugin') return 'This host was restored from your last session. Connect to use this plugin.';
       if (isFiles) {
         return 'This host was restored from your last session. Connect to browse files over SFTP.';
       }
@@ -135,10 +136,11 @@ export const TerminalDisconnectedView = memo(function TerminalDisconnectedView({
       }
       return 'This terminal was restored from your last session. Connect when you are ready.';
     }
+    if (surface === 'plugin') return 'This host is disconnected. Reconnect to use this plugin.';
     return isFiles
       ? 'This host is disconnected. Reconnect to browse files over SFTP.'
       : 'The SSH session for this terminal ended. Reconnect to open a new shell.';
-  }, [kind, errorDetail, terminalCount, isFiles]);
+  }, [kind, errorDetail, terminalCount, isFiles, surface]);
 
   const primaryLabel = kind === 'error' ? 'Retry connection' : 'Reconnect';
   const connectingLabel = isFiles
@@ -293,7 +295,7 @@ export const TerminalDisconnectedView = memo(function TerminalDisconnectedView({
             {primaryLabel}
           </Button>
 
-          {!isConnecting ? (
+          {!isConnecting && isSurfaceActive ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-app-muted/70">
               <kbd className="rounded border border-app-border/80 bg-app-surface/80 px-1.5 py-0.5 font-mono text-[10px] text-app-muted">
                 Enter
