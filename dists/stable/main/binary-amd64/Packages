@@ -1,16 +1,16 @@
 Package: zync
-Version: 2.33.4
+Version: 2.33.5
 Architecture: amd64
-Installed-Size: 54791
+Installed-Size: 54606
 Maintainer: Gajendra
 Depends: libwebkit2gtk-4.1-0, libgtk-3-0
 Priority: optional
 Section: utils
-Filename: pool/main/z/zync/zync_2.33.4_amd64.deb
-Size: 17138480
-SHA256: 714f6a7252861e9506800e4f2fcceddd6db03f0d1e04a8b1b5cf05753bf0eb83
-SHA1: 76ec15e2ead4befc58afe2ec7799fbb5617fa998
-MD5sum: 4f7586477db145eff74b564ddca8dd47
+Filename: pool/main/z/zync/zync_2.33.5_amd64.deb
+Size: 17130086
+SHA256: 86a6920cb6996875c289617907e676707f2ac565b534efe7f02328690fbabb10
+SHA1: 11f998c72c41b2bffed0ee396fcdb8851314b43e
+MD5sum: cff6086d00f346c63a2f112a7f590851
 Description: A modern SSH client
  (none)
 
