@@ -4,10 +4,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.33.12] - 2026-10-03
+
 ### Added
 
-- **Inbox status bar access:** Keep a visible Inbox button in the bottom status
-  bar, with an unread count, so conversations remain easy to reopen. ([ac501c3])
+- **Inbox status bar access:** Keep an icon-only inbox shortcut in the bottom
+  status bar, with an unread badge and accessible tooltip, so conversations
+  remain easy to reopen. ([ac501c3], [4e3c5ff])
+- **Report issue shortcut:** Open Settings > Feedback directly from the replies
+  inbox. ([4e3c5ff])
 
 ### Changed
 
@@ -1729,7 +1734,9 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [d3f4060]: https://github.com/zync-sh/zync/commit/d3f4060
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.33.11...HEAD
+[4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.33.12...HEAD
+[2.33.12]: https://github.com/zync-sh/zync/compare/v2.33.11...v2.33.12
 [2.33.11]: https://github.com/zync-sh/zync/compare/v2.33.10...v2.33.11
 [2.33.10]: https://github.com/zync-sh/zync/compare/v2.33.9...v2.33.10
 [2.33.9]: https://github.com/zync-sh/zync/compare/v2.33.8...v2.33.9

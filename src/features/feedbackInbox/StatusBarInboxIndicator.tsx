@@ -18,12 +18,11 @@ export function StatusBarInboxIndicator() {
         type="button"
         onClick={() => window.dispatchEvent(new Event(INBOX_OPEN_EVENT))}
         aria-label={label}
-        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-transparent px-2 text-app-muted transition-colors hover:border-app-border/40 hover:bg-app-surface hover:text-app-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60"
+        className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-transparent text-app-muted transition-colors hover:border-app-border/40 hover:bg-app-surface hover:text-app-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60"
       >
         <MessageSquare size={13} aria-hidden="true" />
-        <span>Inbox</span>
         {unread > 0 && (
-          <span className="min-w-4 rounded-full bg-app-accent px-1 text-center text-[10px] font-semibold leading-4 text-app-bg">
+          <span aria-hidden="true" className="absolute -right-1 -top-1 min-w-4 rounded-full bg-app-accent px-1 text-center text-[10px] font-semibold leading-4 text-app-bg">
             {unread}
           </span>
         )}

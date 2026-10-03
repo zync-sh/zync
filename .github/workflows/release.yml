@@ -55,6 +55,10 @@ jobs:
             exit 1
           fi
 
+      - name: Install registry-check dependencies
+        if: ${{ env.REGISTRY_URL != '' && env.REGISTRY_ROOT_KEYS != '' }}
+        run: npm ci --legacy-peer-deps
+
       - name: Verify published metadata
         if: ${{ env.REGISTRY_URL != '' && env.REGISTRY_ROOT_KEYS != '' }}
         shell: bash

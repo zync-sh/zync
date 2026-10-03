@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { Bug } from "lucide-react";
 import { Modal } from "../../components/ui/Modal";
+import { useAppStore } from "../../store/useAppStore";
 import { getExistingInstallId } from "../installation/identity";
 import {
   claimLegacySurveys,
@@ -35,6 +37,7 @@ function previouslyClaimed(installId: string | null): boolean {
  * or tab mounting. No polling interval and no startup credential enrollment.
  */
 export function FeedbackInbox() {
+  const openSettings = useAppStore((state) => state.openSettings);
   const [snapshot, setSnapshot] = useState(empty);
   const [open, setOpen] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -139,6 +142,10 @@ export function FeedbackInbox() {
     };
   }, []);
   const refresh = useCallback(() => refreshRef.current(), []);
+  const reportIssue = () => {
+    setOpen(false);
+    openSettings("feedback");
+  };
   const connectEarlierSurveys = async () => {
     if (!legacyInstallId || claiming || legacyClaimed) return;
     setClaiming(true);
@@ -180,6 +187,19 @@ export function FeedbackInbox() {
           <p className="text-xs text-app-muted">
             Replies are private to this installation.
           </p>
+          <div className="flex items-center justify-between gap-3">
+            <button type="button" onClick={refresh} className="text-xs text-app-accent hover:underline">
+              Refresh inbox
+            </button>
+            <button
+              type="button"
+              onClick={reportIssue}
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-app-border px-2.5 py-1.5 text-xs font-medium text-app-text transition-colors hover:bg-app-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60"
+            >
+              <Bug size={13} aria-hidden="true" />
+              Report issue
+            </button>
+          </div>
           {!legacyClaimed && legacyInstallId && (
             <div className="space-y-2 rounded-lg border border-app-border bg-app-surface/40 p-3 text-xs">
               <p className="font-medium text-app-text">Connect earlier surveys</p>
@@ -199,9 +219,6 @@ export function FeedbackInbox() {
             </div>
           )}
           {claimResult && <p role="status" className="text-xs text-app-muted">{claimResult}</p>}
-          <button onClick={refresh} className="text-xs text-app-accent">
-            Refresh inbox
-          </button>
           {error && (
             <p role="alert" className="text-sm text-red-400">
               {error}
