@@ -1,0 +1,31 @@
+/* Geometry only: these values may be inherited by a future density scope.
+ * Keep color aliases inline so body/subtree theme overrides resolve at the control.
+ * This is an internal foundation, not a persisted customization or plugin API.
+ */
+:root {
+    --zync-control-radius: 0.375rem;
+    --zync-control-height-sm: 2rem;
+    --zync-control-height-md: 2.5rem;
+    --zync-control-height-lg: 3rem;
+    --zync-control-height-icon: 2.25rem;
+    --zync-control-font-size: 0.8125rem;
+    --zync-control-label-size: 0.75rem;
+    --zync-popup-radius: 0.5rem;
+    --zync-dialog-radius: 0.75rem;
+    --zync-menu-item-height: 2rem;
+    --zync-toolbar-gap: 0.25rem;
+    --zync-panel-header-gap: 0.5rem;
+    --zync-panel-header-height: 3rem;
+    --zync-switch-width: 2.75rem;
+    --zync-switch-height: 1.5rem;
+    --zync-switch-inset: 0.125rem;
+    --zync-switch-thumb-color: #ffffff;
+    --zync-popup-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+    --zync-dialog-shadow: 0 16px 48px rgb(0 0 0 / 0.25);
+}
+
+@theme inline {
+    --color-control-focus: var(--color-app-accent);
+    --color-control-danger: var(--color-app-danger);
+    --color-control-on-primary: var(--color-foreground-on-accent, #ffffff);
+}

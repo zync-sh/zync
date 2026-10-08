@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./theme/controls.css";
 
 @theme {
     /* Standard Dark Theme (Default) */

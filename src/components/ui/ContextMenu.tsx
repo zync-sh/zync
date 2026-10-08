@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/utils.js';
 import { isInsideMenu, MENU_PANEL_CLASS, MenuSubmenu } from './MenuSubmenu';
+import { MENU_ITEM_CLASSES } from './surfaceStyles';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -185,8 +186,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 function MenuItem({ item, onClose }: { item: ContextMenuItem; onClose: () => void }) {
   if ('separator' in item) return <div className="h-px bg-app-border/50 my-1 mx-2" />;
   const itemClass = cn(
-    'flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors mx-1 rounded-md text-xs w-[calc(100%-8px)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent',
-    item.disabled ? 'text-app-muted/50 cursor-not-allowed'
+    MENU_ITEM_CLASSES,
+    'mx-1 w-[calc(100%-8px)]',
+    item.disabled ? 'text-app-muted'
       : item.variant === 'danger' ? 'text-app-danger hover:bg-app-danger/10' : 'text-app-text hover:bg-app-surface',
   );
   if (item.children?.length) {

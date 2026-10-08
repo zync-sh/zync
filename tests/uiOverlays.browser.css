@@ -1,0 +1,31 @@
+/* Standalone fixture colors also cover body-portaled menus and the modal root. */
+body[data-overlay-gallery-theme="dark"] {
+    --color-app-bg: #18181b;
+    --color-app-panel: #202024;
+    --color-app-surface: #27272a;
+    --color-app-border: #52525b;
+    --color-app-text: #f4f4f5;
+    --color-app-muted: #b4b4bc;
+    --color-app-accent: #8486ce;
+    --color-app-danger: #ff8080;
+    --color-foreground-on-accent: #18181b;
+}
+body[data-overlay-gallery-theme="light"] {
+    --color-app-bg: #f4f4f5;
+    --color-app-panel: #ffffff;
+    --color-app-surface: #f4f4f5;
+    --color-app-border: #a1a1aa;
+    --color-app-text: #18181b;
+    --color-app-muted: #52525b;
+    --color-app-accent: #50529a;
+    --color-app-danger: #b91c1c;
+    --color-foreground-on-accent: #ffffff;
+}
+.overlay-gallery { height: 100%; overflow: auto; background: var(--color-app-bg); color: var(--color-app-text); padding: 32px; }
+.overlay-gallery h1 { font-size: 24px; font-weight: 600; }
+.overlay-gallery h2 { font-size: 18px; font-weight: 600; }
+.overlay-gallery p { font-size: 13px; margin: 12px 0; }
+.overlay-gallery-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin: 24px 0; }
+.overlay-gallery-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px; max-width: 1000px; }
+.overlay-gallery section { display: flex; flex-direction: column; align-items: stretch; gap: 20px; padding: 24px; background: var(--color-app-panel); border: 1px solid var(--color-app-border); border-radius: 12px; }
+.overlay-gallery-form { display: grid; gap: 20px; }

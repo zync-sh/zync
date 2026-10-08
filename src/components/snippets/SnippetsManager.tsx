@@ -6,6 +6,9 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import { IconButton } from '../ui/IconButton';
+import { PanelHeader } from '../ui/PanelHeader';
+import { Toolbar } from '../ui/Toolbar';
 import type { Snippet } from '../../store/useAppStore';
 
 // Snippet interface is now imported from store
@@ -133,12 +136,9 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
 
   return (
     <div className="flex flex-col h-full bg-app-bg">
-      <div className="p-4 border-b border-app-border flex justify-between items-center bg-app-panel">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Code size={20} className="text-app-accent" />
-          Snippets
-        </h2>
-        <Button
+      <PanelHeader title="Snippets" icon={<Code size={20} />} titleClassName="text-lg font-semibold" className="p-4 bg-app-panel"
+        actions={<Button
+          type="button"
           onClick={() => {
             // On the global snippets tab, default to global scope (undefined).
             // On a real SSH connection tab, default to that connection.
@@ -147,9 +147,9 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
             setIsModalOpen(true);
           }}
         >
-          <Plus size={16} className="mr-2" /> New
-        </Button>
-      </div>
+          <Plus aria-hidden="true" size={16} className="mr-2" /> New
+        </Button>}
+      />
 
       <div className="flex-1 overflow-auto p-4 space-y-6">
         {filteredSnippets.length === 0 && (
@@ -169,37 +169,31 @@ export function SnippetsManager({ connectionId }: { connectionId?: string }) {
                   className="bg-app-panel border border-app-border rounded-lg p-3 hover:border-app-accent transition-colors cursor-pointer group relative"
                   onClick={() => handleRun(snippet.command)}
                 >
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-medium text-app-text text-sm">{snippet.name}</h4>
+                  <div className="flex flex-wrap justify-between items-start gap-2 mb-1">
+                    <div className="flex min-w-0 flex-1 basis-32 items-center gap-2">
+                      <h4 className="min-w-0 break-words font-medium text-app-text text-sm">{snippet.name}</h4>
                       {snippet.connectionId && (
                         <span className="text-[10px] bg-app-accent/20 text-app-accent px-1.5 py-0.5 rounded-full">Host Only</span>
                       )}
                     </div>
-                    <div className="flex gap-1">
-                      <button
+                    <Toolbar label={`Actions for ${snippet.name}`} className="shrink-0">
+                      <IconButton
+                        label="Copy to Clipboard"
+                        icon={<Copy size={14} />}
                         onClick={(e) => handleCopy(snippet.command, e)}
-                        className="text-app-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                        title="Copy to Clipboard"
-                      >
-                        <Copy size={14} />
-                      </button>
-                      <button
+                      />
+                      <IconButton
+                        label="Edit"
+                        icon={<Edit2 size={14} />}
                         onClick={(e) => handleEdit(snippet, e)}
-                        className="text-app-muted hover:text-app-accent opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                        title="Edit"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        type="button"
+                      />
+                      <IconButton
+                        label="Delete"
+                        variant="danger"
+                        icon={<Trash2 size={14} />}
                         onClick={(e) => handleDeleteClick(snippet, e)}
-                        className="text-app-muted hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                      />
+                    </Toolbar>
                   </div>
                   <div className="bg-app-bg/50 p-1.5 rounded border border-app-border/50 font-mono text-[10px] text-app-muted/80 truncate">
                     {snippet.command}

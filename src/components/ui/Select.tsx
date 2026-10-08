@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, useId, useLayoutEffect } from 'react';
 import { ZPortal } from './ZPortal';
 import { ChevronDown, Check, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Command } from 'cmdk';
 import { cn } from '../../lib/utils';
+import { CONTROL_BASE_CLASSES, CONTROL_LABEL_CLASSES } from './controlStyles';
+import { MENU_ITEM_CLASSES, POPUP_SURFACE_CLASSES } from './surfaceStyles';
 
 export interface SelectOption {
     value: string;
@@ -99,6 +101,7 @@ const calculateDropdownCoords = (
     };
 };
 
+/** Theme-aware selector; inline/portal placement and local keyboard ownership stay with the control. */
 export function Select({
     id,
     ariaLabel,
@@ -118,6 +121,7 @@ export function Select({
     portal = false
 }: SelectProps) {
     const internalId = useId();
+    const reduceMotion = useReducedMotion();
     const dropdownId = `select-dropdown-${internalId}`;
     const triggerId = id ?? `select-trigger-${internalId}`;
     const [isOpen, setIsOpen] = useState(false);
@@ -202,10 +206,10 @@ export function Select({
             id={dropdownId}
             data-zync-select-open="true"
             data-zync-shortcuts="local"
-            initial={{ opacity: 0, y: coords.openUpward ? -2 : 2, scale: 0.995 }}
+            initial={reduceMotion ? false : { opacity: 0, y: coords.openUpward ? -2 : 2, scale: 0.995 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: coords.openUpward ? -2 : 2, scale: 0.995 }}
-            transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : coords.openUpward ? -2 : 2, scale: reduceMotion ? 1 : 0.995 }}
+            transition={{ duration: reduceMotion ? 0 : 0.15, ease: [0.16, 1, 0.3, 1] }}
             style={portal ? {
                 position: 'absolute',
                 top: coords.top || 0,
@@ -217,26 +221,28 @@ export function Select({
             } : undefined}
             className={cn(
                 !portal && "absolute z-[110] w-full mt-1.5",
-                "bg-app-panel/95 border border-app-border shadow-2xl rounded-xl overflow-hidden backdrop-blur-3xl ring-1 ring-black/5 dark:ring-white/10"
+                POPUP_SURFACE_CLASSES,
+                "overflow-hidden"
             )}
         >
             <Command ref={commandRef} defaultValue={selectedOption ? (selectedOption.label + " " + (selectedOption.description || "")).trim() : undefined} loop className="flex flex-col w-full bg-transparent">
                 {showSearch && (
-                    <div className="flex items-center border-b border-white/[0.05] px-3 bg-white/[0.02]" cmdk-input-wrapper="">
-                        <Search className="w-3.5 h-3.5 text-app-muted/30" />
+                    <div className="flex items-center border-b border-app-border px-3" cmdk-input-wrapper="">
+                        <Search aria-hidden="true" className="w-3.5 h-3.5 text-app-muted" />
                         <Command.Input
                             autoFocus
                             placeholder="Filter..."
-                            className="w-full h-10 bg-transparent text-xs outline-none px-2.5 placeholder:text-app-muted/20"
+                            aria-label={`Filter ${label ?? ariaLabel ?? 'options'}`}
+                            className="w-full h-10 bg-transparent text-[length:var(--zync-control-font-size)] text-app-text outline-none px-2.5 placeholder:text-app-muted"
                         />
                     </div>
                 )}
                 <Command.List
-                    className="max-h-40 overflow-y-auto custom-scrollbar p-1 scroll-smooth"
+                    className="max-h-40 overflow-y-auto custom-scrollbar p-1 scroll-smooth motion-reduce:scroll-auto"
                     style={portal ? { maxHeight: `${Math.max(0, coords.maxHeight - (showSearch ? SEARCH_HEADER_HEIGHT + LIST_PADDING : LIST_PADDING))}px` } : undefined}
                 >
-                    <Command.Empty className="py-4 text-center text-[9px] text-app-muted/40 font-bold uppercase tracking-widest italic leading-none">
-                        No hits
+                    <Command.Empty className="py-4 text-center text-xs text-app-muted">
+                        No matches
                     </Command.Empty>
 
                     {options.map((option) => (
@@ -249,43 +255,36 @@ export function Select({
                                 onChange(option.value);
                             }}
                             className={cn(
-                                "flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs transition-all cursor-pointer select-none group/item mb-0.5 last:mb-0",
-                                "aria-selected:bg-app-accent/10 aria-selected:text-app-accent",
-                                // Selected: accent background only — keep text-white off the row so icons keep their colors.
+                                MENU_ITEM_CLASSES,
+                                "cursor-pointer select-none group/item mb-0.5 last:mb-0 aria-selected:bg-app-accent/10",
                                 value === option.value
-                                    ? "bg-app-accent font-semibold shadow-md shadow-app-accent/10 aria-selected:bg-app-accent"
-                                    : "text-app-text/60 hover:bg-app-accent/5 hover:text-app-accent",
+                                    ? "bg-app-accent/15 font-semibold aria-selected:bg-app-accent/20"
+                                    : "hover:bg-app-surface",
                                 itemClassName
                             )}
                         >
                             {option.icon && (
                                 <div className={cn(
-                                    "flex-none transition-all duration-300 group-hover/item:scale-105 scale-90 shrink-0",
-                                    value !== option.value && "text-app-muted group-aria-selected:text-app-accent"
+                                    "flex-none shrink-0",
+                                    value !== option.value && "text-app-muted"
                                 )}>
                                     {option.icon}
                                 </div>
                             )}
                             <div className="flex-1 overflow-hidden">
-                                <div className={cn(
-                                    "truncate leading-none font-medium text-[11px]",
-                                    value === option.value && "text-white",
-                                )}>
+                                <div className="truncate leading-snug font-medium">
                                     {option.label}
                                 </div>
                                 {option.description && (
-                                    <div className={cn(
-                                        "text-[8px] truncate mt-0.5 opacity-30 group-aria-selected:opacity-70 transition-opacity",
-                                        value === option.value && "text-white/80 opacity-80"
-                                    )}>
+                                    <div className="text-xs text-app-muted truncate mt-0.5">
                                         {option.description}
                                     </div>
                                 )}
                             </div>
                             {showCheck && value === option.value && (
-                                <motion.div layoutId="check" className="flex-none">
-                                    <Check className="w-2.5 h-2.5 text-white" />
-                                </motion.div>
+                                <span className="flex-none" aria-hidden="true">
+                                    <Check className="w-3.5 h-3.5 text-current" />
+                                </span>
                             )}
                         </Command.Item>
                     ))}
@@ -297,7 +296,7 @@ export function Select({
     return (
         <div className={cn("relative w-full", className)} ref={containerRef}>
             {label && (
-                <label htmlFor={triggerId} className="text-[10px] font-bold text-app-muted uppercase tracking-wider block mb-2 px-1">
+                <label htmlFor={triggerId} className={cn(CONTROL_LABEL_CLASSES, 'mb-1')}>
                     {label}
                 </label>
             )}
@@ -320,31 +319,33 @@ export function Select({
                     }
                 }}
                 className={cn(
-                    "w-full flex items-center justify-between px-3 py-2 rounded-xl border text-[13px] transition-all duration-300 outline-none group",
+                    CONTROL_BASE_CLASSES,
+                    "h-[var(--zync-control-height-md)] w-full flex items-center justify-between px-3 py-2 border group",
                     "bg-app-surface text-app-text",
                     isOpen
-                        ? "border-app-accent/40 shadow-[0_0_15px_rgba(121,123,206,0.1)] ring-1 ring-app-accent/20"
-                        : "border-app-border/60 hover:border-app-border hover:bg-app-surface/80 shadow-sm",
-                    disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
+                        ? "border-control-focus ring-2 ring-control-focus"
+                        : "border-app-border hover:border-app-muted",
+                    !disabled && "cursor-pointer",
                     triggerClassName
                 )}
                 disabled={disabled}
             >
                 <div className="flex-1 flex items-center gap-2 overflow-hidden text-left min-w-0">
                     {selectedOption?.icon && (
-                        <div className="flex-none shrink-0 transition-transform duration-300 group-hover:scale-105">
+                        <div className="flex-none shrink-0">
                             {/* Keep badge/image colors fully visible on the closed trigger */}
-                            <div className="scale-90">{selectedOption.icon}</div>
+                            {selectedOption.icon}
                         </div>
                     )}
-                    <span className={cn("truncate font-medium tracking-tight", !selectedOption && "text-app-muted opacity-70")}>
+                    <span className={cn("truncate font-medium", !selectedOption && "text-app-muted")}>
                         {selectedOption ? selectedOption.label : placeholder}
                     </span>
                 </div>
                 <ChevronDown
+                    aria-hidden="true"
                     className={cn(
-                        "w-3 h-3 text-app-muted transition-all duration-500 ml-1.5 opacity-30 group-hover:opacity-80",
-                        isOpen && "transform rotate-180 text-app-accent opacity-100 scale-110"
+                        "w-3.5 h-3.5 shrink-0 text-app-muted transition-transform duration-150 motion-reduce:transition-none ml-1.5",
+                        isOpen && "rotate-180"
                     )}
                 />
             </button>

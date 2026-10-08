@@ -1,6 +1,8 @@
 import type { HTMLAttributes, ReactNode } from 'react';
 import { cn } from '../../lib/utils';
+import { POPUP_SURFACE_CLASSES } from './surfaceStyles';
 
+/** Shared popup surface; callers own actions, keyboard behavior and open state. */
 export function TopbarDropdown({
   children,
   align = 'left',
@@ -19,7 +21,8 @@ export function TopbarDropdown({
     <div
       {...props}
       className={cn(
-        "absolute bg-app-panel border border-app-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in duration-200 p-1",
+        POPUP_SURFACE_CLASSES,
+        "absolute z-50 overflow-hidden animate-in fade-in duration-200 motion-reduce:animate-none p-1",
         side === 'top' ? 'bottom-full mb-2 slide-in-from-bottom-2' : 'top-full mt-2 slide-in-from-top-2',
         widthClass,
         align === 'right' ? 'right-0' : 'left-0',

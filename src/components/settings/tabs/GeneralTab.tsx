@@ -6,6 +6,9 @@ import type { SelectOption } from '../../ui/Select';
 import { Select } from '../../ui/Select';
 import { withOrphanSelectOption } from '../../ui/selectOptions';
 import { Section } from '../common/Section';
+import { Switch } from '../../ui/Switch';
+import { Button } from '../../ui/Button';
+import { Toolbar } from '../../ui/Toolbar';
 
 interface ActiveEditorProvider {
     manifest: {
@@ -96,26 +99,16 @@ export function GeneralTab({
                                 </p>
                             </div>
                         </div>
-                        <button
-                            onClick={() => onUpdateSettings({
+                        <Switch
+                            onCheckedChange={(checked) => { void onUpdateSettings({
                                 privacy: {
                                     ...(settings.privacy ?? { showHostAddressesInLists: DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS }),
-                                    showHostAddressesInLists: !showHostAddressesInLists,
+                                    showHostAddressesInLists: checked,
                                 },
-                            })}
-                            role="switch"
-                            aria-checked={showHostAddressesInLists}
-                            aria-label="Show host addresses in lists"
-                            className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${
-                                showHostAddressesInLists ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
-                            }`}
-                        >
-                            <span
-                                className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${
-                                    showHostAddressesInLists ? 'translate-x-5' : 'translate-x-0'
-                                }`}
-                            />
-                        </button>
+                            }); }}
+                            checked={showHostAddressesInLists}
+                            label="Show host addresses in lists"
+                        />
                     </div>
                 </div>
                 <div className="p-4 rounded-lg bg-[var(--color-app-surface)]/50 border border-[var(--color-app-border)]">
@@ -131,29 +124,19 @@ export function GeneralTab({
                                 </p>
                             </div>
                         </div>
-                        <button
-                            onClick={() => onUpdateSettings({
+                        <Switch
+                            onCheckedChange={(checked) => { void onUpdateSettings({
                                 privacy: {
                                     ...(settings.privacy ?? {
                                         showHostAddressesInLists: DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS,
                                         shareAnonymousUsage: true,
                                     }),
-                                    shareAnonymousUsage: !shareAnonymousUsage,
+                                    shareAnonymousUsage: checked,
                                 },
-                            })}
-                            role="switch"
-                            aria-checked={shareAnonymousUsage}
-                            aria-label="Share anonymous usage"
-                            className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${
-                                shareAnonymousUsage ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
-                            }`}
-                        >
-                            <span
-                                className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${
-                                    shareAnonymousUsage ? 'translate-x-5' : 'translate-x-0'
-                                }`}
-                            />
-                        </button>
+                            }); }}
+                            checked={shareAnonymousUsage}
+                            label="Share anonymous usage"
+                        />
                     </div>
                 </div>
             </Section>
@@ -172,21 +155,13 @@ export function GeneralTab({
                                 </p>
                             </div>
                         </div>
-                        <button
-                            onClick={() => { void handleAutoUpdateToggle(); }}
-                            role="switch"
-                            aria-checked={autoUpdateCheck}
+                        <Switch
+                            onCheckedChange={() => { void handleAutoUpdateToggle(); }}
+                            checked={autoUpdateCheck}
                             aria-disabled={isUpdatingAutoCheck}
-                            aria-label="Auto-update check"
+                            label="Auto-update check"
                             disabled={isUpdatingAutoCheck}
-                            className={`w-11 h-6 rounded-full transition-colors relative focus:outline-none focus:ring-2 focus:ring-[var(--color-app-accent)]/50 ${autoUpdateCheck ? 'bg-[var(--color-app-accent)]' : 'bg-[var(--color-app-border)]'
-                                } ${isUpdatingAutoCheck ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        >
-                            <span
-                                className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${autoUpdateCheck ? 'translate-x-5' : 'translate-x-0'
-                                    }`}
-                            />
-                        </button>
+                        />
                     </div>
                 </div>
             </Section>
@@ -244,28 +219,25 @@ export function GeneralTab({
                                     {isDefaultDataPath && <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--color-app-muted)] border border-[var(--color-app-border)] px-1.5 py-0.5 rounded">Default</span>}
                                 </div>
 
-                                <div className="flex gap-2">
-                                    <button
+                                <Toolbar label="Data storage actions" className="gap-2">
+                                    <Button type="button" variant="secondary" size="sm"
                                         onClick={onChangeLocation}
-                                        className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-text)] transition-colors flex items-center gap-2"
                                     >
                                         Change Location
-                                    </button>
+                                    </Button>
                                     {!isDefaultDataPath && (
-                                        <button
+                                        <Button type="button" variant="secondary" size="sm"
                                             onClick={onResetLocation}
-                                            className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/30 border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-muted)] transition-colors"
                                         >
                                             Reset to Default
-                                        </button>
+                                        </Button>
                                     )}
-                                    <button
+                                    <Button type="button" variant="danger" size="sm"
                                         onClick={onClearConnections}
-                                        className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-xs font-medium text-red-500 transition-colors"
                                     >
                                         Clear All Connections
-                                    </button>
-                                </div>
+                                    </Button>
+                                </Toolbar>
                             </div>
                         </div>
                     </div>
@@ -299,22 +271,20 @@ export function GeneralTab({
                                     {isDefaultLogPath && <span className="text-[10px] uppercase font-bold tracking-wider text-[var(--color-app-muted)] border border-[var(--color-app-border)] px-1.5 py-0.5 rounded">Default</span>}
                                 </div>
 
-                                <div className="flex gap-2">
-                                    <button
+                                <Toolbar label="Log storage actions" className="gap-2">
+                                    <Button type="button" variant="secondary" size="sm"
                                         onClick={onChangeLogLocation}
-                                        className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-[var(--color-app-bg)] border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-text)] transition-colors flex items-center gap-2"
                                     >
                                         Change Location
-                                    </button>
+                                    </Button>
                                     {!isDefaultLogPath && (
-                                        <button
+                                        <Button type="button" variant="secondary" size="sm"
                                             onClick={onResetLogLocation}
-                                            className="px-3 py-1.5 bg-[var(--color-app-surface)] hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/30 border border-[var(--color-app-border)] rounded-lg text-xs font-medium text-[var(--color-app-muted)] transition-colors"
                                         >
                                             Reset to Default
-                                        </button>
+                                        </Button>
                                     )}
-                                </div>
+                                </Toolbar>
                             </div>
 
                         </div>

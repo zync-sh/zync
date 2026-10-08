@@ -2,8 +2,9 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { MENU_ITEM_CLASSES, POPUP_SURFACE_CLASSES } from './surfaceStyles';
 
-export const MENU_PANEL_CLASS = 'fixed z-[99999] w-52 max-w-[calc(100vw-16px)] rounded-xl border border-app-border/50 bg-app-panel shadow-xl text-sm ring-1 ring-white/5 flex flex-col py-1 overflow-y-auto overscroll-contain';
+export const MENU_PANEL_CLASS = cn(POPUP_SURFACE_CLASSES, 'fixed z-[99999] w-52 max-w-[calc(100vw-16px)] text-sm flex flex-col py-1 overflow-y-auto overscroll-contain');
 
 /** Portaled descendants belong to the menu containing their trigger, including nested flyouts. */
 export function isInsideMenu(root: HTMLElement | null, target: EventTarget | null): boolean {
@@ -96,7 +97,7 @@ export function MenuSubmenu({ label, icon, children, disabled = false, triggerCl
             onKeyDown={event => {
                 if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); show(true); }
             }}
-            className={cn('w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-app-text hover:bg-app-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent disabled:opacity-50', triggerClassName)}
+            className={cn(MENU_ITEM_CLASSES, 'w-full text-app-text hover:bg-app-surface', triggerClassName)}
         >
             {icon && <span className="text-app-muted" aria-hidden="true">{icon}</span>}
             <span>{label}</span><ChevronRight size={13} className="ml-auto opacity-50" aria-hidden="true" />

@@ -1,5 +1,6 @@
 import type { AppSettings } from '../../../../store/settingsSlice';
 import { Section } from '../../common/Section';
+import { SettingsGroup } from '../../common/SettingsGroup';
 import { Toggle } from '../../common/Toggle';
 
 export interface AppearanceInterfaceSectionProps {
@@ -13,14 +14,14 @@ export function AppearanceInterfaceSection({
 }: AppearanceInterfaceSectionProps) {
     return (
         <Section title="Interface">
-            <div className="space-y-2 rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-surface)]/50 p-1">
+            <SettingsGroup>
                 <Toggle
                     label="Compact Mode"
                     description="Reduce spacing for denser UI."
                     checked={compactMode}
                     onChange={onCompactModeChange}
                 />
-            </div>
+            </SettingsGroup>
         </Section>
     );
 }

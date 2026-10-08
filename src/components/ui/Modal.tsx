@@ -1,9 +1,10 @@
 import { GripHorizontal, X } from 'lucide-react';
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useRef } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ZPortal } from './ZPortal';
-import { motion, AnimatePresence, useDragControls, useMotionValue } from 'framer-motion';
+import { motion, AnimatePresence, useDragControls, useMotionValue, useReducedMotion } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { Button } from './Button';
+import { DIALOG_SURFACE_CLASSES } from './surfaceStyles';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -13,6 +14,19 @@ const FOCUSABLE_SELECTOR = [
   'select:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+
+/** Share visible, enabled Tab candidates between initial focus and focus wrapping.
+ * Client rects exclude hidden ancestors without excluding fixed-position controls.
+ * Do not filter opacity: the dialog itself fades in while acquiring focus.
+ */
+function getFocusableControls(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(element => {
+    if (element.tabIndex < 0 || element.matches(':disabled, input[type="hidden"]')
+      || element.closest('[inert]') || element.getClientRects().length === 0) return false;
+    const visibility = getComputedStyle(element).visibility;
+    return visibility !== 'hidden' && visibility !== 'collapse';
+  });
+}
 
 const DRAG_BLOCK_SELECTOR = 'button, a, input, textarea, select, [role="button"], [data-no-modal-drag="true"]';
 
@@ -79,7 +93,10 @@ export function Modal({
   zIndexClassName,
 }: ModalProps) {
   const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const subtitleId = useId();
+  const reduceMotion = useReducedMotion();
+  const [dialogElement, setDialogElement] = useState<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const dragConstraintsRef = useRef<HTMLDivElement>(null);
   const dragControls = useDragControls();
   const x = useMotionValue(0);
@@ -119,32 +136,44 @@ export function Modal({
     if (!isOpen) return;
     x.set(0);
     y.set(0);
+  }, [isOpen, x, y]);
 
-    const previouslyFocused = document.activeElement instanceof HTMLElement
+  // Capture the opener before ZPortal's passive mount can auto-focus a child.
+  // Keep the saved opener stable across dialog/content ref updates.
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    openerRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+  }, [isOpen]);
+
+  // ZPortal mounts asynchronously: acquire focus only after the dialog exists.
+  useEffect(() => {
+    if (!isOpen || !dialogElement) return;
+    const previouslyFocused = openerRef.current;
     const frame = window.requestAnimationFrame(() => {
-      const dialog = dialogRef.current;
-      const firstFocusable = dialog?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-      (firstFocusable ?? dialog)?.focus();
+      for (const control of getFocusableControls(dialogElement)) {
+        control.focus();
+        // Some rendered candidates still reject focus (e.g. closed content).
+        if (dialogElement.ownerDocument.activeElement === control) return;
+      }
+      dialogElement.focus();
     });
 
     return () => {
       window.cancelAnimationFrame(frame);
-      if (previouslyFocused && previouslyFocused.isConnected) {
-        previouslyFocused.focus();
-      }
+      // Restore after the closing commit, not during layout-effect teardown.
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [isOpen, x, y]);
+  }, [isOpen, dialogElement]);
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Tab') return;
 
-    const dialog = dialogRef.current;
+    const dialog = dialogElement;
     if (!dialog) return;
 
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-      .filter((element) => element.offsetParent !== null);
+    const focusable = getFocusableControls(dialog);
 
     if (focusable.length === 0) {
       event.preventDefault();
@@ -184,7 +213,7 @@ export function Modal({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, pointerEvents: 'none' }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
+            transition={{ duration: reduceMotion ? 0 : 0.15, ease: 'easeOut' }}
             className={cn(
               "absolute inset-0 flex p-4 pointer-events-none",
               placement === 'bottom-right' ? 'items-end justify-end' : 'items-center justify-center',
@@ -200,10 +229,10 @@ export function Modal({
               className={cn('absolute inset-0', backdrop === 'subtle' ? 'bg-black/15' : 'bg-black/70')}
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 8, pointerEvents: 'none' }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
+              exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.96, y: reduceMotion ? 0 : 8, pointerEvents: 'none' }}
+              transition={{ duration: reduceMotion ? 0 : 0.15, ease: 'easeOut' }}
               drag
               dragControls={dragControls}
               dragListener={false}
@@ -212,15 +241,17 @@ export function Modal({
               dragMomentum={false}
               style={{ x, y }}
               className={cn(
-                'relative w-full bg-app-panel backdrop-blur-xl border border-app-border rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden ring-1 ring-black/5 dark:ring-white/5 transition-[max-width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] pointer-events-auto',
+                DIALOG_SURFACE_CLASSES,
+                'relative w-full flex flex-col max-h-[90vh] overflow-hidden transition-[max-width] duration-150 motion-reduce:transition-none pointer-events-auto',
                 width,
                 className
               )}
-              ref={dialogRef}
+              ref={setDialogElement}
               data-zync-modal-surface="true"
               role="dialog"
               aria-modal="true"
               aria-labelledby={titleId}
+              aria-describedby={subtitle ? subtitleId : undefined}
               tabIndex={-1}
               onKeyDown={handleDialogKeyDown}
               onClick={(e) => e.stopPropagation()}
@@ -232,7 +263,7 @@ export function Modal({
                 <div className="min-w-0 pr-2">
                   <h3 id={titleId} className={cn("text-lg font-semibold text-app-text tracking-tight", titleClassName)}>{title}</h3>
                   {subtitle && (
-                    <p className="mt-1 text-xs text-app-muted leading-relaxed">{subtitle}</p>
+                    <p id={subtitleId} className="mt-1 text-xs text-app-muted leading-relaxed">{subtitle}</p>
                   )}
                 </div>
                 <GripHorizontal
@@ -241,13 +272,14 @@ export function Modal({
                 />
                 {effectiveShowCloseButton && (
                   <Button
+                    type="button"
                     variant="ghost"
                     size="icon"
                     onClick={onClose}
                     aria-label="Close"
-                    className="h-8 w-8 rounded-full text-app-muted hover:bg-app-accent hover:text-white transition-all hover:scale-110 active:scale-95 hover:shadow-lg hover:shadow-app-accent/20"
+                    className="h-8 w-8 shrink-0"
                   >
-                    <X className="h-4 w-4" />
+                    <X aria-hidden="true" className="h-4 w-4" />
                   </Button>
                 )}
               </div>

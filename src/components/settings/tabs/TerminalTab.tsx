@@ -7,6 +7,7 @@ import { ShellIcon } from '../../icons/ShellIcon';
 import { Select } from '../../ui/Select';
 import { withOrphanSelectOption } from '../../ui/selectOptions';
 import { Section } from '../common/Section';
+import { SettingsGroup } from '../common/SettingsGroup';
 import { Toggle } from '../common/Toggle';
 import {
     DEFAULT_TERMINAL_GPU_ACCELERATION,
@@ -110,23 +111,25 @@ export function TerminalTab({
             )}
 
             <Section title="Rendering">
-                <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/40 p-3 space-y-3">
+                <SettingsGroup>
                     <Toggle
                         label="GPU Acceleration (WebGL)"
                         description="Faster rendering for large output. On Windows, GPU text is rasterized to a canvas and can look sharper/thinner than DOM mode, which uses native ClearType."
                         checked={settings.terminal.gpuAcceleration ?? DEFAULT_TERMINAL_GPU_ACCELERATION}
                         onChange={(value) => { void updateTerminalSettings({ gpuAcceleration: value }); }}
                     />
-                    <TerminalRendererStatus
-                        gpuAcceleration={settings.terminal.gpuAcceleration ?? DEFAULT_TERMINAL_GPU_ACCELERATION}
-                    />
-                </div>
+                    <div className="px-4 pb-3">
+                        <TerminalRendererStatus
+                            gpuAcceleration={settings.terminal.gpuAcceleration ?? DEFAULT_TERMINAL_GPU_ACCELERATION}
+                        />
+                    </div>
+                </SettingsGroup>
             </Section>
 
             <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
 
             <Section title="Background hosts">
-                <div className="rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/40 p-3 space-y-3">
+                <SettingsGroup>
                     <Toggle
                         label="Suspend idle host shells"
                         description="After switching away from a workspace host, suspend its PTYs once quiet (scrollback preserved). Shells still producing output stay alive. Press Enter on return to resume. Off by default — SSH hosts show a fresh login on auto-respawn."
@@ -134,33 +137,35 @@ export function TerminalTab({
                         onChange={(value) => { void updateTerminalSettings({ suspendIdleHostPtys: value }); }}
                     />
                     {(settings.terminal.suspendIdleHostPtys ?? DEFAULT_SUSPEND_IDLE_HOST_PTYS) && (
-                        <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/30 px-3 py-2.5">
-                            <div>
-                                <p id="idle-host-pty-timeout-label" className="text-sm font-medium text-[var(--color-app-text)]">Idle timeout</p>
-                                <p className="text-[11px] text-[var(--color-app-muted)]">Minutes before background host PTYs suspend</p>
+                        <div className="px-4 pb-3">
+                            <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-app-border)]/60 bg-[var(--color-app-surface)]/30 px-3 py-2.5">
+                                <div>
+                                    <p id="idle-host-pty-timeout-label" className="text-sm font-medium text-[var(--color-app-text)]">Idle timeout</p>
+                                    <p className="text-[11px] text-[var(--color-app-muted)]">Minutes before background host PTYs suspend</p>
+                                </div>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={60}
+                                    inputMode="numeric"
+                                    aria-labelledby="idle-host-pty-timeout-label"
+                                    value={settings.terminal.idleHostPtySuspendMinutes ?? DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES}
+                                    onChange={(e) => {
+                                        const minutes = Math.max(1, Math.min(60, Number(e.target.value) || 1));
+                                        void updateTerminalSettings({ idleHostPtySuspendMinutes: minutes });
+                                    }}
+                                    className="w-16 min-h-[36px] rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)]/50 px-2 py-1.5 text-sm text-center text-[var(--color-app-text)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:border-[var(--color-app-accent)] focus:ring-1 focus:ring-[var(--color-app-accent)]/20"
+                                />
                             </div>
-                            <input
-                                type="number"
-                                min={1}
-                                max={60}
-                                inputMode="numeric"
-                                aria-labelledby="idle-host-pty-timeout-label"
-                                value={settings.terminal.idleHostPtySuspendMinutes ?? DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES}
-                                onChange={(e) => {
-                                    const minutes = Math.max(1, Math.min(60, Number(e.target.value) || 1));
-                                    void updateTerminalSettings({ idleHostPtySuspendMinutes: minutes });
-                                }}
-                                className="w-16 min-h-[36px] rounded-lg border border-[var(--color-app-border)] bg-[var(--color-app-bg)]/50 px-2 py-1.5 text-sm text-center text-[var(--color-app-text)] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:border-[var(--color-app-accent)] focus:ring-1 focus:ring-[var(--color-app-accent)]/20"
-                            />
                         </div>
                     )}
-                </div>
+                </SettingsGroup>
             </Section>
 
             <div className="h-px bg-[var(--color-app-border)]/20 my-2" />
 
             <Section title="Ghost suggestions">
-                <div className="space-y-1">
+                <SettingsGroup plain>
                     <Toggle
                         label="Inline ghost text"
                         description="Show faded fish-style inline completion while typing."
@@ -173,7 +178,7 @@ export function TerminalTab({
                         checked={settings.ghostSuggestions?.contextMenuEnabled ?? false}
                         onChange={(value) => { setGhostSuggestionsField({ contextMenuEnabled: value }); }}
                     />
-                    <div className="px-3 py-2 space-y-1">
+                    <div className="px-4 py-2 space-y-1">
                         <Select
                             label="Native shell sessions"
                             value={settings.ghostSuggestions?.nativeShellPolicy ?? 'auto'}
@@ -194,8 +199,8 @@ export function TerminalTab({
                         </p>
                     </div>
 
-                    <div className="rounded-lg border border-[var(--color-app-border)]/50 bg-[var(--color-app-bg)]/25 px-1 pt-3 pb-1 mt-2">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-app-muted)] px-3 pb-1">
+                    <SettingsGroup>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-app-muted)] px-4 pt-3 pb-1">
                             Providers
                         </div>
                         <Toggle
@@ -216,8 +221,8 @@ export function TerminalTab({
                             checked={settings.ghostSuggestions?.providers?.filesystem ?? true}
                             onChange={(value) => { setGhostProviderField({ filesystem: value }); }}
                         />
-                    </div>
-                </div>
+                    </SettingsGroup>
+                </SettingsGroup>
             </Section>
         </div>
     );

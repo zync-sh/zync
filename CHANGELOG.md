@@ -4,6 +4,64 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Shared switches:** Add compact and labeled switches with native keyboard
+  activation, accessible descriptions, shared theme tokens and track-relative
+  thumb geometry. Existing settings callbacks continue to own persistence.
+  ([c502279])
+- **Switch and navigation coverage:** Add ten component/navigation contract tests
+  and expand the development control gallery to 94 checks, including scaled switch
+  geometry, grouped-row alignment and Settings tab semantics. ([b6cbb16])
+- **Shared UI regression coverage:** Add control and surface contract tests plus
+  development-only light/dark galleries for buttons, inputs, dropdowns, menus and
+  dialogs. These fixtures are not production app routes. ([3039d68])
+- **Panel and action primitives:** Add reusable panel headers, named icon buttons
+  and wrapping action groups with shared sizing tokens and native Tab navigation.
+  ([829aa77])
+- **Header and action coverage:** Add six component contract tests and extend the
+  control gallery with narrow-header, loading-action and form-safety checks.
+  ([fe2da58])
+
+### Changed
+
+- **Settings and connection controls:** Adopt shared switches and action groups in
+  General Settings, plus named icon buttons and wrapping footer actions in Add
+  Connection. Existing save, test and confirmation handlers are retained.
+  ([4a679a5])
+- **Consistent shared controls:** Centralize control sizing, typography, focus,
+  disabled states and theme colors for buttons and inputs while preserving native
+  form behavior and caller styling overrides. ([c1057ee])
+- **Consistent popup surfaces:** Align shared selects, menus and dialogs with
+  reusable surface tokens, clearer labels and reduced-motion support. Existing
+  placement and protected-dialog dismissal rules are retained. ([c23b6fe])
+- **Settings and Snippets headers:** Adopt shared panel headers and a named Settings
+  close action. Keep snippet copy/edit/delete actions visible without hovering and
+  allow their row to wrap in narrow panes, preserving existing action handlers.
+  ([5e525a1])
+
+### Fixed
+
+- **Settings switch alignment:** Give boxed, plain and nested Terminal settings
+  rows a consistent gutter; use the same grouping for Compact Mode. ([c502279])
+- **Settings keyboard navigation:** Scope Up/Down and Home/End to the vertical
+  section list, with Enter/Space activation and one Tab stop. Separate settings.json
+  from the section tabs, link tabs to their panel, and exclude inactive tabs from
+  dialog focus wrapping. Arrow keys elsewhere no longer switch sections.
+  ([3a47a70])
+- **Visible dialog focus targets:** Skip hidden, disabled and inert controls when
+  acquiring or wrapping focus. Verify initial focus succeeds and fall back to the
+  dialog when no eligible control exists; add hidden/empty-control fixtures.
+  ([56fc544])
+- **Dialog focus restoration:** Capture the opener before auto-focused portal
+  content mounts, so dismissal returns focus to the correct control. Add an
+  auto-focus regression fixture to the overlay gallery. ([2ac5078])
+- **Dialog initial focus:** Wait for portal content to mount before moving keyboard
+  focus into a dialog, and restore its opener on dismissal. ([c23b6fe])
+- **Accessible input errors:** Associate validation messages with their inputs
+  without losing caller-provided descriptions; expose loading buttons as busy.
+  ([c1057ee])
+
 ## [2.34.1] - 2026-10-05
 
 ### Changed
@@ -2023,3 +2081,15 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [4cacff1]: https://github.com/zync-sh/zync/commit/4cacff1
 [3efbf72]: https://github.com/zync-sh/zync/commit/3efbf72
 [025d573]: https://github.com/zync-sh/zync/commit/025d573
+[c1057ee]: https://github.com/zync-sh/zync/commit/c1057ee
+[c23b6fe]: https://github.com/zync-sh/zync/commit/c23b6fe
+[3039d68]: https://github.com/zync-sh/zync/commit/3039d68
+[829aa77]: https://github.com/zync-sh/zync/commit/829aa77
+[5e525a1]: https://github.com/zync-sh/zync/commit/5e525a1
+[fe2da58]: https://github.com/zync-sh/zync/commit/fe2da58
+[2ac5078]: https://github.com/zync-sh/zync/commit/2ac5078
+[56fc544]: https://github.com/zync-sh/zync/commit/56fc544
+[c502279]: https://github.com/zync-sh/zync/commit/c502279
+[3a47a70]: https://github.com/zync-sh/zync/commit/3a47a70
+[4a679a5]: https://github.com/zync-sh/zync/commit/4a679a5
+[b6cbb16]: https://github.com/zync-sh/zync/commit/b6cbb16

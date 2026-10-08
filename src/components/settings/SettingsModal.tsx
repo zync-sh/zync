@@ -3,10 +3,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import { ZPortal } from '../ui/ZPortal';
+import { IconButton } from '../ui/IconButton';
+import { PanelHeader } from '../ui/PanelHeader';
 import { useAppStore } from '../../store/useAppStore'; // Updated Import
 import { usePlugins } from '../../context/PluginContext';
 
-import { X, Type, Monitor, FileText, Keyboard, Info, RefreshCw, FolderOpen, Settings as SettingsIcon, Package, Code, Sparkles, GripHorizontal, PanelBottom, MessageSquare } from 'lucide-react';
+import { X, RefreshCw, FolderOpen, Package, GripHorizontal } from 'lucide-react';
 import { ToastContainer } from '../ui/Toast';
 
 import { buildEditorProviderOptions, CODEMIRROR_EDITOR_ID, formatEditorCapabilities } from '../editor/providers';
@@ -21,7 +23,7 @@ import { AboutTab } from './tabs/AboutTab';
 import { StatusBarTab } from './tabs/StatusBarTab';
 import { FeedbackTab } from './tabs/FeedbackTab';
 import { IconResolver } from './common/IconResolver';
-import { TabButton } from './common/TabButton';
+import { SettingsNavigation, settingsPanelId, settingsTabId, type SettingsSection as Tab } from './SettingsNavigation';
 import { TiltLogo } from './common/TiltLogo';
 import { useSettingsPaths } from './hooks/useSettingsPaths';
 import { useSettingsUpdateFlow } from './hooks/useSettingsUpdateFlow';
@@ -39,7 +41,6 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-type Tab = 'general' | 'terminal' | 'appearance' | 'statusBar' | 'fileManager' | 'shortcuts' | 'plugins' | 'ai' | 'feedback' | 'about';
 const BUILTIN_ICON_THEME_COUNT = 2; // VSCode Icons + Lucide
 const FOCUSABLE_SELECTOR = [
     'a[href]',
@@ -47,8 +48,8 @@ const FOCUSABLE_SELECTOR = [
     'textarea:not([disabled])',
     'input:not([disabled])',
     'select:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])',
-].join(',');
+    '[tabindex]',
+].map(selector => `${selector}:not([tabindex="-1"])`).join(',');
 const DRAG_BLOCK_SELECTOR = 'button, a, input, textarea, select, [role="button"], [data-no-modal-drag="true"]';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
@@ -358,7 +359,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     // Note: Update listeners moved to UpdateNotification.tsx (Global Store)
 
-    // Keyboard Navigation
+    // Modal dismissal only; section navigation is scoped to SettingsNavigation.
     useEffect(() => {
         if (!isOpen) return;
 
@@ -387,33 +388,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 onClose();
                 return;
             }
-
-            // Arrow keys for tab navigation (skip when restart confirm is open,
-            // or when inner tablists already handled the key)
-            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-                if (showRestartConfirm || e.defaultPrevented) {
-                    return;
-                }
-                e.preventDefault();
-                const tabs: Tab[] = ['general', 'terminal', 'appearance', 'statusBar', 'fileManager', 'shortcuts', 'plugins', 'ai', 'feedback', 'about'];
-                const currentIndex = tabs.indexOf(activeTab);
-                let nextIndex: number;
-
-                if (e.key === 'ArrowRight') {
-                    nextIndex = (currentIndex + 1) % tabs.length;
-                } else {
-                    nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
-                }
-
-                handleTabChange(tabs[nextIndex]);
-            }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [
         isOpen,
-        activeTab,
         onClose,
         showRestartConfirm,
         setShowRestartConfirm,
@@ -500,7 +480,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             );
         }
     };
-    const getTabIndex = (tab: Tab) => (activeTab === tab ? 0 : -1);
     const handleDragHandlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
         if (event.button !== 0) return;
         const target = event.target instanceof HTMLElement ? event.target : null;
@@ -604,60 +583,21 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 >
 
                 {/* Sidebar */}
-                <div className="w-[180px] flex flex-col border-r border-[var(--color-app-border)]/40 bg-[var(--color-app-surface)]/20 p-2 space-y-0.5" role="tablist" aria-label="Settings sections">
-                    <div className="px-3 py-4 mb-1">
-                        <span className="text-xs font-bold text-[var(--color-app-muted)] uppercase tracking-wider opacity-70">Settings</span>
-                    </div>
-
-                    <TabButton active={activeTab === 'general'} onClick={() => handleTabChange('general')} icon={<SettingsIcon size={15} />} label="General" tabIndex={getTabIndex('general')} />
-                    <TabButton active={activeTab === 'terminal'} onClick={() => handleTabChange('terminal')} icon={<Type size={15} />} label="Terminal" tabIndex={getTabIndex('terminal')} />
-                    <TabButton active={activeTab === 'appearance'} onClick={() => handleTabChange('appearance')} icon={<Monitor size={15} />} label="Appearance" tabIndex={getTabIndex('appearance')} />
-                    <TabButton active={activeTab === 'statusBar'} onClick={() => handleTabChange('statusBar')} icon={<PanelBottom size={15} />} label="Status Bar" tabIndex={getTabIndex('statusBar')} />
-                    <TabButton active={activeTab === 'fileManager'} onClick={() => handleTabChange('fileManager')} icon={<FileText size={15} />} label="File Manager" tabIndex={getTabIndex('fileManager')} />
-                    <TabButton active={activeTab === 'shortcuts'} onClick={() => handleTabChange('shortcuts')} icon={<Keyboard size={15} />} label="Shortcuts" tabIndex={getTabIndex('shortcuts')} />
-                    <TabButton active={activeTab === 'plugins'} onClick={() => handleTabChange('plugins')} icon={<Package size={15} />} label="Plugins" tabIndex={getTabIndex('plugins')} />
-                    <TabButton active={activeTab === 'ai'} onClick={() => handleTabChange('ai')} icon={<Sparkles size={15} />} label="AI" tabIndex={getTabIndex('ai')} />
-                    <TabButton active={activeTab === 'feedback'} onClick={() => handleTabChange('feedback')} icon={<MessageSquare size={15} />} label="Feedback" tabIndex={getTabIndex('feedback')} />
-                    <TabButton
-                        active={false}
-                        onClick={() => {
-                            openSettingsJsonTab();
-                            onClose();
-                        }}
-                        icon={<Code size={15} />}
-                        label="settings.json"
-                    />
-
-                    <div className="mt-auto pt-2 border-t border-[var(--color-app-border)]/30">
-                        <TabButton
-                            active={activeTab === 'about'}
-                            onClick={() => handleTabChange('about')}
-                            icon={<Info size={15} />}
-                            label="About"
-                            tabIndex={getTabIndex('about')}
-                            badge={updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready'}
-                            badgeLabel={
-                                updateStatus === 'available'
-                                    ? 'Update available'
-                                    : updateStatus === 'downloading'
-                                        ? 'Update downloading'
-                                        : updateStatus === 'ready'
-                                            ? 'Update ready to install'
-                                            : 'New notifications'
-                            }
-                        />
-                    </div>
-                </div>
+                <SettingsNavigation idPrefix={titleId} activeTab={activeTab} onTabChange={handleTabChange}
+                    onOpenJson={() => { openSettingsJsonTab(); onClose(); }}
+                    aboutBadge={updateStatus === 'available' || updateStatus === 'downloading' || updateStatus === 'ready'}
+                    aboutBadgeLabel={updateStatus === 'available' ? 'Update available'
+                        : updateStatus === 'downloading' ? 'Update downloading'
+                            : updateStatus === 'ready' ? 'Update ready to install' : 'New notifications'} />
 
                 {/* Content Area */}
                 <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-app-bg)]">
                     {/* Header */}
-                    <div
-                        className="h-12 flex items-center justify-between px-4 border-b border-[var(--color-app-border)]/30 shrink-0 cursor-move active:cursor-grabbing select-none"
+                    <PanelHeader
+                        className="border-app-border/30 cursor-move active:cursor-grabbing select-none"
                         onPointerDown={handleDragHandlePointerDown}
-                    >
-                        <h2 id={titleId} className="font-medium text-[var(--color-app-text)] text-sm tracking-tight">
-                            {activeTab === 'fileManager'
+                        titleId={titleId}
+                        title={activeTab === 'fileManager'
                                 ? 'File Manager'
                                 : activeTab === 'statusBar'
                                     ? 'Status Bar'
@@ -666,18 +606,15 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 : activeTab === 'feedback'
                                     ? 'Feedback'
                                 : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
-                        </h2>
-                        <GripHorizontal
-                            aria-hidden="true"
-                            className="ml-auto mr-2 h-4 w-4 shrink-0 text-app-muted/45"
-                        />
-                        <button onClick={onClose} className="p-1.5 rounded-md text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)] transition-colors">
-                            <X size={16} />
-                        </button>
-                    </div>
+                        actions={<>
+                            <GripHorizontal aria-hidden="true" className="mr-2 h-4 w-4 shrink-0 text-app-muted/45" />
+                            <IconButton label="Close settings" icon={<X size={16} />} onClick={onClose} />
+                        </>}
+                    />
 
                     {/* Scrollable Content */}
-                    <div className={`flex-1 overflow-y-auto p-4 lg:p-5 space-y-6 transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}>
+                    <div role="tabpanel" id={settingsPanelId(titleId)} aria-labelledby={settingsTabId(titleId, activeTab)}
+                        className={`flex-1 overflow-y-auto p-4 lg:p-5 space-y-6 transition-opacity duration-150 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}>
 
                         {activeTab === 'general' && (
                             <GeneralTab

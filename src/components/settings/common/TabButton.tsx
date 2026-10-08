@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 export function TabButton({
     active,
@@ -9,6 +9,7 @@ export function TabButton({
     badge = false,
     badgeLabel,
     tabIndex = 0,
+    ...props
 }: {
     active: boolean;
     onClick: () => void;
@@ -18,15 +19,16 @@ export function TabButton({
     badge?: boolean;
     badgeLabel?: string;
     tabIndex?: number;
-}) {
+} & Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'id' | 'aria-controls' | 'onFocus' | 'onKeyDown'>) {
     return (
         <button
+            {...props}
             type="button"
             onClick={onClick}
             role="tab"
             aria-selected={active && !dimmed}
             tabIndex={tabIndex}
-            className={`w-full relative flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all ${dimmed ? 'opacity-30 cursor-default' :
+            className={`w-full relative flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-control-focus ${dimmed ? 'opacity-30 cursor-default' :
                 active
                     ? 'bg-[var(--color-app-surface)] text-[var(--color-app-text)] font-medium shadow-sm'
                     : 'text-[var(--color-app-muted)] hover:text-[var(--color-app-text)] hover:bg-[var(--color-app-surface)]/50'

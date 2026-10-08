@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
+import { Toolbar } from '../ui/Toolbar';
 import { Select } from '../ui/Select';
 import { OSIcon } from '../icons/OSIcon';
 import { useAppStore, Connection } from '../../store/useAppStore';
@@ -1354,29 +1356,31 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         <div>
                                             <div className="flex items-center justify-between mb-2">
                                                 <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">Icon</label>
-                                                <button
+                                                <Button variant="ghost" size="sm"
                                                     type="button"
-                                                    className="text-[11px] text-app-accent hover:underline"
+                                                    className="text-app-accent"
                                                     onClick={() => setShowAllIcons((prev) => !prev)}
                                                 >
                                                     {showAllIcons ? 'Show less' : 'Show more'}
-                                                </button>
+                                                </Button>
                                             </div>
-                                            <div className="grid grid-cols-9 gap-2">
+                                            <div className="grid grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-2">
                                                 {visibleIcons.map(iconName => (
-                                                    <button
+                                                    <IconButton
                                                         key={iconName}
+                                                        label={iconName}
+                                                        icon={<OSIcon icon={iconName} className="w-5 h-5" />}
+                                                        size="md"
+                                                        aria-pressed={(formData.icon || 'Server').toLowerCase() === iconName.toLowerCase()}
                                                         onClick={() => setFormData({ ...formData, icon: iconName })}
                                                         className={cn(
-                                                            "p-2 rounded-lg border transition-all hover:bg-app-surface flex items-center justify-center aspect-square",
+                                                            "w-full border",
                                                             (formData.icon || 'Server').toLowerCase() === iconName.toLowerCase()
                                                                 ? "bg-app-accent/20 border-app-accent text-app-accent"
                                                                 : "bg-app-bg border-app-border text-app-muted"
                                                         )}
                                                         title={iconName}
-                                                    >
-                                                        <OSIcon icon={iconName} className="w-5 h-5" />
-                                                    </button>
+                                                    />
                                                 ))}
                                             </div>
                                         </div>
@@ -1518,14 +1522,15 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                     <p className="text-xs text-amber-400/90">{testDisabledReason}</p>
                                 </div>
                             )}
-                            <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-                                <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                                <Toolbar label="Connection test actions" className="gap-2">
                                     {!activeEditingConnectionId && (
-                                        <Button variant="ghost" size="sm" onClick={() => setEntryMode('chooser')}>
+                                        <Button type="button" variant="ghost" size="sm" onClick={() => setEntryMode('chooser')}>
                                             Change Mode
                                         </Button>
                                     )}
                                     <Button
+                                        type="button"
                                         variant="ghost"
                                         size="sm"
                                         onClick={() => { void handleTestConnection(); }}
@@ -1542,9 +1547,10 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                                     <ShieldCheck className="w-3.5 h-3.5" />}
                                         <span>{testStatus === 'testing' ? 'Testing...' : 'Test'}</span>
                                     </Button>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
+                                </Toolbar>
+                                <Toolbar label="Save connection actions" className="ml-auto gap-2">
                                     <Button
+                                        type="button"
                                         variant="secondary"
                                         size="sm"
                                         disabled={!canSave || isSaving}
@@ -1553,6 +1559,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                         {activeEditingConnectionId ? 'Save' : 'Create'}
                                     </Button>
                                     <Button
+                                        type="button"
                                         variant="primary"
                                         size="sm"
                                         disabled={!canSave || isSaving}
@@ -1560,7 +1567,7 @@ export function AddConnectionModal({ isOpen, onClose, editingConnectionId }: Add
                                     >
                                         {activeEditingConnectionId ? 'Save & Open' : 'Save & Connect'}
                                     </Button>
-                                </div>
+                                </Toolbar>
                             </div>
                         </div>
                     </>
