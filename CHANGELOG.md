@@ -4,8 +4,24 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.38.0] - 2026-10-26
+
 ### Added
 
+- **File Manager Up button:** Go to the parent folder beside Back and Forward.
+  The shortcut hint follows your keybinding, and the button is disabled at filesystem
+  roots and while the folder is loading or the host is offline. ([484ca1c])
+  Unresolved or relative locations also keep the button disabled. ([c96d801])
+
+- **Global security hardening audit library:** Browse saved reports from all hosts
+  from global navigation, the **+** menu or command palette. Search, filter by host,
+  open reports offline, export or delete saved copies. Removed hosts' reports remain
+  available. The feature is now named **Security hardening audit**. **New audit**
+  selects a host and opens the existing setup, with explicit connection and run
+  approval. Back preserves the current in-memory draft through **Resume audit**.
+  Browse labels respect host-address privacy, removed host filters clear after
+  confirmed changes, and deleting a draft's host leaves Back available.
+  ([9272802], [a9c29d6], [e6b3bbc])
 - **Actionable hardening guidance:** Attention findings show a concise recommended
   next step, with expandable change, impact, verification and recovery guidance
   where available. Unavailable checks retain collection next steps. Saved reports
@@ -16,6 +32,7 @@ All notable changes to Zync are documented in this file. The format is based on 
   ordered steps that survive saving and importing reports.
   Readable audit-rule, OS-profile and preset labels replace internal identifiers in
   report metadata and accepted-risk details.
+  ([2dc52de], [a5a7894], [cc27338])
 - **Simpler audit navigation:** Keep Reports and Accepted risks in the library,
   with a separate New assessment view and one Back control for setup/report review.
   Back retains list filters, pages and the latest unsaved report. Saved report rows
@@ -23,6 +40,7 @@ All notable changes to Zync are documented in this file. The format is based on 
   Leaving setup retains scope choices while clearing one-run credentials and sudo consent.
   Delete preparation uses row-local progress, and background refresh preserves the
   visible list instead of replacing it with a loading placeholder.
+  ([cc27338])
 - **Independent accepted risks:** Keep host-scoped acceptances separately from
   reports, with search, reason/expiry details and confirmed removal. Report deletion
   keeps them by default; an optional checkbox atomically removes matching unchanged
@@ -31,6 +49,7 @@ All notable changes to Zync are documented in this file. The format is based on 
   Report exports support up to 1,000 notes within a 1 MiB annotation budget.
   Stale actions remain blocked after deletion and reacceptance, and spreadsheet
   exports honor the newest matching decision before checking its expiry.
+  ([2dc52de], [a5a7894], [cc27338])
 - **Saved hardening reports:** Explicitly save a new report or replace a selected
   saved copy, including accepted-risk reasons and expiry. Open, compare and delete
   dated reports locally across app restarts. Saved summaries appear inline by default,
@@ -40,6 +59,7 @@ All notable changes to Zync are documented in this file. The format is based on 
   risk notes and spreadsheet exports treat evidence as text. Excel keeps Baseline
   and Preset in Summary and Area in Findings; CSV retains all three columns.
   JSON roundtrips preserve the report/import size budget near its limit.
+  ([2dc52de], [a5a7894], [cc27338])
 - **Focused hardening workflow:** Compact role presets and an areas editor replace
   the text-heavy setup. The catalog now contains 183 checks across 15 areas,
   including a bounded sample of running Docker containers, a current-file SSH
@@ -49,6 +69,7 @@ All notable changes to Zync are documented in this file. The format is based on 
   explain evidence without claiming complete application coverage or live SSH policy.
   Complete sampled workload outcomes bind comparisons and risk decisions, including
   matches beyond the displayed ID list. Setup controls adapt to narrow split panes.
+  ([2dc52de], [a5a7894], [cc27338])
 - **Local hardening review:** Explicit report comparison binds host-key, account,
   policy, target and rule identity; missing or unavailable checks never appear
   resolved. Standard/sudo comparisons show newly assessed and no-longer-assessed
@@ -56,15 +77,18 @@ All notable changes to Zync are documented in this file. The format is based on 
   Expiring accepted-risk annotations require a reason, bind to exact
   evidence and preserve native status/counts. Reports/notes can be explicitly saved
   locally or exported, with no automatic saving or upload.
+  ([2dc52de], [a5a7894], [cc27338])
 - **Selectable hardening areas:** Run the original 38-check host baseline or
   choose additional host protections and optional Nginx, Apache, Docker Engine,
   PostgreSQL, MySQL, Redis and Jenkins modules, with selected areas captured in approval,
   results, filters, JSON export and sudo retries. Unselected modules run no commands.
   Application results distinguish named service-unit/file checks from local daemon
   observations; they do not claim complete application or database policy coverage.
-- **Hardening audit:** Open an on-demand Hardening audit pane with scan corners,
+  ([2dc52de], [a5a7894], [cc27338])
+- **Security hardening audit:** Open an on-demand Security hardening audit pane with scan corners,
   an OS icon and a magnifier in a Linux SSH workspace for a first-party, read-only baseline
   of 38 host checks and observations.
+  ([b81abbd], [50978eb], [9ca8e2b])
   Covers kernel, SSH, account, file, network, mount, update and service settings,
   with evidence, contextual recommendations, searchable/paginated results,
   cancellation and local JSON export. No scanner/agent installation, account,
@@ -89,8 +113,43 @@ All notable changes to Zync are documented in this file. The format is based on 
   essential findings appear before expandable technical details.
   Plain-language results explain settings and next steps while retaining exact
   technical evidence for inspection and export.
+  ([c1fb5bd], [36327af])
   SSH policy prefers config-only OpenSSH `-G` when supported, with a bounded probe
   and legacy `-T` fallback. Linux collection requires GNU coreutils `timeout`.
+
+### Fixed
+
+- **Current global audit history:** Returning to the saved-report library refreshes
+  its list, while report previews and audit drafts skip background list refreshes.
+  ([1fa69c8])
+
+- **Disconnected workspace actions:** Audit setup, Dashboard and per-host Port
+  Forwarding share explicit Connect/Reconnect/Retry controls. Saved reports,
+  accepted risks and tunnel configurations remain usable offline; audit scope
+  and in-memory completed reports survive reconnect without starting a scan.
+  Offline audit setup shows only the connection card; assessment controls return
+  after connecting.
+  Connection cards offer Cancel during connection and concise failure reasons;
+  audit reconnect restores keyboard focus without interrupting another control.
+  ([87e62bb], [9ee6ba5])
+- **Consistent tunnel starts:** Per-host and global single/group starts connect
+  through the existing host flow, respect cancellation and avoid duplicate starts
+  after automatic tunnel restoration. Browsing no longer reconciles by stopping
+  tunnels, and stopping a forward no longer disconnects other host panes. ([fa7ad8c])
+  Connection failures surface as errors and count as failures in group starts;
+  errors arriving after Cancel still count as cancellations. ([b534c07])
+- **Focused reconnect shortcuts:** Only the focused restored terminal or Files
+  pane owns reconnect autofocus and the Enter shortcut. Offline dashboards hide
+  live metrics and remote actions until the host is connected. ([9ee6ba5])
+- **Reconnect state:** Visible but unfocused Files panes no longer take keyboard
+  focus. Sudo retry stays unavailable while an assessment runs or stops. Tunnel
+  group starts recheck runtime status after connecting, and disconnect cleanup
+  clears stale active flags while retaining reconnect restoration choices.
+  Feature connections preserve shell inventory and canvas selection. Fresh tunnel
+  starts after cancellation wait for cleanup, and keyboard pane navigation cancels
+  pending reconnect focus recovery. ([87e62bb], [fa7ad8c], [9ee6ba5], [2fa623e])
+- **Docker workload checks:** Fixed jq 1.6 compatibility so inventory parsing,
+  bounded inspection and transfer-status handling work on hosts using that version. ([94d4f06])
 
 ## [2.37.0] - 2026-10-22
 
@@ -2770,7 +2829,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.37.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.0...HEAD
+[2.38.0]: https://github.com/zync-sh/zync/compare/v2.37.0...v2.38.0
 [2.37.0]: https://github.com/zync-sh/zync/compare/v2.36.0...v2.37.0
 [2.36.0]: https://github.com/zync-sh/zync/compare/v2.35.1...v2.36.0
 [2.35.1]: https://github.com/zync-sh/zync/compare/v2.34.1...v2.35.1
@@ -3093,3 +3153,23 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [bcfe6f4]: https://github.com/zync-sh/zync/commit/bcfe6f42dd3f00b3ff650da0f3622b1bb60154d1
 [387ddc7]: https://github.com/zync-sh/zync/commit/387ddc7efa2905cc29e1842730daa5f2aa6b3c4e
 [354db7d]: https://github.com/zync-sh/zync/commit/354db7d2cf43a04d42c6dc7213d078a7be1eca3b
+[94d4f06]: https://github.com/zync-sh/zync/commit/94d4f06296ea8fb61b8c846994c19970b4ae07dc
+[87e62bb]: https://github.com/zync-sh/zync/commit/87e62bb600b36f3f0e95e4b419ff6d34057ad284
+[fa7ad8c]: https://github.com/zync-sh/zync/commit/fa7ad8c9db8fba55e6f3769f4cb148fda8844d4f
+[9ee6ba5]: https://github.com/zync-sh/zync/commit/9ee6ba5bfac0689fb5f8f98873758428b938d96a
+[2fa623e]: https://github.com/zync-sh/zync/commit/2fa623e546e10356133ae6a6b0f8d379aee53653
+[b534c07]: https://github.com/zync-sh/zync/commit/b534c07a886f16fa22fefbf040ca6bd3dd12f400
+[9272802]: https://github.com/zync-sh/zync/commit/92728022a340136c4e95d613d73df09c8abe1c04
+[a9c29d6]: https://github.com/zync-sh/zync/commit/a9c29d687d552078cbaa02233f02e064719468d9
+[e6b3bbc]: https://github.com/zync-sh/zync/commit/e6b3bbce5b03baf5180f06030c93f0bd5f8db3c3
+[2dc52de]: https://github.com/zync-sh/zync/commit/2dc52def4487e719f18c1f7e10d37b3141553181
+[a5a7894]: https://github.com/zync-sh/zync/commit/a5a7894a2c7879a902dee029bf527961d1c5d0bc
+[cc27338]: https://github.com/zync-sh/zync/commit/cc273385dde498cc9b0a19e576ff7d66372c1eb2
+[b81abbd]: https://github.com/zync-sh/zync/commit/b81abbd030036fd8e693f1f33e89076f78dd58f8
+[50978eb]: https://github.com/zync-sh/zync/commit/50978ebe6d5fff1cbed86ff2b0827c1aa5538555
+[9ca8e2b]: https://github.com/zync-sh/zync/commit/9ca8e2bff37fbd3f0fdb23d85c14eeddb74778d2
+[c1fb5bd]: https://github.com/zync-sh/zync/commit/c1fb5bd41b9bcb6aa08957cb929ac6a45fdd65ca
+[36327af]: https://github.com/zync-sh/zync/commit/36327afc287c18cc741b0746d380301a47ef2c31
+[484ca1c]: https://github.com/zync-sh/zync/commit/484ca1cabd76e7a919a3d3cd5743f368a236da34
+[1fa69c8]: https://github.com/zync-sh/zync/commit/1fa69c86635fda49d8bf35ee606d158fcff9a0ca
+[c96d801]: https://github.com/zync-sh/zync/commit/c96d8019256821dddbcc3dfc9a0920f13c669129

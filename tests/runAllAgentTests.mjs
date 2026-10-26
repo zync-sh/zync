@@ -38,10 +38,15 @@ normalizeEmittedImports(path.resolve('.tmp-agent-tests'));
 
 const tests = [
   '.tmp-agent-tests/tests/securityAssessment.test.js',
+  'tests/securityPanelRetry.test.mjs',
+  '.tmp-agent-tests/tests/userTunnelActions.test.js',
+  '.tmp-agent-tests/tests/tunnelConnectionLifecycle.test.js',
+  'tests/featureConnectionWorkspace.test.mjs',
   '.tmp-agent-tests/tests/vaultSshCertificate.test.js',
   '.tmp-agent-tests/tests/connectionOptions.test.js',
   '.tmp-agent-tests/tests/networkInterface.test.js',
   'tests/terminalLifecycleOwnership.test.mjs',
+  'tests/reconnectPaneFocus.test.mjs',
   'tests/changedFunctionDocs.test.mjs',
   'tests/terminalOutputFlow.test.mjs',
   'tests/terminalRendererLifecycle.test.mjs',
@@ -179,6 +184,7 @@ const tests = [
   'tests/fileListPresentation.test.mjs',
   'tests/fileMarquee.test.mjs',
   'tests/filePathNav.test.mjs',
+  '.tmp-agent-tests/tests/filePathAbsolute.test.js',
   'tests/fileVolumes.test.mjs',
   'tests/themedIconSrc.test.mjs',
   'tests/materialIconTheme.test.mjs',

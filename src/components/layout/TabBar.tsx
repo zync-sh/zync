@@ -2,6 +2,7 @@ import { GlobalUtilityActions } from './GlobalUtilityActions';
 import { GoogleMarkIcon } from '../icons/providerIcons';
 import { Settings as SettingsIcon, Network, Gift, Home, Shield, Monitor, Link2 } from 'lucide-react';
 import { OSIcon } from '../icons/OSIcon';
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
 import { ZyncMark } from '../brand/ZyncMark';
 import { LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
 import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
@@ -26,6 +27,7 @@ import { isEditorOverlayOpen } from '../editor/overlayState';
 
 function getIconForTab(tab: Tab, connections: Connection[], size: 12 | 13 = 12) {
     if (tab.type === 'port-forwarding') return <Network size={size} />;
+    if (tab.type === 'security-audits') return <HardeningAuditIcon size={size} />;
     if (tab.type === 'public-urls') return <Link2 size={size} />;
     if (tab.type === 'settings') return <SettingsIcon size={size} />;
     if (tab.type === 'release-notes') return <Gift size={size} className="text-[var(--color-app-accent)]" />;
@@ -85,6 +87,7 @@ export function TabBar() {
     const goHome = useAppStore(state => state.goHome);
     const openPublicUrlsTab = useAppStore(state => state.openPublicUrlsTab);
     const openPortForwardingTab = useAppStore(state => state.openPortForwardingTab);
+    const openSecurityAuditsTab = useAppStore(state => state.openSecurityAuditsTab);
     const openTab = useAppStore(state => state.openTab);
     const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
     const { showInTitleLeft, showInTitleRight } = useNotificationBellPlacement();
@@ -267,6 +270,7 @@ export function TabBar() {
                                 open={{
                                     portForwardingOpen: tabs.some((tab) => tab.type === 'port-forwarding'),
                                     publicUrlsOpen: tabs.some((tab) => tab.type === 'public-urls'),
+                                    securityAuditsOpen: tabs.some((tab) => tab.type === 'security-audits'),
                                     localOpen: tabs.some((tab) => tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID),
                                     openHostIds: new Set(
                                         tabs
@@ -283,6 +287,7 @@ export function TabBar() {
                                 onNewTunnel={() => window.dispatchEvent(new Event('ssh-ui:open-new-tunnel'))}
                                 onOpenPortForwarding={() => openPortForwardingTab()}
                                 onOpenPublicUrls={() => openPublicUrlsTab()}
+                                onOpenSecurityAudits={() => openSecurityAuditsTab()}
                                 onOpenLocal={() => openTab('local')}
                                 onOpenHost={(hostId) => openTab(hostId)}
                             />

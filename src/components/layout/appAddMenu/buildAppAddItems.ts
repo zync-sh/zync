@@ -6,6 +6,7 @@ import {
 } from '../../../features/connections/domain/connectionDisplay';
 import type { Connection } from '../../../features/connections/domain/types';
 import type { AppAddHost, AppAddItem, AppAddOpenState } from './types';
+import { builtinWorkspaceViewLabel } from '../../../features/workspace/domain/registrations';
 
 export const APP_ADD_GROUP_ORDER: AppAddItem['group'][] = ['create', 'go'];
 
@@ -91,6 +92,14 @@ export function buildAppAddItems(input: {
             label: 'Public URLs',
             keywords: uniqueKeywords('public urls', 'share', 'https', 'beta', 'pu'),
             hint: open.publicUrlsOpen ? 'Open' : undefined,
+        },
+        {
+            id: 'go:security-audits',
+            group: 'go',
+            kind: 'security-audits',
+            label: builtinWorkspaceViewLabel('security'),
+            keywords: uniqueKeywords('security hardening audit', 'reports', 'saved', 'global'),
+            hint: open.securityAuditsOpen ? 'Open' : undefined,
         },
         {
             id: 'go:local',

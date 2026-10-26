@@ -23,18 +23,29 @@ import { ReportActionMenu, ReportExportMenu } from './ReportActionMenu';
 import { AcceptedRisksList } from './AcceptedRisksList';
 import { DeleteReportDialog } from './DeleteReportDialog';
 
+interface AssessmentReportsProps {
+    owner: object; subject: AssessmentSubject; liveResult: AssessmentResult | null; running: boolean;
+    setup: ReactNode; onLeaveSetup(): void; onRetryWithSudo?: (label: SudoRetryLabel) => void;
+    presets?: readonly ScopePreset[];
+    /** A global row enters the shared host-scoped reviewer without creating an assessment controller. */
+    initialReport?: SavedReportSummary; onBackToLibrary?(): void;
+    /** Each explicit request reveals setup while retaining the current report and nonsecret scope choices. */
+    setupRequest?: object;
+}
+
 /** Reports have an explicit local lifecycle, independent from remote assessment or credential ownership. */
-export function AssessmentReports({ owner, subject, liveResult, running, setup, onLeaveSetup, onRetryWithSudo, presets }: { owner: object; subject: AssessmentSubject; liveResult: AssessmentResult | null; running: boolean; setup: ReactNode; onLeaveSetup(): void; onRetryWithSudo?: (label: SudoRetryLabel) => void; presets?: readonly ScopePreset[] }) {
+export function AssessmentReports({ owner, subject, liveResult, running, setup, onLeaveSetup, onRetryWithSudo, presets, initialReport, onBackToLibrary, setupRequest }: AssessmentReportsProps) {
     const notify = useAppStore(state => state.showToast);
     const library = useReportLibrary(owner, subject, notify);
     const storedAnnotations = useMemo(() => library.risks.map(row => row.annotation), [library.risks]);
     const review = useAssessmentReview(owner, notify, storedAnnotations);
     const [viewed, setViewed] = useState<{ owner: object; package: ReportPackage }>();
     const canBrowse = subject.connectionId !== 'local' && Boolean(subject.host);
-    const [view, setView] = useState<'library' | 'setup' | 'report'>(canBrowse ? 'library' : 'setup');
+    const canReturnToLibrary = canBrowse || Boolean(onBackToLibrary);
+    const [view, setView] = useState<'library' | 'setup' | 'report'>(initialReport ? 'report' : setupRequest ? 'setup' : canBrowse ? 'library' : 'setup');
     const showList = view === 'library';
     const [listView, setListView] = useState<'reports' | 'risks'>('reports');
-    const [opening, setOpening] = useState<string>();
+    const [opening, setOpening] = useState<string | undefined>(initialReport?.id);
     const [preparingDelete, setPreparingDelete] = useState<string>();
     const [showSave, setShowSave] = useState(false);
     const [deleting, setDeleting] = useState<{ report: SavedReportSummary; risks: SavedRisk[] }>();
@@ -61,24 +72,29 @@ export function AssessmentReports({ owner, subject, liveResult, running, setup, 
     const notes = JSON.stringify(annotations);
     const savedCopy = saved?.owner === owner && saved.result === result ? saved : undefined;
     const savedUnchanged = Boolean(savedCopy && savedCopy.notes === notes);
-    useEffect(() => { latestDraft.current = { annotations: [], saved: undefined }; returnFocus.current = null; restoreOpener.current = false; focusNext.current = undefined; setViewed(undefined); setSaved(undefined); setView(canBrowse ? 'library' : 'setup'); setListView('reports'); setOpening(undefined); setPreparingDelete(undefined); setShowSave(false); setDeleting(undefined); setRemovingRisk(undefined); setAccepting(undefined); }, [owner]);
+    useEffect(() => { latestDraft.current = { annotations: [], saved: undefined }; returnFocus.current = null; restoreOpener.current = false; focusNext.current = undefined; setViewed(undefined); setSaved(undefined); setView(initialReport ? 'report' : setupRequest ? 'setup' : canBrowse ? 'library' : 'setup'); setListView('reports'); setOpening(initialReport?.id); setPreparingDelete(undefined); setShowSave(false); setDeleting(undefined); setRemovingRisk(undefined); setAccepting(undefined); }, [owner]);
     // Default browsing loads bounded local data; native migration separates legacy notes once, without SSH.
-    useEffect(() => { if (subject.connectionId !== 'local' && subject.host) void library.refresh(); }, [owner]);
+    useEffect(() => { if (!initialReport && !setupRequest && subject.connectionId !== 'local' && subject.host) void library.refresh(); }, [owner]);
     useEffect(() => {
-        setViewed(undefined); setSaved(undefined); setShowSave(false); setAccepting(undefined); setView(liveResult ? 'report' : canBrowse ? 'library' : 'setup');
+        setViewed(undefined); setSaved(undefined); setShowSave(false); setAccepting(undefined); setView(liveResult || initialReport ? 'report' : setupRequest ? 'setup' : canBrowse ? 'library' : 'setup');
         if (liveResult) focusNext.current = 'report';
         if (liveResult && subject.connectionId !== 'local' && subject.host) void library.refresh();
     }, [liveResult]);
     useEffect(() => { if (running) { if (historical) review.replaceAnnotations(latestDraft.current.annotations); latestDraft.current = { annotations: [], saved: undefined }; libraryChoice.current++; setViewed(undefined); setShowSave(false); setView('setup'); setOpening(undefined); setPreparingDelete(undefined); setAccepting(undefined); } }, [running]);
     useEffect(() => {
+        if (!setupRequest) return;
+        libraryChoice.current++; setOpening(undefined); setPreparingDelete(undefined); onLeaveSetup();
+        focusNext.current = 'setup'; setView('setup');
+    }, [setupRequest]);
+    useEffect(() => {
         const listTarget = restoreOpener.current && returnFocus.current?.getClientRects().length ? returnFocus.current : listView === 'reports' ? listHeading.current : riskHeading.current;
         const target = showList ? listTarget : view === 'setup' ? setupBack.current : reportHeading.current;
         if (focusNext.current === (showList ? 'list' : view === 'setup' ? 'setup' : 'report') && target?.getClientRects().length) { target.focus(); focusNext.current = undefined; restoreOpener.current = false; }
-    }, [view, result, listView, library.rows.length, library.risks.length]);
+    }, [view, result, listView, library.rows.length, library.risks.length, setupRequest]);
     /** Remember the local opener so Back restores keyboard position as well as the retained library view. */
     const rememberOpener = () => { const active = document.activeElement; returnFocus.current = active instanceof HTMLElement && root.current?.contains(active) ? active : null; };
     /** Returning keeps nonsecret scope and list state; one-shot run access is released by its owner. */
-    const backToLibrary = () => { if (view === 'setup') onLeaveSetup(); libraryChoice.current++; setOpening(undefined); setPreparingDelete(undefined); restoreOpener.current = true; focusNext.current = 'list'; setView('library'); };
+    const backToLibrary = () => { if (view === 'setup') onLeaveSetup(); libraryChoice.current++; setOpening(undefined); setPreparingDelete(undefined); if (onBackToLibrary) { onBackToLibrary(); return; } restoreOpener.current = true; focusNext.current = 'list'; setView('library'); };
     const accepted = useMemo(() => {
         if (!result) return new Map<Finding, RiskException>();
         const indexed = new Map(reportRiskAnnotations(result, annotations).map(item => [riskIdentityKey(item), item]));
@@ -99,7 +115,10 @@ export function AssessmentReports({ owner, subject, liveResult, running, setup, 
         if (compare && captured) review.compareSaved(report.result);
         else { if (!historical) latestDraft.current = { annotations: [...review.annotations], saved }; setViewed({ owner, package: report }); review.replaceAnnotations(report.annotations); setSaved({ owner, result: report.result, summary: report.summary, notes: JSON.stringify(report.annotations) }); }
         focusNext.current = 'report'; setView('report');
+        if (initialReport) void library.refresh();
     };
+    // Global entry loads exactly the selected body; host browsing keeps its existing default library view.
+    useEffect(() => { if (initialReport) void openSaved(initialReport); }, [owner, initialReport]);
     /** Import previews a normalized report and its risk notes, without automatically adding it to history. */
     const openImported = async () => {
         const captured = result;
@@ -187,8 +206,15 @@ export function AssessmentReports({ owner, subject, liveResult, running, setup, 
     };
     const retry = !historical && !running ? onRetryWithSudo : undefined;
     return <section ref={root} aria-label="Assessment reports" className="space-y-4">
+        {initialReport && !result && <div className="space-y-4 pt-5">
+            <Button variant="ghost" size="sm" onClick={backToLibrary}><ArrowLeft size={14} className="mr-2" aria-hidden="true" />Back</Button>
+            {opening ? <p role="status" className="text-xs text-app-muted">Opening report…</p>
+                : <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-app-border bg-app-panel p-4 text-xs">
+                    <p>Could not open this saved report.</p><Button variant="secondary" size="sm" disabled={busy} onClick={() => void openSaved(initialReport)}>Retry opening report</Button>
+                </div>}
+        </div>}
         <div hidden={view !== 'setup'}>
-            {canBrowse && <Button ref={setupBack} variant="ghost" size="sm" disabled={busy || running} className="mt-5" onClick={backToLibrary}><ArrowLeft size={14} className="mr-2" aria-hidden="true" />Back</Button>}
+            {canReturnToLibrary && <Button ref={setupBack} variant="ghost" size="sm" disabled={busy || running} className="mt-5" onClick={backToLibrary}><ArrowLeft size={14} className="mr-2" aria-hidden="true" />Back</Button>}
             {setup}
         </div>
         {canBrowse && <div hidden={!showList}>
@@ -208,7 +234,7 @@ export function AssessmentReports({ owner, subject, liveResult, running, setup, 
             onRefresh={() => void library.refresh()} onOpen={item => void openSaved(item)} onCompare={item => void openSaved(item, true)} onDelete={item => void requestDelete(item)} onImport={() => void openImported()} onExport={(item, format) => void exportSaved(item, format)} /></div>
         </div>}
         {result && <div hidden={view !== 'report'} className="space-y-4 pt-5">
-            {canBrowse && <Button variant="ghost" size="sm" disabled={busy || running} onClick={backToLibrary}><ArrowLeft size={14} className="mr-2" aria-hidden="true" />Back</Button>}
+            {canReturnToLibrary && <Button variant="ghost" size="sm" disabled={busy || running} onClick={backToLibrary}><ArrowLeft size={14} className="mr-2" aria-hidden="true" />Back</Button>}
             <div className="flex flex-wrap items-center justify-between gap-3">
                 {result && <div><h2 ref={reportHeading} tabIndex={-1} className="text-sm font-semibold outline-none">{historical ? 'Report preview' : 'Hardening results'}</h2><p className="mt-1 text-[11px] text-app-muted">{savedUnchanged ? 'Saved on this device' : savedCopy ? 'Unsaved changes' : historical ? 'Earlier observations · not saved' : 'Not saved'}</p></div>}
                 <div className="flex flex-wrap items-center gap-1">

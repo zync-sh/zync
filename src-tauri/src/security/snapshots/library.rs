@@ -94,6 +94,16 @@ impl ReportLibrary {
 
     /// List small summaries, not report bodies, so browsing history does not retain every finding in memory.
     fn list(&self, subject: &SnapshotSubject) -> Result<Vec<Summary>, String> {
+        self.list_matching(Some(subject))
+    }
+
+    /// Global history uses the same bounded metadata index and never expands report bodies or risk notes.
+    fn list_all(&self) -> Result<Vec<Summary>, String> {
+        self.list_matching(None)
+    }
+
+    /// Optional endpoint/account filtering does not weaken the required scope of load or delete operations.
+    fn list_matching(&self, subject: Option<&SnapshotSubject>) -> Result<Vec<Summary>, String> {
         let database = self.database()?;
         let tx = database.begin_read().map_err(storage_error)?;
         let table = tx.open_table(INDEX).map_err(storage_error)?;
@@ -104,7 +114,7 @@ impl ReportLibrary {
         for row in table.iter().map_err(storage_error)? {
             let (_, value) = row.map_err(storage_error)?;
             let item = decode_summary(value.value())?;
-            if same_subject(&item, subject) {
+            if subject.is_none_or(|subject| same_subject(&item, subject)) {
                 rows.push(item);
             }
         }
@@ -314,18 +324,21 @@ fn same_subject(item: &Summary, subject: &SnapshotSubject) -> bool {
     item.host == subject.host && item.username == subject.username && item.port == subject.port
 }
 
-/// History is available only to the main application window and executes no assessment commands.
+/// A missing subject lists device-wide summaries; history is main-window-only and executes no assessment commands.
 #[tauri::command]
 pub async fn security_assessment_saved_reports(
     window: tauri::WebviewWindow,
     library: tauri::State<'_, Arc<ReportLibrary>>,
-    subject: SnapshotSubject,
+    subject: Option<SnapshotSubject>,
 ) -> Result<Vec<Summary>, String> {
     super::super::runner::main_window(&window)?;
     let store = library.inner().clone();
-    tokio::task::spawn_blocking(move || store.list(&subject))
-        .await
-        .map_err(storage_error)?
+    tokio::task::spawn_blocking(move || match subject {
+        Some(subject) => store.list(&subject),
+        None => store.list_all(),
+    })
+    .await
+    .map_err(storage_error)?
 }
 /// Load a single report under its captured endpoint/account scope.
 #[tauri::command]

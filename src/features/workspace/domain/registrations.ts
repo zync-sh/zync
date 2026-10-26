@@ -198,7 +198,7 @@ export function registrationForContent(registry: WorkspaceViewRegistry, content:
 
 const BUILTIN_LABELS: Readonly<Record<WorkspaceBuiltinView, string>> = {
     terminal: 'Terminal', files: 'Files', 'port-forwarding': 'Port Forwarding',
-    dashboard: 'Dashboard', snippets: 'Snippets', security: 'Hardening audit',
+    dashboard: 'Dashboard', snippets: 'Snippets', security: 'Security hardening audit',
 };
 const BUILTIN_VIEWS: readonly WorkspaceBuiltinView[] = ['terminal', ...SPLIT_FEATURE_IDS];
 

@@ -1,4 +1,5 @@
 import {
+  ArrowUp,
   FilePlus,
   FolderInput,
   FolderPlus,
@@ -8,6 +9,7 @@ import {
 } from 'lucide-react';
 import { memo, useCallback, useLayoutEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
+import { shortcutHint } from '../../features/shortcuts/labels';
 import { Tooltip } from '../ui/Tooltip';
 import { IconButton } from '../ui/IconButton';
 import { useAppStore } from '../../store/useAppStore';
@@ -16,6 +18,7 @@ import { FilePathBar } from './FilePathBar';
 import { FileActionMenu } from './FileActionMenu';
 import type { FileFolderLoader } from './fileFolderOptions';
 import { FilePathEditor, type FilePathRestoreFocus } from './FilePathEditor';
+import { isAbsoluteFilePath, parentFilePath } from './filePathNav';
 
 interface FileToolbarProps {
   currentPath: string;
@@ -71,6 +74,8 @@ function FileToolbarInner({
   loadFolders,
 }: FileToolbarProps) {
   const compactMode = useAppStore((state) => state.settings.compactMode);
+  const upShortcut = useAppStore((state) => shortcutHint('fmUp', state.settings.keybindings ?? {}));
+  const parentPath = isAbsoluteFilePath(currentPath) ? parentFilePath(currentPath) : null;
   const barRef = useRef<HTMLDivElement>(null);
   const restorePathFocusRef = useRef<FilePathRestoreFocus>(null);
 
@@ -109,6 +114,15 @@ function FileToolbarInner({
         forwardEntries={forwardEntries}
         onJump={onHistoryJump}
       />
+
+      <Tooltip content={upShortcut ? `Up one folder (${upShortcut})` : 'Up one folder'} position="bottom">
+        <IconButton
+          label="Up"
+          icon={<ArrowUp size={14} />}
+          disabled={disabled || !parentPath}
+          onClick={() => { if (parentPath) onNavigate(parentPath); }}
+        />
+      </Tooltip>
 
       <div className="files-toolbar-path flex h-8 min-w-0 flex-1 items-center overflow-hidden">
         {isEditingPath ? (

@@ -73,6 +73,8 @@ const GLOBAL_IDS: [&str; 10] = [
     "settings",
     "profile",
 ];
+// Additive destinations do not invalidate orders saved by earlier v3 builds.
+const OPTIONAL_GLOBAL_IDS: [&str; 1] = ["security-audits"];
 
 fn valid_ids(value: Option<&Value>, version: u64, complete: bool) -> bool {
     let Some(items) = value.and_then(Value::as_array) else {
@@ -89,7 +91,7 @@ fn valid_ids(value: Option<&Value>, version: u64, complete: bool) -> bool {
         } else if version == 2 {
             264
         } else {
-            266
+            267
         })
     {
         return false;
@@ -97,7 +99,10 @@ fn valid_ids(value: Option<&Value>, version: u64, complete: bool) -> bool {
     let mut seen = std::collections::HashSet::new();
     items.iter().all(|item| {
         item.as_str().is_some_and(|id| {
-            (known.contains(&id) || (version >= 2 && plugin_id(id))) && seen.insert(id)
+            (known.contains(&id)
+                || (version == 3 && OPTIONAL_GLOBAL_IDS.contains(&id))
+                || (version >= 2 && plugin_id(id)))
+                && seen.insert(id)
         })
     }) && (!complete || known.iter().all(|id| seen.contains(id)))
 }
@@ -269,6 +274,42 @@ mod tests {
         next["hidden"] = json!([]);
         next["version"] = json!(1);
         assert!(!supported(&next));
+    }
+
+    #[test]
+    fn audit_destination_is_additive_to_existing_v3_orders() {
+        let original = json!({"version":3,"visible":false,"position":"right","showLabels":false,
+            "order":GLOBAL_IDS,"hidden":["tunnels"],"workspaceTabsPosition":"default"});
+        assert!(supported(&original));
+        let mut next = original.clone();
+        next["order"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("security-audits"));
+        next["hidden"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("security-audits"));
+        assert!(supported(&next));
+        assert!(replacement(
+            &json!({"workspaceNavigation":original}),
+            &json!({"exists":true,"value":original}),
+            &next
+        )
+        .unwrap()
+        .is_some());
+        next["order"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("security-audits"));
+        assert!(
+            !supported(&next),
+            "duplicate additive destinations remain invalid"
+        );
+        assert!(!original["order"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("security-audits")));
     }
 
     #[test]

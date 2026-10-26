@@ -93,6 +93,7 @@ declare global {
 // Lazy Load Heavy Components
 const TerminalManager = lazy(() => import('../terminal/TerminalManager').then(module => ({ default: module.TerminalManager })));
 const GlobalTunnelList = lazy(() => import('../tunnel/GlobalTunnelList').then(module => ({ default: module.GlobalTunnelList })));
+const GlobalSecurityAuditsPanel = lazy(() => import('../../features/security/ui/GlobalSecurityAuditsPanel').then(module => ({ default: module.GlobalSecurityAuditsPanel })));
 const PublicUrlsPanel = lazy(() => import('../share/PublicUrlsPanel').then(module => ({ default: module.PublicUrlsPanel })));
 const SettingsJsonEditorPanel = lazy(() =>
     import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
@@ -443,6 +444,12 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
                 </Suspense>
             </div>
         );
+    }
+
+    if (tab.type === 'security-audits') {
+        return <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
+            <Suspense fallback={<TabLoading />}><GlobalSecurityAuditsPanel active={isActive} /></Suspense>
+        </div>;
     }
 
     if (tab.type === 'public-urls') {

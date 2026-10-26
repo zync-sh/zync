@@ -1,0 +1,84 @@
+export {};
+declare const process: { env: Record<string, string | undefined> };
+const assertModule = 'node:assert/strict';
+const { default: assert } = await import(assertModule);
+const { chromium } = await import(process.env.ZYNC_PLAYWRIGHT_MODULE || 'playwright');
+const browser = await chromium.launch({ channel: process.env.ZYNC_BROWSER_CHANNEL || 'msedge', headless: true });
+try {
+    const page = await browser.newPage({ viewport: { width: 1080, height: 820 }, reducedMotion: 'reduce' });
+    const errors: string[] = [];
+    page.on('pageerror', (error: Error) => errors.push(error.message));
+    await page.goto((process.env.ZYNC_BROWSER_BASE_URL || 'http://127.0.0.1:1426') + '/tests/dashboardConnection.browser.html');
+    const dashboard = page.locator('[data-dashboard-fixture]');
+    const calls = async () => Number(await page.locator('body').getAttribute('data-metric-calls') || 0);
+    await dashboard.getByRole('heading', { name: 'System overview', exact: true }).waitFor();
+    assert.equal(await dashboard.getByText('CPU Usage', { exact: true }).count(), 0, 'Offline hosts do not show zero or stale live widgets');
+    assert.equal(await dashboard.getByText('Quick Actions', { exact: true }).count(), 0, 'Offline dashboard does not expose remote actions');
+    await page.waitForTimeout(3250);
+    assert.equal(await calls(), 0, 'Opening an offline dashboard never polls the host');
+
+    await dashboard.getByRole('button', { name: /^(Connect|Reconnect)$/ }).click();
+    assert.equal(await page.locator('body').getAttribute('data-connect-calls'), '1', 'Connection is an explicit user action');
+    await dashboard.getByRole('button', { name: /Connecting/ }).waitFor();
+    assert.equal(await calls(), 0, 'An unfinished connection never starts polling');
+    assert.equal(await dashboard.getByText('CPU Usage', { exact: true }).count(), 0);
+    const cancel = dashboard.getByRole('button', { name: 'Cancel', exact: true });
+    await cancel.waitFor();
+    await page.setViewportSize({ width: 340, height: 750 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, 'Connecting and Cancel fit a narrow pane');
+    if (process.env.ZYNC_BROWSER_SCREENSHOT_DIR) await page.screenshot({ path: process.env.ZYNC_BROWSER_SCREENSHOT_DIR + '/dashboard-connecting-narrow.png' });
+    await cancel.click();
+    await dashboard.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-cancel-calls'), '1', 'Cancel uses the existing host cancellation action exactly once');
+    assert.equal(await calls(), 0, 'Cancelling never starts metric collection');
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).click();
+    await page.waitForFunction(() => document.body.dataset.ignoredLateCompletion === 'true');
+    assert.equal(await dashboard.getByText('CPU Usage', { exact: true }).count(), 0, 'A late completion cannot resurrect the cancelled attempt');
+    assert.equal(await calls(), 0);
+
+    await page.setViewportSize({ width: 1080, height: 820 });
+    await dashboard.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await cancel.waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-connect-calls'), '2', 'The host can be connected again after cancellation');
+
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).click();
+    await dashboard.getByText('CPU Usage', { exact: true }).waitFor();
+    await page.waitForFunction(() => Number(document.body.dataset.metricCalls || 0) > 0);
+    await dashboard.getByText('Quick Actions', { exact: true }).waitFor();
+    const beforeDisconnect = await calls();
+    await page.getByRole('button', { name: 'Disconnect fixture', exact: true }).click();
+    await dashboard.getByRole('heading', { name: 'System overview', exact: true }).waitFor();
+    assert.equal(await dashboard.getByText('CPU Usage', { exact: true }).count(), 0, 'Disconnect hides previously collected live metrics');
+    await page.waitForTimeout(3250);
+    assert.equal(await calls(), beforeDisconnect, 'Disconnect stops scheduled polling');
+
+    await page.getByRole('button', { name: 'Fail connection fixture', exact: true }).click();
+    await dashboard.getByRole('button', { name: /Retry/ }).waitFor();
+    await dashboard.getByText('Connection timed out.', { exact: true }).waitFor();
+    const timeoutDetails = dashboard.getByText('Connection timed out while connecting to dashboard.invalid:22 (synthetic socket timeout).', { exact: true });
+    assert.equal(await timeoutDetails.isVisible(), false, 'A known failure has a concise reason without expanded technical detail');
+    await dashboard.locator('summary').filter({ hasText: 'Connection details' }).click();
+    await timeoutDetails.waitFor({ state: 'visible' });
+    await dashboard.locator('summary').filter({ hasText: 'Connection details' }).click();
+    await dashboard.getByRole('button', { name: 'Edit host', exact: true }).click();
+    assert.equal(await page.locator('body').getAttribute('data-edited-host'), 'dashboard-fixture', 'Edit retains the existing saved-host flow');
+    await dashboard.getByRole('button', { name: 'Retry connection', exact: true }).click();
+    await cancel.waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-connect-calls'), '3', 'Retry uses the same explicit connection action');
+    await cancel.click();
+    await dashboard.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-cancel-calls'), '2');
+    await page.getByRole('button', { name: 'Unknown failure fixture', exact: true }).click();
+    await dashboard.getByText('Could not connect to this host.', { exact: true }).waitFor();
+    assert.equal(await dashboard.getByText('Synthetic transport diagnostic: opaque failure 0xF17; fixture-only details that do not belong in the summary.', { exact: true }).isVisible(), false,
+        'Unknown failures keep broad raw diagnostics out of the summary');
+    assert.equal(await calls(), beforeDisconnect, 'Connection errors do not restart polling');
+    await page.setViewportSize({ width: 340, height: 750 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, 'Offline recovery fits a narrow pane');
+    if (process.env.ZYNC_BROWSER_SCREENSHOT_DIR) await page.screenshot({ path: process.env.ZYNC_BROWSER_SCREENSHOT_DIR + '/dashboard-disconnected-narrow.png' });
+    await page.getByRole('button', { name: 'Remove host fixture', exact: true }).click();
+    assert.equal(await dashboard.getByText('CPU Usage', { exact: true }).count(), 0);
+    assert.equal(await calls(), beforeDisconnect, 'A removed host cannot receive telemetry requests');
+    assert.deepEqual(errors, []);
+    console.log('Dashboard disconnected browser checks passed.');
+} finally { await browser.close(); }

@@ -59,6 +59,7 @@ export function runGlobalNavigation(action: GlobalNavigationAction): boolean {
             state.activateTab(tab.id); return true;
         },
         openPublicUrls: state.openPublicUrlsTab, openForwarding: state.openPortForwardingTab, openSnippets: state.openSnippetsTab,
+        openSecurityAudits: state.openSecurityAuditsTab,
     });
 }
 

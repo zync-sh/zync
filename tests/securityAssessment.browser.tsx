@@ -1,7 +1,10 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Provider as TooltipProvider } from '@radix-ui/react-tooltip';
 import { SecurityPanel } from '../src/features/security/ui/SecurityPanel';
+import { PaneLeafView } from '../src/components/terminal/PaneLeafView';
+import { dispatchAppShortcut } from '../src/features/shortcuts/dispatch';
+import type { PaneLeaf, PaneLayout } from '../src/lib/paneLayout';
 import { useAppStore } from '../src/store/useAppStore';
 import type { AssessmentReport, AssessmentRequest, AssessmentResult, Finding } from '../src/features/security/domain/assessment';
 import type { ModuleDefinition } from '../src/features/security/domain/modules';
@@ -25,7 +28,16 @@ let genericProfile = false;
 let catalogFailure = false;
 let catalogCalls = 0;
 let nativeCalls = 0;
+let connectCalls = 0;
+let cancelConnectCalls = 0;
+let finishConnect: (() => void) | undefined;
 let lastReport: AssessmentReport | null = null;
+const paneFocusFixture = new URLSearchParams(window.location.search).has('paneFocus');
+const auditPane: PaneLeaf = { type: 'pane', id: 'audit-pane', content: { kind: 'feature', featureId: 'security', instanceId: 'audit-instance' } };
+const siblingPane: PaneLeaf = { type: 'pane', id: 'sibling-pane', content: { kind: 'feature', featureId: 'dashboard', instanceId: 'dashboard-instance' } };
+const focusLayout: PaneLayout = { version: 1, activePaneId: auditPane.id, root: {
+    type: 'split', id: 'focus-split', direction: 'horizontal', sizes: [0.5, 0.5], children: [auditPane, siblingPane],
+} };
 const modules: ModuleDefinition[] = [
     { id: 'host', label: 'Host baseline', description: 'Kernel, SSH, account, file and network settings', group: 'host', checkCount: 38, recommended: true },
     { id: 'extended-host', label: 'Additional host protections', description: 'Additional local protections and logging settings', group: 'host', checkCount: 12, recommended: false },
@@ -294,12 +306,36 @@ window.ipcRenderer = { async invoke(channel: string, payload: Record<string, unk
     throw new Error(`Unexpected assessment fixture command: ${channel}`);
 } } as typeof window.ipcRenderer;
 useAppStore.setState({ connections: [{ id: 'fixture', name: 'Production lab', host: 'fixture.invalid', username: 'fixture', port: 22, status: 'connected', lastConnected: 1 }],
+    ...(paneFocusFixture ? {
+        tabs: [{ id: 'fixture-host', type: 'connection' as const, connectionId: 'fixture', title: 'Production lab', view: 'security' }],
+        activeTabId: 'fixture-host', activeConnectionId: 'fixture', showWelcomeScreen: false,
+        terminals: { fixture: [] }, paneLayouts: { fixture: { audit: focusLayout } },
+        activePaneGroupOwner: { fixture: 'audit' }, activeTerminalIds: { fixture: null },
+        saveSession: async () => {},
+    } : {}),
+    connect: async id => {
+        document.body.dataset.connectCalls = String(++connectCalls);
+        useAppStore.setState(state => ({ connections: state.connections.map(item => item.id === id ? { ...item, status: 'connecting' } : item) }));
+        await new Promise<void>(resolve => { finishConnect = resolve; });
+    },
+    cancelConnect: async id => {
+        document.body.dataset.cancelConnectCalls = String(++cancelConnectCalls);
+        useAppStore.setState(state => ({ connections: state.connections.map(item => item.id === id ? { ...item, status: 'disconnected' } : item) }));
+        finishConnect?.(); finishConnect = undefined;
+    },
     showToast: (type, message) => { document.body.dataset.toast = `${type}:${message}`; } });
 
 /** Fixture controls are outside the production panel and never call native APIs. */
 function Fixture() {
     const [open, setOpen] = useState(true);
     const [local, setLocal] = useState(false);
+    const layout = useAppStore(state => state.paneLayouts.fixture?.audit);
+    useEffect(() => {
+        if (!paneFocusFixture) return;
+        const onKeyDown = (event: KeyboardEvent) => { if (dispatchAppShortcut(event)) event.preventDefault(); };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, []);
     return <TooltipProvider><div className="flex h-screen flex-col bg-app-bg text-app-text">
         <div className="flex flex-wrap gap-3 border-b border-app-border p-2 text-xs" aria-label="Fixture controls">
             <button onClick={() => { if (pending) { const run = pending; pending = null; lastReport = report(run.request); run.resolve(lastReport); } }}>Complete scan fixture</button>
@@ -312,11 +348,21 @@ function Fixture() {
             <button onClick={() => { hold = true; }}>Hold admission fixture</button>
             <button onClick={() => { hold = false; held?.({ id: 'held-id', identity: { host: 'fixture.invalid', username: 'fixture', port: 22 } }); held = null; }}>Release admission fixture</button>
             <button onClick={() => useAppStore.setState(state => ({ connections: state.connections.map(item => ({ ...item, status: item.status === 'connected' ? 'disconnected' : 'connected', lastConnected: (item.lastConnected ?? 1) + 1 })) }))}>Toggle connection fixture</button>
+            <button onClick={() => {
+                if (!finishConnect) return;
+                useAppStore.setState(state => ({ connections: state.connections.map(item => ({ ...item, status: 'connected', lastConnected: (item.lastConnected ?? 1) + 1 })) }));
+                finishConnect?.(); finishConnect = undefined;
+            }}>Complete connection fixture</button>
+            <button onClick={() => void useAppStore.getState().cancelConnect('fixture')}>Cancel connection fixture</button>
             <button onClick={() => setOpen(!open)}>Toggle pane fixture</button>
             <button onClick={() => setLocal(!local)}>Toggle local fixture</button>
             <button onClick={() => useAppStore.setState(state => ({ connections: state.connections.map(item => ({ ...item, host: item.host === 'fixture.invalid' ? 'edited.invalid' : 'fixture.invalid' })) }))}>Edit saved host fixture</button>
         </div>
-        <div data-assessment-fixture-panel className="min-h-0 flex-1">{open && <SecurityPanel connectionId={local ? 'local' : 'fixture'} />}</div>
+        <div data-assessment-fixture-panel className="min-h-0 flex-1">{open && (paneFocusFixture && layout
+            ? <div data-fixture-focused-pane={layout.activePaneId} className="flex h-full">
+                <div className="min-w-0 flex-1"><PaneLeafView connectionId="fixture" node={auditPane} layout={layout} split edges={{ top: false, right: true, bottom: false, left: false }} workspaceActive panelVisible /></div>
+                <div className="w-12" aria-label="Sibling pane fixture" />
+            </div> : <SecurityPanel connectionId={local ? 'local' : 'fixture'} />)}</div>
     </div></TooltipProvider>;
 }
 document.body.dataset.overlayGalleryTheme = 'dark';

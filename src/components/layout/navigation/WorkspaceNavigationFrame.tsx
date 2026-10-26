@@ -31,6 +31,7 @@ export function WorkspaceNavigationFrame({ children }: { children: ReactNode }) 
         hasWorkspace={Boolean(workspace)} keybindings={keybindings}
         workspaceLabel={workspaceLabel} workspaceBadge={workspaceBadge}
         activeId={section ?? (activeId === 'public-urls' ? 'public-urls' : activeId === 'port-forwarding' ? 'tunnels'
+            : activeId === 'security-audits' ? 'security-audits'
             : activeId === 'connection' ? activeConnection === GLOBAL_SNIPPETS_CONNECTION_ID ? 'snippets' : 'workspace' : undefined)}
         footer={<GlobalUtilityActions location="activity" />}
         onChange={action => useAppStore.getState().updateWorkspaceNavigation(action)}

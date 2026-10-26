@@ -20,6 +20,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { usePlugins } from "../../context/PluginContext";
 import { clsx } from "clsx";
 import { OSIcon } from "../icons/OSIcon";
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
+import { builtinWorkspaceViewLabel } from '../../features/workspace/domain/registrations';
 import { GoogleMarkIcon } from "../icons/providerIcons";
 import { useConnectionDisplayLabels } from "../../features/connections/presentation/useConnectionDisplayLabels";
 import { openBuiltinThemePicker } from '../../features/plugins/presentation/themePicker';
@@ -386,6 +388,14 @@ export function CommandPalette() {
                                 </Command.Group>
 
                                 <Command.Group heading="Tools" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
+                                    <Command.Item
+                                        value="Security hardening audit saved reports global"
+                                        onSelect={() => runCommand(() => useAppStore.getState().openSecurityAuditsTab())}
+                                        className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                                    >
+                                        <HardeningAuditIcon className="mr-2 h-4 w-4 opacity-70" />
+                                        <span>{builtinWorkspaceViewLabel('security')}</span>
+                                    </Command.Item>
                                     <Command.Item
                                         value="Port Forwarding"
                                         onSelect={() => runCommand(() => useAppStore.getState().openPortForwardingTab())}

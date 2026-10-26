@@ -9,8 +9,39 @@ try {
     const errors: string[] = [];
     const screenshots = process.env.ZYNC_BROWSER_SCREENSHOT_DIR;
     page.on('pageerror', (error: Error) => errors.push(error.message));
-    await page.goto((process.env.ZYNC_BROWSER_BASE_URL || 'http://127.0.0.1:1426') + '/tests/securityAssessment.browser.html');
-    await page.getByRole('heading', { name: 'Hardening audit', exact: true }).waitFor();
+    const fixtureUrl = (process.env.ZYNC_BROWSER_BASE_URL || 'http://127.0.0.1:1426') + '/tests/securityAssessment.browser.html';
+    // Keyboard pane navigation changes store ownership without requiring a DOM focus move.
+    // Mount the real pane renderer and shortcut dispatcher so an erroneous heading focus
+    // would also reselect the audit through the pane's production onFocusCapture handler.
+    await page.goto(fixtureUrl + '?paneFocus');
+    await page.getByRole('button', { name: 'New assessment', exact: true }).click();
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    const ownership = page.locator('[data-fixture-focused-pane]');
+    const reconnect = page.getByRole('region', { name: 'Host connection', exact: true });
+    await reconnect.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await reconnect.getByRole('button', { name: 'Connecting…', exact: true }).waitFor();
+    await page.keyboard.press('Control+Alt+ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[data-fixture-focused-pane]')?.getAttribute('data-fixture-focused-pane') === 'sibling-pane');
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'Logical keyboard navigation leaves DOM focus unchanged');
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).evaluate((element: HTMLButtonElement) => element.click());
+    await reconnect.waitFor({ state: 'hidden' });
+    const liveHeading = page.getByRole('heading', { name: 'Host hardening', exact: true });
+    assert.equal(await liveHeading.evaluate((element: HTMLElement) => element === document.activeElement), false, 'An unfocused visible audit never takes reconnect focus');
+    assert.equal(await ownership.getAttribute('data-fixture-focused-pane'), 'sibling-pane', 'Connection completion preserves the pane selected by the real keyboard shortcut');
+
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    await reconnect.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await reconnect.getByRole('button', { name: 'Connecting…', exact: true }).waitFor();
+    await page.keyboard.press('Control+Alt+ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[data-fixture-focused-pane]')?.getAttribute('data-fixture-focused-pane') === 'sibling-pane');
+    await page.keyboard.press('Control+Alt+ArrowLeft');
+    await page.waitForFunction(() => document.querySelector('[data-fixture-focused-pane]')?.getAttribute('data-fixture-focused-pane') === 'audit-pane');
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).evaluate((element: HTMLButtonElement) => element.click());
+    await reconnect.waitFor({ state: 'hidden' });
+    assert.equal(await liveHeading.evaluate((element: HTMLElement) => element === document.activeElement), false, 'Returning to the audit pane does not revive a relinquished handoff');
+
+    await page.goto(fixtureUrl);
+    await page.getByRole('heading', { name: 'Security hardening audit', exact: true }).waitFor();
     const setup = page.getByRole('region', { name: 'Assessment setup', exact: true });
     const run = setup.getByRole('button', { name: 'Run assessment', exact: true });
     const findings = page.getByRole('region', { name: 'Assessment findings', exact: true });
@@ -90,6 +121,44 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
     await page.setViewportSize({ width: 1080, height: 980 });
 
+    // Offline setup shows one connection card; existing choices survive without implying scan approval.
+    await showSetup();
+    await select('Preset', 'Web server');
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    await library.getByText('No saved reports yet. Run an assessment, then choose Save report.', { exact: true }).waitFor();
+    await showSetup();
+    assert.equal(await run.count(), 0, 'Offline setup omits the disabled assessment action');
+    assert.equal(await setup.getByLabel('Preset', { exact: true }).count(), 0, 'Offline setup omits preset controls');
+    assert.equal(await setup.locator('[data-assessment-module-picker], [data-assessment-setup-scope]').count(), 0, 'Offline setup omits scope controls and run details');
+    const connectionNotice = setup.getByRole('region', { name: 'Host connection', exact: true });
+    await connectionNotice.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await connectionNotice.getByRole('button', { name: 'Connecting…', exact: true }).waitFor();
+    assert.equal(await run.count(), 0, 'Pending connections cannot admit an assessment');
+    assert.equal(await page.locator('body').getAttribute('data-begins'), null);
+    await connectionNotice.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(await run.count(), 0, 'Cancelling connection keeps only the connection action');
+    assert.equal(await page.locator('body').getAttribute('data-cancel-connect-calls'), '1', 'The card uses the existing host cancellation action');
+    await connectionNotice.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).evaluate((element: HTMLButtonElement) => element.click());
+    await connectionNotice.waitFor({ state: 'hidden' });
+    assert.equal(await setup.isVisible(), true, 'Connecting retains the setup view');
+    assert.equal(await run.isEnabled(), true);
+    const setupHeading = setup.getByRole('heading', { name: 'Host hardening', exact: true });
+    assert.equal(await setupHeading.evaluate((element: HTMLElement) => element === document.activeElement), true, 'A completed explicit reconnect hands keyboard focus to the assessment controls');
+    await setup.getByText('Host baseline + 1 more · 50 checks', { exact: true }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-connect-calls'), '2');
+    assert.equal(await page.locator('body').getAttribute('data-begins'), null, 'Connecting is separate from assessment approval');
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    await connectionNotice.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    const otherControl = page.getByRole('button', { name: 'Toggle uncertain-only fixture', exact: true });
+    await otherControl.focus();
+    await page.getByRole('button', { name: 'Complete connection fixture', exact: true }).evaluate((element: HTMLButtonElement) => element.click());
+    await connectionNotice.waitFor({ state: 'hidden' });
+    assert.equal(await otherControl.evaluate((element: HTMLElement) => element === document.activeElement), true, 'A completed reconnect cannot steal focus from another control or pane');
+    assert.equal(await page.locator('body').getAttribute('data-begins'), null);
+    await select('Preset', 'General server');
+
     await showSetup();
     await setup.getByText('Host baseline · 38 checks', { exact: true }).waitFor();
     assert.equal((await setup.innerText()).split(/\s+/).length < 75, true, 'Setup stays task-focused rather than a page of explanation');
@@ -151,6 +220,18 @@ try {
     assert.deepEqual(JSON.parse(await page.locator('body').getAttribute('data-request')), { kind: 'hardening', elevationConsent: false, modules: ['host'], presetId: 'general' });
     await complete();
     assert.equal(await rows.count(), 25, 'DOM pagination stays bounded');
+    const completedBegins = await page.locator('body').getAttribute('data-begins');
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    await page.getByText('Assessment finished', { exact: true }).waitFor();
+    assert.equal(await rows.count(), 25, 'Completed evidence remains browsable after disconnect');
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
+    await library.waitFor();
+    await page.getByRole('button', { name: 'Latest assessment', exact: true }).click();
+    assert.equal(await rows.count(), 25, 'Returning from the offline library retains the in-memory report');
+    await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();
+    await page.getByText('Assessment finished', { exact: true }).waitFor();
+    assert.equal(await rows.count(), 25, 'Reconnecting does not replace the viewed completed report');
+    assert.equal(await page.locator('body').getAttribute('data-begins'), completedBegins, 'Offline browsing and reconnect never admit a scan');
     const reportScope = page.locator('[data-assessment-report-scope]');
     await reportScope.locator(':scope > summary').getByText('Linux audit rules · v7', { exact: true }).waitFor();
     const beforeRuleDetails = await page.locator('body').getAttribute('data-native-calls');
@@ -589,7 +670,7 @@ try {
     await approval.waitFor({ state: 'hidden' });
     assert.equal(Number(await page.locator('body').getAttribute('data-begins')), beforeDisconnect);
     await showSetup();
-    assert.equal(await run.isEnabled(), false);
+    assert.equal(await run.count(), 0);
     assert.equal(await setup.getByRole('switch').count(), 0);
     await screenshot('security-disconnected-dark');
     await page.getByRole('button', { name: 'Toggle connection fixture', exact: true }).click();

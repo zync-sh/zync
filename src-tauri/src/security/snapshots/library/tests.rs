@@ -116,6 +116,96 @@ fn reports_survive_reopen_and_keep_only_normalized_evidence() {
         .contains("fixture-secret"));
 }
 
+/// Device-wide browsing includes orphaned endpoints/accounts but reads only bounded index metadata.
+#[test]
+fn global_history_lists_scoped_summaries_without_reading_report_bodies() {
+    let folder = tempfile::tempdir().unwrap();
+    let store = ReportLibrary::new(folder.path().join("reports.redb"));
+    let mut reports = Vec::new();
+    for (host, username, port) in [
+        ("fixture.invalid", "fixture", 22),
+        ("other.invalid", "fixture", 22),
+        ("fixture.invalid", "other", 22),
+        ("fixture.invalid", "fixture", 2222),
+    ] {
+        let mut value = payload();
+        value["subject"]["host"] = host.into();
+        value["subject"]["username"] = username.into();
+        value["subject"]["port"] = port.into();
+        let scope = subject(&value);
+        let summary = store
+            .save(&value.to_string(), "Saved report", None)
+            .unwrap();
+        reports.push((scope, summary));
+    }
+    for (scope, summary) in &reports {
+        let scoped = store.list(scope).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, summary.id);
+    }
+    // Missing/corrupt bodies must not prevent metadata browsing or trigger risk-note migration.
+    let database = store.database().unwrap();
+    let tx = database.begin_write().unwrap();
+    {
+        let mut bodies = tx.open_table(REPORTS).unwrap();
+        bodies.remove(reports[0].1.id.as_str()).unwrap();
+        bodies
+            .insert(reports[1].1.id.as_str(), b"invalid report".as_slice())
+            .unwrap();
+    }
+    tx.commit().unwrap();
+    let rows = store.list_all().unwrap();
+    assert_eq!(rows.len(), reports.len());
+    assert!(rows
+        .windows(2)
+        .all(|pair| pair[0].updated_at > pair[1].updated_at
+            || pair[0].updated_at == pair[1].updated_at && pair[0].id <= pair[1].id));
+    assert!(store.load(&reports[0].1.id, &reports[0].0).is_err());
+    assert!(store.load(&reports[1].1.id, &reports[1].0).is_err());
+    assert!(store.load(&reports[2].1.id, &reports[0].0).is_err());
+}
+
+/// Global enumeration retains the same corruption and record-count bounds as host-scoped browsing.
+#[test]
+fn global_history_rejects_invalid_or_oversized_metadata() {
+    let folder = tempfile::tempdir().unwrap();
+    let store = ReportLibrary::new(folder.path().join("reports.redb"));
+    let value = payload();
+    let scope = subject(&value);
+    let saved = store
+        .save(&value.to_string(), "Saved report", None)
+        .unwrap();
+    let database = store.database().unwrap();
+    for invalid in [
+        b"invalid metadata".to_vec(),
+        vec![b' '; MAX_INDEX_BYTES + 1],
+    ] {
+        let tx = database.begin_write().unwrap();
+        tx.open_table(INDEX)
+            .unwrap()
+            .insert(saved.id.as_str(), invalid.as_slice())
+            .unwrap();
+        tx.commit().unwrap();
+        assert!(store.list_all().is_err());
+        assert!(store.list(&scope).is_err());
+    }
+    let metadata = serde_json::to_vec(&saved).unwrap();
+    let tx = database.begin_write().unwrap();
+    {
+        let mut index = tx.open_table(INDEX).unwrap();
+        index
+            .insert(saved.id.as_str(), metadata.as_slice())
+            .unwrap();
+        for _ in 0..MAX_RECORDS {
+            let id = uuid::Uuid::new_v4().to_string();
+            index.insert(id.as_str(), metadata.as_slice()).unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    assert!(store.list_all().is_err());
+    assert!(store.list(&scope).is_err());
+}
+
 /// Explicit replacement preserves ID, detects stale revisions, and rejects another endpoint or host key.
 #[test]
 fn replacements_and_deletion_are_atomic_scoped_and_revision_checked() {
@@ -239,4 +329,5 @@ fn report_quota_requires_explicit_replacement_or_deletion() {
         )
         .unwrap();
     assert_eq!(store.list(&scope).unwrap().len() as u64, MAX_RECORDS);
+    assert_eq!(store.list_all().unwrap().len() as u64, MAX_RECORDS);
 }

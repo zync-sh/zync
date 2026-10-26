@@ -3,6 +3,7 @@ import { FolderPlus, Laptop, Link2, Monitor, Network, Search } from 'lucide-reac
 import { cn } from '../../../lib/utils';
 import { OSIcon } from '../../icons/OSIcon';
 import { PublicUrlsLabel } from '../../share/PublicUrlsLabel';
+import { HardeningAuditIcon } from '../../icons/HardeningAuditIcon';
 import { TopbarDropdown } from '../../ui/TopbarDropdown';
 import { APP_ADD_GROUP_LABEL, buildAppAddItems } from './buildAppAddItems';
 import { groupAppAddItems, visibleAppAddItems } from './filterAppAddItems';
@@ -18,6 +19,7 @@ export function AppAddMenu({
     onNewTunnel,
     onOpenPortForwarding,
     onOpenPublicUrls,
+    onOpenSecurityAudits,
     onOpenLocal,
     onOpenHost,
 }: {
@@ -30,6 +32,7 @@ export function AppAddMenu({
     onNewTunnel: () => void;
     onOpenPortForwarding: () => void;
     onOpenPublicUrls: () => void;
+    onOpenSecurityAudits: () => void;
     onOpenLocal: () => void;
     onOpenHost: (hostId: string) => void;
 }) {
@@ -79,6 +82,9 @@ export function AppAddMenu({
                 break;
             case 'public-urls':
                 onOpenPublicUrls();
+                break;
+            case 'security-audits':
+                onOpenSecurityAudits();
                 break;
             case 'local':
                 onOpenLocal();
@@ -235,6 +241,7 @@ function AppAddIcon({ item, host }: { item: AppAddItem; host?: AppAddHost }): Re
     if (item.kind === 'new-tunnel') return <Network size={13} />;
     if (item.kind === 'port-forwarding') return <Network size={13} />;
     if (item.kind === 'public-urls') return <Link2 size={13} />;
+    if (item.kind === 'security-audits') return <HardeningAuditIcon size={13} />;
     if (item.kind === 'local') return <Monitor size={13} />;
     if (item.kind === 'host') {
         return <OSIcon icon={host?.icon || 'Server'} className="w-[13px] h-[13px]" />;

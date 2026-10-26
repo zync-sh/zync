@@ -147,7 +147,7 @@ test('navigation context menu lists visible and hidden destinations in saved ord
     const items = navigationContextMenu({ preferences, entries, keybindings: { toggleSidebar: 'Ctrl+Shift+F9' },
         editable: true, onChange: action => calls.push(plain(action)), onCustomize() {} });
     const selectable = items.filter(item => 'checked' in item && !item.disabled);
-    assert.equal(selectable.length, 7);
+    assert.equal(selectable.length, 8);
     assert.equal(selectable[0].label, 'Snippets'); assert.equal(selectable[0].checked, false);
     const hosts = selectable.find(item => item.label === 'Hosts');
     assert.equal(hosts.checked, true); assert.equal(hosts.shortcut, 'Ctrl+Shift+F9 / Ctrl+Shift+B');
@@ -280,6 +280,24 @@ test('workspace strip placement rejects non-string JSON values without changing 
     }
 });
 
+test('global audits are additive to saved v3 navigation without a load-time rewrite', () => {
+    const before = { ...defaults(), visible: false, position: 'right',
+        order: defaults().order.filter(id => id !== 'security-audits'), hidden: ['tunnels'] };
+    const original = structuredClone(before);
+    assert.ok(domain.parseWorkspaceNavigation(before));
+    const resolved = domain.resolveWorkspaceNavigation(before);
+    assert.deepEqual(plain(resolved), before, 'old v3 navigation retains its exact saved choices');
+    assert.deepEqual(before, original, 'loading never mutates the saved envelope');
+    const projected = domain.navigationOrder(resolved, domain.NAVIGATION_IDS);
+    assert.equal(projected.at(-1), 'security-audits', 'the new destination is appended for display');
+    assert.equal(projected.filter(id => id === 'security-audits').length, 1);
+    const edited = domain.changeWorkspaceNavigation(resolved, { type: 'hidden', id: 'security-audits', value: true });
+    assert.deepEqual(Array.from(edited.hidden), ['tunnels', 'security-audits']);
+    assert.equal(edited.visible, false); assert.equal(edited.position, 'right');
+    assert.equal(edited.version, 3, 'explicit edits do not require a schema version bump');
+    assert.ok(domain.parseWorkspaceNavigation(edited));
+});
+
 test('workspace strip placement rejects singleton arrays like the native codec', () => {
     for (const value of [['default'], ['left'], ['right']]) {
         assert.equal(domain.parseWorkspaceNavigation({ ...defaults(), workspaceTabsPosition: value }), null);
@@ -395,13 +413,13 @@ test('navigation renders global destinations rather than active-host feature sho
     assert.equal(renderNavigation({ ...props, preferences: { ...defaults(), visible: false } }), '', 'an explicit hidden choice still removes the bar');
     const html = renderNavigation({ ...props, preferences: { ...defaults(), visible: true, showLabels: true } });
     assert.match(html, /aria-label="Global navigation"/);
-    for (const label of ['Hosts', 'Public URLs', 'Port Forwarding', 'Snippets', 'Vaults', 'Plugins']) assert.ok(html.includes('aria-label="' + label + '"'));
+    for (const label of ['Hosts', 'Public URLs', 'Port Forwarding', 'Security hardening audit', 'Snippets', 'Vaults', 'Plugins']) assert.ok(html.includes('aria-label="' + label + '"'));
     assert.doesNotMatch(html, /data-navigation-item="workspace"/, 'workspace navigation is opt-in via strip placement');
     for (const label of ['Files', 'Dashboard', 'AI Command Bar']) assert.equal(html.includes('aria-label="' + label + '"'), false);
     assert.match(html, /data-tab-drag-axis="vertical"/); assert.doesNotMatch(html, /role="tab/);
     assert.doesNotMatch(html, /title=/, 'navigation uses shared tooltips, not native titles');
     const navigationButtons = html.match(/<button\b[^>]*data-workspace-tab-trigger[^>]*>/g) ?? [];
-    assert.equal(navigationButtons.length, 7);
+    assert.equal(navigationButtons.length, 8);
     for (const button of navigationButtons) {
         assert.match(button, /focus-visible:ring-1/);
         assert.match(button, /focus-visible:ring-inset/);
@@ -444,9 +462,10 @@ test('global navigation controller calls only explicit manager/selection ports',
     const { activateGlobalNavigation } = load('src/features/workspace/application/globalNavigation.ts');
     const calls = [];
     const port = { showSection: section => calls.push(['section', section]), selectWorkspace: () => { calls.push(['workspace']); return true; },
-        openPublicUrls: () => calls.push(['public']), openForwarding: () => calls.push(['forwarding']), openSnippets: () => calls.push(['snippets']) };
+        openPublicUrls: () => calls.push(['public']), openForwarding: () => calls.push(['forwarding']), openSnippets: () => calls.push(['snippets']),
+        openSecurityAudits: () => calls.push(['audits']) };
     for (const action of ['hosts', 'vaults', 'plugins']) { calls.length = 0; assert.equal(activateGlobalNavigation(action, port), true); assert.deepEqual(calls, [['section', action]]); }
-    for (const [action, result] of [['public-urls', 'public'], ['tunnels', 'forwarding'], ['snippets', 'snippets']]) {
+    for (const [action, result] of [['public-urls', 'public'], ['tunnels', 'forwarding'], ['snippets', 'snippets'], ['security-audits', 'audits']]) {
         calls.length = 0; activateGlobalNavigation(action, port); assert.deepEqual(calls, [[result], ['section', null]]);
     }
     calls.length = 0; assert.equal(activateGlobalNavigation('workspace', { ...port, selectWorkspace: () => false }), false); assert.deepEqual(calls, []);

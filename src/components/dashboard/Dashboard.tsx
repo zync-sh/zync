@@ -7,6 +7,7 @@ import { RadialProgress } from './RadialProgress';
 import { UptimeWidget } from './UptimeWidget';
 import { ProcessWidget } from './ProcessWidget';
 import { QuickActionsWidget } from './QuickActionsWidget';
+import { HostConnectionNotice } from '../connections/HostConnectionNotice';
 
 export function Dashboard({ connectionId, isVisible = true }: { connectionId?: string; isVisible?: boolean }) {
   const globalId = useAppStore(state => state.activeConnectionId);
@@ -333,6 +334,24 @@ export function Dashboard({ connectionId, isVisible = true }: { connectionId?: s
         <p className="text-sm text-app-muted mt-2 max-w-sm text-center opacity-70 leading-relaxed">
           Select a connection from the sidebar, or search for a host above to get started.
         </p>
+      </div>
+    );
+  }
+
+  // Metrics and remote actions belong to the live session; disconnected hosts keep a recovery action instead.
+  if (!isConnected) {
+    return (
+      <div className="h-full min-h-0 overflow-auto bg-app-bg text-app-text">
+        <div className="mx-auto max-w-5xl px-4 py-5 sm:px-7 sm:py-7">
+          <header className="flex min-w-0 items-center gap-3">
+            <LayoutDashboard size={28} className="shrink-0 text-app-accent" aria-hidden="true" />
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold tracking-tight">System overview</h1>
+              <p className="mt-1 break-all text-xs text-app-muted">{connection ? `${connection.username}@${connection.host}` : 'SSH host'}</p>
+            </div>
+          </header>
+          <HostConnectionNotice connectionId={activeConnectionId} description="Connect to view live system metrics." className="mt-5" />
+        </div>
       </div>
     );
   }

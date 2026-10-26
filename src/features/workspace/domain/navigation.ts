@@ -3,10 +3,12 @@ import { isPluginWorkspaceViewId } from './registrations';
 
 /** Global chrome and host-tab placement preferences, not live identities or plugin permissions. */
 export const LEGACY_NAVIGATION_IDS = ['hosts', 'files', 'tunnels', 'snippets', 'dashboard', 'ai', 'commands', 'settings'] as const;
-export const NAVIGATION_IDS = ['hosts', 'workspace', 'public-urls', 'tunnels', 'snippets', 'commands', 'vaults', 'plugins', 'settings', 'profile'] as const;
+export const NAVIGATION_IDS = ['hosts', 'workspace', 'public-urls', 'tunnels', 'security-audits', 'snippets', 'commands', 'vaults', 'plugins', 'settings', 'profile'] as const;
+// New destinations are additive; previously saved v3 orders remain supported.
+const REQUIRED_NAVIGATION_IDS = NAVIGATION_IDS.filter(id => id !== 'security-audits');
 export type GlobalNavigationId = typeof NAVIGATION_IDS[number];
 export type NavigationId = GlobalNavigationId | typeof LEGACY_NAVIGATION_IDS[number] | `plugin:${string}`;
-export const MAX_NAVIGATION_ITEMS = 266;
+export const MAX_NAVIGATION_ITEMS = 267;
 export type NavigationPosition = 'left' | 'right' | 'top' | 'bottom';
 export type WorkspaceTabsPosition = 'default' | 'left' | 'right';
 export interface WorkspaceNavigation {
@@ -53,7 +55,7 @@ export function parseWorkspaceNavigation(value: unknown): WorkspaceNavigation | 
         || typeof item.position !== 'string' || !['left', 'right', 'top', 'bottom'].includes(item.position)
         || (item.version === 3 && (!['left', 'right'].includes(item.position)
             || typeof item.workspaceTabsPosition !== 'string' || !['default', 'left', 'right'].includes(item.workspaceTabsPosition)))
-        || !isIds(item.order, item.version) || !(item.version === 3 ? NAVIGATION_IDS : LEGACY_NAVIGATION_IDS).every(id => (item.order as string[]).includes(id))
+        || !isIds(item.order, item.version) || !(item.version === 3 ? REQUIRED_NAVIGATION_IDS : LEGACY_NAVIGATION_IDS).every(id => (item.order as string[]).includes(id))
         || !isIds(item.hidden, item.version) || !item.hidden.every(id => (item.order as NavigationId[]).includes(id))) return null;
     if (item.version === 3 && item.hidden.some(id => id === 'settings' || id === 'profile')) return null;
     return { version: item.version, visible: item.visible, position: item.position as NavigationPosition,
@@ -91,7 +93,7 @@ export type NavigationChange =
     | { type: 'reset' };
 
 /** Pointer and keyboard actions share this bounded, resource-independent reducer. */
-export function changeWorkspaceNavigation(current: WorkspaceNavigation, action: NavigationChange, available: readonly NavigationId[] = []): WorkspaceNavigation {
+export function changeWorkspaceNavigation(current: WorkspaceNavigation, action: NavigationChange, available: readonly NavigationId[] = NAVIGATION_IDS): WorkspaceNavigation {
     const original = current;
     current = migrateWorkspaceNavigation(current);
     let next: WorkspaceNavigation;

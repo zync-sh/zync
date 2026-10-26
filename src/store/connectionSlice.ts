@@ -3,6 +3,7 @@ import { terminalForConnectionStartup } from '../features/workspace/application/
 import type { AppStore } from './useAppStore';
 import { scheduleSaveSession } from './sessionSlice';
 import { normalizeDisplayAlias } from '../features/workspace/domain/presentation';
+import { builtinWorkspaceViewLabel } from '../features/workspace/domain/registrations';
 import { assertSupportedMainTabPresentations, changeMainTabPresentation, parseMainTabPresentation, reorderMainTabsById, stablePinnedMainTabs, type MainTabPresentationAction } from '../features/workspace/domain/mainTabPresentation';
 import { isPaneLayoutCloseBlocked } from '../lib/paneCloseBlockers';
 import type { Connection, CoreTabView, Folder, Tab } from '../features/connections/domain/types.js';
@@ -150,7 +151,12 @@ export interface ConnectionSlice {
     clearConnections: () => void;
 
     // Connection Actions
-    connect: (id: string, options?: { skipVaultPrompt?: boolean; skipCredentialPull?: boolean }) => Promise<void>;
+    connect: (id: string, options?: {
+        skipVaultPrompt?: boolean;
+        skipCredentialPull?: boolean;
+        /** Connect host-backed content without creating or selecting a shell. */
+        preserveWorkspace?: boolean;
+    }) => Promise<void>;
     cancelConnect: (id: string) => Promise<void>;
     disconnect: (id: string) => Promise<void>;
     /** WiFi drop / SSH EOF — stop active tunnels, keep terminal tabs and scrollback. */
@@ -159,6 +165,7 @@ export interface ConnectionSlice {
     // Tab Actions
     openTab: (connectionId: string, startView?: CoreTabView) => void;
     openPortForwardingTab: () => void;
+    openSecurityAuditsTab: () => void;
     openPublicUrlsTab: () => void;
     openSnippetsTab: () => void;
     openReleaseNotesTab: () => void;
@@ -211,7 +218,7 @@ export interface ConnectionSlice {
 }
 
 const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard', 'security']);
-const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'release-notes', 'snippets', 'settings', 'vault', 'sync', 'public-urls']);
+const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'security-audits', 'release-notes', 'snippets', 'settings', 'vault', 'sync', 'public-urls']);
 
 type PersistedConnection = Omit<Connection, 'status'> & Partial<Pick<Connection, 'status'>>;
 
@@ -502,10 +509,13 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             }
             markConnectionBackendOffline(id);
             if (disconnectBackend) {
+                snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
                 try {
                     await disconnectIpc(id);
                 } catch (error) {
                     console.error('Failed to cleanup cancelled connection:', error);
+                } finally {
+                    get().markAllTunnelsStoppedForConnection(id);
                 }
                 // Same as disconnect/transport-lost: freeze PTYs and keep tabs
                 // pendingRestore so a late cancel cannot leave live terminals
@@ -652,7 +662,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             for (const termId of existingTermIds) {
                 resetTerminalPtyForReconnect(termId);
             }
-            const primaryTermId = get().ensureTerminal(id);
+            // Feature actions only reconnect existing shells; terminal actions may
+            // bootstrap the first one through the normal workspace selection flow.
+            const primaryTermId = options?.preserveWorkspace
+                ? get().activeTerminalIds[id] ?? null
+                : get().ensureTerminal(id);
             const startupTermId = terminalForConnectionStartup(get(), id, primaryTermId);
 
             set(state => {
@@ -842,7 +856,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     get().showToast('success', `Saved "${label}" to Vault. Connecting...`);
                     if (await finishCancelledConnect()) return;
                     queueMicrotask(() => {
-                        void get().connect(id, { skipVaultPrompt: true, skipCredentialPull });
+                        void get().connect(id, { ...options, skipVaultPrompt: true, skipCredentialPull });
                     });
                 } catch (vaultError: unknown) {
                     clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
@@ -866,7 +880,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 const unlocked = await useVaultStore.getState().requestUnlock();
                 if (shouldScheduleUnlockRetry(unlocked, cancelledConnectAttempts, attemptId)) {
                     queueMicrotask(() => {
-                        void get().connect(id, { skipVaultPrompt: true, skipCredentialPull });
+                        void get().connect(id, { ...options, skipVaultPrompt: true, skipCredentialPull });
                     });
                     return;
                 }
@@ -907,6 +921,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             cancelledAttempts: cancelledConnectAttempts,
         });
         markConnectionBackendOffline(id);
+        snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+        get().markAllTunnelsStoppedForConnection(id);
         set(state => ({
             connections: markConnectionStatus(state.connections, id, 'disconnected'),
         }));
@@ -972,6 +988,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         } finally {
             // Suspend PTYs but keep xterm scrollback/tabs — avoids WebGL teardown blank screens.
             suspendAllTerminalsForConnection(get().terminals[id]);
+            get().markAllTunnelsStoppedForConnection(id);
         }
 
         // Preserve pendingRestore metadata on SSH tabs so reconnect can respawn PTY without losing tab list (roadmap 5.9)
@@ -1048,6 +1065,18 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         });
         track('tunnels');
         // Dirty-checked in sessionSlice — redundant calls are harmless.
+        get().saveSession();
+    },
+
+    /** Reuse one offline audit library without creating a host session or shell. */
+    openSecurityAuditsTab: () => {
+        get().setGlobalSidebarSection(null);
+        set(state => ({ ...ensureSingleTabByType(state.tabs, 'security-audits', () => ({
+            id: crypto.randomUUID(),
+            type: 'security-audits',
+            title: builtinWorkspaceViewLabel('security'),
+            view: 'security',
+        })), showWelcomeScreen: false }));
         get().saveSession();
     },
 
@@ -1330,7 +1359,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         ...(presentation && { presentation }),
                         connectionId: isLegacySnippetsTab
                             ? GLOBAL_SNIPPETS_CONNECTION_ID
-                            : s.connectionId,
+                            : s.tabType === 'security-audits' ? undefined : s.connectionId,
                         vaultProfileId: s.tabType === 'vault'
                             ? (isVaultProfileId(s.vaultProfileId)
                                 ? s.vaultProfileId
@@ -1359,7 +1388,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 activeConnectionId === 'local' ||
                 state.connections.some(c => c.id === activeConnectionId);
             const resolvedConnId =
-                resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
+                resolvedTab?.type === 'security-audits' ? null
+                    : resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
 
             // When the restored active tab is the global snippets tab (a pseudo-tab with
             // no real connection), fall back to the most recent real connection tab so

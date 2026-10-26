@@ -11,6 +11,22 @@ export interface SavedReportSummary {
 }
 export interface SavedReport extends ReportPackage { summary: SavedReportSummary }
 export type ReportRevision = Pick<SavedReportSummary, 'id' | 'revision'>;
+
+/** Endpoint and SSH account, rather than a mutable or deleted saved-host ID, identify local report scope. */
+export function savedReportSubject(item: SavedReportSummary): AssessmentSubject {
+    return { connectionId: 'saved-report', name: item.name, host: item.host, username: item.username, port: item.port };
+}
+
+/** Keep IPv6 endpoints unambiguous and include ports so similarly named hosts remain distinguishable. */
+export function savedReportHostLabel(item: Pick<SavedReportSummary, 'host' | 'username' | 'port'>): string {
+    const host = item.host.includes(':') && !item.host.startsWith('[') ? `[${item.host}]` : item.host;
+    return `${item.username}@${host}:${item.port}`;
+}
+
+/** Collision-free filter identity retains the exact endpoint/account used by native scoped reads. */
+export function savedReportHostKey(item: Pick<SavedReportSummary, 'host' | 'username' | 'port'>): string {
+    return JSON.stringify([item.host, item.username, item.port]);
+}
 export interface ReportLibraryPort {
     list(subject: AssessmentSubject): Promise<SavedReportSummary[]>;
     load(id: string, subject: AssessmentSubject): Promise<SavedReport>;

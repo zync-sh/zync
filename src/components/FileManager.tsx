@@ -157,11 +157,14 @@ export const FileManager = memo(function FileManager({
   surface = 'overlay',
   instanceId,
   active,
+  focused,
 }: {
   connectionId?: string;
   surface?: FileManagerSurface;
   instanceId?: string;
   active?: boolean;
+  /** Renderer-owned keyboard focus; listing visibility remains independent. */
+  focused?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const listingFocusRef = useRef<HTMLDivElement>(null);
@@ -198,6 +201,9 @@ export const FileManager = memo(function FileManager({
   });
   const storeSurfaceActive = useAppStore((state) => isFileManagerActive(state, connectionId, surface, instanceId));
   const isFilesSurfaceActive = active ?? storeSurfaceActive;
+  const isFilesFocusOwner = isFilesSurfaceActive && (focused ?? true);
+  const filesFocusOwnerRef = useRef(isFilesFocusOwner);
+  filesFocusOwnerRef.current = isFilesFocusOwner;
   const storeKey = activeConnectionId ? filesStoreKey(activeConnectionId, instanceId) : '';
 
   // Zustand Store Hooks — subscribe to this connection only so other hosts do not re-paint Files.
@@ -1885,7 +1891,7 @@ export const FileManager = memo(function FileManager({
   // Focus when the files panel is shown (dispatched from TabContent — avoids isVisible prop churn).
   useEffect(() => {
     const handlePanelShow = () => {
-      if (!isFilesSurfaceActive) return;
+      if (!filesFocusOwnerRef.current) return;
       if (isFileManagerPanelShown(containerRef.current)) {
         focusOnActivation();
       }
@@ -1895,7 +1901,8 @@ export const FileManager = memo(function FileManager({
   }, [isFilesSurfaceActive, focusOnActivation]);
 
   useEffect(() => {
-    if (surface !== 'pane' || !isFilesSurfaceActive) return;
+    // Focus-only changes must not steal an explicitly clicked toolbar/input target.
+    if (surface !== 'pane' || !isFilesSurfaceActive || !filesFocusOwnerRef.current) return;
     focusOnActivation();
   }, [surface, isFilesSurfaceActive, focusOnActivation]);
 
@@ -2055,7 +2062,7 @@ export const FileManager = memo(function FileManager({
             isPendingRestore={isPendingRestore}
             activeConnectionId={activeConnectionId || ''}
             surface="files"
-            isSurfaceActive={isFilesSurfaceActive}
+            isSurfaceActive={isFilesFocusOwner}
             onReconnect={() => { void handleReconnect(); }}
             onEditHost={
               connection

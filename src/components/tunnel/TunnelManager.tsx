@@ -30,6 +30,8 @@ import {
   tunnelWithSwappedPort,
 } from '../../features/tunnels/application/tunnelPortConflict';
 import { revertTunnelOriginalPort } from '../../features/tunnels/application/tunnelActions';
+import { userTunnelActions } from '../../features/tunnels/application/userTunnelStoreActions';
+import { HostConnectionNotice } from '../connections/HostConnectionNotice';
 
 const EMPTY_TUNNELS: TunnelConfig[] = [];
 
@@ -46,7 +48,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       : EMPTY_TUNNELS,
   );
   const loadTunnels = useAppStore((state) => state.loadTunnels);
-  const startTunnel = useAppStore((state) => state.startTunnel);
   const stopTunnel = useAppStore((state) => state.stopTunnel);
   const saveTunnel = useAppStore((state) => state.saveTunnel);
   const deleteTunnel = useAppStore((state) => state.deleteTunnel);
@@ -84,12 +85,6 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       window.ipcRenderer.off('tunnel:status-change', handleStatusChange);
     };
   }, [activeConnectionId, loadTunnels, updateTunnelStatus]);
-
-  useEffect(() => {
-    if (!activeConnectionId || connectionStatus === 'connected') return;
-    const reconcile = useAppStore.getState().reconcileTunnelsForConnection;
-    void reconcile(activeConnectionId);
-  }, [activeConnectionId, connectionStatus]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -144,7 +139,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
           showToast('error', `Failed to revert port: ${message}`);
         }
       } else {
-        await startTunnel(tunnel.id, tunnel.connectionId);
+        if (await userTunnelActions.start(tunnel) === 'cancelled') return;
         showToast('success', 'Forwarding started');
       }
     } catch (error: unknown) {
@@ -168,7 +163,7 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
     try {
       const updatedTunnel = tunnelWithSwappedPort(tunnel, port);
       await saveTunnel(updatedTunnel);
-      await startTunnel(updatedTunnel.id, updatedTunnel.connectionId);
+      if (await userTunnelActions.start(updatedTunnel) === 'cancelled') return;
       showToast('success', `Switched to port ${port}`);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -192,32 +187,19 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
   };
   // Handle starting all tunnels in a group
   const handleStartGroup = async (groupName: string, groupTunnels: TunnelConfig[]) => {
-    let successCount = 0;
-    let failCount = 0;
-
     showToast('info', `Starting ${groupName === 'Ungrouped' ? 'ungrouped' : groupName} forwards...`);
-
-    // Sequential start to avoid race conditions and potential UI freezing
-    for (const tunnel of groupTunnels) {
-      if (tunnel.status !== 'active') {
-        try {
-          await startTunnel(tunnel.id, tunnel.connectionId);
-          successCount++;
-        } catch (err) {
-          console.error(`Failed to start tunnel ${tunnel.name}:`, err);
-          failCount++;
-        }
-      }
-    }
+    const { started, failed, cancelled } = await userTunnelActions.startGroup(groupTunnels);
 
     if (activeConnectionId) {
       await loadTunnels(activeConnectionId);
     }
 
-    if (failCount > 0) {
-      showToast('error', `Started ${successCount} tunnels, failed ${failCount}`);
-    } else if (successCount > 0) {
-      showToast('success', `Started ${successCount} forwards`);
+    if (failed > 0) {
+      showToast('error', `Started ${started} forwards; ${failed} failed${cancelled ? `; ${cancelled} not started` : ''}`);
+    } else if (cancelled > 0) {
+      showToast('info', `Started ${started} forwards; ${cancelled} not started`);
+    } else if (started > 0) {
+      showToast('success', `Started ${started} forwards`);
     }
   };
 
@@ -372,6 +354,9 @@ export function TunnelManager({ connectionId }: { connectionId?: string }) {
       </div>
 
       <div className="flex-1 overflow-auto p-4">
+        {conn && connectionStatus !== 'connected' && (
+          <HostConnectionNotice connectionId={activeConnectionId} description="Saved forwards stay available offline. Starting one connects this host." className="mb-4" />
+        )}
         {tunnels.length > 0 && (
           <TunnelFilterToolbar
             query={searchQuery}

@@ -1,5 +1,5 @@
 export type GlobalSidebarSection = 'hosts' | 'workspace' | 'vaults' | 'plugins' | null;
-export type GlobalNavigationAction = 'hosts' | 'workspace' | 'public-urls' | 'tunnels' | 'snippets' | 'vaults' | 'plugins';
+export type GlobalNavigationAction = 'hosts' | 'workspace' | 'public-urls' | 'tunnels' | 'security-audits' | 'snippets' | 'vaults' | 'plugins';
 
 interface GlobalNavigationPort {
     workspaceDocked?: boolean;
@@ -7,6 +7,7 @@ interface GlobalNavigationPort {
     selectWorkspace(): boolean;
     openPublicUrls(): void;
     openForwarding(): void;
+    openSecurityAudits(): void;
     openSnippets(): void;
 }
 
@@ -19,6 +20,7 @@ export function activateGlobalNavigation(action: GlobalNavigationAction, port: G
             port.showSection(port.workspaceDocked ? 'workspace' : null); return true;
         case 'public-urls': port.openPublicUrls(); port.showSection(null); return true;
         case 'tunnels': port.openForwarding(); port.showSection(null); return true;
+        case 'security-audits': port.openSecurityAudits(); port.showSection(null); return true;
         case 'snippets': port.openSnippets(); port.showSection(null); return true;
         default: return false;
     }

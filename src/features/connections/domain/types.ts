@@ -67,7 +67,7 @@ export interface Folder {
 
 export interface Tab {
     id: string;
-    type: 'connection' | 'settings' | 'port-forwarding' | 'release-notes' | 'vault' | 'sync' | 'public-urls';
+    type: 'connection' | 'settings' | 'port-forwarding' | 'security-audits' | 'release-notes' | 'vault' | 'sync' | 'public-urls';
     title: string;
     /** Presentation only; never changes host names, resource IDs or ownership. */
     displayAlias?: string;

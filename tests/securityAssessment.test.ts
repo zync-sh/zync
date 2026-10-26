@@ -223,7 +223,7 @@ check(filterFindings([{ ...findings[0], moduleId: 'host' }, { ...findings[1], mo
 check(filterFindings(findings, 'host policy').length === 4, 'Search includes recommendation text as advertised');
 check(filterFindings([{ ...findings[1], scope: 'Complete technical context', scopeSummary: 'Current process setting only' }], 'process setting').length === 1, 'Search finds the concise scope displayed in the report');
 check(filterFindings([{ ...findings[1], scope: 'Complete technical context', scopeSummary: 'Current process setting only' }], 'technical context').length === 1, 'Full recorded scope remains searchable alongside its concise summary');
-check(SPLIT_FEATURE_IDS.includes('security') && builtinWorkspaceViewLabel('security') === 'Hardening audit', 'Audit naming retains the stable workspace feature identity');
+check(SPLIT_FEATURE_IDS.includes('security') && builtinWorkspaceViewLabel('security') === 'Security hardening audit', 'Audit naming retains the stable workspace feature identity');
 check(buildWorkspaceOpenItems({ shells: [], canOpenFeature: true }).some(item => item.featureId === 'security'), 'Workspace Open discovers Security');
 const catalog = parseAssessmentCatalog({ version: '1', modules: scopeCatalog,
     presets: [{ id: 'general', label: 'General server', description: 'Host scope', moduleIds: ['host'], revision: '1' }], defaultPresetId: 'general' });

@@ -5,6 +5,7 @@ export type AppAddKind =
     | 'new-folder'
     | 'new-tunnel'
     | 'port-forwarding'
+    | 'security-audits'
     | 'public-urls'
     | 'local'
     | 'host';
@@ -36,6 +37,7 @@ export type AppAddItem = {
 
 export type AppAddOpenState = {
     portForwardingOpen?: boolean;
+    securityAuditsOpen?: boolean;
     publicUrlsOpen?: boolean;
     localOpen?: boolean;
     openHostIds?: ReadonlySet<string>;

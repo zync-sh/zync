@@ -2,7 +2,7 @@ import { buildConnectConfigResult } from '../src/features/connections/domain/con
 import { buildConnectionSavePayload, buildConnectionTestPayload, connectionTestDependencies } from '../src/features/connections/domain/formTransforms.js';
 import { applyAuthMethodTransition } from '../src/features/connections/domain/authMethodTransition.js';
 import { getCredentialHealthChecks, validateConnectionDraft } from '../src/features/connections/domain/validation.js';
-import { connectionFailureSummary, orderedInterfaceAddresses } from '../src/features/connections/domain/formPresentation.js';
+import { connectionFailureReason, connectionFailureSummary, orderedInterfaceAddresses } from '../src/features/connections/domain/formPresentation.js';
 import type { Connection } from '../src/features/connections/domain/types.js';
 import { assignCredentialToConnections, syncCredentialAssignments } from '../src/features/connections/domain/credentialAssignments.js';
 import { preserveVaultCredentialOnUpdate, mergeImportedConnectionsByName } from '../src/features/connections/domain/merge.js';
@@ -70,6 +70,22 @@ equal(connectionFailureSummary('Authentication failed').includes('remote usernam
     'Authentication rejection does not claim a specific account exists or is invalid');
 equal(connectionFailureSummary('certificate identity rejected'), 'Could not verify this connection. Review the details below.',
     'Unknown failures are not misclassified');
+for (const [message, reason, summary] of [
+    ['SSH user certificate has expired', 'SSH certificate has expired.', 'Certificate expired. Renew it and select the updated certificate.'],
+    ['SSH user certificate does not match its private key', 'Certificate and private key do not match.', 'Certificate and private key do not match. Select a matching pair.'],
+    ['Connection failed: actively refused (os error 10061)', 'Connection refused.', 'Connection refused. Check the host, port and whether the SSH server is running.'],
+    ['Socket error (os error 111)', 'Connection refused.', 'Connection refused. Check the host, port and whether the SSH server is running.'],
+    ['Socket error (os error 61)', 'Connection refused.', 'Connection refused. Check the host, port and whether the SSH server is running.'],
+    ['Connection timed out while connecting to fixture.invalid:22', 'Connection timed out.', 'Connection timed out. Check the network, firewall and selected adapter.'],
+    ['Socket error (os error 10060)', 'Connection timed out.', 'Connection timed out. Check the network, firewall and selected adapter.'],
+    ['Authentication rejected', 'Authentication failed.', 'Authentication failed. Check the remote username and selected credential.'],
+]) {
+    equal(connectionFailureReason(message), reason, 'Recovery card uses the shared recognized failure cause');
+    equal(connectionFailureSummary(message), summary, 'Host form keeps its existing actionable summary');
+}
+for (const message of [undefined, '', 'certificate identity rejected', 'fixture-only unknown failure <img src=x onerror=alert(1)>']) {
+    equal(connectionFailureReason(message), 'Could not connect to this host.', 'Unknown diagnostics remain generic without echoing raw server text');
+}
 console.log('Host form presentation regression checks passed');
 
 const forwarded = { ...host, id: 'forwarded' };

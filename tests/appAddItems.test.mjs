@@ -23,10 +23,20 @@ runTest('create rows stay pinned and go includes pf pu local hosts', () => {
   assert.deepEqual(kinds.slice(0, 3), ['new-host', 'new-folder', 'new-tunnel']);
   assert.equal(kinds.includes('port-forwarding'), true);
   assert.equal(kinds.includes('public-urls'), true);
+  assert.equal(kinds.includes('security-audits'), true);
   assert.equal(kinds.includes('local'), true);
   assert.equal(items.some((item) => item.kind === 'host' && item.hostId === 'h-a'), true);
   assert.equal(items.some((item) => item.label === 'Files'), false);
   assert.equal(items.some((item) => item.label === 'Snippets'), false);
+});
+
+runTest('global audit navigation is discoverable and reflects its open state without selecting a host', () => {
+  const items = buildAppAddItems({ hosts, open: { securityAuditsOpen: true } });
+  const audit = items.find(item => item.kind === 'security-audits');
+  assert.equal(audit.label, 'Security hardening audit');
+  assert.equal(audit.hint, 'Open');
+  assert.equal(audit.hostId, undefined);
+  assert.equal(visibleAppAddItems(items, 'audit').includes(audit), true);
 });
 
 runTest('favorites sort before other hosts', () => {

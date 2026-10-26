@@ -190,7 +190,7 @@ export const TerminalComponent = memo(function TerminalComponent({
 
   if (!isConnected) {
     // TerminalManager sets isVisible = workspaceActive && terminalView.
-    const isSurfaceActive = isVisible && isWorkspaceActive && isTerminalView;
+    const isSurfaceActive = isVisible && isWorkspaceActive && isTerminalView && (isFocused ?? isActiveTab);
     return (
       <TerminalDisconnectedView
         connection={connection}

@@ -36,6 +36,7 @@ import {
 import { FEATURE_META, type FeatureId } from './featureMeta';
 import { resolveWorkspaceNavigation } from '../../features/workspace/domain/navigation';
 import { GoogleMarkIcon } from '../icons/providerIcons';
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
 import { useWorkspaceSidebar } from './navigation/WorkspaceSidebarContext';
 import { sidebarPresentation } from '../../features/workspace/application/sidebarPresentation';
 
@@ -68,6 +69,7 @@ export function Sidebar({ className }: { className?: string }) {
     const activeConnectionId = useAppStore(state => state.activeConnectionId);
     const openTab = useAppStore(state => state.openTab);
     const openPortForwardingTab = useAppStore(state => state.openPortForwardingTab);
+    const openSecurityAuditsTab = useAppStore(state => state.openSecurityAuditsTab);
     const openPublicUrlsTab = useAppStore(state => state.openPublicUrlsTab);
     const folders = useAppStore(state => state.folders);
     const addFolder = useAppStore(state => state.addFolder);
@@ -858,6 +860,12 @@ export function Sidebar({ className }: { className?: string }) {
                             label="Public URLs"
                             trailing={<BetaBadge className="text-[8px]" />}
                             onClick={() => openPublicUrlsTab()}
+                        />}
+
+                        {!navigationEnabled && <SidebarActionButton
+                            icon={<HardeningAuditIcon size={13} />}
+                            label={FEATURE_META.security.label}
+                            onClick={() => openSecurityAuditsTab()}
                         />}
 
                         {(!navigationEnabled || section === 'vaults') && <VaultNavSection />}

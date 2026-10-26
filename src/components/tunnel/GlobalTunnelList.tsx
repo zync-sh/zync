@@ -33,19 +33,17 @@ import {
 import {
     revertTunnelOriginalPort,
     stopTunnelConfig,
-    startTunnelConfig,
 } from '../../features/tunnels/application/tunnelActions';
+import { userTunnelActions } from '../../features/tunnels/application/userTunnelStoreActions';
 
 export function GlobalTunnelList() {
     const connections = useAppStore(state => state.connections);
-    const connect = useAppStore(state => state.connect);
     const tunnelsMap = useAppStore(state => state.tunnels);
     const allTunnels = useMemo(() => Object.values(tunnelsMap).flat(), [tunnelsMap]);
     const loadAllTunnels = useAppStore(state => state.loadAllTunnels);
     const updateTunnelStatus = useAppStore(state => state.updateTunnelStatus);
     const deleteTunnel = useAppStore(state => state.deleteTunnel);
     const saveTunnel = useAppStore(state => state.saveTunnel);
-    const startTunnel = useAppStore(state => state.startTunnel);
     const stopTunnel = useAppStore(state => state.stopTunnel);
 
     const showToast = useAppStore((state) => state.showToast);
@@ -70,10 +68,6 @@ export function GlobalTunnelList() {
         suggestedPort: number;
     } | null>(null);
     const [customPort, setCustomPort] = useState<string>(''); // For custom port input
-
-    const disconnect = useAppStore(state => state.disconnect);
-    const tabs = useAppStore(state => state.tabs);
-    const terminals = useAppStore(state => state.terminals);
 
     const loadTunnels = async () => {
         setLoading(true);
@@ -214,28 +208,10 @@ export function GlobalTunnelList() {
                     showToast('error', `Failed to revert port: ${message}`);
                 }
 
-                // Connection Cleanup Logic
-                setTimeout(() => {
-                    const remainingActiveForthost = allTunnels.filter(t => t.connectionId === tunnel.connectionId && t.status === 'active' && t.id !== tunnel.id).length;
-                    const hasActiveTabs = tabs.some(tab => tab.connectionId === tunnel.connectionId && (tab.view === 'terminal' || tab.view === 'files'));
-                    const hasActiveTerminals = (terminals[tunnel.connectionId] || []).length > 0;
-
-                    if (remainingActiveForthost === 0 && !hasActiveTabs && !hasActiveTerminals) {
-                        console.log(`[CLEANUP] Connection ${tunnel.connectionId} is idle, disconnecting...`);
-                        disconnect(tunnel.connectionId);
-                    }
-                }, 1000); // Small delay to let status update
+                // Stopping a forward leaves the shared host transport available to every pane.
                 loadTunnels(); // Refresh UI
             } else {
-                if (conn.status !== 'connected') {
-                    showToast('info', `Connecting to ${conn.name || conn.host}...`);
-                    try {
-                        await connect(conn.id);
-                    } catch (e: any) {
-                        return;
-                    }
-                }
-                await startTunnelConfig(tunnel, startTunnel);
+                if (await userTunnelActions.start(tunnel) === 'cancelled') return;
                 showToast('success', `Forwarding started`);
             }
         } catch (error: unknown) {
@@ -259,7 +235,7 @@ export function GlobalTunnelList() {
         try {
             const updatedTunnel = tunnelWithSwappedPort(tunnel, port);
             await saveTunnel(updatedTunnel);
-            await startTunnel(updatedTunnel.id, updatedTunnel.connectionId);
+            if (await userTunnelActions.start(updatedTunnel) === 'cancelled') return;
             showToast('success', `Switched to port ${port}`);
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
@@ -282,51 +258,17 @@ export function GlobalTunnelList() {
 
     // Handle starting all tunnels in a group
     const handleStartGroup = async (groupName: string, groupTunnels: TunnelConfig[]) => {
-        let successCount = 0;
-        let failCount = 0;
-
         showToast('info', `Starting ${groupName === 'Ungrouped' ? 'ungrouped' : groupName} forwards...`);
-
-        // Group tunnels by connectionId to ensure active SSH sessions
-        const tunnelsByConn = groupTunnels.reduce((acc, t) => {
-            if (t.status !== 'active') {
-                if (!acc[t.connectionId]) acc[t.connectionId] = [];
-                acc[t.connectionId].push(t);
-            }
-            return acc;
-        }, {} as Record<string, TunnelConfig[]>);
-
-        for (const [connectionId, tunnels] of Object.entries(tunnelsByConn)) {
-            const conn = connections.find(c => c.id === connectionId);
-
-            // Connect if needed
-            if (conn && conn.status !== 'connected') {
-                try {
-                    showToast('info', `Connecting to ${conn.name || 'host'}...`);
-                    await connect(conn.id);
-                } catch (e: any) {
-                    failCount += tunnels.length;
-                    continue;
-                }
-            }
-
-            for (const tunnel of tunnels) {
-                try {
-                    await startTunnel(tunnel.id, tunnel.connectionId);
-                    successCount++;
-                } catch (err) {
-                    console.error(`Failed to start tunnel ${tunnel.name}:`, err);
-                    failCount++;
-                }
-            }
-        }
+        const { started, failed, cancelled } = await userTunnelActions.startGroup(groupTunnels);
 
         loadTunnels();
 
-        if (failCount > 0) {
-            showToast('error', `Started ${successCount} tunnels, failed ${failCount}`);
-        } else if (successCount > 0) {
-            showToast('success', `Started ${successCount} forwards`);
+        if (failed > 0) {
+            showToast('error', `Started ${started} forwards; ${failed} failed${cancelled ? `; ${cancelled} not started` : ''}`);
+        } else if (cancelled > 0) {
+            showToast('info', `Started ${started} forwards; ${cancelled} not started`);
+        } else if (started > 0) {
+            showToast('success', `Started ${started} forwards`);
         }
     };
 

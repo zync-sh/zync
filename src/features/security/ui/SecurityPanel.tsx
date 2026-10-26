@@ -7,7 +7,7 @@ import { builtinWorkspaceViewLabel } from '../../workspace/domain/registrations'
 import { useAssessment } from '../application/useAssessment';
 import { useAssessmentModules } from '../application/useAssessmentModules';
 
-import { hardeningSudoRetryLabel, type AssessmentRequest, type SudoRetryLabel } from '../domain/assessment';
+import { hardeningSudoRetryLabel, type AssessmentRequest, type AssessmentResult, type SudoRetryLabel } from '../domain/assessment';
 import { selectedModules, type ModuleDefinition, type RuntimeCredential, type RuntimeCredentialKind } from '../domain/modules';
 
 import { AssessmentPasswordDialog } from './AssessmentPasswordDialog';
@@ -22,14 +22,22 @@ interface Approval {
 type CredentialDrafts = Partial<Record<RuntimeCredentialKind, RuntimeCredential>>;
 
 /** Account-free hardening workspace: compact setup, explicit access and pane-owned evidence review. */
-export function SecurityPanel({ connectionId }: { connectionId: string }) {
+export function SecurityPanel({ connectionId, visible = true, focused = true, setupRequest, onBackToLibrary }: {
+    connectionId: string; visible?: boolean; focused?: boolean; setupRequest?: object; onBackToLibrary?(): void;
+}) {
     const connection = useAppStore(state => state.connections.find(item => item.id === connectionId));
     const connected = connection?.status === 'connected' && connectionId !== 'local';
-    const { state, controller } = useAssessment({
+    // Local browsing and nonsecret scope belong to the host, independently of live transport epochs.
+    const subject = useMemo(() => ({
         connectionId, name: connection?.name ?? 'Local workspace',
         host: connection?.host ?? '', username: connection?.username ?? '', port: connection?.port ?? 22,
-    }, connected, connection?.lastConnected);
-    const scope = useAssessmentModules(controller);
+    }), [connectionId, connection?.name, connection?.host, connection?.username, connection?.port]);
+    const { state, controller } = useAssessment(subject, connected, connection?.lastConnected);
+    const scope = useAssessmentModules(subject);
+    const [retained, setRetained] = useState<{ owner: object; result: AssessmentResult } | null>(null);
+    useEffect(() => {
+        setRetained(previous => state.status === 'completed' ? { owner: subject, result: state.result } : previous?.owner === subject ? previous : null);
+    }, [subject, state]);
     const chosenModules = useMemo(() => selectedModules(scope.modules, scope.selected), [scope.modules, scope.selected]);
     const [elevationConsent, setElevationConsent] = useState(false);
     const [confirmation, setConfirmation] = useState<Approval | null>(null);
@@ -51,8 +59,8 @@ export function SecurityPanel({ connectionId }: { connectionId: string }) {
     }, [activeModules, controller]);
     const busy = state.status === 'running' || state.status === 'stopping';
     const host = connection ? connection.username + '@' + connection.host : connectionId === 'local' ? 'Local workspace' : 'SSH host';
-    const result = state.status === 'completed' ? state.result : null;
-    const canRetryWithSudo = connected && result !== null && Boolean(hardeningSudoRetryLabel(result.report));
+    const result = state.status === 'completed' ? state.result : retained?.owner === subject ? retained.result : null;
+    const canRetryWithSudo = connected && !busy && result !== null && Boolean(hardeningSudoRetryLabel(result.report));
 
     /** Closing an approval drops its one-shot secrets while retaining the existing report. */
     const closeApproval = () => { setConfirmation(null); setConfiguring(null); setCredentialState({ owner: controller, values: {} }); };
@@ -90,9 +98,9 @@ export function SecurityPanel({ connectionId }: { connectionId: string }) {
                 <HardeningAuditIcon osIcon={connection?.icon} size={28} className="shrink-0 text-app-accent" />
                 <div className="min-w-0"><h1 className="text-base font-semibold tracking-tight">{builtinWorkspaceViewLabel('security')}</h1><p className="mt-1 break-all text-xs text-app-muted">{host}</p></div>
             </header>
-            <AssessmentReports owner={controller} presets={scope.presets} subject={{ connectionId, name: connection?.name ?? 'SSH host', host: connection?.host ?? '', username: connection?.username ?? '', port: connection?.port ?? 22 }}
+            <AssessmentReports owner={subject} presets={scope.presets} subject={subject} setupRequest={setupRequest} onBackToLibrary={onBackToLibrary}
                 liveResult={result} running={busy} onLeaveSetup={() => { closeApproval(); setElevationConsent(false); }} onRetryWithSudo={canRetryWithSudo ? handleRetryWithSudo : undefined} setup={<>
-            <HardeningSetup connected={connected} local={connectionId === 'local'}
+            <HardeningSetup connectionId={connectionId} connected={connected} local={connectionId === 'local'} visible={visible} focused={focused}
                 compact={busy || state.status === 'failed'} busy={busy} stopping={state.status === 'stopping'}
                 elevationConsent={elevationConsent} onElevationChange={setElevationConsent}
                 onCancel={() => { setCredentialState({ owner: controller, values: {} }); controller.cancel(); }}

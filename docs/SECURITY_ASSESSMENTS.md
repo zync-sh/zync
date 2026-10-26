@@ -1,9 +1,34 @@
-# Hardening audit
+# Security hardening audit
 
-Open **Hardening audit** from a Linux SSH host's workspace **+** menu, then choose
+Open **Security hardening audit** from a Linux SSH host's workspace **+** menu, then choose
 **New assessment**. Choose a preset,
 adjust **Areas**, then select **Run assessment** and approve the host, scope and
 access. No account, scanner, agent or Python installation is required.
+
+Use **Security hardening audit** in the global navigation bar, **+** menu or command
+palette to browse saved reports from all hosts. Search by report or host and filter
+by SSH account and endpoint. Reports open offline, including after a saved host is
+removed. Row actions export or delete a report; accepted risks are kept by default.
+Browse labels follow **Show host addresses in lists**. Report details and exports
+retain the recorded endpoint.
+To start from the global view, choose **New audit**, select a saved Linux SSH host
+and continue to its setup. Connect explicitly if it is offline, choose the checks
+and use **Run assessment** to review and approve the run. Selecting a host does
+not connect or start an assessment. **Back** returns to saved reports; **Resume
+audit** restores the current in-memory setup or unsaved result. Choosing another
+host replaces that draft. The host workspace remains an alternative entry point.
+Back remains available if the selected saved host is removed.
+
+Saved reports and accepted risks remain available while the host is offline.
+New assessment shows a connection card until you use **Connect** or **Reconnect**.
+Assessment controls appear after connecting, with any previous preset and area
+choices retained. Running still needs separate approval; connecting does not
+start an assessment.
+Use **Cancel** to stop a pending connection. Connection failures show a short
+reason, with diagnostic information under **Connection details**. After connecting,
+keyboard focus moves to the setup heading if you stayed in the connection card.
+Switching panes also cancels that focus handoff. Connecting from this card keeps
+your current shell tabs and workspace selection.
 
 ## Choose what to check
 
@@ -168,7 +193,7 @@ keeps a separate copy. **Replace saved report** explicitly updates a chosen copy
 for the same host/account and recorded SSH key, including its accepted-risk notes. Replacement
 detects changes from another pane instead of silently overwriting them.
 
-**Saved reports** appears inline by default when you open Hardening audit, with this
+**Saved reports** appears inline by default when you open Security hardening audit, with this
 host/account's dated records and check counts. The report list loads local summaries
 instead of retaining all report bodies. The one-time acceptance-note migration
 reads saved bodies to separate their notes. Click a report row, or focus it and press

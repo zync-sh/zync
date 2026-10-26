@@ -1,6 +1,7 @@
 # Fixed local Engine GETs only. Full responses stay on the host; only security
 # booleans, counts, controlled enums and container IDs enter the fact envelope.
 # Each slot has its own protected label so normal sudo policies need no replay bypass.
+# jq 1.6 reserves "label"; its filter uses a separate record_label binding.
 docker_workload_request() {
     command -v curl >/dev/null 2>&1 || return 127
     command -v jq >/dev/null 2>&1 || return 127
@@ -11,7 +12,7 @@ docker_workload_request() {
         printf '\nZYNC-WORKLOAD-%s-%s-status:%s\n' "$sudo_nonce" "$label" "$docker_workload_status"
     # Consumers wait through an approved password prompt. The producer's shared
     # execution timeout starts after authentication; the overall run bounds waiting.
-    } | head -c 524289 | jq --raw-input --slurp --compact-output --arg nonce "$sudo_nonce" --arg label "$label" --arg kind "$1" '
+    } | head -c 524289 | jq --raw-input --slurp --compact-output --arg nonce "$sudo_nonce" --arg record_label "$label" --arg kind "$1" '
     def bounded_array($object; $key):
       if ($object | type) == "object" and ($object | has($key)) then
         $object[$key] as $value | if $value == null then []
@@ -31,7 +32,7 @@ docker_workload_request() {
           elif ["0","f","F","FALSE","false","False"] | index($value) then false else null end
       else . end);
     if utf8bytelength > 524288 then ("Workload response exceeded its limit" | halt_error(65))
-    else split("\nZYNC-WORKLOAD-" + $nonce + "-" + $label + "-status:") as $parts
+    else split("\nZYNC-WORKLOAD-" + $nonce + "-" + $record_label + "-status:") as $parts
       | if ($parts | length) != 2 or ($parts[1] | test("^[0-9]{1,3}\n$") | not) then ("Workload response was incomplete" | halt_error(65))
         else ($parts[1] | tonumber) as $status
         | if $status > 255 then ("Workload response status was invalid" | halt_error(65))

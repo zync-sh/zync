@@ -264,6 +264,7 @@ export interface AppSettings {
         navigationSnippets: string;
         navigationVaults: string;
         navigationPlugins: string;
+        navigationSecurityAudits: string;
         navigationProfile: string;
         commandPaletteMode: string;
         toggleSidebar: string;
@@ -443,6 +444,7 @@ export const defaultSettings: AppSettings = {
         navigationSnippets: 'Mod+Alt+5',
         navigationVaults: 'Mod+Alt+6',
         navigationPlugins: 'Mod+Alt+7',
+        navigationSecurityAudits: 'Mod+Alt+8',
         navigationProfile: 'Mod+Alt+0',
         commandPaletteMode: 'Mod+Shift+P',
         toggleSidebar: 'Mod+B',

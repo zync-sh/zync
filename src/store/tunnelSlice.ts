@@ -24,7 +24,7 @@ export interface TunnelSlice {
     isLoadingTunnels: boolean;
 
     // Actions
-    loadTunnels: (connectionId: string) => Promise<void>;
+    loadTunnels: (connectionId: string, options?: { throwOnError?: boolean }) => Promise<void>;
     loadAllTunnels: () => Promise<void>;
     saveTunnel: (tunnel: TunnelConfig) => Promise<void>;
     deleteTunnel: (id: string, connectionId: string) => Promise<void>;
@@ -42,7 +42,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
     tunnels: {},
     isLoadingTunnels: false,
 
-    loadTunnels: async (connectionId) => {
+    loadTunnels: async (connectionId, options) => {
         set({ isLoadingTunnels: true });
         try {
             const list = await ipc.invoke('tunnel:list', connectionId);
@@ -56,6 +56,8 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
         } catch (error) {
             console.error('Failed to load tunnels:', error);
             set({ isLoadingTunnels: false });
+            // Explicit starts must not infer an inactive runtime from a failed status read.
+            if (options?.throwOnError) throw error;
         }
     },
 
@@ -193,6 +195,8 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
             await get().loadTunnels(connectionId);
         } catch (error) {
             console.error('Failed to reconcile tunnels for connection:', error);
+        } finally {
+            // Reconciliation is teardown: a failed follow-up list read cannot leave running renderer flags behind.
             get().markAllTunnelsStoppedForConnection(connectionId);
         }
     },
@@ -200,7 +204,7 @@ export const createTunnelSlice: StateCreator<AppStore, [], [], TunnelSlice> = (s
     markAllTunnelsStoppedForConnection: (connectionId) => {
         set(state => {
             const currentList = state.tunnels[connectionId];
-            if (!currentList?.length) {
+            if (!currentList?.some(tunnel => tunnel.status === 'active')) {
                 return state;
             }
             return {

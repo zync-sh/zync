@@ -1,5 +1,10 @@
 export type FilePathSeparator = '/' | '\\';
 
+/** Fully rooted POSIX, drive or UNC paths; home tokens and drive-relative paths are unresolved. */
+export function isAbsoluteFilePath(path: string): boolean {
+  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\');
+}
+
 export function filePathSeparator(path: string): FilePathSeparator {
   if (path.startsWith('/')) return '/';
   if (/^[A-Za-z]:/.test(path) || path.startsWith('\\\\')) return '\\';

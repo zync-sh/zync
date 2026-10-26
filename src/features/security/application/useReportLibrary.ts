@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AssessmentSubject } from '../domain/assessment';
 import type { ReportLibraryPort, SavedReportSummary } from '../domain/savedReports';
-import { reportLibraryIpc } from '../infrastructure/reportLibraryIpc';
+import { listSavedReports, reportLibraryIpc } from '../infrastructure/reportLibraryIpc';
 import type { SavedRisk } from '../domain/acceptedRisks';
 
 type LibraryStatus = 'idle' | 'loading' | 'ready' | 'failed';
 interface LibraryState { owner: object; rows: SavedReportSummary[]; risks: SavedRisk[]; status: LibraryStatus; riskStatus: LibraryStatus; riskReadAt: number; busy: boolean; refreshing: boolean }
 
-/** Bounded report summaries/acceptances; pane ownership fences late dialog and database completions. */
-export function useReportLibrary(owner: object, subject: AssessmentSubject, notify: (type: 'success' | 'error' | 'info', message: string) => void,
+/** Bounded local data with owned completions; an absent subject lists global summaries without reading acceptances. */
+export function useReportLibrary(owner: object, subject: AssessmentSubject | undefined, notify: (type: 'success' | 'error' | 'info', message: string) => void,
     port: ReportLibraryPort = reportLibraryIpc) {
     const ownerRef = useRef(owner); ownerRef.current = owner;
     const pending = useRef<object | undefined>(undefined);
@@ -39,7 +39,9 @@ export function useReportLibrary(owner: object, subject: AssessmentSubject, noti
         setState(previous => ({ ...previous, owner, refreshing: true,
             status: previous.owner === owner && previous.status === 'ready' ? 'ready' : 'loading',
             riskStatus: previous.owner === owner && previous.riskStatus === 'ready' ? 'ready' : 'loading' }));
-        const data = await perform(() => Promise.allSettled([port.list(subject), port.risks(subject)]), 'Could not load saved audit data.');
+        const data = await perform(() => Promise.allSettled(subject
+            ? [port.list(subject), port.risks(subject)]
+            : [listSavedReports(), Promise.resolve([] as SavedRisk[])]), 'Could not load saved audit data.');
         if (ownerRef.current === owner && refreshing.current === token && data) setState(previous => ({ ...previous, owner, refreshing: false,
             status: data[0].status === 'fulfilled' ? 'ready' : 'failed', rows: data[0].status === 'fulfilled' ? data[0].value : previous.rows,
             riskStatus: data[1].status === 'fulfilled' ? 'ready' : 'failed', risks: data[1].status === 'fulfilled' ? data[1].value : previous.risks,

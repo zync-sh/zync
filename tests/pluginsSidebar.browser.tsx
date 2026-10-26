@@ -44,7 +44,7 @@ function Fixture() {
     }, [theme]);
     const openPlugins = () => activateGlobalNavigation('plugins', {
         showSection: setSection, selectWorkspace: () => false,
-        openPublicUrls() {}, openForwarding() {}, openSnippets() {},
+        openPublicUrls() {}, openForwarding() {}, openSecurityAudits() {}, openSnippets() {},
     });
     return <main className="h-full overflow-auto bg-app-bg text-app-text p-6">
         <h1 className="text-lg font-semibold">Plugins sidebar fixture</h1>

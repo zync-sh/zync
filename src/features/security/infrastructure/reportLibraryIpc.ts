@@ -2,7 +2,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type { AssessmentResult } from '../domain/assessment';
 import type { RiskException } from '../domain/review';
-import { reportPayload, type ReportExportFormat, type ReportLibraryPort, type ReportPackage } from '../domain/savedReports';
+import { reportPayload, type ReportExportFormat, type ReportLibraryPort, type ReportPackage, type SavedReportSummary } from '../domain/savedReports';
+
+/** Global browsing reads the same bounded metadata index without loading reports or connecting to hosts. */
+export function listSavedReports(): Promise<SavedReportSummary[]> {
+    return invoke('security_assessment_saved_reports', { subject: null });
+}
 
 /** Explicit local report storage uses the native validator and transactional library, outside sync/global state. */
 export const reportLibraryIpc: ReportLibraryPort = {

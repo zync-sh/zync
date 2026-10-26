@@ -61,7 +61,7 @@ test('main tab activation changes visibility without replaying motion or broad t
         ts.forEachChild(node, child => collect(child, inside));
     }
     collect(mainSource);
-    assert.equal(visibilityClasses.length, 7, 'Cover all six global tab bodies and the host/Snippets body');
+    assert.equal(visibilityClasses.length, 8, 'Cover all seven global tab bodies, including saved audits, and the host/Snippets body');
     for (const expression of visibilityClasses) {
         for (const forceOpaqueShell of [false, true]) {
             for (const terminalTransparencyEnabled of [false, true]) {

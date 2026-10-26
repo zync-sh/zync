@@ -48,6 +48,7 @@ export const SHORTCUT_CATALOG: readonly ShortcutCommand[] = ([
     { id: 'navigationSnippets', label: 'Show global Snippets', section: 'global', defaultKeys: 'Mod+Alt+5', when: 'app', settingsKey: 'navigationSnippets', configurable: true, navigationAction: 'snippets' },
     { id: 'navigationVaults', label: 'Show Vaults', section: 'global', defaultKeys: 'Mod+Alt+6', when: 'app', settingsKey: 'navigationVaults', configurable: true, navigationAction: 'vaults' },
     { id: 'navigationPlugins', label: 'Show Plugins', section: 'global', defaultKeys: 'Mod+Alt+7', when: 'app', settingsKey: 'navigationPlugins', configurable: true, navigationAction: 'plugins' },
+    { id: 'navigationSecurityAudits', label: 'Show Security hardening audit', section: 'global', defaultKeys: 'Mod+Alt+8', when: 'app', settingsKey: 'navigationSecurityAudits', configurable: true, navigationAction: 'security-audits' },
     { id: 'navigationProfile', label: 'Open Profile and Sync menu', section: 'global', defaultKeys: 'Mod+Alt+0', when: 'app', settingsKey: 'navigationProfile', configurable: true, shellAction: 'profile-menu', terminalReservation: 'recommended' },
     {
         id: 'customizeNavigation', label: 'Customize navigation', section: 'view',
