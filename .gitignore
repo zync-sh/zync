@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# Vite uses the TypeScript source; generated copies must not shadow it.
+/vite.config.js
+/vite.config.d.ts
+*.tsbuildinfo
 target-agent-check/
 src-tauri/target-agent-check/
 # Editor directories and files
@@ -28,6 +33,7 @@ src-tauri/target-agent-check/
 release/
 .tmp-agent-tests/
 .npm-cache/
+tests/files/native-permissions/target/
 # Written by Snap CI on the runner only — never commit
 snap/ci-build-env.sh
 # Prebuilt .deb downloaded for snap packaging — never commit
@@ -38,3 +44,5 @@ prebuilt/
 /AGENTS.md
 /CLAUDE.md
 /GEMINI.md
+
+.tmp*

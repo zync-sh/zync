@@ -4,11 +4,13 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-use crate::ai::tool_command_exec::{exec_silent, exec_ssh_silent, exec_ssh_silent_with_stdin};
+use crate::ai::tool_command_exec::exec_silent;
 use crate::ai::tool_exec_support::{cap_output, emit_output, shell_quote};
 use crate::ai::tools::ToolContext;
 use crate::ai::types::ToolDiffEvent;
+use crate::ai::util::COMMAND_TIMEOUT;
 use crate::commands::ConnectionHandle;
+use crate::ssh_command::SshSession;
 
 fn build_read_file_command(path: &str) -> String {
     format!("cat -- {}", shell_quote(path))
@@ -34,6 +36,36 @@ fn should_stream_remote_write(content_len: usize) -> bool {
 
 fn build_streaming_write_command(path: &str) -> String {
     format!("base64 -d > {}", shell_quote(path))
+}
+
+/// Confirm a shell write step only with an explicit zero exit status, retaining
+/// stderr diagnostics on errors. Success-looking stdout is not confirmation.
+async fn checked_remote_write_command(
+    session: SshSession,
+    command: &str,
+    input: Option<&[u8]>,
+    operation: &str,
+) -> Result<(), String> {
+    let mut stderr = Vec::new();
+    let status =
+        crate::ssh_command::run(session, command, input, COMMAND_TIMEOUT, |stream, data| {
+            if stream != 0 {
+                stderr.extend_from_slice(data);
+            }
+        })
+        .await;
+
+    let error = match status {
+        Ok(Some(0)) => return Ok(()),
+        Ok(Some(code)) => format!("{operation} failed (exit code {code})"),
+        Ok(None) => format!("{operation} failed: remote command did not report an exit status"),
+        Err(error) => format!("{operation} failed: {error}"),
+    };
+    if stderr.is_empty() {
+        Err(error)
+    } else {
+        Err(format!("{error}: {}", String::from_utf8_lossy(&stderr)))
+    }
 }
 
 pub(crate) async fn read_file(
@@ -100,62 +132,7 @@ pub(crate) async fn write_file(
 
 async fn do_write_file(ctx: &ToolContext<'_>, path: &str, content: &str) -> Result<(), String> {
     if let Some(conn_id) = ctx.connection_id {
-        let conns = ctx.connections.lock().await;
-        let handle = conns.get(conn_id).ok_or_else(|| {
-            format!(
-                "SSH connection '{}' not found. Reconnect and try again.",
-                conn_id
-            )
-        })?;
-
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            if let Some(parent_str) = parent.to_str().filter(|value| !value.is_empty()) {
-                if let Some(session_arc) = &handle.session {
-                    let mkdir_cmd = format!("mkdir -p {}", shell_quote(parent_str));
-                    let session = session_arc.lock().await;
-                    let _ = exec_ssh_silent(&session, &mkdir_cmd).await;
-                }
-            }
-        }
-
-        if let Some(sftp) = &handle.sftp_session {
-            use tokio::io::AsyncWriteExt;
-
-            let mut file = sftp
-                .create(path)
-                .await
-                .map_err(|e| format!("SFTP create failed: {}", e))?;
-            file.write_all(content.as_bytes())
-                .await
-                .map_err(|e| format!("SFTP write failed: {}", e))?;
-            file.flush()
-                .await
-                .map_err(|e| format!("SFTP flush failed: {}", e))?;
-            file.shutdown()
-                .await
-                .map_err(|e| format!("SFTP close failed: {}", e))?;
-            return Ok(());
-        }
-
-        let session_arc = handle
-            .session
-            .as_ref()
-            .ok_or_else(|| "SSH session is not active. Reconnect and try again.".to_string())?;
-        use base64::{engine::general_purpose, Engine as _};
-        let encoded = general_purpose::STANDARD.encode(content.as_bytes());
-        let session = session_arc.lock().await;
-        if should_stream_remote_write(content.len()) {
-            let cmd = build_streaming_write_command(path);
-            exec_ssh_silent_with_stdin(&session, &cmd, encoded.as_bytes()).await?;
-        } else {
-            let cmd = format!(
-                "printf '%s' '{}' | base64 -d > {}",
-                encoded,
-                shell_quote(path)
-            );
-            exec_ssh_silent(&session, &cmd).await?;
-        }
-        return Ok(());
+        return write_remote_file(ctx.connections, conn_id, path, content).await;
     }
 
     if let Some(parent) = std::path::Path::new(path).parent() {
@@ -166,6 +143,73 @@ async fn do_write_file(ctx: &ToolContext<'_>, path: &str, content: &str) -> Resu
     tokio::fs::write(path, content)
         .await
         .map_err(|e| format!("Cannot write {}: {}", path, e))
+}
+
+pub(crate) async fn write_remote_file(
+    connections: &Mutex<HashMap<String, ConnectionHandle>>,
+    connection_id: &str,
+    path: &str,
+    content: &str,
+) -> Result<(), String> {
+    // Both handles belong to the same transport even if the registry is replaced
+    // during mkdir or writing. Never retain the registry guard across network I/O.
+    let (session, sftp) = {
+        let conns = connections.lock().await;
+        let handle = conns.get(connection_id).ok_or_else(|| {
+            format!(
+                "SSH connection '{}' not found. Reconnect and try again.",
+                connection_id
+            )
+        })?;
+        (handle.session.clone(), handle.sftp_session.clone())
+    };
+
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if let Some(parent_str) = parent.to_str().filter(|value| !value.is_empty()) {
+            if let Some(session) = &session {
+                let mkdir_cmd = format!("mkdir -p {}", shell_quote(parent_str));
+                checked_remote_write_command(session.clone(), &mkdir_cmd, None, "Remote mkdir")
+                    .await?;
+            }
+        }
+    }
+
+    if let Some(sftp) = sftp {
+        use tokio::io::AsyncWriteExt;
+
+        let mut file = sftp
+            .create(path)
+            .await
+            .map_err(|e| format!("SFTP create failed: {}", e))?;
+        file.write_all(content.as_bytes())
+            .await
+            .map_err(|e| format!("SFTP write failed: {}", e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("SFTP flush failed: {}", e))?;
+        file.shutdown()
+            .await
+            .map_err(|e| format!("SFTP close failed: {}", e))?;
+        return Ok(());
+    }
+
+    let session =
+        session.ok_or_else(|| "SSH session is not active. Reconnect and try again.".to_string())?;
+    use base64::{engine::general_purpose, Engine as _};
+    let encoded = general_purpose::STANDARD.encode(content.as_bytes());
+    if should_stream_remote_write(content.len()) {
+        let cmd = build_streaming_write_command(path);
+        checked_remote_write_command(session, &cmd, Some(encoded.as_bytes()), "Remote file write")
+            .await?;
+    } else {
+        let cmd = format!(
+            "printf '%s' '{}' | base64 -d > {}",
+            encoded,
+            shell_quote(path)
+        );
+        checked_remote_write_command(session, &cmd, None, "Remote file write").await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn list_files(

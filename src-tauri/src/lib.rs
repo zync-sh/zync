@@ -31,6 +31,7 @@ mod preference_settings;
 mod shell_icons;
 mod snippets;
 mod ssh;
+mod ssh_command;
 mod ssh_certificate;
 mod network_interfaces;
 mod sftp_read;

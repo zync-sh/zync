@@ -1,6 +1,7 @@
 use crate::ai::tool_exec_support::{cap_output, emit_output};
 use crate::ai::tools::ToolContext;
 use crate::ai::util::COMMAND_TIMEOUT;
+use crate::ssh_command::SshSession;
 
 pub(crate) async fn exec_command(
     ctx: &ToolContext<'_>,
@@ -22,11 +23,10 @@ pub(crate) async fn exec_command(
                 .ok_or_else(|| "SSH session is not active. Reconnect and try again.".to_string())?
                 .clone()
         };
-        let session = session_arc.lock().await;
         return exec_ssh(
             ctx.app,
             ctx.session_dir.as_deref(),
-            &session,
+            session_arc,
             cmd,
             ctx.run_id,
             tool_call_id,
@@ -57,8 +57,7 @@ pub(crate) async fn exec_silent(ctx: &ToolContext<'_>, cmd: &str) -> Result<Stri
                 .ok_or_else(|| "SSH session is not active.".to_string())?
                 .clone()
         };
-        let session = session_arc.lock().await;
-        return exec_ssh_silent(&session, cmd).await;
+        return exec_ssh_silent(session_arc, cmd).await;
     }
 
     exec_local_silent(cmd).await
@@ -67,129 +66,34 @@ pub(crate) async fn exec_silent(ctx: &ToolContext<'_>, cmd: &str) -> Result<Stri
 async fn exec_ssh(
     app: &tauri::AppHandle,
     session_dir: Option<&std::path::Path>,
-    session: &russh::client::Handle<crate::ssh::Client>,
+    session: SshSession,
     cmd: &str,
     run_id: &str,
     tool_call_id: &str,
 ) -> Result<String, String> {
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("SSH channel error: {}", e))?;
-
-    channel
-        .exec(true, cmd)
-        .await
-        .map_err(|e| format!("SSH exec error: {}", e))?;
-
-    let result = tokio::time::timeout(COMMAND_TIMEOUT, async {
-        let mut output = String::new();
-        let mut exit_code: Option<u32> = None;
-        loop {
-            match channel.wait().await {
-                Some(russh::ChannelMsg::Data { data }) => {
-                    let chunk = String::from_utf8_lossy(&data).to_string();
-                    emit_output(app, run_id, tool_call_id, &chunk);
-                    output.push_str(&chunk);
-                }
-                Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                    let chunk = String::from_utf8_lossy(&data).to_string();
-                    emit_output(app, run_id, tool_call_id, &chunk);
-                    output.push_str(&chunk);
-                }
-                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                    exit_code = Some(exit_status);
-                }
-                None => break,
-                _ => {}
-            }
-        }
-        (output, exit_code)
-    })
-    .await;
-
-    match result {
-        Ok((output, exit_code)) => {
-            let mut result = cap_output(session_dir, Some(tool_call_id), output);
-            if let Some(code) = exit_code {
-                if code != 0 {
-                    result.push_str(&format!("\n[Exit code: {}]", code));
-                }
-            }
-            Ok(result)
-        }
-        Err(_) => Err(format!(
-            "Command timed out after {}s. Consider breaking it into smaller steps.",
-            COMMAND_TIMEOUT.as_secs()
-        )),
-    }
-}
-
-pub(crate) async fn exec_ssh_silent(
-    session: &russh::client::Handle<crate::ssh::Client>,
-    cmd: &str,
-) -> Result<String, String> {
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("SSH channel error: {}", e))?;
-
-    channel
-        .exec(true, cmd)
-        .await
-        .map_err(|e| format!("SSH exec error: {}", e))?;
-
-    collect_ssh_output(&mut channel).await
-}
-
-pub(crate) async fn exec_ssh_silent_with_stdin(
-    session: &russh::client::Handle<crate::ssh::Client>,
-    cmd: &str,
-    input: &[u8],
-) -> Result<String, String> {
-    let mut channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("SSH channel error: {}", e))?;
-
-    channel
-        .exec(true, cmd)
-        .await
-        .map_err(|e| format!("SSH exec error: {}", e))?;
-
-    channel
-        .data(input)
-        .await
-        .map_err(|e| format!("SSH stdin send error: {}", e))?;
-    channel
-        .eof()
-        .await
-        .map_err(|e| format!("SSH stdin EOF error: {}", e))?;
-
-    collect_ssh_output(&mut channel).await
-}
-
-async fn collect_ssh_output(
-    channel: &mut russh::Channel<russh::client::Msg>,
-) -> Result<String, String> {
     let mut output = String::new();
-    let mut exit_code: Option<u32> = None;
+    let exit_code = crate::ssh_command::run(session, cmd, None, COMMAND_TIMEOUT, |_, data| {
+        let chunk = String::from_utf8_lossy(data);
+        emit_output(app, run_id, tool_call_id, &chunk);
+        output.push_str(&chunk);
+    })
+    .await?;
 
-    loop {
-        match channel.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => {
-                output.push_str(&String::from_utf8_lossy(&data));
-            }
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                output.push_str(&String::from_utf8_lossy(&data));
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = Some(exit_status);
-            }
-            None => break,
-            _ => {}
+    let mut result = cap_output(session_dir, Some(tool_call_id), output);
+    if let Some(code) = exit_code {
+        if code != 0 {
+            result.push_str(&format!("\n[Exit code: {}]", code));
         }
     }
+    Ok(result)
+}
+
+pub(crate) async fn exec_ssh_silent(session: SshSession, cmd: &str) -> Result<String, String> {
+    let mut output = String::new();
+    let exit_code = crate::ssh_command::run(session, cmd, None, COMMAND_TIMEOUT, |_, data| {
+        output.push_str(&String::from_utf8_lossy(data));
+    })
+    .await?;
 
     let mut result = output;
     if let Some(code) = exit_code {

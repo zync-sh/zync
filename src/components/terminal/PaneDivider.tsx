@@ -1,7 +1,23 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { cn } from '../../lib/utils';
-import { MIN_PANE_RATIO, splitSashStyle, type SplitDirection, wheelAxisDelta, wheelDeltaToRatio } from '../../lib/paneLayout';
+import {
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState,
+} from 'react';
+
+import {
+    MIN_PANE_RATIO,
+    type SplitDirection,
+    splitSashStyle,
+    wheelAxisDelta,
+    wheelDeltaToRatio,
+} from '../../lib/paneLayout';
 import { beginPaneDividerDrag, endPaneDividerDrag } from '../../lib/terminal/terminalFit';
+import { cn } from '../../lib/utils';
 
 const KEY_STEP = 0.05;
 const WHEEL_SETTLE_MS = 140;
@@ -48,7 +64,7 @@ export function PaneDivider({
     const dragHold = useRef<ReturnType<typeof beginPaneDividerDrag> | null>(null);
     const wheelHold = useRef<ReturnType<typeof beginPaneDividerDrag> | null>(null);
     const wheelHeld = useRef(false);
-    const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const wheelTimer = useRef<ReturnType<Window['setTimeout']> | null>(null);
     const firstRatioRef = useRef(firstRatio);
     const previousRatio = useRef(firstRatio);
     const interactionOrigin = useRef(firstRatio);
@@ -61,7 +77,9 @@ export function PaneDivider({
     useLayoutEffect(() => {
         // A held-state render can precede a coalesced parent preview. Do not lose
         // input accumulated since the last actual controlled-value update.
-        if (previousRatio.current !== firstRatio) firstRatioRef.current = firstRatio;
+        if (previousRatio.current !== firstRatio) {
+            firstRatioRef.current = firstRatio;
+        }
         previousRatio.current = firstRatio;
         onDragRef.current = onDrag;
         onDragStartRef.current = onDragStart;
@@ -78,7 +96,9 @@ export function PaneDivider({
     } | null>(null);
 
     const stopDrag = useCallback((commit: boolean) => {
-        if (!dragging.current) return;
+        if (!dragging.current) {
+            return;
+        }
         dragging.current = false;
         const capture = pointerCapture.current;
         pointerCapture.current = null;
@@ -95,7 +115,9 @@ export function PaneDivider({
         endPaneDividerDrag(dragHold.current);
         dragHold.current = null;
         if (commit) {
-            if (onDragEndRef.current() === false) firstRatioRef.current = interactionOrigin.current;
+            if (onDragEndRef.current() === false) {
+                firstRatioRef.current = interactionOrigin.current;
+            }
         } else if (onCancelRef.current) {
             firstRatioRef.current = interactionOrigin.current;
             onCancelRef.current();
@@ -108,13 +130,17 @@ export function PaneDivider({
             window.clearTimeout(wheelTimer.current);
             wheelTimer.current = null;
         }
-        if (!wheelHeld.current) return;
+        if (!wheelHeld.current) {
+            return;
+        }
         wheelHeld.current = false;
         setHeld(false);
         endPaneDividerDrag(wheelHold.current);
         wheelHold.current = null;
         if (commit) {
-            if (onDragEndRef.current() === false) firstRatioRef.current = interactionOrigin.current;
+            if (onDragEndRef.current() === false) {
+                firstRatioRef.current = interactionOrigin.current;
+            }
             window.dispatchEvent(new Event('zync:pane-resize-end'));
         } else if (onCancelRef.current) {
             firstRatioRef.current = interactionOrigin.current;
@@ -122,17 +148,31 @@ export function PaneDivider({
         }
     }, []);
 
-    useEffect(() => () => {
-        stopDrag(false);
-        finishWheel(false);
-    }, [stopDrag, finishWheel]);
+    useEffect(
+        () => () => {
+            stopDrag(false);
+            finishWheel(false);
+        },
+        [stopDrag, finishWheel],
+    );
 
     useEffect(() => {
-        const onBlur = () => { stopDrag(!onCancelRef.current); finishWheel(!onCancelRef.current); };
+        /** End active resizing on blur, rolling back when cancellation is available. */
+        const onBlur = () => {
+            stopDrag(!onCancelRef.current);
+            finishWheel(!onCancelRef.current);
+        };
+        /** Cancel an eligible resize before Escape reaches another focused control. */
         const onEscape = (event: globalThis.KeyboardEvent) => {
             // Wheel resizing can leave another main-document control focused.
             // Only an active, rollback-capable sash owns Escape.
-            if (event.key !== 'Escape' || !onCancelRef.current || (!dragging.current && !wheelHeld.current)) return;
+            if (
+                event.key !== 'Escape' ||
+                !onCancelRef.current ||
+                (!dragging.current && !wheelHeld.current)
+            ) {
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             stopDrag(false);
@@ -147,8 +187,13 @@ export function PaneDivider({
     }, [stopDrag, finishWheel]);
 
     const changeRatio = useCallback((ratio: number) => {
-        if (!Number.isFinite(ratio)) return;
-        const bounded = Math.max(boundsRef.current.minRatio, Math.min(boundsRef.current.maxRatio, ratio));
+        if (!Number.isFinite(ratio)) {
+            return;
+        }
+        const bounded = Math.max(
+            boundsRef.current.minRatio,
+            Math.min(boundsRef.current.maxRatio, ratio),
+        );
         // Wheel/key events may arrive before the coalesced preview render.
         firstRatioRef.current = bounded;
         onDragRef.current(bounded);
@@ -156,15 +201,24 @@ export function PaneDivider({
 
     useEffect(() => {
         const node = nodeRef.current;
-        if (!node) return undefined;
+        if (!node) {
+            return undefined;
+        }
 
+        /** Preview wheel-driven ratios and commit once the wheel burst settles. */
         const onWheel = (event: WheelEvent) => {
-            if (event.ctrlKey || event.metaKey) return;
-            if (dragging.current) return;
+            if (event.ctrlKey || event.metaKey) {
+                return;
+            }
+            if (dragging.current) {
+                return;
+            }
             const stacked = direction === 'vertical';
             const axis = wheelAxisDelta(event.deltaX, event.deltaY, stacked);
             const step = wheelDeltaToRatio(axis, event.deltaMode);
-            if (step === 0) return;
+            if (step === 0) {
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             if (!wheelHeld.current) {
@@ -175,7 +229,9 @@ export function PaneDivider({
                 wheelHold.current = beginPaneDividerDrag();
             }
             changeRatio(firstRatioRef.current + step);
-            if (wheelTimer.current != null) window.clearTimeout(wheelTimer.current);
+            if (wheelTimer.current != null) {
+                window.clearTimeout(wheelTimer.current);
+            }
             wheelTimer.current = window.setTimeout(() => finishWheel(true), WHEEL_SETTLE_MS);
         };
 
@@ -183,80 +239,116 @@ export function PaneDivider({
         return () => node.removeEventListener('wheel', onWheel);
     }, [direction, finishWheel, changeRatio]);
 
-    const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-        if (event.button !== 0 || !event.isPrimary) return;
-        event.preventDefault();
-        if (event.detail >= 2) {
-            finishWheel(false);
-            stopDrag(false);
-            onEqualize();
-            return;
-        }
-        const frame = event.currentTarget.closest(frameSelector);
-        if (!(frame instanceof HTMLElement)) return;
-        // Keyboard events inside plugin iframes do not bubble to the host. Focus
-        // an opted-in draft handle so Escape remains reachable during its drag.
-        if (onCancelRef.current) event.currentTarget.focus({ preventScroll: true });
-        finishWheel(false);
-        stopDrag(false);
-        interactionOrigin.current = firstRatioRef.current;
-        onDragStartRef.current?.();
-        dragging.current = true;
-        // Keep receiving movement when the pointer crosses a plugin iframe.
-        event.currentTarget.setPointerCapture(event.pointerId);
-        pointerCapture.current = { node: event.currentTarget, id: event.pointerId };
-        setHeld(true);
-        dragHold.current = beginPaneDividerDrag();
-        const vertical = direction === 'vertical';
-        const startSize = vertical ? frame.clientHeight : frame.clientWidth;
-        const startRect = frame.getBoundingClientRect();
-
-        const onMove = (move: globalThis.PointerEvent) => {
-            if (!dragging.current || move.pointerId !== event.pointerId || startSize <= 0) return;
-            move.preventDefault();
-            const pos = vertical ? move.clientY : move.clientX;
-            const origin = vertical ? startRect.top : startRect.left;
-            const ratio = (pos - origin) / startSize;
-            changeRatio(ratio);
-        };
-        const onUp = (up: globalThis.PointerEvent) => {
-            if (up.pointerId === event.pointerId) stopDrag(true);
-        };
-        const onCancel = (cancel: globalThis.PointerEvent) => {
-            if (cancel.pointerId === event.pointerId) stopDrag(!onCancelRef.current);
-        };
-        listeners.current = { move: onMove, up: onUp, cancel: onCancel };
-        window.addEventListener('pointermove', onMove, { capture: true });
-        window.addEventListener('pointerup', onUp, { capture: true });
-        window.addEventListener('pointercancel', onCancel, { capture: true });
-    }, [direction, finishWheel, onEqualize, stopDrag, frameSelector, changeRatio]);
-
-    const onKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-        if (event.key === 'Escape' && onCancelRef.current && (dragging.current || wheelHeld.current)) {
+    const onPointerDown = useCallback(
+        (event: ReactPointerEvent<HTMLDivElement>) => {
+            if (event.button !== 0 || !event.isPrimary) {
+                return;
+            }
             event.preventDefault();
-            event.stopPropagation();
-            stopDrag(false);
+            if (event.detail >= 2) {
+                finishWheel(false);
+                stopDrag(false);
+                onEqualize();
+                return;
+            }
+            const frame = event.currentTarget.closest(frameSelector);
+            if (!(frame instanceof HTMLElement)) {
+                return;
+            }
+            // Keyboard events inside plugin iframes do not bubble to the host. Focus
+            // an opted-in draft handle so Escape remains reachable during its drag.
+            if (onCancelRef.current) {
+                event.currentTarget.focus({ preventScroll: true });
+            }
             finishWheel(false);
-            return;
-        }
-        if (event.key === 'Enter' || event.key === 'Home') {
+            stopDrag(false);
+            interactionOrigin.current = firstRatioRef.current;
+            onDragStartRef.current?.();
+            dragging.current = true;
+            // Keep receiving movement when the pointer crosses a plugin iframe.
+            event.currentTarget.setPointerCapture(event.pointerId);
+            pointerCapture.current = { node: event.currentTarget, id: event.pointerId };
+            setHeld(true);
+            dragHold.current = beginPaneDividerDrag();
+            const vertical = direction === 'vertical';
+            const startSize = vertical ? frame.clientHeight : frame.clientWidth;
+            const startRect = frame.getBoundingClientRect();
+
+            /** Preview the owning pointer's ratio within the captured frame bounds. */
+            const onMove = (move: globalThis.PointerEvent) => {
+                if (!dragging.current || move.pointerId !== event.pointerId || startSize <= 0) {
+                    return;
+                }
+                move.preventDefault();
+                const pos = vertical ? move.clientY : move.clientX;
+                const origin = vertical ? startRect.top : startRect.left;
+                const ratio = (pos - origin) / startSize;
+                changeRatio(ratio);
+            };
+            /** Commit the resize only when its owning pointer is released. */
+            const onUp = (up: globalThis.PointerEvent) => {
+                if (up.pointerId === event.pointerId) {
+                    stopDrag(true);
+                }
+            };
+            /** End a cancelled pointer gesture, rolling back when cancellation is available. */
+            const onCancel = (cancel: globalThis.PointerEvent) => {
+                if (cancel.pointerId === event.pointerId) {
+                    stopDrag(!onCancelRef.current);
+                }
+            };
+            listeners.current = { move: onMove, up: onUp, cancel: onCancel };
+            window.addEventListener('pointermove', onMove, { capture: true });
+            window.addEventListener('pointerup', onUp, { capture: true });
+            window.addEventListener('pointercancel', onCancel, { capture: true });
+        },
+        [direction, finishWheel, onEqualize, stopDrag, frameSelector, changeRatio],
+    );
+
+    const onKeyDown = useCallback(
+        (event: ReactKeyboardEvent<HTMLDivElement>) => {
+            if (
+                event.key === 'Escape' &&
+                onCancelRef.current &&
+                (dragging.current || wheelHeld.current)
+            ) {
+                event.preventDefault();
+                event.stopPropagation();
+                stopDrag(false);
+                finishWheel(false);
+                return;
+            }
+            if (event.key === 'Enter' || event.key === 'Home') {
+                event.preventDefault();
+                stopDrag(false);
+                finishWheel(false);
+                onEqualize();
+                return;
+            }
+            const stacked = direction === 'vertical';
+            const delta = stacked
+                ? event.key === 'ArrowDown'
+                    ? KEY_STEP
+                    : event.key === 'ArrowUp'
+                      ? -KEY_STEP
+                      : 0
+                : event.key === 'ArrowRight'
+                  ? KEY_STEP
+                  : event.key === 'ArrowLeft'
+                    ? -KEY_STEP
+                    : 0;
+            if (delta === 0) {
+                return;
+            }
             event.preventDefault();
-            stopDrag(false);
-            finishWheel(false);
-            onEqualize();
-            return;
-        }
-        const stacked = direction === 'vertical';
-        const delta =
-            stacked
-                ? event.key === 'ArrowDown' ? KEY_STEP : event.key === 'ArrowUp' ? -KEY_STEP : 0
-                : event.key === 'ArrowRight' ? KEY_STEP : event.key === 'ArrowLeft' ? -KEY_STEP : 0;
-        if (delta === 0) return;
-        event.preventDefault();
-        const origin = firstRatioRef.current;
-        changeRatio(firstRatioRef.current + delta);
-        if ((onKeyCommit ?? onDragEnd)() === false) firstRatioRef.current = origin;
-    }, [direction, changeRatio, onDragEnd, onKeyCommit, onEqualize, stopDrag, finishWheel]);
+            const origin = firstRatioRef.current;
+            changeRatio(firstRatioRef.current + delta);
+            if ((onKeyCommit ?? onDragEnd)() === false) {
+                firstRatioRef.current = origin;
+            }
+        },
+        [direction, changeRatio, onDragEnd, onKeyCommit, onEqualize, stopDrag, finishWheel],
+    );
 
     const stacked = direction === 'vertical';
     const valueNow = Math.round(firstRatio * 100);

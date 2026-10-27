@@ -372,7 +372,7 @@ fn server_program_matches_metadata_semantics_and_enforces_budgets() {
         .args(["-I", "-B"])
         .arg(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../tests/folderSizeRemote.test.py"),
+                .join("../tests/files/folderSizeRemote.test.py"),
         )
         .status()
         .expect("Linux qualification requires the existing Python 3 runtime");

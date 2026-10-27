@@ -5623,50 +5623,49 @@ pub async fn ssh_exec(
             Err(format!("Command failed: {}", stderr))
         }
     } else {
-        // Execute SSH command
-        let connections = state.connections.lock().await;
-        if let Some(conn) = connections.get(&connection_id) {
-            if let Some(session) = &conn.session {
-                let mut channel = session
-                    .lock()
-                    .await
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| e.to_string())?;
-                channel
-                    .exec(true, command)
-                    .await
-                    .map_err(|e| e.to_string())?;
+        ssh_exec_remote(&state.connections, &connection_id, &command).await
+    }
+}
 
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                let mut exit_status = 0;
+pub(crate) async fn ssh_exec_remote(
+    connections: &Mutex<HashMap<String, ConnectionHandle>>,
+    connection_id: &str,
+    command: &str,
+) -> Result<String, String> {
+    let session = {
+        let connections = connections.lock().await;
+        connections
+            .get(connection_id)
+            .and_then(|connection| connection.session.clone())
+            .ok_or_else(|| "Connection not found".to_string())?
+    };
 
-                while let Some(msg) = channel.wait().await {
-                    match msg {
-                        russh::ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                        russh::ChannelMsg::ExtendedData { ref data, .. } => {
-                            stderr.extend_from_slice(data)
-                        }
-                        russh::ChannelMsg::ExitStatus { exit_status: code } => {
-                            exit_status = code;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if exit_status == 0 {
-                    return String::from_utf8(stdout).map_err(|e| e.to_string());
-                } else {
-                    let err_str = String::from_utf8_lossy(&stderr);
-                    return Err(format!(
-                        "Remote command failed (Exit {}): {}",
-                        exit_status, err_str
-                    ));
-                }
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_status = crate::ssh_command::run(
+        session,
+        command,
+        None,
+        crate::ssh_command::DEFAULT_COMMAND_TIMEOUT,
+        |stream, data| {
+            if stream == 0 {
+                stdout.extend_from_slice(data);
+            } else {
+                stderr.extend_from_slice(data);
             }
-        }
-        Err("Connection not found".to_string())
+        },
+    )
+    .await?
+    .unwrap_or(0);
+
+    if exit_status == 0 {
+        String::from_utf8(stdout).map_err(|error| error.to_string())
+    } else {
+        Err(format!(
+            "Remote command failed (Exit {}): {}",
+            exit_status,
+            String::from_utf8_lossy(&stderr)
+        ))
     }
 }
 

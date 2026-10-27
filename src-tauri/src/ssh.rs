@@ -37,6 +37,43 @@ pub(crate) async fn connect_runtime_fixture(port:u16,expected:PublicKey,username
     Ok(session)
 }
 
+/// Exercise the production SSH handler over an in-memory protocol transport.
+#[cfg(test)]
+pub(crate) async fn connect_runtime_stream_fixture(
+    stream: tokio::io::DuplexStream,
+    expected: PublicKey,
+    username: &str,
+    password: &str,
+) -> Result<client::Handle<Client>> {
+    let (failure_tx, _failure_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let handler = Client {
+        tunnel_manager: Arc::new(TunnelManager::new(failure_tx)),
+        connection_id: "command-qualification".into(),
+        kept_alive_session: None,
+        forwarded_agent: None,
+        host: "memory.fixture.invalid".into(),
+        port: 0,
+        host_key_approval: None,
+        auth_banner: Arc::new(Mutex::new(String::new())),
+        presented_key: Arc::new(Mutex::new(None)),
+        fixture_key: Some(expected),
+    };
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(10),
+        client::connect_stream(Arc::new(client::Config::default()), stream, handler),
+    )
+    .await??;
+    let authenticated = tokio::time::timeout(
+        Duration::from_secs(10),
+        session.authenticate_password(username, password),
+    )
+    .await??;
+    if !authenticated.success() {
+        return Err(anyhow!("In-memory SSH fixture authentication failed"));
+    }
+    Ok(session)
+}
+
 #[derive(Clone, Copy)]
 enum AgentSignatureDecision {
     Deny,
