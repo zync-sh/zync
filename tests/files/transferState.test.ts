@@ -67,6 +67,20 @@ Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: m
 setUsageEnabled(true);
 
 try {
+    run('unknown archive totals retain received bytes until explicit completion', () => {
+        const { store, id, current } = fixture();
+        store
+            .getState()
+            .updateTransferProgress(id, { transferred: 12345, total: 0, percentage: 0 });
+        equal(current().status, 'transferring', 'Unknown length is still active work');
+        equal(current().progress.transferred, 12345, 'Keep actual compressed bytes');
+        equal(current().progress.total, 0, 'Do not invent a source-size estimate');
+        equal(current().progress.percentage, 0, 'Do not show false percentage progress');
+        store.getState().completeTransfer(id);
+        equal(current().status, 'completed', 'Only a terminal outcome confirms success');
+        equal(current().progress.percentage, 100, 'Terminal success completes immediately');
+        equal(current().progress.transferred, 12345, 'Completion preserves received bytes');
+    });
     run(
         'cancelled combines explain partial completion instead of claiming an unchanged folder',
         () => {

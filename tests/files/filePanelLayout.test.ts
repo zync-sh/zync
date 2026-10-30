@@ -125,6 +125,7 @@ test('inline Properties owns Escape even after tooltip dismissal, while modal de
     const { PropertiesPanel } = loadSource<
         typeof import('../../src/components/file-manager/PropertiesPanel')
     >('components/file-manager/PropertiesPanel.tsx', {
+        react: { useMemo: <T>(calculate: () => T) => calculate() },
         'react/jsx-runtime': jsx,
         'lucide-react': { Folder: stub, Info: stub, X: stub },
         './FileEntryIcon': { FileEntryIcon: stub },

@@ -21,6 +21,7 @@ import {
 import { createFileTransferExecution } from '../features/files/application/transferEventProjection';
 import { filePermissionFailure } from '../features/files/domain/filePermissions';
 import { notify } from '../features/notifications';
+import { getConnectionBackendEpoch } from '../lib/terminal/connectionBackend';
 import type { AppStore } from './useAppStore';
 
 // @ts-ignore
@@ -29,6 +30,172 @@ const ipc = window.ipcRenderer;
 // redirecting an in-flight navigation back to the previously displayed folder.
 const filesLoadGeneration = new Map<string, { path: string; pending: boolean }>();
 const recentPathsGeneration = new Map<string, number>();
+
+type DirectoryOwner = () => boolean;
+interface DirectoryFlight {
+    owners: Set<DirectoryOwner>;
+    promise: Promise<FileEntry[]>;
+    resolve(entries: FileEntry[]): void;
+    reject(error: unknown): void;
+}
+interface DirectoryRead {
+    connectionId: string;
+    path: string;
+    epoch: number;
+    active: DirectoryFlight;
+    queued?: DirectoryFlight;
+    invalidated: boolean;
+}
+const directoryReads = new WeakMap<() => AppStore, Map<string, DirectoryRead>>();
+
+/** Local paths have a process lifetime; remote sharing requires an observed live transport. */
+function directoryEpoch(connectionId: string): number | undefined {
+    return connectionId === 'local' ? 0 : getConnectionBackendEpoch(connectionId);
+}
+
+/** Keeps literal native paths and connection epochs distinct without delimiter collisions. */
+function directoryReadKey(connectionId: string, epoch: number, path: string): string {
+    return JSON.stringify([connectionId, epoch, path]);
+}
+
+/** Creates one read outcome; later invalidations never extend this promise's lifetime. */
+function createDirectoryFlight(): DirectoryFlight {
+    let resolve!: DirectoryFlight['resolve'];
+    let reject!: DirectoryFlight['reject'];
+    const promise = new Promise<FileEntry[]>((yes, no) => {
+        resolve = yes;
+        reject = no;
+    });
+    return { owners: new Set(), promise, resolve, reject };
+}
+
+/** Finds a surviving pane without allocating a temporary owner array on every shared read. */
+function hasDirectoryOwner(flight: DirectoryFlight): boolean {
+    for (const owns of flight.owners) {
+        if (owns()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Releases finished keys or promotes the one queued read after the current outcome settles. */
+function finishDirectoryRead(
+    reads: Map<string, DirectoryRead>,
+    key: string,
+    read: DirectoryRead,
+): void {
+    if (reads.get(key) !== read) {
+        return;
+    }
+    if (!read.queued) {
+        reads.delete(key);
+        return;
+    }
+    read.active = read.queued;
+    read.queued = undefined;
+    read.invalidated = false;
+    runDirectoryRead(reads, key, read);
+}
+
+/** Submits native acquisition only for a current transport with at least one surviving view owner. */
+function runDirectoryRead(
+    reads: Map<string, DirectoryRead>,
+    key: string,
+    read: DirectoryRead,
+): void {
+    const flight = read.active;
+    if (directoryEpoch(read.connectionId) !== read.epoch || !hasDirectoryOwner(flight)) {
+        flight.reject(new Error('Directory request was superseded'));
+        finishDirectoryRead(reads, key, read);
+        return;
+    }
+    let pending: Promise<FileEntry[]>;
+    try {
+        pending = Promise.resolve(
+            ipc.invoke('fs_list', { connectionId: read.connectionId, path: read.path }),
+        );
+    } catch (error) {
+        pending = Promise.reject(error);
+    }
+    void pending.then(
+        (entries) => {
+            flight.resolve(entries);
+            finishDirectoryRead(reads, key, read);
+        },
+        (error) => {
+            flight.reject(error);
+            finishDirectoryRead(reads, key, read);
+        },
+    );
+}
+
+/** Shares raw reads per store/path while leaving mapping, navigation and errors with each pane. */
+async function readDirectoryEntries(
+    getStore: () => AppStore,
+    connectionId: string,
+    path: string,
+    ownsView: DirectoryOwner,
+): Promise<FileEntry[]> {
+    if (!ownsView()) {
+        throw new Error('Directory request was superseded');
+    }
+    const epoch = directoryEpoch(connectionId);
+    // Legacy/untracked callers still work, but cannot prove shared transport identity.
+    if (epoch === undefined) {
+        return ipc.invoke('fs_list', { connectionId, path });
+    }
+    let reads = directoryReads.get(getStore);
+    if (!reads) {
+        reads = new Map();
+        directoryReads.set(getStore, reads);
+    }
+    const key = directoryReadKey(connectionId, epoch, path);
+    let read = reads.get(key);
+    const start = !read;
+    if (!read) {
+        read = { connectionId, path, epoch, active: createDirectoryFlight(), invalidated: false };
+        reads.set(key, read);
+    } else if (read.invalidated || !hasDirectoryOwner(read.active)) {
+        // A reopened or superseding view must not inherit a read from its former lifetime.
+        read.queued ??= createDirectoryFlight();
+    }
+    const flight = read.queued ?? read.active;
+    flight.owners.add(ownsView);
+    if (start) {
+        runDirectoryRead(reads, key, read);
+    }
+    try {
+        return await flight.promise;
+    } finally {
+        flight.owners.delete(ownsView);
+    }
+}
+
+/** Marks an active acquisition stale; all callers in the next burst share one queued fresh read. */
+function invalidateDirectoryRead(
+    getStore: () => AppStore,
+    connectionId: string,
+    path: string,
+): void {
+    const epoch = directoryEpoch(connectionId);
+    if (epoch === undefined) {
+        return;
+    }
+    const read = directoryReads.get(getStore)?.get(directoryReadKey(connectionId, epoch, path));
+    if (read) {
+        read.invalidated = true;
+    }
+}
+
+/** Refreshes a navigation target only after home resolution has selected its real native path. */
+function refreshTargetPath(state: FileSystemState, key: string): string | undefined {
+    const request = filesLoadGeneration.get(key);
+    if (request?.pending && (request.path === '~' || request.path.startsWith('~/'))) {
+        return;
+    }
+    return request?.pending ? request.path : state.currentPath[key];
+}
 
 /** Bind mutation UI updates to a listing lifetime, including before its first read. */
 function captureFilesView(
@@ -269,60 +436,81 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
 
     /** Resolve and read a folder only while this request still owns its listing instance. */
     loadFiles: async (connectionId, path, skipHistory = false, silent = false, instanceId) => {
-        const state = get();
         const key = filesStoreKey(connectionId, instanceId);
+        // Keep navigation snapshots across awaits without retaining the previous store's listings.
+        const startingPath = get().currentPath[key];
+        const startingHistory = get().history[key] || [];
+        const startingIndex = get().historyIndex[key] || 0;
         // Native paths are identities, not form prose: valid folder-name spaces must survive reads/history.
-        let targetPath = path !== undefined ? path : state.currentPath[key] || '';
+        let targetPath = path !== undefined ? path : startingPath || '';
         if (!targetPath) {
             return;
         }
         const recentGen = recentPathsGeneration.get(connectionId) || 0;
         const loadGen = { path: targetPath, pending: true };
         filesLoadGeneration.set(key, loadGen);
+        const epoch = directoryEpoch(connectionId);
+        /** Revokes both successful and failed replies after navigation, closure or transport replacement. */
+        const ownsLoad = () =>
+            filesLoadGeneration.get(key) === loadGen && directoryEpoch(connectionId) === epoch;
+        /** Releases this request without recreating a closed pane or clearing a replacement's spinner. */
+        const finishLoad = () => {
+            loadGen.pending = false;
+            if (
+                filesLoadGeneration.get(key) === loadGen &&
+                directoryEpoch(connectionId) !== epoch
+            ) {
+                set((state) =>
+                    state.isLoading[key]
+                        ? { isLoading: { ...state.isLoading, [key]: false } }
+                        : state,
+                );
+            }
+        };
         if (targetPath === '~' || targetPath.startsWith('~/')) {
             const conn = get().connections.find((c) => c.id === connectionId);
             let home = (conn?.homePath ?? '').trim();
             if (!home || home === '/' || home === '~') {
                 try {
                     const cwd = await ipc.invoke('fs_cwd', { connectionId });
-                    if (filesLoadGeneration.get(key) !== loadGen) {
+                    if (!ownsLoad()) {
+                        finishLoad();
                         return;
                     }
                     if (typeof cwd === 'string') {
                         home = cwd.trim();
                     }
                 } catch {
-                    if (filesLoadGeneration.get(key) !== loadGen) {
+                    if (!ownsLoad()) {
+                        finishLoad();
                         return;
                     }
                     home = '';
                 }
             }
-            if (filesLoadGeneration.get(key) !== loadGen) {
+            if (!ownsLoad()) {
+                finishLoad();
                 return;
             }
             const expanded = expandTildeWithHome(targetPath, home);
             if (!expanded || expanded === '~' || expanded.startsWith('~/')) {
-                loadGen.pending = false;
+                finishLoad();
                 return;
             }
             targetPath = expanded;
         }
 
         // History Logic
-        if (!skipHistory && targetPath !== state.currentPath[key]) {
-            const currentHistory = state.history[key] || [];
-            const currentIndex = state.historyIndex[key] || 0;
-
+        if (!skipHistory && targetPath !== startingPath) {
             // If we are at the end of history, push new path
             // If we are in middle, truncate future and push
-            const newHistory = [...currentHistory.slice(0, currentIndex + 1), targetPath];
+            const newHistory = [...startingHistory.slice(0, startingIndex + 1), targetPath];
 
             // If history is empty, initialize it with BOTH previous path (if exists) and new path?
             // Or just make sure initial path is there.
-            if (newHistory.length === 1 && state.currentPath[key]) {
+            if (newHistory.length === 1 && startingPath) {
                 // First navigation: ensure start path is in history at index 0
-                newHistory.unshift(state.currentPath[key]);
+                newHistory.unshift(startingPath);
             }
 
             set((state) => ({
@@ -349,21 +537,27 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
             (connection) => connection.id === connectionId,
         );
         try {
-            const entries = await ipc.invoke('fs_list', { connectionId, path: targetPath });
-            if (filesLoadGeneration.get(key) !== loadGen) {
+            const entries = await readDirectoryEntries(get, connectionId, targetPath, ownsLoad);
+            if (!ownsLoad()) {
                 return;
             }
 
-            const mappedEntries: FileEntry[] = entries.map((e: any) => ({
-                name: e.name,
-                type: e.type,
-                size: e.size,
-                lastModified: e.lastModified,
-                permissions: e.permissions,
-                path: e.path,
-                owner: typeof e.owner === 'string' ? e.owner : '',
-                group: typeof e.group === 'string' ? e.group : '',
-            }));
+            // Native metadata already matches the UI contract and is treated as immutable.
+            // Each pane owns its array; only legacy identity fields require new entry objects.
+            const mappedEntries: FileEntry[] = entries.map((entry) =>
+                typeof entry.owner === 'string' && typeof entry.group === 'string'
+                    ? entry
+                    : {
+                          name: entry.name,
+                          type: entry.type,
+                          size: entry.size,
+                          lastModified: entry.lastModified,
+                          permissions: entry.permissions,
+                          path: entry.path,
+                          owner: typeof entry.owner === 'string' ? entry.owner : '',
+                          group: typeof entry.group === 'string' ? entry.group : '',
+                      },
+            );
 
             const skipRecent = (recentPathsGeneration.get(connectionId) || 0) !== recentGen;
             set((state) => {
@@ -394,7 +588,7 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 };
             });
         } catch (error: any) {
-            if (filesLoadGeneration.get(key) !== loadGen) {
+            if (!ownsLoad()) {
                 return;
             }
             console.error('Failed to load files:', error);
@@ -445,21 +639,16 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 get().disconnect(connectionId);
             }
         } finally {
-            loadGen.pending = false;
+            finishLoad();
         }
     },
 
     /** Refresh the current navigation target without adding history or restarting home resolution. */
     refreshFiles: async (connectionId, instanceId) => {
         const key = filesStoreKey(connectionId, instanceId);
-        const request = filesLoadGeneration.get(key);
-        // Home resolution has not started its listing read yet. Let that
-        // navigation perform the fresh read and retain its history ownership.
-        if (request?.pending && (request.path === '~' || request.path.startsWith('~/'))) {
-            return;
-        }
-        const path = request?.pending ? request.path : get().currentPath[key];
+        const path = refreshTargetPath(get(), key);
         if (path) {
+            invalidateDirectoryRead(get, connectionId, path);
             await get().loadFiles(connectionId, path, true, true, instanceId);
         }
     },
@@ -472,10 +661,19 @@ export const createFileSystemSlice: StateCreator<AppStore, [], [], FileSystemSli
                 key === connectionId ||
                 (key.startsWith(instancePrefix) && key.length > instancePrefix.length),
         );
+        const targets = keys
+            .map((key) => ({ key, path: refreshTargetPath(get(), key) }))
+            .filter((target): target is { key: string; path: string } => Boolean(target.path));
+        for (const path of new Set(targets.map((target) => target.path))) {
+            invalidateDirectoryRead(get, connectionId, path);
+        }
         await Promise.all(
-            keys.map((key) =>
-                get().refreshFiles(
+            targets.map(({ key, path }) =>
+                get().loadFiles(
                     connectionId,
+                    path,
+                    true,
+                    true,
                     key === connectionId ? undefined : key.slice(instancePrefix.length),
                 ),
             ),
