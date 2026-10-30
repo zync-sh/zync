@@ -254,6 +254,7 @@ const tests = [
     'tests/terminalRendererSession.test.mjs',
     'tests/terminalRendererController.test.mjs',
     'tests/terminalRendererDiagnostics.test.mjs',
+    '.tmp-agent-tests/tests/terminal/terminalRendererSetup.test.js',
     'tests/terminalInputPipeline.test.mjs',
     'tests/terminalInputQueue.test.mjs',
     'tests/terminalPtyLifecycle.test.mjs',
