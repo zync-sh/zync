@@ -62,6 +62,8 @@ if (
 normalizeEmittedImports(path.resolve('.tmp-agent-tests'));
 
 const tests = [
+    '.tmp-agent-tests/tests/dashboard/dashboardMetrics.test.js',
+    '.tmp-agent-tests/tests/dashboard/dashboardMetadata.test.js',
     '.tmp-agent-tests/tests/securityAssessment.test.js',
     'tests/securityPanelRetry.test.mjs',
     '.tmp-agent-tests/tests/userTunnelActions.test.js',
