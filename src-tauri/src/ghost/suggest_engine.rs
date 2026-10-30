@@ -137,6 +137,7 @@ fn hit_normalized(
     }
 }
 
+/// Keeps filesystem state lazy and indirect so the IPC command's by-value future stays small.
 async fn fetch_path_suggestion(
     line: &str,
     cwd: Option<&str>,
@@ -145,14 +146,16 @@ async fn fetch_path_suggestion(
     recent_commands: &[String],
     state: &AppState,
 ) -> PathSuggestion {
-    path_suggestion(PathSuggestParams {
+    // Keep large filesystem state out of the main-thread IPC future. Allocate it
+    // only if provider selection actually polls this filesystem lookup.
+    Box::pin(path_suggestion(PathSuggestParams {
         line,
         cwd,
         connection_id,
         wsl_shell_id,
         recent_commands,
         state,
-    })
+    }))
     .await
 }
 

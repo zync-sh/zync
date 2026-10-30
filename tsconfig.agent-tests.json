@@ -55,7 +55,7 @@
         "tests/terminalOutputFlow.test.ts",
         "tests/terminalRendererLifecycle.test.ts",
         "tests/terminalRendererMemory.browser.ts",
-        "tests/ghostCwdSafety.test.ts",
+        "tests/ghost/**/*.ts",
         "tests/ghostPromptSafety.test.ts",
         "tests/workspaceSplitControls.test.ts",
         "tests/paneTabRelease.browser.tsx",

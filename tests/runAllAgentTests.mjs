@@ -49,8 +49,13 @@ function normalizeEmittedImports(directory) {
 
 const [feature, ...testArguments] = process.argv.slice(2);
 const browserRun = feature === 'files' && testArguments[0] === '--browser';
-if ((feature && feature !== 'files') || (testArguments.length > 0 && !browserRun)) {
-    console.error('Usage: node tests/runAllAgentTests.mjs [files [--browser [browser flags]]]');
+if (
+    (feature && feature !== 'files' && feature !== 'ghost') ||
+    (testArguments.length > 0 && !browserRun)
+) {
+    console.error(
+        'Usage: node tests/runAllAgentTests.mjs [files [--browser [browser flags]] | ghost]',
+    );
     process.exit(1);
 }
 
@@ -72,7 +77,7 @@ const tests = [
     '.tmp-agent-tests/tests/tooling/gitHooks.test.js',
     'tests/terminalOutputFlow.test.mjs',
     'tests/terminalRendererLifecycle.test.mjs',
-    'tests/ghostCwdSafety.test.mjs',
+    '.tmp-agent-tests/tests/ghost/ghostCwdSafety.test.js',
     'tests/ghostPromptSafety.test.mjs',
     '.tmp-agent-tests/tests/files/folderSizes.test.js',
     '.tmp-agent-tests/tests/files/filePermissions.test.js',
@@ -280,7 +285,14 @@ const selectedTests = browserRun
     ? ['.tmp-agent-tests/tests/files/filesProduction.browser.test.js']
     : feature === 'files'
       ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/files/'))
-      : tests;
+      : feature === 'ghost'
+        ? tests.filter(
+              (file) =>
+                  file.startsWith('.tmp-agent-tests/tests/ghost/') ||
+                  file === 'tests/ghostPromptSafety.test.mjs' ||
+                  file === 'tests/terminalShellContext.test.mjs',
+          )
+        : tests;
 
 for (const file of selectedTests) {
     const args = file.startsWith('tests/terminal')

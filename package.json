@@ -61,6 +61,7 @@
     "test:vault-focus": "npm run compile:agent-tests && node tests/vaultFocus.test.mjs",
     "test:unlock-modal-consistency": "node tests/unlockModalConsistency.test.mjs",
     "test:ghost-helpers": "npm run compile:agent-tests && node tests/ghostSuggestionsHelpers.test.mjs",
+    "test:ghost-runtime": "npm run compile:agent-tests && node tests/runAllAgentTests.mjs ghost",
     "test:release-notes-markdown": "npm run compile:agent-tests && node tests/releaseNotesMarkdown.test.mjs",
     "test:session-persistence": "npm run compile:agent-tests && node tests/sessionPersistence.test.mjs",
     "test:usage": "npm run compile:agent-tests && node tests/usageSession.test.mjs && node tests/usageQueue.test.mjs && node tests/usageFlush.test.mjs",
