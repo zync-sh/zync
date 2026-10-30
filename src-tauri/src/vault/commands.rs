@@ -47,11 +47,24 @@ impl From<VaultError> for VaultCommandError {
 
 type VaultResult<T> = Result<T, VaultCommandError>;
 
+/// Marks synchronous vault work as blocking while preserving its already-acquired mutex guard.
+/// Requires Tauri's multi-thread Tokio runtime; `block_in_place` cannot run on a current-thread
+/// runtime. The vault mutex bounds operations to one owner and retains FIFO acquisition order.
+/// The closure and borrowed secrets stay on this call stack; no detached mutation is created.
+fn run_vault_blocking<T>(operation: impl FnOnce() -> T) -> T {
+    tokio::task::block_in_place(operation)
+}
+
+#[cfg(test)]
+mod runtime_tests;
+
 // ── Commands ──────────────────────────────────────────────────────────────────
 
+/// Loads database/session-cache status under the existing vault lock on a blocking boundary.
 #[tauri::command]
 pub async fn vault_status(vault: State<'_, Mutex<VaultService>>) -> VaultResult<VaultStatus> {
-    vault.lock().await.status().map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| vault.status().map_err(Into::into))
 }
 
 fn migrate_legacy_api_keys(app: &tauri::AppHandle, vault: &VaultService) -> VaultResult<()> {
@@ -68,6 +81,7 @@ pub struct InitializeArgs {
     pub remember_on_device: bool,
 }
 
+/// Initializes the encrypted vault and migrates API keys under one serialized blocking owner.
 #[tauri::command]
 pub async fn vault_initialize(
     app: tauri::AppHandle,
@@ -75,11 +89,13 @@ pub async fn vault_initialize(
     args: InitializeArgs,
 ) -> VaultResult<VaultStatus> {
     let mut vault = vault.lock().await;
-    let status = vault
-        .initialize(args.passphrase.expose_secret(), args.remember_on_device)
-        .map_err(VaultCommandError::from)?;
-    migrate_legacy_api_keys(&app, &vault)?;
-    Ok(status)
+    run_vault_blocking(|| {
+        let status = vault
+            .initialize(args.passphrase.expose_secret(), args.remember_on_device)
+            .map_err(VaultCommandError::from)?;
+        migrate_legacy_api_keys(&app, &vault)?;
+        Ok(status)
+    })
 }
 
 #[derive(Deserialize)]
@@ -89,6 +105,7 @@ pub struct UnlockArgs {
     pub remember_on_device: bool,
 }
 
+/// Unlocks and migrates the vault without occupying an async worker with KDF/database work.
 #[tauri::command]
 pub async fn vault_unlock(
     app: tauri::AppHandle,
@@ -96,20 +113,20 @@ pub async fn vault_unlock(
     args: UnlockArgs,
 ) -> VaultResult<VaultStatus> {
     let mut vault = vault.lock().await;
-    let status = vault
-        .unlock(args.passphrase.expose_secret(), args.remember_on_device)
-        .map_err(VaultCommandError::from)?;
-    migrate_legacy_api_keys(&app, &vault)?;
-    Ok(status)
+    run_vault_blocking(|| {
+        let status = vault
+            .unlock(args.passphrase.expose_secret(), args.remember_on_device)
+            .map_err(VaultCommandError::from)?;
+        migrate_legacy_api_keys(&app, &vault)?;
+        Ok(status)
+    })
 }
 
+/// Clears remembered-device storage while retaining vault serialization.
 #[tauri::command]
 pub async fn vault_forget_device(vault: State<'_, Mutex<VaultService>>) -> VaultResult<()> {
-    vault
-        .lock()
-        .await
-        .forget_device_session()
-        .map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| vault.forget_device_session().map_err(Into::into))
 }
 
 #[derive(Debug, Serialize)]
@@ -127,18 +144,16 @@ pub async fn vault_reset_local(
     app: tauri::AppHandle,
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<VaultResetLocalResult> {
-    let data_dir = crate::commands::get_data_dir(&app);
     // Lock order: vault mutex, then CONNECTIONS_MUTATION_LOCK. Hold both across
     // strip + wipe so connections_save / secure_to_vault cannot write authRef
     // data into the gap. If wipe fails after strip, credentials remain and
     // hosts can be re-linked; the reverse order can leave dangling authRefs.
     let mut vault = vault.lock().await;
-    let (cleared_auth_refs, status) = tokio::task::block_in_place(|| {
+    let (cleared_auth_refs, status) = run_vault_blocking(|| {
+        let data_dir = crate::commands::get_data_dir(&app);
         let _connections_guard = crate::commands::CONNECTIONS_MUTATION_LOCK
             .lock()
-            .map_err(|error| {
-                VaultError::InvalidData(format!("lock connections file: {error}"))
-            })?;
+            .map_err(|error| VaultError::InvalidData(format!("lock connections file: {error}")))?;
         let cleared_auth_refs = strip_connection_auth_refs_locked(&data_dir)?;
         let status = vault.reset_local()?;
         Ok::<_, VaultError>((cleared_auth_refs, status))
@@ -176,56 +191,62 @@ impl Drop for ItemCreateArgs {
     }
 }
 
+/// Creates and projects a credential under the existing lock on the blocking boundary.
 #[tauri::command]
 pub async fn vault_item_create(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemCreateArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty())
-    {
-        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
-        let result = vault.item_create_with_secret_values(
-            &args.label,
-            &args.kind,
-            &sanitized,
-            args.notes.as_deref(),
-            args.credential_id.as_deref(),
-        );
-        zeroize_secret_values(&mut sanitized);
-        result.map_err(VaultCommandError::from)?
-    } else {
-        let secret = args
-            .secret
-            .as_ref()
-            .filter(|secret| !secret.expose_secret().trim().is_empty())
-            .ok_or_else(|| VaultCommandError {
-                code: "invalid_secret_values".into(),
-                message: "Credential requires at least one non-empty secret value".into(),
-            })?;
-        vault
-            .item_create_with_logical_id(
-                &args.label,
-                &args.kind,
-                secret.expose_secret(),
-                args.notes.as_deref(),
-                args.credential_id.as_deref(),
-            )
-            .map_err(VaultCommandError::from)?
-    };
-    vault.item_meta(&record).map_err(Into::into)
+    run_vault_blocking(|| {
+        let record =
+            if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
+                let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
+                let result = vault.item_create_with_secret_values(
+                    &args.label,
+                    &args.kind,
+                    &sanitized,
+                    args.notes.as_deref(),
+                    args.credential_id.as_deref(),
+                );
+                zeroize_secret_values(&mut sanitized);
+                result.map_err(VaultCommandError::from)?
+            } else {
+                let secret = args
+                    .secret
+                    .as_ref()
+                    .filter(|secret| !secret.expose_secret().trim().is_empty())
+                    .ok_or_else(|| VaultCommandError {
+                        code: "invalid_secret_values".into(),
+                        message: "Credential requires at least one non-empty secret value".into(),
+                    })?;
+                vault
+                    .item_create_with_logical_id(
+                        &args.label,
+                        &args.kind,
+                        secret.expose_secret(),
+                        args.notes.as_deref(),
+                        args.credential_id.as_deref(),
+                    )
+                    .map_err(VaultCommandError::from)?
+            };
+        vault.item_meta(&record).map_err(Into::into)
+    })
 }
 
+/// Loads credential metadata under the existing lock without blocking an async worker.
 #[tauri::command]
 pub async fn vault_item_list(
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<Vec<VaultItemMeta>> {
     let vault = vault.lock().await;
-    let items = vault.item_list().map_err(VaultCommandError::from)?;
-    items
-        .into_iter()
-        .map(|record| vault.item_meta(&record).map_err(Into::into))
-        .collect()
+    run_vault_blocking(|| {
+        let items = vault.item_list().map_err(VaultCommandError::from)?;
+        items
+            .into_iter()
+            .map(|record| vault.item_meta(&record).map_err(Into::into))
+            .collect()
+    })
 }
 
 #[derive(Deserialize)]
@@ -233,28 +254,31 @@ pub struct ItemGetArgs {
     pub item_id: String,
 }
 
+/// Reads credential details and fingerprints atomically on the blocking boundary.
 #[tauri::command]
 pub async fn vault_item_get(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemGetArgs,
 ) -> VaultResult<VaultItemDetail> {
     let vault = vault.lock().await;
-    let record = vault
-        .item_get(&args.item_id)
-        .map_err(VaultCommandError::from)?;
-    Ok(VaultItemDetail {
-        logical_id: VaultService::record_logical_id(&record),
-        secret_fingerprint: vault
-            .record_secret_fingerprint(&record)
-            .map_err(VaultCommandError::from)?,
-        id: record.id.clone(),
-        kind: record.kind.clone(),
-        label: record.label.clone(),
-        notes: record.notes.clone(),
-        credential: record.credential.clone(),
-        revision: record.revision,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
+    run_vault_blocking(|| {
+        let record = vault
+            .item_get(&args.item_id)
+            .map_err(VaultCommandError::from)?;
+        Ok(VaultItemDetail {
+            logical_id: VaultService::record_logical_id(&record),
+            secret_fingerprint: vault
+                .record_secret_fingerprint(&record)
+                .map_err(VaultCommandError::from)?,
+            id: record.id.clone(),
+            kind: record.kind.clone(),
+            label: record.label.clone(),
+            notes: record.notes.clone(),
+            credential: record.credential.clone(),
+            revision: record.revision,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        })
     })
 }
 
@@ -263,16 +287,14 @@ pub struct ItemDeleteArgs {
     pub item_id: String,
 }
 
+/// Deletes a credential with the existing serialized database semantics.
 #[tauri::command]
 pub async fn vault_item_delete(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemDeleteArgs,
 ) -> VaultResult<()> {
-    vault
-        .lock()
-        .await
-        .item_delete(&args.item_id)
-        .map_err(Into::into)
+    let vault = vault.lock().await;
+    run_vault_blocking(|| vault.item_delete(&args.item_id).map_err(Into::into))
 }
 
 #[derive(Deserialize)]
@@ -295,45 +317,48 @@ impl Drop for ItemUpdateArgs {
     }
 }
 
+/// Updates and projects a credential under one serialized blocking operation.
 #[tauri::command]
 pub async fn vault_item_update(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemUpdateArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty())
-    {
-        let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
-        let result = vault.item_update_with_secret_values(
-            &args.item_id,
-            &args.label,
-            &args.kind,
-            &sanitized,
-            args.notes.as_deref(),
-            None,
-        );
-        zeroize_secret_values(&mut sanitized);
-        result.map_err(VaultCommandError::from)?
-    } else {
-        let secret = args
-            .secret
-            .as_ref()
-            .filter(|secret| !secret.expose_secret().trim().is_empty())
-            .ok_or_else(|| VaultCommandError {
-                code: "invalid_secret_values".into(),
-                message: "Credential requires at least one non-empty secret value".into(),
-            })?;
-        vault
-            .item_update(
-                &args.item_id,
-                &args.label,
-                &args.kind,
-                secret.expose_secret(),
-                args.notes.as_deref(),
-            )
-            .map_err(VaultCommandError::from)?
-    };
-    vault.item_meta(&record).map_err(Into::into)
+    run_vault_blocking(|| {
+        let record =
+            if let Some(secret_values) = args.secret_values.as_ref().filter(|v| !v.is_empty()) {
+                let mut sanitized = sanitize_secret_values(&args.kind, secret_values)?;
+                let result = vault.item_update_with_secret_values(
+                    &args.item_id,
+                    &args.label,
+                    &args.kind,
+                    &sanitized,
+                    args.notes.as_deref(),
+                    None,
+                );
+                zeroize_secret_values(&mut sanitized);
+                result.map_err(VaultCommandError::from)?
+            } else {
+                let secret = args
+                    .secret
+                    .as_ref()
+                    .filter(|secret| !secret.expose_secret().trim().is_empty())
+                    .ok_or_else(|| VaultCommandError {
+                        code: "invalid_secret_values".into(),
+                        message: "Credential requires at least one non-empty secret value".into(),
+                    })?;
+                vault
+                    .item_update(
+                        &args.item_id,
+                        &args.label,
+                        &args.kind,
+                        secret.expose_secret(),
+                        args.notes.as_deref(),
+                    )
+                    .map_err(VaultCommandError::from)?
+            };
+        vault.item_meta(&record).map_err(Into::into)
+    })
 }
 
 #[derive(Deserialize)]
@@ -351,15 +376,17 @@ pub async fn vault_item_set_ssh_certificate(
     args: SetSshCertificateArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = vault
-        .item_set_ssh_certificate(
-            &args.item_id,
-            args.expected_revision,
-            &args.expected_secret_fingerprint,
-            args.certificate.as_ref().map(|value| value.expose_secret()),
-        )
-        .map_err(VaultCommandError::from)?;
-    vault.item_meta(&record).map_err(Into::into)
+    run_vault_blocking(|| {
+        let record = vault
+            .item_set_ssh_certificate(
+                &args.item_id,
+                args.expected_revision,
+                &args.expected_secret_fingerprint,
+                args.certificate.as_ref().map(|value| value.expose_secret()),
+            )
+            .map_err(VaultCommandError::from)?;
+        vault.item_meta(&record).map_err(Into::into)
+    })
 }
 
 /// Trim pasted key/certificate text, preserving passphrase bytes required to decrypt a key.
@@ -430,16 +457,18 @@ pub struct ItemRevisionHistoryArgs {
     pub item_id: String,
 }
 
+/// Reads credential revision history on the blocking boundary.
 #[tauri::command]
 pub async fn vault_item_revision_history(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemRevisionHistoryArgs,
 ) -> VaultResult<Vec<RevisionMeta>> {
-    vault
-        .lock()
-        .await
-        .item_revision_history(&args.item_id)
-        .map_err(Into::into)
+    let vault = vault.lock().await;
+    run_vault_blocking(|| {
+        vault
+            .item_revision_history(&args.item_id)
+            .map_err(Into::into)
+    })
 }
 
 #[derive(Deserialize)]
@@ -448,16 +477,19 @@ pub struct ItemRestoreRevisionArgs {
     pub revision: u64,
 }
 
+/// Restores and projects a revision under one serialized blocking operation.
 #[tauri::command]
 pub async fn vault_item_restore_revision(
     vault: State<'_, Mutex<VaultService>>,
     args: ItemRestoreRevisionArgs,
 ) -> VaultResult<VaultItemMeta> {
     let vault = vault.lock().await;
-    let record = vault
-        .item_restore_revision(&args.item_id, args.revision)
-        .map_err(VaultCommandError::from)?;
-    vault.item_meta(&record).map_err(Into::into)
+    run_vault_blocking(|| {
+        let record = vault
+            .item_restore_revision(&args.item_id, args.revision)
+            .map_err(VaultCommandError::from)?;
+        vault.item_meta(&record).map_err(Into::into)
+    })
 }
 
 // ── Recovery key commands ─────────────────────────────────────────────────────
@@ -477,33 +509,34 @@ pub async fn vault_change_passphrase(
     vault: State<'_, Mutex<VaultService>>,
     args: ChangePassphraseArgs,
 ) -> VaultResult<VaultStatus> {
-    vault
-        .lock()
-        .await
-        .change_passphrase(
-            args.current_passphrase
-                .as_ref()
-                .map(|value| value.expose_secret()),
-            args.new_passphrase.expose_secret(),
-            args.remember_on_device,
-        )
-        .map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| {
+        vault
+            .change_passphrase(
+                args.current_passphrase
+                    .as_ref()
+                    .map(|value| value.expose_secret()),
+                args.new_passphrase.expose_secret(),
+                args.remember_on_device,
+            )
+            .map_err(Into::into)
+    })
 }
 
+/// Generates and persists a recovery slot under the existing vault lock.
 #[tauri::command]
 pub async fn vault_generate_recovery_key(
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<String> {
-    vault
-        .lock()
-        .await
-        .generate_recovery_key()
-        .map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| vault.generate_recovery_key().map_err(Into::into))
 }
 
+/// Checks the recovery slot on the blocking boundary under the existing lock.
 #[tauri::command]
 pub async fn vault_has_recovery_key(vault: State<'_, Mutex<VaultService>>) -> VaultResult<bool> {
-    vault.lock().await.has_recovery_key().map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| vault.has_recovery_key().map_err(Into::into))
 }
 
 #[derive(Deserialize)]
@@ -513,6 +546,7 @@ pub struct UnlockWithRecoveryKeyArgs {
     pub remember_on_device: bool,
 }
 
+/// Restores and migrates the vault under one serialized blocking operation.
 #[tauri::command]
 pub async fn vault_unlock_with_recovery_key(
     app: tauri::AppHandle,
@@ -520,11 +554,13 @@ pub async fn vault_unlock_with_recovery_key(
     args: UnlockWithRecoveryKeyArgs,
 ) -> VaultResult<VaultStatus> {
     let mut vault = vault.lock().await;
-    let status = vault
-        .unlock_with_recovery_key(args.recovery_key.expose_secret(), args.remember_on_device)
-        .map_err(VaultCommandError::from)?;
-    migrate_legacy_api_keys(&app, &vault)?;
-    Ok(status)
+    run_vault_blocking(|| {
+        let status = vault
+            .unlock_with_recovery_key(args.recovery_key.expose_secret(), args.remember_on_device)
+            .map_err(VaultCommandError::from)?;
+        migrate_legacy_api_keys(&app, &vault)?;
+        Ok(status)
+    })
 }
 
 // ── Export / Import commands ──────────────────────────────────────────────────
@@ -534,17 +570,17 @@ pub struct ExportArgs {
     pub dest_path: String,
 }
 
+/// Validates and exports the encrypted vault under the existing serialized owner.
 #[tauri::command]
 pub async fn vault_export(
     vault: State<'_, Mutex<VaultService>>,
     args: ExportArgs,
 ) -> VaultResult<()> {
-    let dest_path = validate_export_path(&args.dest_path)?;
-    vault
-        .lock()
-        .await
-        .export_vault(&dest_path)
-        .map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| {
+        let dest_path = validate_export_path(&args.dest_path)?;
+        vault.export_vault(&dest_path).map_err(Into::into)
+    })
 }
 
 #[derive(Deserialize)]
@@ -552,37 +588,43 @@ pub struct ImportArgs {
     pub src_path: String,
 }
 
+/// Validates and imports an encrypted vault under the existing serialized owner.
 #[tauri::command]
 pub async fn vault_import(
     vault: State<'_, Mutex<VaultService>>,
     args: ImportArgs,
 ) -> VaultResult<VaultStatus> {
-    let src_path = validate_import_path(&args.src_path)?;
-    vault
-        .lock()
-        .await
-        .import_vault(&src_path)
-        .map_err(Into::into)
+    let mut vault = vault.lock().await;
+    run_vault_blocking(|| {
+        let src_path = validate_import_path(&args.src_path)?;
+        vault.import_vault(&src_path).map_err(Into::into)
+    })
 }
 
 // ── Secure-to-vault commands ──────────────────────────────────────────────────
 
+/// Reads the local migration preview on a blocking boundary without mutating credentials.
 #[tauri::command]
 pub async fn vault_secure_to_vault_preview(
     app: tauri::AppHandle,
 ) -> VaultResult<SecureToVaultPreview> {
-    let data_dir = crate::commands::get_data_dir(&app);
-    crate::vault::secure_to_vault::preview(&data_dir).map_err(Into::into)
+    run_vault_blocking(|| {
+        let data_dir = crate::commands::get_data_dir(&app);
+        crate::vault::secure_to_vault::preview(&data_dir).map_err(Into::into)
+    })
 }
 
+/// Migrates local credentials on the blocking boundary while preserving vault-first lock order.
 #[tauri::command]
 pub async fn vault_secure_to_vault(
     app: tauri::AppHandle,
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<SecureToVaultResult> {
-    let data_dir = crate::commands::get_data_dir(&app);
     let guard = vault.lock().await;
-    crate::vault::secure_to_vault::secure(&data_dir, &guard).map_err(Into::into)
+    run_vault_blocking(|| {
+        let data_dir = crate::commands::get_data_dir(&app);
+        crate::vault::secure_to_vault::secure(&data_dir, &guard).map_err(Into::into)
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -593,14 +635,17 @@ pub struct VaultBackfillResult {
     pub skipped_missing_items: u32,
 }
 
+/// Repairs credential references under the existing vault-first blocking boundary.
 #[tauri::command]
 pub async fn vault_backfill_connection_refs(
     app: tauri::AppHandle,
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<VaultBackfillResult> {
-    let data_dir = crate::commands::get_data_dir(&app);
     let guard = vault.lock().await;
-    repair_connection_refs(&data_dir, &guard).map_err(Into::into)
+    run_vault_blocking(|| {
+        let data_dir = crate::commands::get_data_dir(&app);
+        repair_connection_refs(&data_dir, &guard).map_err(Into::into)
+    })
 }
 
 fn validate_export_path(path: &str) -> VaultResult<std::path::PathBuf> {
