@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 
-use crate::ai::tool_exec_support::{is_dangerous_command, validate_command, validate_path};
+use crate::ai::tool_exec_support::{
+    is_dangerous_command, validate_command, validate_path, MAX_WRITE_BYTES,
+};
 use crate::ai::tool_schemas::{
     planning_tool_schemas_claude, planning_tool_schemas_gemini, planning_tool_schemas_openai,
     tool_schemas_claude, tool_schemas_gemini, tool_schemas_openai,
@@ -36,8 +38,8 @@ pub fn planning_tool_schemas(config: &crate::ai::AiConfig) -> serde_json::Value 
 /// Borrowed context passed into every tool execution call.
 ///
 /// Note: `session_dir` tracks the active session path, allowing heavily verbose
-/// tool outputs (like large read_file or command actions) to automatically stream
-/// artifacts to disk to circumvent AI buffer overruns.
+/// tool outputs to retain a bounded diagnostic artifact outside the small model
+/// preview. Artifact finalization runs on the bounded filesystem worker pool.
 pub struct ToolContext<'a> {
     pub app: &'a AppHandle,
     pub connections: &'a Arc<Mutex<HashMap<String, ConnectionHandle>>>,
@@ -46,6 +48,7 @@ pub struct ToolContext<'a> {
     pub session_dir: Option<PathBuf>,
 }
 
+/// Validates tool inputs before dispatch, preserving write and safety-policy limits.
 pub async fn execute_tool(ctx: &ToolContext<'_>, tool_call: &ToolCall) -> Result<String, String> {
     match tool_call.name.as_str() {
         "run_command" => {
@@ -87,7 +90,7 @@ pub async fn execute_tool(ctx: &ToolContext<'_>, tool_call: &ToolCall) -> Result
                 .and_then(|v| v.as_str())
                 .ok_or("Missing 'content' parameter")?;
             validate_path(path)?;
-            if content.len() > 512_000 {
+            if content.len() > MAX_WRITE_BYTES {
                 return Err(format!(
                     "Content is too large ({} bytes, max 512 KB). Write the file in smaller chunks.",
                     content.len()

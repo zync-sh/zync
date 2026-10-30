@@ -21,6 +21,7 @@
         "sourceMap": false
     },
     "include": [
+        "tests/ai/**/*.ts",
         "tests/files/**/*.ts",
         "tests/files/**/*.tsx",
         "tests/securityAssessment.test.ts",
