@@ -9,6 +9,10 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
+const MAX_CACHE_ENTRIES: usize = 128;
+const CACHE_TRIM_ENTRIES: usize = 112;
+const MAX_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum BackendKey {
     Local,
@@ -27,7 +31,57 @@ pub(super) struct ListingKey {
 
 struct CachedEntries {
     at: Instant,
+    last_used: Instant,
+    bytes: usize,
     entries: Arc<[FileEntry]>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    entries: HashMap<ListingKey, CachedEntries>,
+    sweeper: Weak<()>,
+}
+
+impl CacheState {
+    /// Reclaims expired values independently of cache count without extending freshness on hits.
+    fn prune(&mut self, now: Instant) {
+        self.entries.retain(|_, entry| {
+            now.saturating_duration_since(entry.at) < Duration::from_millis(FS_LIST_CACHE_TTL_MS)
+        });
+    }
+
+    /// Accounts retained payload allocations; hash buckets and allocator overhead are separate.
+    fn bytes(&self) -> usize {
+        self.entries
+            .values()
+            .fold(0usize, |total, entry| total.saturating_add(entry.bytes))
+    }
+}
+
+/// Counts owned string capacities, entry storage, cache metadata and shared-allocation counters.
+fn listing_bytes(key: &ListingKey, entries: &[FileEntry]) -> usize {
+    let backend_bytes = match &key.backend {
+        BackendKey::Local | BackendKey::Wsl(None) => 0,
+        BackendKey::Wsl(Some(distro)) => distro.capacity(),
+        BackendKey::Remote { id, .. } => id.capacity(),
+    };
+    let base = std::mem::size_of::<(ListingKey, CachedEntries)>()
+        .saturating_add(2 * std::mem::size_of::<usize>())
+        .saturating_add(key.path.capacity())
+        .saturating_add(backend_bytes)
+        .saturating_add(std::mem::size_of_val(entries));
+    entries.iter().fold(base, |total, entry| {
+        [
+            &entry.name,
+            &entry.path,
+            &entry.r#type,
+            &entry.permissions,
+            &entry.owner,
+            &entry.group,
+        ]
+        .iter()
+        .fold(total, |bytes, value| bytes.saturating_add(value.capacity()))
+    })
 }
 
 #[derive(Default)]
@@ -37,7 +91,7 @@ struct Flight {
 
 #[derive(Default)]
 pub(super) struct ListingCache {
-    entries: Mutex<HashMap<ListingKey, CachedEntries>>,
+    entries: Arc<Mutex<CacheState>>,
     flights: Mutex<HashMap<ListingKey, Weak<Flight>>>,
 }
 
@@ -60,21 +114,26 @@ impl ListingCache {
         F: Future<Output = bool>,
     {
         if !current().await {
+            self.invalidate(&key.backend);
             return Err("Connection changed before ghost listing".into());
         }
+        let backend = key.backend.clone();
         let entries = self
             .list(key, async {
                 if !current().await {
+                    self.invalidate(&backend);
                     return Err("Connection changed before ghost listing".into());
                 }
                 let entries = request.await?;
                 if !current().await {
+                    self.invalidate(&backend);
                     return Err("Connection changed during ghost listing".into());
                 }
                 Ok(entries)
             })
             .await?;
         if !current().await {
+            self.invalidate(&backend);
             return Err("Connection changed during ghost listing".into());
         }
         Ok(entries)
@@ -82,10 +141,19 @@ impl ListingCache {
 
     /// Shares a fresh immutable listing without copying its filenames or metadata.
     fn fresh(&self, key: &ListingKey) -> Option<Arc<[FileEntry]>> {
-        let cache = self.entries.lock().ok()?;
-        let entry = cache.get(key)?;
-        (entry.at.elapsed() < Duration::from_millis(FS_LIST_CACHE_TTL_MS))
-            .then(|| entry.entries.clone())
+        let mut cache = self.entries.lock().ok()?;
+        let now = Instant::now();
+        cache.prune(now);
+        let entry = cache.entries.get_mut(key)?;
+        entry.last_used = now;
+        Some(entry.entries.clone())
+    }
+
+    /// Removes only the rejected backend identity; replacement generations and active flights survive.
+    fn invalidate(&self, backend: &BackendKey) {
+        if let Ok(mut cache) = self.entries.lock() {
+            cache.entries.retain(|key, _| &key.backend != backend);
+        }
     }
 
     /// Registers callers under one lock so last-lease removal cannot race an upgrade.
@@ -106,28 +174,78 @@ impl ListingCache {
         })
     }
 
-    /// Starts successful TTL once, preserving the existing count-based cleanup policy.
+    /// Admits complete listings within the payload/count budgets, evicting least recently used values.
     fn publish(&self, key: ListingKey, entries: Arc<[FileEntry]>) {
-        if let Ok(mut cache) = self.entries.lock() {
-            cache.insert(
+        let bytes = listing_bytes(&key, &entries);
+        let owner = if let Ok(mut cache) = self.entries.lock() {
+            let now = Instant::now();
+            cache.prune(now);
+            cache.entries.remove(&key);
+            // Oversized results still reach every waiter, without displacing useful cached values.
+            if bytes > MAX_CACHE_BYTES {
+                return;
+            }
+            cache.entries.insert(
                 key,
                 CachedEntries {
-                    at: Instant::now(),
+                    at: now,
+                    last_used: now,
+                    bytes,
                     entries,
                 },
             );
-            if cache.len() > 128 {
-                cache.retain(|_, entry| {
-                    entry.at.elapsed() < Duration::from_millis(FS_LIST_CACHE_TTL_MS)
-                });
-                while cache.len() > 112 {
-                    if let Some(key) = cache.keys().next().cloned() {
-                        cache.remove(&key);
-                    } else {
-                        break;
-                    }
+            let count_limit = if cache.entries.len() > MAX_CACHE_ENTRIES {
+                CACHE_TRIM_ENTRIES
+            } else {
+                MAX_CACHE_ENTRIES
+            };
+            while cache.entries.len() > count_limit || cache.bytes() > MAX_CACHE_BYTES {
+                let oldest = cache
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.last_used)
+                    .map(|(key, _)| key.clone());
+                if let Some(oldest) = oldest {
+                    cache.entries.remove(&oldest);
+                } else {
+                    break;
                 }
             }
+            if cache.sweeper.upgrade().is_some() {
+                return;
+            }
+            let owner = Arc::new(());
+            cache.sweeper = Arc::downgrade(&owner);
+            owner
+        } else {
+            return;
+        };
+        tokio::spawn(Self::expire(Arc::downgrade(&self.entries), owner));
+    }
+
+    /// Sleeps until the earliest expiry; weak state ownership releases idle caches on disposal.
+    async fn expire(state: Weak<Mutex<CacheState>>, _owner: Arc<()>) {
+        loop {
+            let delay = {
+                let Some(state) = state.upgrade() else { return };
+                let Ok(mut cache) = state.lock() else { return };
+                let now = Instant::now();
+                cache.prune(now);
+                let delay = cache
+                    .entries
+                    .values()
+                    .map(|entry| {
+                        Duration::from_millis(FS_LIST_CACHE_TTL_MS)
+                            .saturating_sub(now.saturating_duration_since(entry.at))
+                    })
+                    .min();
+                let Some(delay) = delay else {
+                    cache.sweeper = Weak::new();
+                    return;
+                };
+                delay
+            };
+            tokio::time::sleep(delay).await;
         }
     }
 
