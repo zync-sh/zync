@@ -3694,6 +3694,7 @@ async fn get_sftp_or_reconnect(
 }
 
 /// Optional ghost ownership checks reject a replacement instead of adopting its channel.
+/// Captured ghost bindings require a live transport; only unbound Files callers reconnect.
 /// Reconnect state is indirect and allocated only if a missing/dead transport requires it.
 async fn get_sftp_for_binding(
     state: &AppState,
@@ -3777,6 +3778,10 @@ async fn get_sftp_for_binding(
                 return Err(error.to_string());
             }
         }
+    }
+
+    if expected.is_some() {
+        return Err("Ghost lookup requires a live connection binding".into());
     }
 
     println!("[SFTP] SSH session missing for '{}', reconnecting...", id);
