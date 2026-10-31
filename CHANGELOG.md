@@ -12,6 +12,10 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Ghost cache memory:** Release expired directory listings during idle and bound
+  retained cache payloads. Oversized listings still return complete suggestions
+  and share acquisition between callers already waiting for the same directory. ([4d79ba0f])
+
 - **Development memory:** Update React and React DOM to 19.3.1, which clears
   retained performance-track property snapshots during repeated UI updates,
   including folder navigation. No application memory limits were increased. ([15e0fd2b])
@@ -3324,3 +3328,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [1bc5cf06]: https://github.com/zync-sh/zync/commit/1bc5cf062c37c449282c25e609c60a767aae4d46
 [8ed5d09d]: https://github.com/zync-sh/zync/commit/8ed5d09dcdc9940bb2020e04693d22eba1da8139
 [caa4fe00]: https://github.com/zync-sh/zync/commit/caa4fe00582b98aa91832f81cf6417cddf5894f6
+[4d79ba0f]: https://github.com/zync-sh/zync/commit/4d79ba0fc3721baeb65737ee54b9f568a84ffb85
