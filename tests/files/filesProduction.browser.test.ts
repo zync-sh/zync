@@ -16,6 +16,8 @@ const transferSafetyOnly = process.argv.includes('--transfer-safety-only');
 const listSpacingOnly = process.argv.includes('--list-spacing-only');
 const listControlsOnly = process.argv.includes('--list-controls-only');
 const gridAlignmentOnly = process.argv.includes('--grid-alignment-only');
+const largeListOnly = process.argv.includes('--large-list-only');
+const navigationMemoryOnly = process.argv.includes('--navigation-memory-only');
 const focusOnly = process.argv.includes('--focus-only');
 const permissionsOnly = process.argv.includes('--permissions-only');
 const administratorOnly = process.argv.includes('--admin-permissions-only');
@@ -46,6 +48,7 @@ const server = await createServer({
                     ['FileContentsHeader.tsx', 'const selectedCount =', "'@header'"],
                     ['FileViewControls.tsx', 'const reversed =', "'@view'"],
                     ['FilePlacesSidebar.tsx', 'const home =', "'@places'"],
+                    ['PropertiesPanel.tsx', 'let folderCount = 0;', "'@properties-projection'"],
                 ];
                 const probe = probes.find(([file]) =>
                     id.replaceAll('\\', '/').endsWith('/src/components/file-manager/' + file),
@@ -124,7 +127,7 @@ try {
     const address = server.httpServer?.address();
     assert.ok(address && typeof address !== 'string', 'The test server must have a TCP address');
     await page.goto(
-        `http://127.0.0.1:${address.port}/tests/files/filesProduction.browser.html${folderSizesOnly ? '?folderSizes=1' : administratorOnly ? '?permissions=1&admin=1' : windowsEditorOnly ? '?permissions=1&windows=1&editor=1' : windowsPermissionsOnly ? '?permissions=1&windows=1' : accessOnly ? '?access=1' : permissionsOnly ? '?permissions=1' : editorOnly ? '?editor=1' : ''}`,
+        `http://127.0.0.1:${address.port}/tests/files/filesProduction.browser.html${navigationMemoryOnly ? '?access=1&navigationMemory=1' : folderSizesOnly ? '?folderSizes=1' : administratorOnly ? '?permissions=1&admin=1' : windowsEditorOnly ? '?permissions=1&windows=1&editor=1' : windowsPermissionsOnly ? '?permissions=1&windows=1' : accessOnly ? '?access=1' : permissionsOnly ? '?permissions=1' : editorOnly ? '?editor=1' : ''}`,
         { waitUntil: 'domcontentloaded', timeout: 60000 },
     );
     const item = (name: string) => page.locator(`[data-file-name=${JSON.stringify(name)}]`);
@@ -142,7 +145,196 @@ try {
         await mkdir(process.env.ZYNC_FILES_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: `${process.env.ZYNC_FILES_SCREENSHOTS}/${name}.png` });
     };
-    if (gridAlignmentOnly) {
+    if (navigationMemoryOnly) {
+        await listing.waitFor();
+        const cdp = await context.newCDPSession(page);
+        let navigation = 0;
+        for (const defaultView of ['list', 'grid'] as const) {
+            await page.evaluate(
+                (defaultView) => window.filesUiTest.preference({ defaultView }),
+                defaultView,
+            );
+            for (let cycle = 0; cycle < 2; cycle++) {
+                for (let index = 0; index < 20; index++) {
+                    await page.evaluate(
+                        (index) => window.filesUiTest.navigateMemoryListing(index),
+                        ++navigation,
+                    );
+                    await listing.locator('[aria-setsize="1000"]').first().waitFor();
+                    await page.waitForTimeout(25);
+                }
+                // GC belongs only to this isolated diagnostic. Do not clear performance
+                // measures here: their retained copies of row props caused the regression.
+                await cdp.send('HeapProfiler.collectGarbage');
+                const retainedProps = await page.evaluate(
+                    () =>
+                        performance.getEntriesByType('measure').filter((entry) => {
+                            const detail = (entry as PerformanceMeasure).detail;
+                            return (
+                                Array.isArray(detail?.devtools?.properties) &&
+                                detail.devtools.properties.length > 0
+                            );
+                        }).length,
+                );
+                check(
+                    `${defaultView}: navigation ${navigation} releases performance-track prop snapshots`,
+                    retainedProps < 1000,
+                );
+                check(
+                    `${defaultView}: navigation ${navigation} keeps rows virtualized`,
+                    (await page.locator('[data-file-name]').count()) < 200,
+                );
+                console.log(
+                    JSON.stringify({
+                        navigation,
+                        retainedProps,
+                        heap: await cdp.send('Runtime.getHeapUsage'),
+                    }),
+                );
+            }
+        }
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+        console.log(`Files navigation memory checks passed (${checks}).`);
+    } else if (largeListOnly) {
+        await listing.waitFor();
+        const nativeBefore = await page.evaluate(() => window.filesUiTest.calls.length);
+        // A fixed viewport must keep a small mounted window even when inventory grows.
+        const mountedLimit = 200;
+        for (const count of [50000, 100000]) {
+            await page.evaluate((count) => window.filesUiTest.manyFiles(count), count);
+            for (const view of ['list', 'grid'] as const) {
+                await page.evaluate(
+                    (defaultView) => window.filesUiTest.preference({ defaultView }),
+                    view,
+                );
+                await listing.locator(`[aria-setsize="${count}"]`).first().waitFor();
+                await listing.focus();
+                await listing
+                    .locator('[data-file-list-viewport], [role="presentation"]')
+                    .evaluateAll((nodes) => {
+                        const viewport = nodes.find(
+                            (node) =>
+                                (node as HTMLElement).scrollHeight >
+                                (node as HTMLElement).clientHeight,
+                        );
+                        if (viewport) {
+                            (viewport as HTMLElement).scrollTop = (
+                                viewport as HTMLElement
+                            ).scrollHeight;
+                        }
+                    });
+                await listing.locator(`[aria-posinset="${count}"]`).waitFor();
+                const rendered = await listing.locator('[data-file-name]').count();
+                check(
+                    `${count}-file ${view} reaches the end with bounded mounted rows`,
+                    rendered > 0 && rendered < mountedLimit,
+                );
+                await page.keyboard.press('Control+A');
+                await page.waitForFunction(
+                    (count) =>
+                        document
+                            .querySelector('.files-summary-count')
+                            ?.textContent?.includes(`${count} selected`),
+                    count,
+                );
+                check(
+                    `${count}-file ${view} Select All keeps DOM virtualized`,
+                    (await listing.locator('[aria-selected="true"]').count()) < mountedLimit,
+                );
+                await page.keyboard.press('Escape');
+                await page.waitForFunction(
+                    () =>
+                        document.querySelectorAll(
+                            '[role="listbox"] [data-file-name][aria-selected="true"]',
+                        ).length === 0,
+                );
+                check(`${count}-file ${view} Escape clears selection`, true);
+            }
+        }
+        check(
+            'large directory rendering and selection add no native requests',
+            await page.evaluate(
+                (before) => window.filesUiTest.calls.length === before,
+                nativeBefore,
+            ),
+        );
+        await listing.focus();
+        await page.keyboard.press('Control+A');
+        await page.getByRole('button', { name: 'Inspect selection', exact: true }).click();
+        await page.getByRole('button', { name: 'Close properties', exact: true }).waitFor();
+        const inspector = page.locator('aside[aria-label="File properties"]');
+        check(
+            'large Properties shows the current complete selection',
+            (await inspector.textContent())?.includes('100000 items'),
+        );
+        await page.evaluate(() => {
+            globalThis.filesRowRenders!['@properties-projection'] = 0;
+        });
+        await page.getByRole('button', { name: 'Close properties', exact: true }).click();
+        await page.evaluate(() => {
+            const previous = window.filesUiTest.savedSettings().fileManager.dateTimeFormat;
+            window.filesUiTest.preference({
+                dateTimeFormat: previous === 'detailed' ? 'simple' : 'detailed',
+            });
+            return new Promise<void>((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+            );
+        });
+        check(
+            'closed same-context Properties retains closing content without recomputing selection metadata',
+            (await inspector.textContent())?.includes('100000 items') &&
+                (await page.evaluate(
+                    () => globalThis.filesRowRenders!['@properties-projection'],
+                )) === 0,
+        );
+        await page.evaluate(() => window.filesUiTest.manyFiles(100000));
+        await page.waitForFunction(() =>
+            document
+                .querySelector('aside[aria-label="File properties"]')
+                ?.textContent?.includes('Select a file or folder'),
+        );
+        check(
+            'same-path listing replacement releases closed Properties metadata',
+            !(await inspector.textContent())?.includes('100000 items'),
+        );
+        await page.evaluate(() => {
+            window.filesUiTest.breadcrumbPath(`${window.filesUiTest.path()}/config`);
+        });
+        await item('environments').waitFor();
+        await page.waitForFunction(() =>
+            document
+                .querySelector('aside[aria-label="File properties"]')
+                ?.textContent?.includes('Select a file or folder'),
+        );
+        check(
+            'closed Properties releases the previous large selection after navigation',
+            !(await inspector.textContent())?.includes('100000 items'),
+        );
+        await listing.focus();
+        await page.keyboard.press('Control+A');
+        await page.getByRole('button', { name: 'Inspect selection', exact: true }).click();
+        await page.getByRole('button', { name: 'Close properties', exact: true }).waitFor();
+        check(
+            'reopened Properties uses the new directory selection',
+            (await inspector.textContent())?.includes('2 items'),
+        );
+        await page.getByRole('button', { name: 'Close properties', exact: true }).click();
+        const restoredCount = await page.evaluate(() => {
+            window.filesUiTest.restore();
+            const files = window.filesUiTest.listingSnapshot().files;
+            const showHidden = window.filesUiTest.savedSettings().fileManager.showHiddenFiles;
+            return files.filter((file) => showHidden || !file.name.startsWith('.')).length;
+        });
+        await listing.locator(`[aria-setsize="${restoredCount}"]`).first().waitFor();
+        check(
+            'returning to a small directory removes the large virtual row window',
+            (await listing.locator('[data-file-name]').count()) <= restoredCount,
+        );
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+        console.log(`Large Files listing checks passed (${checks}).`);
+    } else if (gridAlignmentOnly) {
         await listing.waitFor();
         await page.getByRole('button', { name: 'Hide places', exact: true }).click();
         await page.getByRole('button', { name: 'View', exact: true }).click();

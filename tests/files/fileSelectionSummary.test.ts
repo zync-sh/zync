@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { FileSelectionMark } from '../../src/components/file-manager/FileSelectionMark';
 import {
+    filePropertiesEntries,
     fileSelectionSizeLabel,
     fileSelectionSummary,
 } from '../../src/components/file-manager/fileSelectionSummary';
@@ -20,6 +21,62 @@ const file = (name: string, size: number, type: FileEntry['type'] = '-'): FileEn
     path: `/${name}`,
     owner: '',
     group: '',
+});
+
+test('Properties resolves large selections in one listing pass while preserving selection order', () => {
+    let nameReads = 0;
+    const count = 5000;
+    const entries = Array.from({ length: count }, (_, index) => {
+        const entry = file(`entry-${index}`, index);
+        Object.defineProperty(entry, 'name', {
+            get() {
+                nameReads++;
+                return `entry-${index}`;
+            },
+        });
+        return entry;
+    });
+    const names = Array.from({ length: count }, (_, index) => `entry-${count - index - 1}`);
+    const selected = filePropertiesEntries(entries, names, null, true);
+    assert.equal(nameReads, count, 'Selection size must not multiply directory scans');
+    assert.equal(selected.length, count);
+    for (let index = 0; index < count; index++) {
+        assert.equal(selected[index], entries[count - index - 1]);
+    }
+    nameReads = 0;
+    assert.deepEqual(filePropertiesEntries(entries, [], 'entry-0', true), [entries[0]]);
+    assert.equal(nameReads, 1, 'A small selection stops once its requested names are found');
+});
+
+test('Properties preserves duplicate selection names, first listing matches and missing-name behavior', () => {
+    const first = Object.freeze(file('same', 1));
+    const duplicate = Object.freeze(file('same', 2));
+    const hidden = Object.freeze(file('.hidden', 3));
+    const focused = Object.freeze(file('focused', 4));
+    const entries = Object.freeze([first, duplicate, hidden, focused]);
+    const names = Object.freeze(['.hidden', 'missing', 'same', 'same']);
+    assert.deepEqual(filePropertiesEntries(entries, names, 'focused', true), [
+        hidden,
+        first,
+        first,
+    ]);
+    assert.deepEqual(filePropertiesEntries(entries, ['missing'], 'focused', true), []);
+    assert.deepEqual(filePropertiesEntries(entries, [], 'focused', true), [focused]);
+    assert.deepEqual(filePropertiesEntries(entries, [], 'missing', true), []);
+    assert.deepEqual(filePropertiesEntries(entries, [], null, true), []);
+    assert.equal(entries.length, 4);
+    assert.deepEqual(names, ['.hidden', 'missing', 'same', 'same']);
+});
+
+test('closed Properties does not inspect a listing or resolve a focused fallback', () => {
+    const unread = new Proxy<FileEntry[]>([], {
+        get() {
+            throw new Error('Closed Properties must not touch directory entries');
+        },
+    });
+    assert.deepEqual(filePropertiesEntries(unread, ['selected'], 'focused', false), []);
+    assert.deepEqual(filePropertiesEntries(unread, [], 'focused', false), []);
+    assert.deepEqual(filePropertiesEntries(unread, [], null, true), []);
 });
 
 test('selection summary never mistakes directory metadata for recursive size or follows links', () => {

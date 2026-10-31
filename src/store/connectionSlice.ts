@@ -1,32 +1,5 @@
 import { StateCreator } from 'zustand';
-import { terminalForConnectionStartup } from '../features/workspace/application/reconnectTerminal';
-import type { AppStore } from './useAppStore';
-import { scheduleSaveSession } from './sessionSlice';
-import { normalizeDisplayAlias } from '../features/workspace/domain/presentation';
-import { builtinWorkspaceViewLabel } from '../features/workspace/domain/registrations';
-import { assertSupportedMainTabPresentations, changeMainTabPresentation, parseMainTabPresentation, reorderMainTabsById, stablePinnedMainTabs, type MainTabPresentationAction } from '../features/workspace/domain/mainTabPresentation';
-import { isPaneLayoutCloseBlocked } from '../lib/paneCloseBlockers';
-import type { Connection, CoreTabView, Folder, Tab } from '../features/connections/domain/types.js';
-import {
-    addFolderToState,
-    deleteFolderFromState,
-    mergeImportedConnections,
-    renameFolderInState,
-    upsertConnectionInState,
-    updateConnectionFolderInState,
-} from '../features/connections/application/connectionService';
-import {
-    activateExistingConnectionTab,
-    createConnectionTabState,
-    createLocalTerminalTabState,
-    ensureVaultTabState,
-    ensureSyncBackupTabState,
-    ensureGlobalSnippetsTab,
-    ensureSingleTabByType,
-    findConnectionTab,
-    GLOBAL_SNIPPETS_CONNECTION_ID,
-    LOCAL_TERMINAL_CONNECTION_ID,
-} from '../features/connections/application/tabService';
+
 import {
     applyConnectionMetadata,
     getCloseTabPreActions,
@@ -35,28 +8,61 @@ import {
     markConnectionStatus,
     reduceTabCloseState,
 } from '../features/connections/application/connectionLifecycleService';
-import { pinFeatureOnConnectionIfNeeded } from '../features/connections/application/tunnelAutoStartService';
-import { track, trackConnectFailure, trackConnectSuccess, usageFeatureForTabView } from '../features/usage';
 import {
-    restartTunnelsAfterConnect,
-    snapshotActiveTunnelsForReconnect,
-} from '../features/tunnels/application/tunnelReconnectService';
+    addFolderToState,
+    deleteFolderFromState,
+    mergeImportedConnections,
+    renameFolderInState,
+    updateConnectionFolderInState,
+    upsertConnectionInState,
+} from '../features/connections/application/connectionService';
+import { ensureVaultCredentialForConnect } from '../features/connections/application/ensureVaultCredentialForConnect';
+import { connectWithHostKeyVerification } from '../features/connections/application/hostKeyVerification';
+import {
+    clearVaultRequestedPassphrase,
+    consumeVaultRequestedPassphrase,
+    KeyPassphrasePromptCancelledError,
+    KeyPassphraseVaultRequestedError,
+    prepareConnectKeyPassphrases,
+} from '../features/connections/application/keyPassphraseRuntime';
+import {
+    cancelNetworkPrompts,
+    NetworkSelectionCancelledError,
+    prepareNetworkInterface,
+} from '../features/connections/application/networkInterface';
+import {
+    activateExistingConnectionTab,
+    createConnectionTabState,
+    createLocalTerminalTabState,
+    ensureGlobalSnippetsTab,
+    ensureSingleTabByType,
+    ensureSyncBackupTabState,
+    ensureVaultTabState,
+    findConnectionTab,
+    GLOBAL_SNIPPETS_CONNECTION_ID,
+    LOCAL_TERMINAL_CONNECTION_ID,
+} from '../features/connections/application/tabService';
+import { pinFeatureOnConnectionIfNeeded } from '../features/connections/application/tunnelAutoStartService';
 import {
     buildConnectConfigResult,
     buildDefaultKeyVaultLabel,
     buildUniqueVaultLabel,
     connectConfigUsesVaultAuth,
+    type ImportPlanItem,
     normalizeFolderPath,
     preserveVaultCredentialOnUpdate,
     shouldAutoConnectOnOpenTab,
-    type ImportPlanItem,
 } from '../features/connections/domain';
+import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import { connectionErrorMessage } from '../features/connections/domain/errorSanitization';
-import { connectWithHostKeyVerification } from '../features/connections/application/hostKeyVerification';
-import { useVaultStore } from '../vault/useVaultStore';
-import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../vault/vaultLoading';
-import { isVaultAccessError } from '../vault/vaultUnlockPrompt';
-import { ensureVaultCredentialForConnect } from '../features/connections/application/ensureVaultCredentialForConnect';
+import { CONNECTIONS_CLEARED_EVENT } from '../features/connections/domain/hostInventoryCache';
+import type { Connection, CoreTabView, Folder, Tab } from '../features/connections/domain/types.js';
+import {
+    clearCancelledConnectAttempt,
+    recordConnectCancellation,
+    registerConnectAttempt,
+    shouldScheduleUnlockRetry,
+} from '../features/connections/infrastructure/connectCancelState';
 import {
     cancelConnectIpc,
     connectIpc,
@@ -65,47 +71,62 @@ import {
     readLocalKeyFileIpc,
     transportLostIpc,
 } from '../features/connections/infrastructure/connectionIpc';
-import { vaultIpc } from '../vault/ipc';
-import { seedRemoteGhostHistory } from '../lib/ghostSuggestions/client';
-import { ghostDebug } from '../lib/ghostSuggestions/ghostDebug';
 import {
     hasQueuedSerializedConnectOp,
     hasSerializedConnectOp,
-    runSerializedConnectOp,
     runSerializedConnectionOp,
+    runSerializedConnectOp,
 } from '../features/connections/infrastructure/connectionOpQueue';
 import {
-    clearCancelledConnectAttempt,
-    recordConnectCancellation,
-    registerConnectAttempt,
-    shouldScheduleUnlockRetry,
-} from '../features/connections/infrastructure/connectCancelState';
+    type LoadConnectionsIpcResult,
+    loadConnectionsIpc,
+    saveConnectionsIpc,
+} from '../features/connections/infrastructure/connectionPersistence';
+import {
+    restartTunnelsAfterConnect,
+    snapshotActiveTunnelsForReconnect,
+} from '../features/tunnels/application/tunnelReconnectService';
+import {
+    track,
+    trackConnectFailure,
+    trackConnectSuccess,
+    usageFeatureForTabView,
+} from '../features/usage';
+import { terminalForConnectionStartup } from '../features/workspace/application/reconnectTerminal';
+import {
+    assertSupportedMainTabPresentations,
+    changeMainTabPresentation,
+    type MainTabPresentationAction,
+    parseMainTabPresentation,
+    reorderMainTabsById,
+    stablePinnedMainTabs,
+} from '../features/workspace/domain/mainTabPresentation';
+import { normalizeDisplayAlias } from '../features/workspace/domain/presentation';
+import { builtinWorkspaceViewLabel } from '../features/workspace/domain/registrations';
+import { seedRemoteGhostHistory } from '../lib/ghostSuggestions/client';
+import { ghostDebug } from '../lib/ghostSuggestions/ghostDebug';
+import { isPaneLayoutCloseBlocked } from '../lib/paneCloseBlockers';
+import { clearRemoteShellCache } from '../lib/shells/cache';
+import { dispatchTerminalConnectionWakeup, resetTerminalPtyForReconnect } from '../lib/terminal';
 import {
     markConnectionBackendLive,
     markConnectionBackendOffline,
 } from '../lib/terminal/connectionBackend';
 import { suspendAllTerminalsForConnection } from '../lib/terminal/suspendAllTerminals';
-import { loadConnectionsIpc, saveConnectionsIpc, type LoadConnectionsIpcResult } from '../features/connections/infrastructure/connectionPersistence';
-import { clearRemoteShellCache } from '../lib/shells/cache';
-import {
-    CONNECTIONS_CLEARED_EVENT,
-} from '../features/connections/domain/hostInventoryCache';
-import {
-    dispatchTerminalConnectionWakeup,
-    resetTerminalPtyForReconnect,
-} from '../lib/terminal';
 import { terminalCache } from '../lib/terminal/terminalCache';
-import type { TabSnapshot } from './sessionPersistence';
-import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
-import { DEFAULT_VAULT_PROFILE_ID, isVaultProfileId, type VaultProfileId } from '../vault/profileTypes';
+import { vaultIpc } from '../vault/ipc';
 import {
-    clearVaultRequestedPassphrase,
-    consumeVaultRequestedPassphrase,
-    KeyPassphrasePromptCancelledError,
-    KeyPassphraseVaultRequestedError,
-    prepareConnectKeyPassphrases,
-} from '../features/connections/application/keyPassphraseRuntime';
-import { prepareNetworkInterface, cancelNetworkPrompts, NetworkSelectionCancelledError } from '../features/connections/application/networkInterface';
+    DEFAULT_VAULT_PROFILE_ID,
+    isVaultProfileId,
+    type VaultProfileId,
+} from '../vault/profileTypes';
+import { useVaultStore } from '../vault/useVaultStore';
+import { isVaultInUseError, VAULT_IN_USE_USER_MESSAGE } from '../vault/vaultLoading';
+import { isVaultAccessError } from '../vault/vaultUnlockPrompt';
+import type { TabSnapshot } from './sessionPersistence';
+import { scheduleSaveSession } from './sessionSlice';
+import type { AppStore } from './useAppStore';
+
 export type { Connection, Folder, Tab } from '../features/connections/domain/types.js';
 
 const activeConnectAttempts = new Map<string, string>();
@@ -146,17 +167,22 @@ export interface ConnectionSlice {
     // Actions
     addConnection: (conn: Connection, isTemp?: boolean) => Promise<void>;
     editConnection: (conn: Connection) => Promise<void>;
+    /** Fills a missing sampled icon without replacing other current host fields. */
+    setConnectionIconIfMissing: (id: string, icon: string) => Promise<void>;
     deleteConnection: (id: string) => void;
     importConnections: (conns: Connection[] | ImportPlanItem[], importedFolders?: Folder[]) => void;
     clearConnections: () => void;
 
     // Connection Actions
-    connect: (id: string, options?: {
-        skipVaultPrompt?: boolean;
-        skipCredentialPull?: boolean;
-        /** Connect host-backed content without creating or selecting a shell. */
-        preserveWorkspace?: boolean;
-    }) => Promise<void>;
+    connect: (
+        id: string,
+        options?: {
+            skipVaultPrompt?: boolean;
+            skipCredentialPull?: boolean;
+            /** Connect host-backed content without creating or selecting a shell. */
+            preserveWorkspace?: boolean;
+        },
+    ) => Promise<void>;
     cancelConnect: (id: string) => Promise<void>;
     disconnect: (id: string) => Promise<void>;
     /** WiFi drop / SSH EOF — stop active tunnels, keep terminal tabs and scrollback. */
@@ -217,12 +243,33 @@ export interface ConnectionSlice {
     loadConnections: () => Promise<void>;
 }
 
-const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>(['terminal', 'files', 'port-forwarding', 'snippets', 'dashboard', 'security']);
-const RESTORABLE_TAB_TYPES = new Set(['connection', 'port-forwarding', 'security-audits', 'release-notes', 'snippets', 'settings', 'vault', 'sync', 'public-urls']);
+const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>([
+    'terminal',
+    'files',
+    'port-forwarding',
+    'snippets',
+    'dashboard',
+    'security',
+]);
+const RESTORABLE_TAB_TYPES = new Set([
+    'connection',
+    'port-forwarding',
+    'security-audits',
+    'release-notes',
+    'snippets',
+    'settings',
+    'vault',
+    'sync',
+    'public-urls',
+]);
 
 type PersistedConnection = Omit<Connection, 'status'> & Partial<Pick<Connection, 'status'>>;
 
-export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSlice> = (set, get) => ({
+/** Creates host/workspace actions with serialized persistence and guarded automatic metadata updates. */
+export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSlice> = (
+    set,
+    get,
+) => ({
     connections: [],
     tabs: [],
     activeTabId: null,
@@ -233,12 +280,15 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     isAddConnectionModalOpen: false,
     editingConnectionId: null,
 
-    setAddConnectionModalOpen: (open) => set(
-        open ? { isAddConnectionModalOpen: true }
-             : { isAddConnectionModalOpen: false, editingConnectionId: null }
-    ),
+    setAddConnectionModalOpen: (open) =>
+        set(
+            open
+                ? { isAddConnectionModalOpen: true }
+                : { isAddConnectionModalOpen: false, editingConnectionId: null },
+        ),
 
-    openConnectionModal: (id = null) => set({ isAddConnectionModalOpen: true, editingConnectionId: id }),
+    openConnectionModal: (id = null) =>
+        set({ isAddConnectionModalOpen: true, editingConnectionId: id }),
 
     loadConnections: async () => {
         try {
@@ -252,22 +302,36 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const loaded = await loadConnectionsIpc();
             if (loaded && (Array.isArray(loaded) || 'connections' in loaded)) {
                 const payload = loaded as LoadConnectionsIpcResult;
-                const conns: PersistedConnection[] = Array.isArray(payload) ? payload : payload.connections;
-                const foldersSource: Array<Folder | string> = Array.isArray(payload) ? [] : (payload.folders || []);
-                const folders: Folder[] = foldersSource.map((folder) => typeof folder === 'string' ? { name: folder } : folder);
+                const conns: PersistedConnection[] = Array.isArray(payload)
+                    ? payload
+                    : payload.connections;
+                const foldersSource: Array<Folder | string> = Array.isArray(payload)
+                    ? []
+                    : payload.folders || [];
+                const folders: Folder[] = foldersSource.map((folder) =>
+                    typeof folder === 'string' ? { name: folder } : folder,
+                );
 
                 // Deduplicate connections by ID to prevent React key collisions.
                 // Map keeps the last occurrence for duplicate IDs by design.
-                const uniqueConns = Array.from(new Map(conns.map((connection) => [connection.id, connection])).values());
+                const uniqueConns = Array.from(
+                    new Map(conns.map((connection) => [connection.id, connection])).values(),
+                );
 
                 if (uniqueConns.length !== conns.length) {
-                    console.warn(`[RENDERER] Found ${conns.length - uniqueConns.length} duplicate connection IDs. Deduplicated.`);
+                    console.warn(
+                        `[RENDERER] Found ${conns.length - uniqueConns.length} duplicate connection IDs. Deduplicated.`,
+                    );
                 }
 
-                console.info(`[RENDERER] Applying ${uniqueConns.length} connection(s) and ${folders.length} folder(s).`);
+                console.info(
+                    `[RENDERER] Applying ${uniqueConns.length} connection(s) and ${folders.length} folder(s).`,
+                );
                 set({
-                    connections: uniqueConns.map((connection): Connection => ({ ...connection, status: 'disconnected' })),
-                    folders
+                    connections: uniqueConns.map(
+                        (connection): Connection => ({ ...connection, status: 'disconnected' }),
+                    ),
+                    folders,
                 });
             } else {
                 console.warn('No connections found in loaded data', loaded);
@@ -289,7 +353,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     editConnection: async (updatedConn) => {
         const preSave = upsertConnectionInState(get(), updatedConn);
         await saveToMain(preSave.connections, preSave.folders);
-        const latestExisting = get().connections.find(connection => connection.id === updatedConn.id);
+        const latestExisting = get().connections.find(
+            (connection) => connection.id === updatedConn.id,
+        );
         const merged = upsertConnectionInState(get(), updatedConn);
         if (latestExisting && hasRemoteTargetChanged(latestExisting, updatedConn)) {
             clearRemoteShellCache(updatedConn.id);
@@ -297,19 +363,75 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         set({ connections: merged.connections, folders: merged.folders });
     },
 
+    /** Claims automatic metadata synchronously and reconciles after earlier queued manual saves. */
+    setConnectionIconIfMissing: async (id, icon) => {
+        if (!icon) {
+            return;
+        }
+        let applied: Connection | undefined;
+        let source: Connection | undefined;
+        let previousIcon: string | undefined;
+        /** Patches only a still-missing icon on an existing current host. */
+        const applyMissingIcon = () =>
+            set((state) => {
+                const current = state.connections.find((connection) => connection.id === id);
+                if (!current || current.icon) {
+                    return state;
+                }
+                if (source && hasRemoteTargetChanged(source, current)) {
+                    return state;
+                }
+                source ??= current;
+                previousIcon = current.icon;
+                const updated = { ...current, icon };
+                applied = updated;
+                return {
+                    connections: state.connections.map((connection) =>
+                        connection === current ? updated : connection,
+                    ),
+                };
+            });
+        applyMissingIcon();
+        if (!applied) {
+            return;
+        }
+        try {
+            await queueConnectionSave(() => {
+                // An earlier manual edit can publish after the optimistic claim.
+                // Reapply only if its current icon is still missing; never upsert.
+                applyMissingIcon();
+                return get();
+            });
+        } catch (error) {
+            set((state) =>
+                state.connections.some((connection) => connection === applied)
+                    ? {
+                          connections: state.connections.map((connection) =>
+                              connection === applied
+                                  ? { ...connection, icon: previousIcon }
+                                  : connection,
+                          ),
+                      }
+                    : state,
+            );
+            throw error;
+        }
+    },
+
     deleteConnection: (id) => {
         cancelNetworkPrompts(id);
         clearRemoteShellCache(id);
-        set(state => {
-            const newConns = state.connections.filter(c => c.id !== id);
+        set((state) => {
+            const newConns = state.connections.filter((c) => c.id !== id);
             // Also close related tabs
-            const newTabs = state.tabs.filter(t => t.connectionId !== id);
+            const newTabs = state.tabs.filter((t) => t.connectionId !== id);
             // If active tab was closed, pick new active
             let newActiveId = state.activeTabId;
-            if (state.activeTabId && !newTabs.find(t => t.id === state.activeTabId)) {
+            if (state.activeTabId && !newTabs.find((t) => t.id === state.activeTabId)) {
                 newActiveId = newTabs.length > 0 ? newTabs[newTabs.length - 1].id : null;
             }
-            const newActiveConnectionId = newTabs.find(t => t.id === newActiveId)?.connectionId ?? null;
+            const newActiveConnectionId =
+                newTabs.find((t) => t.id === newActiveId)?.connectionId ?? null;
 
             saveToMain(newConns, state.folders);
             const showWelcomeScreen = newTabs.length === 0 ? true : state.showWelcomeScreen;
@@ -325,13 +447,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     importConnections: (newConns, importedFolders = []) => {
-        set(state => {
+        set((state) => {
             console.log('[IMPORT] Raw Imported Connections:', newConns);
-            const isPlanItems = Array.isArray(newConns)
-                && newConns.length > 0
-                && typeof newConns[0] === 'object'
-                && newConns[0] !== null
-                && 'connection' in (newConns[0] as object);
+            const isPlanItems =
+                Array.isArray(newConns) &&
+                newConns.length > 0 &&
+                typeof newConns[0] === 'object' &&
+                newConns[0] !== null &&
+                'connection' in (newConns[0] as object);
 
             let finalConns: Connection[];
 
@@ -353,7 +476,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     if (item.targetId && item.connection.id !== item.targetId) {
                         idRemap.set(item.connection.id, item.targetId);
                     }
-                    if (!item.targetId || !nextConnections.some(c => c.id === item.targetId)) {
+                    if (!item.targetId || !nextConnections.some((c) => c.id === item.targetId)) {
                         pendingAdds.add(item.connection.id);
                     }
                 });
@@ -370,13 +493,19 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     importedJumpId: string | undefined,
                     existingJumpId: string | undefined,
                 ): string | undefined => {
-                    if (!importedJumpId) return importedJumpId;
+                    if (!importedJumpId) {
+                        return importedJumpId;
+                    }
                     // Follow the remap chain (jump server was also in this batch)
                     const remapped = idRemap.get(importedJumpId) ?? importedJumpId;
                     // If remapped ID exists in the store, use it
-                    if (nextConnections.some(c => c.id === remapped)) return remapped;
+                    if (nextConnections.some((c) => c.id === remapped)) {
+                        return remapped;
+                    }
                     // Jump server is being added as new in this batch — keep imported reference
-                    if (pendingAdds.has(importedJumpId)) return importedJumpId;
+                    if (pendingAdds.has(importedJumpId)) {
+                        return importedJumpId;
+                    }
                     // importedJumpId doesn't resolve → preserve the existing working reference
                     return existingJumpId;
                 };
@@ -386,7 +515,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     const normalizedConnection = { ...item.connection, folder: normalizedFolder };
 
                     if (item.targetId) {
-                        const targetIndex = nextConnections.findIndex((connection) => connection.id === item.targetId);
+                        const targetIndex = nextConnections.findIndex(
+                            (connection) => connection.id === item.targetId,
+                        );
                         if (targetIndex >= 0) {
                             const existing = nextConnections[targetIndex];
                             const preservedMetadata: Partial<Connection> = {
@@ -397,13 +528,19 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                                 homePath: existing.homePath,
                                 createdAt: existing.createdAt,
                             };
-                            const secureConnection = preserveVaultCredentialOnUpdate(existing, normalizedConnection);
+                            const secureConnection = preserveVaultCredentialOnUpdate(
+                                existing,
+                                normalizedConnection,
+                            );
                             nextConnections[targetIndex] = {
                                 ...secureConnection,
                                 ...preservedMetadata,
                                 id: existing.id,
                                 status: existing.status,
-                                jumpServerId: resolveJumpServerId(normalizedConnection.jumpServerId, existing.jumpServerId),
+                                jumpServerId: resolveJumpServerId(
+                                    normalizedConnection.jumpServerId,
+                                    existing.jumpServerId,
+                                ),
                             };
                             return;
                         }
@@ -411,13 +548,17 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
                     creates.push({
                         ...normalizedConnection,
-                        jumpServerId: resolveJumpServerId(normalizedConnection.jumpServerId, undefined),
+                        jumpServerId: resolveJumpServerId(
+                            normalizedConnection.jumpServerId,
+                            undefined,
+                        ),
                     });
                 });
 
-                finalConns = creates.length > 0
-                    ? mergeImportedConnections(nextConnections, creates)
-                    : nextConnections;
+                finalConns =
+                    creates.length > 0
+                        ? mergeImportedConnections(nextConnections, creates)
+                        : nextConnections;
             } else {
                 finalConns = mergeImportedConnections(state.connections, newConns as Connection[]);
             }
@@ -426,17 +567,27 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 ...connection,
                 folder: normalizeFolderPath(connection.folder || ''),
             }));
-            const existingById = new Map(state.connections.map(connection => [connection.id, connection] as const));
+            const existingById = new Map(
+                state.connections.map((connection) => [connection.id, connection] as const),
+            );
             finalConns.forEach((connection) => {
                 const existing = existingById.get(connection.id);
-                if (!existing) return;
-                if (!hasRemoteTargetChanged(existing, connection)) return;
+                if (!existing) {
+                    return;
+                }
+                if (!hasRemoteTargetChanged(existing, connection)) {
+                    return;
+                }
                 clearRemoteShellCache(connection.id);
             });
-            const folderMap = new Map(state.folders.map((folder) => [normalizeFolderPath(folder.name), folder] as const));
+            const folderMap = new Map(
+                state.folders.map((folder) => [normalizeFolderPath(folder.name), folder] as const),
+            );
             importedFolders.forEach((folder) => {
                 const normalized = normalizeFolderPath(folder.name);
-                if (!normalized) return;
+                if (!normalized) {
+                    return;
+                }
                 const existing = folderMap.get(normalized);
                 if (existing) {
                     if (folder.tags && folder.tags.length > 0) {
@@ -448,7 +599,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             });
             finalConns.forEach((connection) => {
                 const normalized = normalizeFolderPath(connection.folder || '');
-                if (!normalized) return;
+                if (!normalized) {
+                    return;
+                }
                 if (!folderMap.has(normalized)) {
                     folderMap.set(normalized, { name: normalized });
                 }
@@ -461,7 +614,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     clearConnections: () => {
-        get().connections.forEach(conn => {
+        get().connections.forEach((conn) => {
             clearRemoteShellCache(conn.id);
         });
         set({
@@ -481,9 +634,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     applyConnectionMetadata: (id, detectedOs) => {
-        set(state => {
+        set((state) => {
             const connections = applyConnectionMetadata(state.connections, id, detectedOs);
-            if (connections === state.connections) return state;
+            if (connections === state.connections) {
+                return state;
+            }
             saveToMain(connections, state.folders);
             return { connections };
         });
@@ -491,424 +646,544 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     connect: async (id, options) => {
         return runSerializedConnectOp(id, async () => {
-        const attemptId = createConnectAttemptId(id);
-        activeConnectAttempts.set(id, attemptId);
-        const inheritedQueuedCancel = registerConnectAttempt({
-            connectionId: id,
-            attemptId,
-            pending: pendingConnectCancellations,
-            cancelledAttempts: cancelledConnectAttempts,
-        });
-        const skipVaultPrompt = options?.skipVaultPrompt ?? false;
-        const skipCredentialPull = options?.skipCredentialPull ?? false;
+            const attemptId = createConnectAttemptId(id);
+            activeConnectAttempts.set(id, attemptId);
+            const inheritedQueuedCancel = registerConnectAttempt({
+                connectionId: id,
+                attemptId,
+                pending: pendingConnectCancellations,
+                cancelledAttempts: cancelledConnectAttempts,
+            });
+            const skipVaultPrompt = options?.skipVaultPrompt ?? false;
+            const skipCredentialPull = options?.skipCredentialPull ?? false;
 
-        const finishCancelledConnect = async (disconnectBackend = false): Promise<boolean> => {
-            if (!clearCancelledConnectAttempt(cancelledConnectAttempts, attemptId)) return false;
-            if (activeConnectAttempts.get(id) === attemptId) {
-                activeConnectAttempts.delete(id);
-            }
-            markConnectionBackendOffline(id);
-            if (disconnectBackend) {
-                snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
-                try {
-                    await disconnectIpc(id);
-                } catch (error) {
-                    console.error('Failed to cleanup cancelled connection:', error);
-                } finally {
-                    get().markAllTunnelsStoppedForConnection(id);
+            const finishCancelledConnect = async (disconnectBackend = false): Promise<boolean> => {
+                if (!clearCancelledConnectAttempt(cancelledConnectAttempts, attemptId)) {
+                    return false;
                 }
-                // Same as disconnect/transport-lost: freeze PTYs and keep tabs
-                // pendingRestore so a late cancel cannot leave live terminals
-                // talking to a disconnected backend.
-                suspendAllTerminalsForConnection(get().terminals[id]);
-            }
-            if (id !== 'local' && disconnectBackend) {
-                const tabs = get().terminals[id] || [];
-                if (tabs.length > 0) {
-                    set(state => ({
-                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                        terminals: {
-                            ...state.terminals,
-                            [id]: tabs.map(t => ({ ...t, pendingRestore: true })),
-                        },
-                    }));
-                    return true;
+                if (activeConnectAttempts.get(id) === attemptId) {
+                    activeConnectAttempts.delete(id);
                 }
-            }
-            set(state => ({
-                connections: markConnectionStatus(state.connections, id, 'disconnected'),
-            }));
-            return true;
-        };
-
-        if (inheritedQueuedCancel) {
-            await finishCancelledConnect();
-            return;
-        }
-
-        // Optimistic update
-        set(state => ({
-            connections: markConnectionStatus(state.connections, id, 'connecting')
-        }));
-
-        try {
-            if (id === 'local') {
-                return; // Local connects instantly usually
-            }
-
-            const connections = get().connections;
-            const conn = connections.find(c => c.id === id);
-            if (!conn) throw new Error('Connection not found');
-
-            const configResult = buildConnectConfigResult(connections, id);
-            if (configResult.status === 'error') {
-                const message = configResult.reason === 'missing-auth'
-                    ? `Connection "${conn.name}" has no authentication configured. Add a password, private key, or vault credential.`
-                    : configResult.reason === 'missing-agent-key'
-                        ? `Connection "${conn.name}" cannot forward its selected key because that key connection is missing or no longer uses a private key.`
-                    : configResult.reason === 'jump-host-failure'
-                        ? `Couldn't build connection config for "${conn.name}". Its jump host is missing on this device — keep the jump host from your sync provider (or restore the connection chain), then try again.`
-                        : `Couldn't build connection config for "${conn.name}".`;
-                set(state => ({
-                    connections: markConnectionErrorIfNeeded(state.connections, id, message),
+                markConnectionBackendOffline(id);
+                if (disconnectBackend) {
+                    snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+                    try {
+                        await disconnectIpc(id);
+                    } catch (error) {
+                        console.error('Failed to cleanup cancelled connection:', error);
+                    } finally {
+                        get().markAllTunnelsStoppedForConnection(id);
+                    }
+                    // Same as disconnect/transport-lost: freeze PTYs and keep tabs
+                    // pendingRestore so a late cancel cannot leave live terminals
+                    // talking to a disconnected backend.
+                    suspendAllTerminalsForConnection(get().terminals[id]);
+                }
+                if (id !== 'local' && disconnectBackend) {
+                    const tabs = get().terminals[id] || [];
+                    if (tabs.length > 0) {
+                        set((state) => ({
+                            connections: markConnectionStatus(
+                                state.connections,
+                                id,
+                                'disconnected',
+                            ),
+                            terminals: {
+                                ...state.terminals,
+                                [id]: tabs.map((t) => ({ ...t, pendingRestore: true })),
+                            },
+                        }));
+                        return true;
+                    }
+                }
+                set((state) => ({
+                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
                 }));
-                get().showToast('error', message, 8000);
-                trackConnectFailure();
+                return true;
+            };
+
+            if (inheritedQueuedCancel) {
+                await finishCancelledConnect();
                 return;
             }
-            const fullConfig = configResult.config;
-            fullConfig.connect_attempt_id = attemptId;
-            const legacyLocalKeyPassphraseIds = new Set<string>();
-            const collectLegacyKeyPassphrases = (
-                config: typeof fullConfig,
-                visited: Set<string> = new Set(),
-                depth = 0,
-            ) => {
-                if (depth > 10 || visited.has(config.id)) return;
-                visited.add(config.id);
-                const source = connections.find(connection => connection.id === config.id);
-                if (
-                    config.auth_method.type === 'PrivateKey'
-                    && source?.privateKeyPath
-                    && source.password
-                    && !source.authRef
-                ) {
-                    legacyLocalKeyPassphraseIds.add(source.id);
-                }
-                if (config.agent_forwarding?.auth_method.type === 'PrivateKey') {
-                    const forwardedSource = connections.find(
-                        connection => connection.id === config.agent_forwarding?.source_connection_id,
-                    );
-                    if (forwardedSource?.privateKeyPath && forwardedSource.password && !forwardedSource.authRef) {
-                        legacyLocalKeyPassphraseIds.add(forwardedSource.id);
-                    }
-                }
-                if (config.jump_host) collectLegacyKeyPassphrases(config.jump_host, visited, depth + 1);
-            };
-            collectLegacyKeyPassphrases(fullConfig);
 
-            if (!skipVaultPrompt && connectConfigUsesVaultAuth(fullConfig)) {
-                const unlocked = await useVaultStore.getState().requestUnlock();
-                if (!unlocked) {
-                    if (isVaultInUseError(useVaultStore.getState().error)) {
-                        get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
-                    }
-                    set(state => ({
-                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                    }));
-                    return;
-                }
-            }
-
-            if (!skipCredentialPull && connectConfigUsesVaultAuth(fullConfig)) {
-                const credentialState = await ensureVaultCredentialForConnect({
-                    connectionId: id,
-                    connections: get().connections,
-                });
-                if (await finishCancelledConnect()) return;
-                if (credentialState === 'missing') {
-                    get().showToast(
-                        'info',
-                        'This host uses a vault key that is not on this device yet. Create or unlock Local Vault, then connect Google Drive to pull it — or add the key in Vault.',
-                        8000,
-                    );
-                    set(state => ({
-                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                    }));
-                    return;
-                }
-            }
-
-            await prepareConnectKeyPassphrases(fullConfig);
-            if (await finishCancelledConnect()) return;
-            await prepareNetworkInterface(fullConfig, {
-                /** Deleting a host while a picker/read is pending invalidates that operation too. */
-                cancelled: () => cancelledConnectAttempts.has(attemptId) || !get().connections.some(connection => connection.id === id),
-            });
-            if (await finishCancelledConnect()) return;
-
-            const response = await connectWithHostKeyVerification(
-                fullConfig,
-                connectIpc,
-                get().showConfirmDialog,
-            );
-            if (await finishCancelledConnect(true)) return;
-            markConnectionBackendLive(id);
-
-            // Reset existing terminal bindings while the host is still marked as
-            // connecting. If we wait until after the connected state update,
-            // React can start a PTY and this reset immediately replaces it.
-            const existingTermIds = (get().terminals[id] ?? []).map((tab) => tab.id);
-            for (const termId of existingTermIds) {
-                resetTerminalPtyForReconnect(termId);
-            }
-            // Feature actions only reconnect existing shells; terminal actions may
-            // bootstrap the first one through the normal workspace selection flow.
-            const primaryTermId = options?.preserveWorkspace
-                ? get().activeTerminalIds[id] ?? null
-                : get().ensureTerminal(id);
-            const startupTermId = terminalForConnectionStartup(get(), id, primaryTermId);
-
-            set(state => {
-                if (cancelledConnectAttempts.has(attemptId)) {
-                    return state;
-                }
-                const connected = markConnectionConnected(state.connections, id, '', response?.detected_os);
-                const newConns = legacyLocalKeyPassphraseIds.size > 0
-                    ? connected.map(connection => legacyLocalKeyPassphraseIds.has(connection.id)
-                        ? { ...connection, password: undefined }
-                        : connection)
-                    : connected;
-                saveToMain(newConns, state.folders);
-                return { connections: newConns };
-            });
-            if (await finishCancelledConnect(true)) return;
-            if (id !== 'local') {
-                trackConnectSuccess(get().connections.find(connection => connection.id === id));
-            }
-            if (legacyLocalKeyPassphraseIds.size > 0) {
-                get().showToast(
-                    'info',
-                    'Legacy key passphrases were removed from host records. Choose remember on device or save to Vault the next time Zync asks.',
-                    8000,
-                );
-            }
-            if (await finishCancelledConnect(true)) return;
-
-            // Clear pendingRestore so SSH terminal tabs can now spawn their PTYs.
-            get().clearPendingRestore(id);
-            const termIds = (get().terminals[id] ?? []).map((tab) => tab.id);
-            dispatchTerminalConnectionWakeup(termIds);
-
-            // Give a visible terminal the first SSH session channel. Ubuntu's
-            // PAM MOTD is one-shot and would otherwise be consumed by SFTP.
-            const terminalReady = !startupTermId || await waitForTerminalStartup(startupTermId);
-            if (await finishCancelledConnect(true)) return;
-
-            const applyHomePath = async () => {
-                if (cancelledConnectAttempts.has(attemptId)) return;
-                let homePath = '';
-                try {
-                    homePath = (await getRemoteCwdIpc(id)).trim();
-                } catch (e) {
-                    console.error('[CONNECT] Failed to fetch home path:', e);
-                    return;
-                }
-                if (!homePath || cancelledConnectAttempts.has(attemptId)) return;
-                set(state => {
-                    const connections = markConnectionConnected(state.connections, id, homePath);
-                    saveToMain(connections, state.folders);
-                    return { connections };
-                });
-                const ghostSettings = get().settings.ghostSuggestions;
-                if (
-                    ghostSettings.importRemoteHistoryOnConnect
-                    && ghostSettings.providers.history
-                    && ghostSettings.inlineEnabled
-                ) {
-                    void seedRemoteGhostHistory({
-                        connectionId: id,
-                        scope: id,
-                        homePath,
-                    }).then((result) => {
-                        ghostDebug('seed', {
-                            connectionId: id,
-                            imported: result.imported,
-                            skippedReason: result.skippedReason ?? null,
-                        });
-                    }).catch(() => {});
-                }
-            };
-
-            if (terminalReady) {
-                await applyHomePath();
-            } else if (startupTermId) {
-                void waitForTerminalStartup(startupTermId, 20_000).then((ready) => {
-                    if (ready) return applyHomePath();
-                    return undefined;
-                });
-            }
-            if (await finishCancelledConnect(true)) return;
+            // Optimistic update
+            set((state) => ({
+                connections: markConnectionStatus(state.connections, id, 'connecting'),
+            }));
 
             try {
-                await get().loadTunnels(id);
-                if (await finishCancelledConnect(true)) return;
-                const tunnels = get().tunnels[id] || [];
-                const startTunnel = get().startTunnel;
-
-                const restartedCount = await restartTunnelsAfterConnect({
-                    connectionId: id,
-                    tunnels,
-                    startTunnel,
-                    onTunnelError: (tunnel, error) => {
-                        const label = tunnel.name || tunnel.id;
-                        const message = error instanceof Error ? error.message : String(error);
-                        console.error(`Failed to restart tunnel ${label}:`, error);
-                        get().showToast('error', `Tunnel "${label}" failed to start: ${message}`, 6000);
-                    },
-                });
-                if (await finishCancelledConnect(true)) return;
-
-                if (restartedCount > 0) {
-                    // 1. Pin 'port-forwarding' feature if not already pinned
-                    const conn = get().connections.find(c => c.id === id);
-                    if (conn) {
-                        pinFeatureOnConnectionIfNeeded<Connection>(conn, 'port-forwarding', (next) => get().editConnection(next));
-                    }
-
-                    // User requested silent open, so we do NOT switch view.
-                    // The terminal view remains active by default.
+                if (id === 'local') {
+                    return; // Local connects instantly usually
                 }
-            } catch (err) {
-                console.error('Failed to load/start tunnels:', err);
-            }
-        } catch (error) {
-            if (await finishCancelledConnect()) return;
-            if (error instanceof KeyPassphrasePromptCancelledError || error instanceof NetworkSelectionCancelledError) {
-                set(state => ({
-                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                }));
-                return;
-            }
-            if (error instanceof KeyPassphraseVaultRequestedError) {
-                set(state => ({
-                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                }));
-                const target = get().connections.find(connection => connection.id === error.connectionId);
-                if (!target || target.privateKeyPath !== error.keyPath) {
-                    clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
-                    get().showToast('error', 'The private-key host changed before it could be saved to Vault.');
+
+                const connections = get().connections;
+                const conn = connections.find((c) => c.id === id);
+                if (!conn) {
+                    throw new Error('Connection not found');
+                }
+
+                const configResult = buildConnectConfigResult(connections, id);
+                if (configResult.status === 'error') {
+                    const message =
+                        configResult.reason === 'missing-auth'
+                            ? `Connection "${conn.name}" has no authentication configured. Add a password, private key, or vault credential.`
+                            : configResult.reason === 'missing-agent-key'
+                              ? `Connection "${conn.name}" cannot forward its selected key because that key connection is missing or no longer uses a private key.`
+                              : configResult.reason === 'jump-host-failure'
+                                ? `Couldn't build connection config for "${conn.name}". Its jump host is missing on this device — keep the jump host from your sync provider (or restore the connection chain), then try again.`
+                                : `Couldn't build connection config for "${conn.name}".`;
+                    set((state) => ({
+                        connections: markConnectionErrorIfNeeded(state.connections, id, message),
+                    }));
+                    get().showToast('error', message, 8000);
+                    trackConnectFailure();
                     return;
                 }
-
-                const unlocked = await useVaultStore.getState().requestUnlock();
-                if (!unlocked) {
-                    clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
-                    if (isVaultInUseError(useVaultStore.getState().error)) {
-                        get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
+                const fullConfig = configResult.config;
+                fullConfig.connect_attempt_id = attemptId;
+                const legacyLocalKeyPassphraseIds = new Set<string>();
+                const collectLegacyKeyPassphrases = (
+                    config: typeof fullConfig,
+                    visited: Set<string> = new Set(),
+                    depth = 0,
+                ) => {
+                    if (depth > 10 || visited.has(config.id)) {
+                        return;
                     }
-                    return;
-                }
-
-                let createdVaultItemId: string | null = null;
-                try {
-                    const status = await vaultIpc.status();
-                    if (status.status === 'unlocked') {
-                        useVaultStore.setState({ status });
+                    visited.add(config.id);
+                    const source = connections.find((connection) => connection.id === config.id);
+                    if (
+                        config.auth_method.type === 'PrivateKey' &&
+                        source?.privateKeyPath &&
+                        source.password &&
+                        !source.authRef
+                    ) {
+                        legacyLocalKeyPassphraseIds.add(source.id);
                     }
-                    if (status.status !== 'unlocked' || !status.vaultId) {
-                        throw new Error('Vault must be unlocked to store this private key.');
-                    }
-                    const vaultId = status.vaultId;
-                    const [privateKey, existingItems] = await Promise.all([
-                        readLocalKeyFileIpc(error.keyPath),
-                        vaultIpc.itemList(),
-                    ]);
-                    const baseLabel = buildDefaultKeyVaultLabel(target);
-                    const label = buildUniqueVaultLabel(baseLabel, existingItems.map(item => item.label));
-                    const passphrase = consumeVaultRequestedPassphrase(error.connectionId, error.keyPath);
-                    if (!passphrase) {
-                        throw new Error('The private-key passphrase expired before it could be saved to Vault. Try connecting again.');
-                    }
-                    const item = await vaultIpc.itemCreate(label, 'ssh-private-key', {
-                        privateKey,
-                        passphrase,
-                    });
-                    createdVaultItemId = item.id;
-                    await get().editConnection({
-                        ...target,
-                        status: 'disconnected',
-                        password: undefined,
-                        privateKeyPath: undefined,
-                        authRef: {
-                            vaultId,
-                            credentialId: item.logicalId,
-                            itemId: item.id,
-                            itemKind: 'ssh-private-key',
-                            purpose: 'ssh-auth',
-                        },
-                    });
-                    try {
-                        await useVaultStore.getState().refreshItems();
-                    } catch {
-                        // The credential and host are already saved; the Vault list can refresh later.
-                    }
-                    get().showToast('success', `Saved "${label}" to Vault. Connecting...`);
-                    if (await finishCancelledConnect()) return;
-                    queueMicrotask(() => {
-                        void get().connect(id, { ...options, skipVaultPrompt: true, skipCredentialPull });
-                    });
-                } catch (vaultError: unknown) {
-                    clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
-                    if (createdVaultItemId) {
-                        try {
-                            await vaultIpc.itemDelete(createdVaultItemId);
-                        } catch {
-                            get().showToast('error', 'Vault conversion failed and its temporary item could not be removed. Delete it from Vault manually.');
+                    if (config.agent_forwarding?.auth_method.type === 'PrivateKey') {
+                        const forwardedSource = connections.find(
+                            (connection) =>
+                                connection.id === config.agent_forwarding?.source_connection_id,
+                        );
+                        if (
+                            forwardedSource?.privateKeyPath &&
+                            forwardedSource.password &&
+                            !forwardedSource.authRef
+                        ) {
+                            legacyLocalKeyPassphraseIds.add(forwardedSource.id);
                         }
                     }
+                    if (config.jump_host) {
+                        collectLegacyKeyPassphrases(config.jump_host, visited, depth + 1);
+                    }
+                };
+                collectLegacyKeyPassphrases(fullConfig);
+
+                if (!skipVaultPrompt && connectConfigUsesVaultAuth(fullConfig)) {
+                    const unlocked = await useVaultStore.getState().requestUnlock();
+                    if (!unlocked) {
+                        if (isVaultInUseError(useVaultStore.getState().error)) {
+                            get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
+                        }
+                        set((state) => ({
+                            connections: markConnectionStatus(
+                                state.connections,
+                                id,
+                                'disconnected',
+                            ),
+                        }));
+                        return;
+                    }
+                }
+
+                if (!skipCredentialPull && connectConfigUsesVaultAuth(fullConfig)) {
+                    const credentialState = await ensureVaultCredentialForConnect({
+                        connectionId: id,
+                        connections: get().connections,
+                    });
+                    if (await finishCancelledConnect()) {
+                        return;
+                    }
+                    if (credentialState === 'missing') {
+                        get().showToast(
+                            'info',
+                            'This host uses a vault key that is not on this device yet. Create or unlock Local Vault, then connect Google Drive to pull it — or add the key in Vault.',
+                            8000,
+                        );
+                        set((state) => ({
+                            connections: markConnectionStatus(
+                                state.connections,
+                                id,
+                                'disconnected',
+                            ),
+                        }));
+                        return;
+                    }
+                }
+
+                await prepareConnectKeyPassphrases(fullConfig);
+                if (await finishCancelledConnect()) {
+                    return;
+                }
+                await prepareNetworkInterface(fullConfig, {
+                    /** Deleting a host while a picker/read is pending invalidates that operation too. */
+                    cancelled: () =>
+                        cancelledConnectAttempts.has(attemptId) ||
+                        !get().connections.some((connection) => connection.id === id),
+                });
+                if (await finishCancelledConnect()) {
+                    return;
+                }
+
+                const response = await connectWithHostKeyVerification(
+                    fullConfig,
+                    connectIpc,
+                    get().showConfirmDialog,
+                );
+                if (await finishCancelledConnect(true)) {
+                    return;
+                }
+                markConnectionBackendLive(id);
+
+                // Reset existing terminal bindings while the host is still marked as
+                // connecting. If we wait until after the connected state update,
+                // React can start a PTY and this reset immediately replaces it.
+                const existingTermIds = (get().terminals[id] ?? []).map((tab) => tab.id);
+                for (const termId of existingTermIds) {
+                    resetTerminalPtyForReconnect(termId);
+                }
+                // Feature actions only reconnect existing shells; terminal actions may
+                // bootstrap the first one through the normal workspace selection flow.
+                const primaryTermId = options?.preserveWorkspace
+                    ? (get().activeTerminalIds[id] ?? null)
+                    : get().ensureTerminal(id);
+                const startupTermId = terminalForConnectionStartup(get(), id, primaryTermId);
+
+                set((state) => {
+                    if (cancelledConnectAttempts.has(attemptId)) {
+                        return state;
+                    }
+                    const connected = markConnectionConnected(
+                        state.connections,
+                        id,
+                        '',
+                        response?.detected_os,
+                    );
+                    const newConns =
+                        legacyLocalKeyPassphraseIds.size > 0
+                            ? connected.map((connection) =>
+                                  legacyLocalKeyPassphraseIds.has(connection.id)
+                                      ? { ...connection, password: undefined }
+                                      : connection,
+                              )
+                            : connected;
+                    saveToMain(newConns, state.folders);
+                    return { connections: newConns };
+                });
+                if (await finishCancelledConnect(true)) {
+                    return;
+                }
+                if (id !== 'local') {
+                    trackConnectSuccess(
+                        get().connections.find((connection) => connection.id === id),
+                    );
+                }
+                if (legacyLocalKeyPassphraseIds.size > 0) {
                     get().showToast(
-                        'error',
-                        `Could not save this key to Vault: ${vaultError instanceof Error ? vaultError.message : String(vaultError)}`,
+                        'info',
+                        'Legacy key passphrases were removed from host records. Choose remember on device or save to Vault the next time Zync asks.',
                         8000,
                     );
                 }
-                return;
-            }
-            const message = connectionErrorMessage(error);
-            if (!skipVaultPrompt && isVaultAccessError(message)) {
-                const unlocked = await useVaultStore.getState().requestUnlock();
-                if (shouldScheduleUnlockRetry(unlocked, cancelledConnectAttempts, attemptId)) {
-                    queueMicrotask(() => {
-                        void get().connect(id, { ...options, skipVaultPrompt: true, skipCredentialPull });
-                    });
+                if (await finishCancelledConnect(true)) {
                     return;
                 }
-                set(state => ({
-                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                }));
-                return;
+
+                // Clear pendingRestore so SSH terminal tabs can now spawn their PTYs.
+                get().clearPendingRestore(id);
+                const termIds = (get().terminals[id] ?? []).map((tab) => tab.id);
+                dispatchTerminalConnectionWakeup(termIds);
+
+                // Give a visible terminal the first SSH session channel. Ubuntu's
+                // PAM MOTD is one-shot and would otherwise be consumed by SFTP.
+                const terminalReady =
+                    !startupTermId || (await waitForTerminalStartup(startupTermId));
+                if (await finishCancelledConnect(true)) {
+                    return;
+                }
+
+                const applyHomePath = async () => {
+                    if (cancelledConnectAttempts.has(attemptId)) {
+                        return;
+                    }
+                    let homePath = '';
+                    try {
+                        homePath = (await getRemoteCwdIpc(id)).trim();
+                    } catch (e) {
+                        console.error('[CONNECT] Failed to fetch home path:', e);
+                        return;
+                    }
+                    if (!homePath || cancelledConnectAttempts.has(attemptId)) {
+                        return;
+                    }
+                    set((state) => {
+                        const connections = markConnectionConnected(
+                            state.connections,
+                            id,
+                            homePath,
+                        );
+                        saveToMain(connections, state.folders);
+                        return { connections };
+                    });
+                    const ghostSettings = get().settings.ghostSuggestions;
+                    if (
+                        ghostSettings.importRemoteHistoryOnConnect &&
+                        ghostSettings.providers.history &&
+                        ghostSettings.inlineEnabled
+                    ) {
+                        void seedRemoteGhostHistory({
+                            connectionId: id,
+                            scope: id,
+                            homePath,
+                        })
+                            .then((result) => {
+                                ghostDebug('seed', {
+                                    connectionId: id,
+                                    imported: result.imported,
+                                    skippedReason: result.skippedReason ?? null,
+                                });
+                            })
+                            .catch(() => {});
+                    }
+                };
+
+                if (terminalReady) {
+                    await applyHomePath();
+                } else if (startupTermId) {
+                    void waitForTerminalStartup(startupTermId, 20_000).then((ready) => {
+                        if (ready) {
+                            return applyHomePath();
+                        }
+                        return undefined;
+                    });
+                }
+                if (await finishCancelledConnect(true)) {
+                    return;
+                }
+
+                try {
+                    await get().loadTunnels(id);
+                    if (await finishCancelledConnect(true)) {
+                        return;
+                    }
+                    const tunnels = get().tunnels[id] || [];
+                    const startTunnel = get().startTunnel;
+
+                    const restartedCount = await restartTunnelsAfterConnect({
+                        connectionId: id,
+                        tunnels,
+                        startTunnel,
+                        onTunnelError: (tunnel, error) => {
+                            const label = tunnel.name || tunnel.id;
+                            const message = error instanceof Error ? error.message : String(error);
+                            console.error(`Failed to restart tunnel ${label}:`, error);
+                            get().showToast(
+                                'error',
+                                `Tunnel "${label}" failed to start: ${message}`,
+                                6000,
+                            );
+                        },
+                    });
+                    if (await finishCancelledConnect(true)) {
+                        return;
+                    }
+
+                    if (restartedCount > 0) {
+                        // 1. Pin 'port-forwarding' feature if not already pinned
+                        const conn = get().connections.find((c) => c.id === id);
+                        if (conn) {
+                            pinFeatureOnConnectionIfNeeded<Connection>(
+                                conn,
+                                'port-forwarding',
+                                (next) => get().editConnection(next),
+                            );
+                        }
+
+                        // User requested silent open, so we do NOT switch view.
+                        // The terminal view remains active by default.
+                    }
+                } catch (err) {
+                    console.error('Failed to load/start tunnels:', err);
+                }
+            } catch (error) {
+                if (await finishCancelledConnect()) {
+                    return;
+                }
+                if (
+                    error instanceof KeyPassphrasePromptCancelledError ||
+                    error instanceof NetworkSelectionCancelledError
+                ) {
+                    set((state) => ({
+                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                    }));
+                    return;
+                }
+                if (error instanceof KeyPassphraseVaultRequestedError) {
+                    set((state) => ({
+                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                    }));
+                    const target = get().connections.find(
+                        (connection) => connection.id === error.connectionId,
+                    );
+                    if (!target || target.privateKeyPath !== error.keyPath) {
+                        clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
+                        get().showToast(
+                            'error',
+                            'The private-key host changed before it could be saved to Vault.',
+                        );
+                        return;
+                    }
+
+                    const unlocked = await useVaultStore.getState().requestUnlock();
+                    if (!unlocked) {
+                        clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
+                        if (isVaultInUseError(useVaultStore.getState().error)) {
+                            get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
+                        }
+                        return;
+                    }
+
+                    let createdVaultItemId: string | null = null;
+                    try {
+                        const status = await vaultIpc.status();
+                        if (status.status === 'unlocked') {
+                            useVaultStore.setState({ status });
+                        }
+                        if (status.status !== 'unlocked' || !status.vaultId) {
+                            throw new Error('Vault must be unlocked to store this private key.');
+                        }
+                        const vaultId = status.vaultId;
+                        const [privateKey, existingItems] = await Promise.all([
+                            readLocalKeyFileIpc(error.keyPath),
+                            vaultIpc.itemList(),
+                        ]);
+                        const baseLabel = buildDefaultKeyVaultLabel(target);
+                        const label = buildUniqueVaultLabel(
+                            baseLabel,
+                            existingItems.map((item) => item.label),
+                        );
+                        const passphrase = consumeVaultRequestedPassphrase(
+                            error.connectionId,
+                            error.keyPath,
+                        );
+                        if (!passphrase) {
+                            throw new Error(
+                                'The private-key passphrase expired before it could be saved to Vault. Try connecting again.',
+                            );
+                        }
+                        const item = await vaultIpc.itemCreate(label, 'ssh-private-key', {
+                            privateKey,
+                            passphrase,
+                        });
+                        createdVaultItemId = item.id;
+                        await get().editConnection({
+                            ...target,
+                            status: 'disconnected',
+                            password: undefined,
+                            privateKeyPath: undefined,
+                            authRef: {
+                                vaultId,
+                                credentialId: item.logicalId,
+                                itemId: item.id,
+                                itemKind: 'ssh-private-key',
+                                purpose: 'ssh-auth',
+                            },
+                        });
+                        try {
+                            await useVaultStore.getState().refreshItems();
+                        } catch {
+                            // The credential and host are already saved; the Vault list can refresh later.
+                        }
+                        get().showToast('success', `Saved "${label}" to Vault. Connecting...`);
+                        if (await finishCancelledConnect()) {
+                            return;
+                        }
+                        queueMicrotask(() => {
+                            void get().connect(id, {
+                                ...options,
+                                skipVaultPrompt: true,
+                                skipCredentialPull,
+                            });
+                        });
+                    } catch (vaultError: unknown) {
+                        clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
+                        if (createdVaultItemId) {
+                            try {
+                                await vaultIpc.itemDelete(createdVaultItemId);
+                            } catch {
+                                get().showToast(
+                                    'error',
+                                    'Vault conversion failed and its temporary item could not be removed. Delete it from Vault manually.',
+                                );
+                            }
+                        }
+                        get().showToast(
+                            'error',
+                            `Could not save this key to Vault: ${vaultError instanceof Error ? vaultError.message : String(vaultError)}`,
+                            8000,
+                        );
+                    }
+                    return;
+                }
+                const message = connectionErrorMessage(error);
+                if (!skipVaultPrompt && isVaultAccessError(message)) {
+                    const unlocked = await useVaultStore.getState().requestUnlock();
+                    if (shouldScheduleUnlockRetry(unlocked, cancelledConnectAttempts, attemptId)) {
+                        queueMicrotask(() => {
+                            void get().connect(id, {
+                                ...options,
+                                skipVaultPrompt: true,
+                                skipCredentialPull,
+                            });
+                        });
+                        return;
+                    }
+                    set((state) => ({
+                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                    }));
+                    return;
+                }
+                console.error('Connection failed:', message);
+                if (id !== 'local') {
+                    trackConnectFailure();
+                }
+                get().showToast('error', `Connection failed: ${message}`, 10000);
+                // Only update to error state if not already in error to prevent loops
+                set((state) => {
+                    const nextConnections = markConnectionErrorIfNeeded(
+                        state.connections,
+                        id,
+                        message,
+                    );
+                    if (nextConnections === state.connections) {
+                        return state;
+                    }
+                    return { connections: nextConnections };
+                });
+            } finally {
+                await finishCancelledConnect(true);
+                if (activeConnectAttempts.get(id) === attemptId) {
+                    activeConnectAttempts.delete(id);
+                }
             }
-            console.error('Connection failed:', message);
-            if (id !== 'local') trackConnectFailure();
-            get().showToast('error', `Connection failed: ${message}`, 10000);
-            // Only update to error state if not already in error to prevent loops
-            set(state => {
-                const nextConnections = markConnectionErrorIfNeeded(state.connections, id, message);
-                if (nextConnections === state.connections) return state;
-                return { connections: nextConnections };
-            });
-        } finally {
-            await finishCancelledConnect(true);
-            if (activeConnectAttempts.get(id) === attemptId) {
-                activeConnectAttempts.delete(id);
-            }
-        }
         });
     },
 
     cancelConnect: async (id) => {
-        if (id === 'local') return;
+        if (id === 'local') {
+            return;
+        }
         cancelNetworkPrompts(id);
 
         const attemptId = activeConnectAttempts.get(id);
@@ -923,7 +1198,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         markConnectionBackendOffline(id);
         snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
         get().markAllTunnelsStoppedForConnection(id);
-        set(state => ({
+        set((state) => ({
             connections: markConnectionStatus(state.connections, id, 'disconnected'),
         }));
 
@@ -936,94 +1211,101 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     handleTransportLost: async (id) => {
         return runSerializedConnectionOp(id, async () => {
-        markConnectionBackendOffline(id);
+            markConnectionBackendOffline(id);
 
-        try {
-            await get().loadTunnels(id);
-            snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
-        } catch (err) {
-            console.error('[TUNNEL] Failed to snapshot tunnels on transport lost:', err);
-        }
+            try {
+                await get().loadTunnels(id);
+                snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+            } catch (err) {
+                console.error('[TUNNEL] Failed to snapshot tunnels on transport lost:', err);
+            }
 
-        try {
-            await transportLostIpc(id);
-        } catch (error) {
-            console.error('Failed to mark transport lost on backend:', error);
-        }
+            try {
+                await transportLostIpc(id);
+            } catch (error) {
+                console.error('Failed to mark transport lost on backend:', error);
+            }
 
-        const tabs = get().terminals[id] || [];
-        if (id !== 'local' && tabs.length > 0) {
-            set(state => ({
-                connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                terminals: {
-                    ...state.terminals,
-                    [id]: tabs.map(t => ({ ...t, pendingRestore: true })),
-                },
-            }));
-        } else {
-            set(state => ({
-                connections: markConnectionStatus(state.connections, id, 'disconnected'),
-            }));
-        }
+            const tabs = get().terminals[id] || [];
+            if (id !== 'local' && tabs.length > 0) {
+                set((state) => ({
+                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                    terminals: {
+                        ...state.terminals,
+                        [id]: tabs.map((t) => ({ ...t, pendingRestore: true })),
+                    },
+                }));
+            } else {
+                set((state) => ({
+                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                }));
+            }
 
-        await get().reconcileTunnelsForConnection(id);
+            await get().reconcileTunnelsForConnection(id);
         });
     },
 
     disconnect: async (id) => {
         return runSerializedConnectionOp(id, async () => {
-        markConnectionBackendOffline(id);
+            markConnectionBackendOffline(id);
 
-        try {
-            await get().loadTunnels(id);
-            snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
-        } catch (err) {
-            console.error('[TUNNEL] Failed to snapshot tunnels before disconnect:', err);
-        }
-
-        try {
-            await disconnectIpc(id);
-        } catch (error) {
-            console.error('Failed to disconnect backend:', error);
-        } finally {
-            // Suspend PTYs but keep xterm scrollback/tabs — avoids WebGL teardown blank screens.
-            suspendAllTerminalsForConnection(get().terminals[id]);
-            get().markAllTunnelsStoppedForConnection(id);
-        }
-
-        // Preserve pendingRestore metadata on SSH tabs so reconnect can respawn PTY without losing tab list (roadmap 5.9)
-        // (moved out of finally so return does not suppress prior exceptions)
-        if (id !== 'local') {
-            const tabs = get().terminals[id] || [];
-            if (tabs.length > 0) {
-                set(state => ({
-                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
-                    terminals: {
-                        ...state.terminals,
-                        [id]: tabs.map(t => ({ ...t, pendingRestore: true })),
-                    },
-                }));
-                return;  // avoid double set
+            try {
+                await get().loadTunnels(id);
+                snapshotActiveTunnelsForReconnect(id, get().tunnels[id] || []);
+            } catch (err) {
+                console.error('[TUNNEL] Failed to snapshot tunnels before disconnect:', err);
             }
-        }
 
-        set(state => ({
-            connections: markConnectionStatus(state.connections, id, 'disconnected')
-        }));
+            try {
+                await disconnectIpc(id);
+            } catch (error) {
+                console.error('Failed to disconnect backend:', error);
+            } finally {
+                // Suspend PTYs but keep xterm scrollback/tabs — avoids WebGL teardown blank screens.
+                suspendAllTerminalsForConnection(get().terminals[id]);
+                get().markAllTunnelsStoppedForConnection(id);
+            }
+
+            // Preserve pendingRestore metadata on SSH tabs so reconnect can respawn PTY without losing tab list (roadmap 5.9)
+            // (moved out of finally so return does not suppress prior exceptions)
+            if (id !== 'local') {
+                const tabs = get().terminals[id] || [];
+                if (tabs.length > 0) {
+                    set((state) => ({
+                        connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                        terminals: {
+                            ...state.terminals,
+                            [id]: tabs.map((t) => ({ ...t, pendingRestore: true })),
+                        },
+                    }));
+                    return; // avoid double set
+                }
+            }
+
+            set((state) => ({
+                connections: markConnectionStatus(state.connections, id, 'disconnected'),
+            }));
         });
     },
 
     openTab: (connectionId, startView: CoreTabView = 'terminal') => {
         let connectAfterOpen: string | null = null;
 
-        set(state => {
+        set((state) => {
             if (connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
-                return { ...createLocalTerminalTabState(state.tabs), lastRealConnectionId: LOCAL_TERMINAL_CONNECTION_ID, showWelcomeScreen: false };
+                return {
+                    ...createLocalTerminalTabState(state.tabs),
+                    lastRealConnectionId: LOCAL_TERMINAL_CONNECTION_ID,
+                    showWelcomeScreen: false,
+                };
             }
 
-            const conn = state.connections.find(c => c.id === connectionId);
+            const conn = state.connections.find((c) => c.id === connectionId);
             if (!conn) {
-                console.warn('[connectionSlice] openTab: missing connection', { connectionId, connectionCount: state.connections.length });
+                console.warn('[connectionSlice] openTab: missing connection', {
+                    connectionId,
+                    connectionCount: state.connections.length,
+                });
                 return state;
             }
 
@@ -1034,13 +1316,20 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             const existingTab = findConnectionTab(state.tabs, conn.id);
 
             if (existingTab) {
-                return { ...activateExistingConnectionTab(state.tabs, existingTab, startView), lastRealConnectionId: conn.id, showWelcomeScreen: false };
+                return {
+                    ...activateExistingConnectionTab(state.tabs, existingTab, startView),
+                    lastRealConnectionId: conn.id,
+                    showWelcomeScreen: false,
+                };
             }
 
-            const showHostAddressesInLists = get().settings.privacy?.showHostAddressesInLists
-                ?? DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
+            const showHostAddressesInLists =
+                get().settings.privacy?.showHostAddressesInLists ??
+                DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
             return {
-                ...createConnectionTabState(state.tabs, conn, startView, { showHostAddressesInLists }),
+                ...createConnectionTabState(state.tabs, conn, startView, {
+                    showHostAddressesInLists,
+                }),
                 lastRealConnectionId: conn.id,
                 showWelcomeScreen: false,
             };
@@ -1055,13 +1344,16 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     openPortForwardingTab: () => {
-        set(state => {
-            return { ...ensureSingleTabByType(state.tabs, 'port-forwarding', () => ({
-                id: crypto.randomUUID(),
-                type: 'port-forwarding',
-                title: 'Port Forwarding',
-                view: 'port-forwarding',
-            })), showWelcomeScreen: false };
+        set((state) => {
+            return {
+                ...ensureSingleTabByType(state.tabs, 'port-forwarding', () => ({
+                    id: crypto.randomUUID(),
+                    type: 'port-forwarding',
+                    title: 'Port Forwarding',
+                    view: 'port-forwarding',
+                })),
+                showWelcomeScreen: false,
+            };
         });
         track('tunnels');
         // Dirty-checked in sessionSlice — redundant calls are harmless.
@@ -1071,43 +1363,52 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     /** Reuse one offline audit library without creating a host session or shell. */
     openSecurityAuditsTab: () => {
         get().setGlobalSidebarSection(null);
-        set(state => ({ ...ensureSingleTabByType(state.tabs, 'security-audits', () => ({
-            id: crypto.randomUUID(),
-            type: 'security-audits',
-            title: builtinWorkspaceViewLabel('security'),
-            view: 'security',
-        })), showWelcomeScreen: false }));
+        set((state) => ({
+            ...ensureSingleTabByType(state.tabs, 'security-audits', () => ({
+                id: crypto.randomUUID(),
+                type: 'security-audits',
+                title: builtinWorkspaceViewLabel('security'),
+                view: 'security',
+            })),
+            showWelcomeScreen: false,
+        }));
         get().saveSession();
     },
 
     openPublicUrlsTab: () => {
-        set(state => {
-            return { ...ensureSingleTabByType(state.tabs, 'public-urls', () => ({
-                id: crypto.randomUUID(),
-                type: 'public-urls',
-                title: 'Public URLs',
-                view: 'terminal',
-            })), showWelcomeScreen: false };
+        set((state) => {
+            return {
+                ...ensureSingleTabByType(state.tabs, 'public-urls', () => ({
+                    id: crypto.randomUUID(),
+                    type: 'public-urls',
+                    title: 'Public URLs',
+                    view: 'terminal',
+                })),
+                showWelcomeScreen: false,
+            };
         });
         track('public_urls');
         get().saveSession();
     },
 
     openReleaseNotesTab: () => {
-        set(state => {
-            return { ...ensureSingleTabByType(state.tabs, 'release-notes', () => ({
-                id: crypto.randomUUID(),
-                type: 'release-notes',
-                title: "What's New",
-                view: 'terminal', // placeholder, not used for this type
-            })), showWelcomeScreen: false };
+        set((state) => {
+            return {
+                ...ensureSingleTabByType(state.tabs, 'release-notes', () => ({
+                    id: crypto.randomUUID(),
+                    type: 'release-notes',
+                    title: "What's New",
+                    view: 'terminal', // placeholder, not used for this type
+                })),
+                showWelcomeScreen: false,
+            };
         });
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
     },
 
     openSettingsJsonTab: () => {
-        set(state => {
+        set((state) => {
             // Reuse a single settings.json workspace tab instance.
             return {
                 ...ensureSingleTabByType(state.tabs, 'settings', () => ({
@@ -1123,7 +1424,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     openVaultTab: (profileId = DEFAULT_VAULT_PROFILE_ID) => {
-        set(state => {
+        set((state) => {
             return {
                 ...ensureVaultTabState(state.tabs, profileId),
                 showWelcomeScreen: false,
@@ -1134,7 +1435,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     openSyncBackupTab: () => {
-        set(state => ({
+        set((state) => ({
             ...ensureSyncBackupTabState(state.tabs),
             showWelcomeScreen: false,
         }));
@@ -1142,7 +1443,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     openSnippetsTab: () => {
-        set(state => {
+        set((state) => {
             return { ...ensureGlobalSnippetsTab(state.tabs), showWelcomeScreen: false };
         });
         track('snippets');
@@ -1152,10 +1453,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     closeTab: (tabId) => {
         const state = get();
-        const tab = state.tabs.find(t => t.id === tabId);
+        const tab = state.tabs.find((t) => t.id === tabId);
         const connectionId = tab?.connectionId;
-        if (connectionId && Object.values(state.paneLayouts[connectionId] ?? {})
-            .some((layout) => isPaneLayoutCloseBlocked(connectionId, layout))) {
+        if (
+            connectionId &&
+            Object.values(state.paneLayouts[connectionId] ?? {}).some((layout) =>
+                isPaneLayoutCloseBlocked(connectionId, layout),
+            )
+        ) {
             get().showToast('warning', 'Close the unsaved editor before closing this tab.');
             return;
         }
@@ -1171,7 +1476,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             get().clearTerminals('local');
         }
 
-        set(state => {
+        set((state) => {
             const next = reduceTabCloseState(state.tabs, state.activeTabId, tabId);
             return {
                 ...next,
@@ -1184,9 +1489,11 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     activateTab: (tabId) => {
         let didActivate = false;
-        set(state => {
-            const tab = state.tabs.find(t => t.id === tabId);
-            if (!tab) return state;
+        set((state) => {
+            const tab = state.tabs.find((t) => t.id === tabId);
+            if (!tab) {
+                return state;
+            }
             didActivate = true;
             const newConnId = tab.connectionId || null;
             const isReal = newConnId !== null && newConnId !== GLOBAL_SNIPPETS_CONNECTION_ID;
@@ -1200,7 +1507,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 ...(isReal && { lastRealConnectionId: newConnId }),
             };
         });
-        if (!didActivate) return;
+        if (!didActivate) {
+            return;
+        }
         scheduleSaveSession(() => get().saveSession());
     },
 
@@ -1210,21 +1519,28 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     setTabView: (tabId, view) => {
-        set(state => {
-            const scope = state.tabs.find(tab => tab.id === tabId)?.connectionId;
+        set((state) => {
+            const scope = state.tabs.find((tab) => tab.id === tabId)?.connectionId;
             return {
-                tabs: state.tabs.map(t => t.id === tabId ? { ...t, view } : t),
-                ...(scope && state.workspaceDockFocus?.[scope] && { workspaceDockFocus: { ...state.workspaceDockFocus, [scope]: null } }),
+                tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, view } : t)),
+                ...(scope &&
+                    state.workspaceDockFocus?.[scope] && {
+                        workspaceDockFocus: { ...state.workspaceDockFocus, [scope]: null },
+                    }),
             };
         });
         const feature = usageFeatureForTabView(view);
-        if (feature) track(feature);
+        if (feature) {
+            track(feature);
+        }
     },
 
     addFolder: (name, tags) => {
-        set(state => {
+        set((state) => {
             const next = addFolderToState(state, name, tags);
-            if (next.folders === state.folders) return state;
+            if (next.folders === state.folders) {
+                return state;
+            }
             saveToMain(state.connections, next.folders);
             return { folders: next.folders };
         });
@@ -1233,14 +1549,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     deleteFolder: (name) => {
         // Simplified Logic: Just remove for now, full recursive logic is huge to copy-paste blindly.
         // We should really try to preserve that logic if possible.
-        // Implementation note: The original deleteFolder logic was complex. 
-        // I will copy the simple removal for now to ensure structural integrity, 
+        // Implementation note: The original deleteFolder logic was complex.
+        // I will copy the simple removal for now to ensure structural integrity,
         // then we can refine the recursive move logic.
         /* 
            Original Context logic was handling sub-folders and moving connections up.
            For this migration step, let's implement basic deletion to pass Typescript.
         */
-        set(state => {
+        set((state) => {
             const next = deleteFolderFromState(state, name);
             saveToMain(next.connections, next.folders);
             return { folders: next.folders, connections: next.connections };
@@ -1248,7 +1564,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     renameFolder: (oldName, newName, newTags) => {
-        set(state => {
+        set((state) => {
             const next = renameFolderInState(state, oldName, newName, newTags);
 
             saveToMain(next.connections, next.folders);
@@ -1257,7 +1573,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     updateConnectionFolder: (connectionId, folderName) => {
-        set(state => {
+        set((state) => {
             const next = updateConnectionFolderInState(state, connectionId, folderName);
             saveToMain(next.connections, next.folders);
             return { connections: next.connections, folders: next.folders };
@@ -1266,17 +1582,27 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     reorderTabs: (oldIndex, newIndex) => {
         const tabs = get().tabs;
-        if (!Number.isInteger(oldIndex) || !Number.isInteger(newIndex)) return;
+        if (!Number.isInteger(oldIndex) || !Number.isInteger(newIndex)) {
+            return;
+        }
         const source = tabs[oldIndex];
         const target = tabs[newIndex];
-        if (source && target) get().reorderWorkspaceTab(source.id, target.id);
+        if (source && target) {
+            get().reorderWorkspaceTab(source.id, target.id);
+        }
     },
 
     reorderWorkspaceTab: (sourceId, targetId) => {
-        if (!get().sessionLoaded || get().isRestoring || get().sessionPersistenceBlocked) return;
-        try { assertSupportedMainTabPresentations(get().tabs); }
-        catch { void get().saveSession(); return; }
-        set(state => {
+        if (!get().sessionLoaded || get().isRestoring || get().sessionPersistenceBlocked) {
+            return;
+        }
+        try {
+            assertSupportedMainTabPresentations(get().tabs);
+        } catch {
+            void get().saveSession();
+            return;
+        }
+        set((state) => {
             const tabs = reorderMainTabsById(state.tabs, sourceId, targetId);
             return tabs === state.tabs ? state : { tabs };
         });
@@ -1284,21 +1610,38 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         get().saveSession();
     },
 
-    setTabPinned: (tabId, pinned) => get().updateTabPresentation(tabId, { type: 'set-pinned', pinned }),
+    setTabPinned: (tabId, pinned) =>
+        get().updateTabPresentation(tabId, { type: 'set-pinned', pinned }),
 
     updateTabPresentation: (tabId, action) => {
         const state = get();
-        if (!state.sessionLoaded || state.isRestoring || state.sessionPersistenceBlocked) return false;
-        try { assertSupportedMainTabPresentations(state.tabs); }
-        catch { void get().saveSession(); return false; }
-        const target = state.tabs.find(tab => tab.id === tabId);
-        if (!target || state.tabs.filter(tab => tab.id === tabId).length !== 1) return false;
+        if (!state.sessionLoaded || state.isRestoring || state.sessionPersistenceBlocked) {
+            return false;
+        }
+        try {
+            assertSupportedMainTabPresentations(state.tabs);
+        } catch {
+            void get().saveSession();
+            return false;
+        }
+        const target = state.tabs.find((tab) => tab.id === tabId);
+        if (!target || state.tabs.filter((tab) => tab.id === tabId).length !== 1) {
+            return false;
+        }
         const result = changeMainTabPresentation(target.presentation, action);
-        if (!result.ok) return false;
-        if (!result.changed) return true;
-        const tabs = state.tabs.map<Tab>(tab => {
-            if (tab !== target) return tab;
-            if (result.value) return { ...tab, presentation: result.value };
+        if (!result.ok) {
+            return false;
+        }
+        if (!result.changed) {
+            return true;
+        }
+        const tabs = state.tabs.map<Tab>((tab) => {
+            if (tab !== target) {
+                return tab;
+            }
+            if (result.value) {
+                return { ...tab, presentation: result.value };
+            }
             const { presentation: _presentation, ...undecorated } = tab;
             return undecorated;
         });
@@ -1309,65 +1652,86 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     setTabDisplayAlias: (tabId, alias) => {
         const state = get();
-        if (!state.sessionLoaded || state.isRestoring || state.sessionPersistenceBlocked) return false;
-        try { assertSupportedMainTabPresentations(state.tabs); }
-        catch { void get().saveSession(); return false; }
-        const target = state.tabs.find(tab => tab.id === tabId);
-        if (!target || state.tabs.filter(tab => tab.id === tabId).length !== 1) return false;
+        if (!state.sessionLoaded || state.isRestoring || state.sessionPersistenceBlocked) {
+            return false;
+        }
+        try {
+            assertSupportedMainTabPresentations(state.tabs);
+        } catch {
+            void get().saveSession();
+            return false;
+        }
+        const target = state.tabs.find((tab) => tab.id === tabId);
+        if (!target || state.tabs.filter((tab) => tab.id === tabId).length !== 1) {
+            return false;
+        }
         const displayAlias = normalizeDisplayAlias(alias);
-        if (target.displayAlias === displayAlias) return true;
-        set({ tabs: state.tabs.map(tab => tab === target ? { ...tab, displayAlias } : tab) });
+        if (target.displayAlias === displayAlias) {
+            return true;
+        }
+        set({ tabs: state.tabs.map((tab) => (tab === target ? { ...tab, displayAlias } : tab)) });
         void get().saveSession();
         return true;
     },
 
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         assertSupportedMainTabPresentations(snapshots);
-        set(state => {
+        set((state) => {
             const seen = new Set<string>();
-            const tabs: Tab[] = stablePinnedMainTabs(snapshots
-                .filter(s => s && typeof s.id === 'string' && s.id.trim())
-                .filter(s => RESTORABLE_TAB_TYPES.has(s.tabType))
-                .filter(s => {
-                    // Drop connection tabs whose connection was deleted.
-                    // 'local' is always valid — it is not in the connections array.
-                    if (s.tabType === 'connection') {
-                        return s.connectionId === 'local' || state.connections.some(c => c.id === s.connectionId);
-                    }
-                    return true;
-                })
-                .filter(s => {
-                    if (seen.has(s.id)) return false;
-                    seen.add(s.id);
-                    return true;
-                })
-                .map(s => {
-                    const parsed = parseMainTabPresentation(s.presentation);
-                    const presentation = parsed.ok ? parsed.value : undefined;
-                    const isLegacySnippetsTab = s.tabType === 'snippets';
-                    const isPluginView = typeof s.view === 'string' && s.view.startsWith('plugin:');
-                    const view: Tab['view'] = isLegacySnippetsTab
-                        ? 'snippets'
-                        : VALID_RESTORABLE_VIEWS.has(s.view as CoreTabView) || isPluginView
-                            ? (s.view as Tab['view'])
-                            : 'terminal';
-                    return {
-                        id: s.id,
-                        type: isLegacySnippetsTab ? 'connection' : s.tabType as Tab['type'],
-                        title: s.title,
-                        displayAlias: normalizeDisplayAlias(s.displayAlias),
-                        ...(presentation && { presentation }),
-                        connectionId: isLegacySnippetsTab
-                            ? GLOBAL_SNIPPETS_CONNECTION_ID
-                            : s.tabType === 'security-audits' ? undefined : s.connectionId,
-                        vaultProfileId: s.tabType === 'vault'
-                            ? (isVaultProfileId(s.vaultProfileId)
-                                ? s.vaultProfileId
-                                : DEFAULT_VAULT_PROFILE_ID)
-                            : undefined,
-                        view,
-                    };
-                }));
+            const tabs: Tab[] = stablePinnedMainTabs(
+                snapshots
+                    .filter((s) => s && typeof s.id === 'string' && s.id.trim())
+                    .filter((s) => RESTORABLE_TAB_TYPES.has(s.tabType))
+                    .filter((s) => {
+                        // Drop connection tabs whose connection was deleted.
+                        // 'local' is always valid — it is not in the connections array.
+                        if (s.tabType === 'connection') {
+                            return (
+                                s.connectionId === 'local' ||
+                                state.connections.some((c) => c.id === s.connectionId)
+                            );
+                        }
+                        return true;
+                    })
+                    .filter((s) => {
+                        if (seen.has(s.id)) {
+                            return false;
+                        }
+                        seen.add(s.id);
+                        return true;
+                    })
+                    .map((s) => {
+                        const parsed = parseMainTabPresentation(s.presentation);
+                        const presentation = parsed.ok ? parsed.value : undefined;
+                        const isLegacySnippetsTab = s.tabType === 'snippets';
+                        const isPluginView =
+                            typeof s.view === 'string' && s.view.startsWith('plugin:');
+                        const view: Tab['view'] = isLegacySnippetsTab
+                            ? 'snippets'
+                            : VALID_RESTORABLE_VIEWS.has(s.view as CoreTabView) || isPluginView
+                              ? (s.view as Tab['view'])
+                              : 'terminal';
+                        return {
+                            id: s.id,
+                            type: isLegacySnippetsTab ? 'connection' : (s.tabType as Tab['type']),
+                            title: s.title,
+                            displayAlias: normalizeDisplayAlias(s.displayAlias),
+                            ...(presentation && { presentation }),
+                            connectionId: isLegacySnippetsTab
+                                ? GLOBAL_SNIPPETS_CONNECTION_ID
+                                : s.tabType === 'security-audits'
+                                  ? undefined
+                                  : s.connectionId,
+                            vaultProfileId:
+                                s.tabType === 'vault'
+                                    ? isVaultProfileId(s.vaultProfileId)
+                                        ? s.vaultProfileId
+                                        : DEFAULT_VAULT_PROFILE_ID
+                                    : undefined,
+                            view,
+                        };
+                    }),
+            );
 
             if (tabs.length === 0) {
                 return {
@@ -1379,40 +1743,57 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             }
 
             const resolvedActiveId =
-                activeTabId && tabs.some(t => t.id === activeTabId)
-                    ? activeTabId
-                    : tabs[0].id;
-            const resolvedTab = tabs.find(t => t.id === resolvedActiveId);
+                activeTabId && tabs.some((t) => t.id === activeTabId) ? activeTabId : tabs[0].id;
+            const resolvedTab = tabs.find((t) => t.id === resolvedActiveId);
             // Validate activeConnectionId against loaded connections before using as fallback.
             const activeConnectionIdValid =
                 activeConnectionId === 'local' ||
-                state.connections.some(c => c.id === activeConnectionId);
+                state.connections.some((c) => c.id === activeConnectionId);
             const resolvedConnId =
-                resolvedTab?.type === 'security-audits' ? null
-                    : resolvedTab?.connectionId ?? (activeConnectionIdValid ? activeConnectionId : null);
+                resolvedTab?.type === 'security-audits'
+                    ? null
+                    : (resolvedTab?.connectionId ??
+                      (activeConnectionIdValid ? activeConnectionId : null));
 
             // When the restored active tab is the global snippets tab (a pseudo-tab with
             // no real connection), fall back to the most recent real connection tab so
             // SnippetsManager has a valid target even before the user switches tabs.
             const lastConnectionTabIdFallback =
-                [...tabs].reverse().find((t: Tab) =>
-                    t.type === 'connection' && !!t.connectionId && t.connectionId !== GLOBAL_SNIPPETS_CONNECTION_ID
-                )?.connectionId ?? null;
+                [...tabs]
+                    .reverse()
+                    .find(
+                        (t: Tab) =>
+                            t.type === 'connection' &&
+                            !!t.connectionId &&
+                            t.connectionId !== GLOBAL_SNIPPETS_CONNECTION_ID,
+                    )?.connectionId ?? null;
             const lastRealConnectionId =
                 resolvedConnId !== null && resolvedConnId !== GLOBAL_SNIPPETS_CONNECTION_ID
                     ? resolvedConnId
                     : lastConnectionTabIdFallback;
 
             return showWelcomeScreen
-                ? { tabs, activeTabId: null, activeConnectionId: null, lastRealConnectionId, showWelcomeScreen: true }
-                : { tabs, activeTabId: resolvedActiveId, activeConnectionId: resolvedConnId, lastRealConnectionId, showWelcomeScreen: false };
+                ? {
+                      tabs,
+                      activeTabId: null,
+                      activeConnectionId: null,
+                      lastRealConnectionId,
+                      showWelcomeScreen: true,
+                  }
+                : {
+                      tabs,
+                      activeTabId: resolvedActiveId,
+                      activeConnectionId: resolvedConnId,
+                      lastRealConnectionId,
+                      showWelcomeScreen: false,
+                  };
         });
     },
 
     toggleFavorite: (connectionId) => {
-        set(state => {
-            const newConns = state.connections.map(c =>
-                c.id === connectionId ? { ...c, isFavorite: !c.isFavorite } : c
+        set((state) => {
+            const newConns = state.connections.map((c) =>
+                c.id === connectionId ? { ...c, isFavorite: !c.isFavorite } : c,
             );
             saveToMain(newConns, state.folders);
             return { connections: newConns };
@@ -1423,48 +1804,68 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         if (connectionId === 'local') {
             const current = get().settings.localTerm?.pinnedFeatures || [];
             const updated = current.includes(feature)
-                ? current.filter(f => f !== feature)
+                ? current.filter((f) => f !== feature)
                 : [...current, feature];
             // Use specific store method to sync pinned features to local terminal settings.
-            void get().updateLocalTermSettings({ pinnedFeatures: updated }).catch(error => {
-                console.error('Failed to update local terminal pinned features:', error);
-                get().showToast('error', `Failed to save pinned features: ${error instanceof Error ? error.message : String(error)}`, 5000);
-            });
+            void get()
+                .updateLocalTermSettings({ pinnedFeatures: updated })
+                .catch((error) => {
+                    console.error('Failed to update local terminal pinned features:', error);
+                    get().showToast(
+                        'error',
+                        `Failed to save pinned features: ${error instanceof Error ? error.message : String(error)}`,
+                        5000,
+                    );
+                });
             return;
         }
 
-        set(state => {
-            const newConns = state.connections.map(c => {
-                if (c.id !== connectionId) return c;
+        set((state) => {
+            const newConns = state.connections.map((c) => {
+                if (c.id !== connectionId) {
+                    return c;
+                }
                 const current = c.pinnedFeatures || [];
                 const updated = current.includes(feature)
-                    ? current.filter(f => f !== feature)
+                    ? current.filter((f) => f !== feature)
                     : [...current, feature];
                 return { ...c, pinnedFeatures: updated };
             });
             saveToMain(newConns, state.folders);
             return { connections: newConns };
         });
-    }
+    },
 });
 
 let pendingSave: Promise<void> = Promise.resolve();
 
 /** Changing an auth identity invalidates cached remote-shell metadata just like changing the target. */
 function hasRemoteTargetChanged(previous: Connection, next: Connection): boolean {
-    return previous.host !== next.host
-        || previous.port !== next.port
-        || previous.username !== next.username
-        || previous.jumpServerId !== next.jumpServerId
-        || previous.privateKeyPath !== next.privateKeyPath
-        || previous.certificatePath !== next.certificatePath
-        || previous.password !== next.password;
+    return (
+        previous.host !== next.host ||
+        previous.port !== next.port ||
+        previous.username !== next.username ||
+        previous.jumpServerId !== next.jumpServerId ||
+        previous.privateKeyPath !== next.privateKeyPath ||
+        previous.certificatePath !== next.certificatePath ||
+        previous.password !== next.password
+    );
 }
 
-const saveToMain = (connections: Connection[], folders: Folder[]): Promise<void> => {
-    const save = pendingSave.then(() => saveConnectionsIpc(connections, folders));
+/** Serializes writes while allowing automatic metadata to resolve its snapshot at execution time. */
+const queueConnectionSave = (
+    snapshot: () => Pick<AppStore, 'connections' | 'folders'>,
+): Promise<void> => {
+    const save = pendingSave.then(() => {
+        const { connections, folders } = snapshot();
+        return saveConnectionsIpc(connections, folders);
+    });
     pendingSave = save.catch((error) => {
         console.error('Failed to save connections:', connectionErrorMessage(error));
     });
     return save;
 };
+
+/** Preserves explicit user saves as the same captured snapshot used by their existing call sites. */
+const saveToMain = (connections: Connection[], folders: Folder[]): Promise<void> =>
+    queueConnectionSave(() => ({ connections, folders }));

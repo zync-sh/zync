@@ -1,16 +1,26 @@
 /** Tracks which SSH hosts have a live entry in the Tauri connections map. */
 
-const liveEpochByConnection: Record<string, number> = {};
+const liveEpochByConnection = new Map<string, number>();
+let nextLiveEpoch = 0;
 
+/** Assigns a fresh transport identity even after an offline interval removed the previous one. */
 export function markConnectionBackendLive(connectionId: string): number {
-  liveEpochByConnection[connectionId] = (liveEpochByConnection[connectionId] ?? 0) + 1;
-  return liveEpochByConnection[connectionId];
+    const epoch = ++nextLiveEpoch;
+    liveEpochByConnection.set(connectionId, epoch);
+    return epoch;
 }
 
+/** Invalidates transport-bound work before asynchronous disconnect cleanup completes. */
 export function markConnectionBackendOffline(connectionId: string): void {
-  delete liveEpochByConnection[connectionId];
+    liveEpochByConnection.delete(connectionId);
 }
 
+/** Returns the current runtime transport identity without retaining offline host records. */
+export function getConnectionBackendEpoch(connectionId: string): number | undefined {
+    return liveEpochByConnection.get(connectionId);
+}
+
+/** Indicates whether the frontend currently owns a live native SSH connection entry. */
 export function isConnectionBackendLive(connectionId: string): boolean {
-  return (liveEpochByConnection[connectionId] ?? 0) > 0;
+    return liveEpochByConnection.has(connectionId);
 }

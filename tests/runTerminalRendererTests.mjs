@@ -1,48 +1,48 @@
 import { spawnSync } from 'node:child_process';
 
 const tests = [
-  'tests/terminalLifecycleOwnership.test.mjs',
-  'tests/terminalOutputFlow.test.mjs',
-  'tests/terminalRendererLifecycle.test.mjs',
-  'tests/terminalDocument.test.mjs',
-  'tests/terminalRendererPolicy.test.mjs',
-  'tests/terminalWebglCapability.test.mjs',
-  'tests/terminalRendererSession.test.mjs',
-  'tests/terminalRendererController.test.mjs',
-  'tests/terminalRendererDiagnostics.test.mjs',
-  'tests/terminalRendererSetup.test.mjs',
-  'tests/terminalInputPipeline.test.mjs',
-  'tests/terminalInputQueue.test.mjs',
-  'tests/terminalPtyLifecycle.test.mjs',
-  'tests/terminalSpawnContext.test.mjs',
-  'tests/terminalSpawnErrors.test.mjs',
-  'tests/terminalLazyPty.test.mjs',
-  'tests/terminalIdlePty.test.mjs',
-  'tests/terminalIdleHostSuspend.test.mjs',
-  'tests/terminalActivity.test.mjs',
-  'tests/terminalLifecycleListeners.test.mjs',
-  'tests/terminalIdleSuspendNotice.test.mjs',
-  'tests/terminalXtermOptions.test.mjs',
-  'tests/terminalImage.test.mjs',
-  'tests/terminalResizeSync.test.mjs',
-  'tests/terminalReconnectReset.test.mjs',
-  'tests/terminalReconnectFlow.test.mjs',
-  'tests/terminalConnectionWakeup.test.mjs',
-  'tests/terminalLifecycleIntegration.test.mjs',
-  'tests/terminalOutputPayload.test.mjs',
-  'tests/terminalOutputStream.test.mjs',
-  'tests/terminalTabClose.test.mjs',
-  'tests/terminalPanelRestore.test.mjs',
-  'tests/terminalScrollbackPreserve.test.mjs',
+    'tests/terminalLifecycleOwnership.test.mjs',
+    'tests/terminalOutputFlow.test.mjs',
+    'tests/terminalRendererLifecycle.test.mjs',
+    'tests/terminalDocument.test.mjs',
+    'tests/terminalRendererPolicy.test.mjs',
+    'tests/terminalWebglCapability.test.mjs',
+    'tests/terminalRendererSession.test.mjs',
+    'tests/terminalRendererController.test.mjs',
+    'tests/terminalRendererDiagnostics.test.mjs',
+    '.tmp-agent-tests/tests/terminal/terminalRendererSetup.test.js',
+    'tests/terminalInputPipeline.test.mjs',
+    'tests/terminalInputQueue.test.mjs',
+    'tests/terminalPtyLifecycle.test.mjs',
+    'tests/terminalSpawnContext.test.mjs',
+    'tests/terminalSpawnErrors.test.mjs',
+    'tests/terminalLazyPty.test.mjs',
+    'tests/terminalIdlePty.test.mjs',
+    'tests/terminalIdleHostSuspend.test.mjs',
+    'tests/terminalActivity.test.mjs',
+    'tests/terminalLifecycleListeners.test.mjs',
+    'tests/terminalIdleSuspendNotice.test.mjs',
+    'tests/terminalXtermOptions.test.mjs',
+    'tests/terminalImage.test.mjs',
+    'tests/terminalResizeSync.test.mjs',
+    'tests/terminalReconnectReset.test.mjs',
+    'tests/terminalReconnectFlow.test.mjs',
+    'tests/terminalConnectionWakeup.test.mjs',
+    'tests/terminalLifecycleIntegration.test.mjs',
+    'tests/terminalOutputPayload.test.mjs',
+    'tests/terminalOutputStream.test.mjs',
+    'tests/terminalTabClose.test.mjs',
+    'tests/terminalPanelRestore.test.mjs',
+    'tests/terminalScrollbackPreserve.test.mjs',
 ];
 
 for (const file of tests) {
-  console.log(`[terminal-renderer] Running ${file}`);
-  const result = spawnSync(process.execPath, [file], { stdio: 'inherit' });
-  if (result.status !== 0) {
-    console.error(`[terminal-renderer] ${file} failed`);
-    process.exit(result.status ?? 1);
-  }
+    console.log(`[terminal-renderer] Running ${file}`);
+    const result = spawnSync(process.execPath, [file], { stdio: 'inherit' });
+    if (result.status !== 0) {
+        console.error(`[terminal-renderer] ${file} failed`);
+        process.exit(result.status ?? 1);
+    }
 }
 
 console.log('[terminal-renderer] All tests passed.');

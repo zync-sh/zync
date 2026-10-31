@@ -3685,17 +3685,30 @@ async fn open_sftp_session(
     Ok(Arc::new(sftp))
 }
 
-// Helper to get SFTP session - initializes it lazily on the live transport and
-// reconnects only when the SSH transport itself has gone away.
+/// Initializes SFTP lazily and reconnects only when the SSH transport has gone away.
 async fn get_sftp_or_reconnect(
     state: &AppState,
     id: &str,
+) -> Result<Arc<russh_sftp::client::SftpSession>, String> {
+    get_sftp_for_binding(state, id, None).await
+}
+
+/// Optional ghost ownership checks reject a replacement instead of adopting its channel.
+/// Reconnect state is indirect and allocated only if a missing/dead transport requires it.
+async fn get_sftp_for_binding(
+    state: &AppState,
+    id: &str,
+    expected: Option<&GhostConnectionIdentity>,
 ) -> Result<Arc<russh_sftp::client::SftpSession>, String> {
     let (reconnect_lock, existing_session, reconnect_generation) = {
         let connections = state.connections.lock().await;
         let conn = connections
             .get(id)
             .ok_or_else(|| format!("Connection {} not found, cannot reconnect for SFTP", id))?;
+
+        if expected.is_some_and(|identity| !identity.matches(conn)) {
+            return Err("Connection changed before ghost lookup".into());
+        }
 
         if let Some(sftp) = &conn.sftp_session {
             return Ok(sftp.clone());
@@ -3715,6 +3728,9 @@ async fn get_sftp_or_reconnect(
                     let conn = connections
                         .get_mut(id)
                         .ok_or_else(|| "Connection was removed while SFTP started".to_string())?;
+                    if expected.is_some_and(|identity| !identity.matches(conn)) {
+                        return Err("Connection changed while SFTP started".into());
+                    }
                     if conn.reconnect_generation != reconnect_generation
                         || !crate::sftp_read::is_current_session(&conn.session, &session)
                     {
@@ -3740,7 +3756,12 @@ async fn get_sftp_or_reconnect(
             }
             Err(OpenSftpError::Transport(_)) => {
                 let mut connections = state.connections.lock().await;
-                let conn = connections.get_mut(id).ok_or("Connection was removed while SFTP started")?;
+                let conn = connections
+                    .get_mut(id)
+                    .ok_or("Connection was removed while SFTP started")?;
+                if expected.is_some_and(|identity| !identity.matches(conn)) {
+                    return Err("Connection changed while SFTP started".into());
+                }
                 if conn.reconnect_generation != reconnect_generation
                     || !crate::sftp_read::is_current_session(&conn.session, &session)
                 {
@@ -3763,7 +3784,7 @@ async fn get_sftp_or_reconnect(
     let timeout_duration = std::time::Duration::from_secs(12);
     match tokio::time::timeout(
         timeout_duration,
-        reconnect_stored_connection(id, reconnect_lock, reconnect_generation, state),
+        Box::pin(reconnect_stored_connection(id, reconnect_lock, reconnect_generation, state)),
     )
     .await
     {
@@ -3781,6 +3802,9 @@ async fn get_sftp_or_reconnect(
         let conn = connections
             .get(id)
             .ok_or_else(|| "Reconnection succeeded but connection is missing".to_string())?;
+        if expected.is_some_and(|identity| !identity.matches(conn)) {
+            return Err("Connection changed during ghost reconnect".into());
+        }
         (
             conn.session
                 .clone()
@@ -3793,8 +3817,12 @@ async fn get_sftp_or_reconnect(
         .map_err(|error| error.to_string())?;
     let (sftp, opened_first_sftp) = {
         let mut connections = state.connections.lock().await;
-        let conn = connections.get_mut(id)
+        let conn = connections
+            .get_mut(id)
             .ok_or("Connection was removed while SFTP started")?;
+        if expected.is_some_and(|identity| !identity.matches(conn)) {
+            return Err("Connection changed while SFTP started".into());
+        }
         if conn.reconnect_generation != reconnect_generation
             || !crate::sftp_read::is_current_session(&conn.session, &session)
         {
@@ -3804,7 +3832,10 @@ async fn get_sftp_or_reconnect(
         if opened_first_sftp {
             conn.file_permission_session = uuid::Uuid::new_v4().to_string();
         }
-        let installed = conn.sftp_session.get_or_insert_with(|| sftp.clone()).clone();
+        let installed = conn
+            .sftp_session
+            .get_or_insert_with(|| sftp.clone())
+            .clone();
         (installed, opened_first_sftp)
     };
     if opened_first_sftp {
@@ -3847,6 +3878,7 @@ pub async fn fs_list_volumes(connection_id: String) -> Result<Vec<FileVolume>, S
         .map_err(|e| e.to_string())
 }
 
+/// Lists local entries on bounded blocking workers and remote entries through SFTP.
 #[tauri::command]
 pub async fn fs_list(
     connection_id: String,
@@ -3856,7 +3888,8 @@ pub async fn fs_list(
     if connection_id == "local" {
         state
             .file_system
-            .list_local(&path)
+            .list_local_async(&path)
+            .await
             .map_err(|e| e.to_string())
     } else {
         let (sftp, identity_cache) = sftp_list_ctx(&state, &connection_id).await?;
@@ -3966,6 +3999,7 @@ pub(crate) async fn read_remote_connection_file(
     }
 }
 
+/// Reads editor content with local blocking work offloaded and existing size limits preserved.
 #[tauri::command]
 pub async fn fs_read_file(
     connection_id: String,
@@ -3979,7 +4013,11 @@ pub async fn fs_read_file(
     }
     if connection_id == "local" {
         match max_bytes {
-            Some(limit) => state.file_system.read_local_limited(&path, limit).map_err(|e| e.to_string()),
+            Some(limit) => state
+                .file_system
+                .read_local_limited_async(&path, limit)
+                .await
+                .map_err(|e| e.to_string()),
             None => state.file_system.read_file(&connection_id, &path).await.map_err(|e| e.to_string()),
         }
     } else {
@@ -4289,19 +4327,149 @@ async fn fs_list_wsl_impl(
     Err("WSL is only available on Windows".to_string())
 }
 
-/// Filesystem helpers for ghost suggest v2 (P5).
+/// A non-owning connection instance and transport generation for private ghost requests.
+#[derive(Clone, Debug)]
+pub(crate) struct GhostConnectionIdentity {
+    owner: std::sync::Weak<Mutex<()>>,
+    generation: u64,
+}
+
+impl PartialEq for GhostConnectionIdentity {
+    /// Distinguishes replacement connections even when their generation restarts at zero.
+    fn eq(&self, other: &Self) -> bool {
+        self.generation == other.generation && self.owner.ptr_eq(&other.owner)
+    }
+}
+
+impl Eq for GhostConnectionIdentity {}
+
+impl std::hash::Hash for GhostConnectionIdentity {
+    /// Keeps only a weak allocation identity in retained cache keys.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.owner.as_ptr(), state);
+        std::hash::Hash::hash(&self.generation, state);
+    }
+}
+
+impl GhostConnectionIdentity {
+    /// Records a weak owner allocation and generation without extending connection lifetime.
+    pub(crate) fn from_owner(owner: &Arc<Mutex<()>>, generation: u64) -> Self {
+        Self {
+            owner: Arc::downgrade(owner),
+            generation,
+        }
+    }
+
+    /// Captures the current connection without retaining its SSH or SFTP transport.
+    fn capture(connection: &ConnectionHandle) -> Self {
+        Self::from_owner(&connection.reconnect_lock, connection.reconnect_generation)
+    }
+
+    /// Accepts only the same connection allocation and transport generation.
+    fn matches(&self, connection: &ConnectionHandle) -> bool {
+        self.generation == connection.reconnect_generation
+            && self
+                .owner
+                .ptr_eq(&Arc::downgrade(&connection.reconnect_lock))
+    }
+}
+
+/// Snapshots one remote binding before any home lookup or filesystem cache access.
+pub(crate) async fn ghost_connection_identity(
+    state: &AppState,
+    connection_id: &str,
+) -> Option<GhostConnectionIdentity> {
+    state
+        .connections
+        .lock()
+        .await
+        .get(connection_id)
+        .map(GhostConnectionIdentity::capture)
+}
+
+/// Rejects evidence from a disconnected, replaced or reconnected transport.
+pub(crate) async fn ghost_identity_is_current(
+    state: &AppState,
+    connection_id: &str,
+    expected: &GhostConnectionIdentity,
+) -> bool {
+    state
+        .connections
+        .lock()
+        .await
+        .get(connection_id)
+        .is_some_and(|c| expected.matches(c))
+}
+
+/// Requires the exact selected SFTP channel as well as its connection binding.
+fn ghost_sftp_matches(
+    connection: &ConnectionHandle,
+    expected: &GhostConnectionIdentity,
+    sftp: &Arc<russh_sftp::client::SftpSession>,
+) -> bool {
+    expected.matches(connection)
+        && connection
+            .sftp_session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, sftp))
+}
+
+/// Clears only a failed channel still owned by this request, preserving any replacement.
+async fn clear_ghost_sftp_if_current(
+    connections: &Mutex<HashMap<String, ConnectionHandle>>,
+    connection_id: &str,
+    expected: &GhostConnectionIdentity,
+    sftp: &Arc<russh_sftp::client::SftpSession>,
+) -> Result<(), String> {
+    let mut connections = connections.lock().await;
+    let connection = connections
+        .get_mut(connection_id)
+        .filter(|connection| ghost_sftp_matches(connection, expected, sftp))
+        .ok_or("Connection changed during ghost listing")?;
+    connection.sftp_session = None;
+    Ok(())
+}
+
+/// Resolves SFTP only for the captured binding and never adopts a replacement context.
+async fn ghost_sftp_ctx(
+    state: &AppState,
+    connection_id: &str,
+    expected: &GhostConnectionIdentity,
+) -> Result<
+    (
+        Arc<russh_sftp::client::SftpSession>,
+        Arc<tokio::sync::OnceCell<SftpIdentityMaps>>,
+    ),
+    String,
+> {
+    if !ghost_identity_is_current(state, connection_id, expected).await {
+        return Err("Connection changed before ghost lookup".into());
+    }
+    let sftp = get_sftp_for_binding(state, connection_id, Some(expected)).await?;
+    let connections = state.connections.lock().await;
+    let connection = connections
+        .get(connection_id)
+        .filter(|connection| ghost_sftp_matches(connection, expected, &sftp))
+        .ok_or("Connection changed during ghost lookup")?;
+    Ok((sftp, connection.sftp_identity_maps.clone()))
+}
+
+/// Uses lightweight local names/types and keeps remote retries on the captured binding.
 pub(crate) async fn ghost_fs_list(
     state: &AppState,
     connection_id: &str,
     path: &str,
+    expected: Option<&GhostConnectionIdentity>,
 ) -> Result<Vec<FileEntry>, String> {
     if connection_id == "local" {
         state
             .file_system
-            .list_local(path)
+            .list_local_names_async(path)
+            .await
             .map_err(|e| e.to_string())
     } else {
-        let (sftp, identity_cache) = sftp_list_ctx(state, connection_id).await?;
+        let expected = expected.ok_or("Missing ghost connection binding")?;
+        let (sftp, identity_cache) = ghost_sftp_ctx(state, connection_id, expected).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
         match tokio::time::timeout(
             timeout_duration,
@@ -4309,23 +4477,39 @@ pub(crate) async fn ghost_fs_list(
         )
         .await
         {
-            Ok(Ok(res)) => Ok(res),
+            Ok(Ok(res)) => {
+                let connections = state.connections.lock().await;
+                if connections
+                    .get(connection_id)
+                    .is_some_and(|c| ghost_sftp_matches(c, expected, &sftp))
+                {
+                    Ok(res)
+                } else {
+                    Err("Connection changed during ghost listing".into())
+                }
+            }
             Ok(Err(e)) if sftp_error_is_dead_session(&e) => {
                 println!("[FS] SFTP session closed during list, retrying...");
-                {
-                    let mut connections = state.connections.lock().await;
-                    if let Some(c) = connections.get_mut(connection_id) {
-                        c.sftp_session = None;
-                    }
-                }
-                let (sftp, identity_cache) = sftp_list_ctx(state, connection_id).await?;
+                clear_ghost_sftp_if_current(&state.connections, connection_id, expected, &sftp)
+                    .await?;
+                let (sftp, identity_cache) = ghost_sftp_ctx(state, connection_id, expected).await?;
                 match tokio::time::timeout(
                     timeout_duration,
                     state.file_system.list_remote(&sftp, path, &identity_cache),
                 )
                 .await
                 {
-                    Ok(Ok(res)) => Ok(res),
+                    Ok(Ok(res)) => {
+                        let connections = state.connections.lock().await;
+                        if connections
+                            .get(connection_id)
+                            .is_some_and(|c| ghost_sftp_matches(c, expected, &sftp))
+                        {
+                            Ok(res)
+                        } else {
+                            Err("Connection changed during ghost listing".into())
+                        }
+                    }
                     Ok(Err(e)) => Err(e.to_string()),
                     Err(_) => Err(format!(
                         "DISCONNECTED: SFTP listing timed out after {}s",
@@ -4342,17 +4526,33 @@ pub(crate) async fn ghost_fs_list(
     }
 }
 
-pub(crate) async fn ghost_fs_cwd(state: &AppState, connection_id: &str) -> Result<String, String> {
+/// Resolves a home directory without allowing a reconnect to retarget an old request.
+pub(crate) async fn ghost_fs_cwd(
+    state: &AppState,
+    connection_id: &str,
+    expected: Option<&GhostConnectionIdentity>,
+) -> Result<String, String> {
     if connection_id == "local" {
         state
             .file_system
             .get_home_dir(connection_id)
             .map_err(|e| e.to_string())
     } else {
-        let sftp = get_sftp_or_reconnect(state, connection_id).await?;
+        let expected = expected.ok_or("Missing ghost connection binding")?;
+        let (sftp, _) = ghost_sftp_ctx(state, connection_id, expected).await?;
         let timeout_duration = std::time::Duration::from_secs(10);
         match tokio::time::timeout(timeout_duration, sftp.canonicalize(".")).await {
-            Ok(Ok(path)) => Ok(path),
+            Ok(Ok(path)) => {
+                let connections = state.connections.lock().await;
+                if connections
+                    .get(connection_id)
+                    .is_some_and(|c| ghost_sftp_matches(c, expected, &sftp))
+                {
+                    Ok(path)
+                } else {
+                    Err("Connection changed during ghost home lookup".into())
+                }
+            }
             Ok(Err(e)) => Err(e.to_string()),
             Err(_) => Err(format!(
                 "DISCONNECTED: SFTP cwd timed out after {}s",
@@ -4641,6 +4841,7 @@ pub async fn fs_mkdir(
     }
 }
 
+/// Renames entries with local existence probes and mutations off async workers.
 #[tauri::command]
 pub async fn fs_rename(
     connection_id: String,
@@ -4650,7 +4851,9 @@ pub async fn fs_rename(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     if connection_id == "local" {
-        if auto_rename.unwrap_or(false) && std::path::Path::new(&new_path).exists() {
+        if auto_rename.unwrap_or(false)
+            && state.file_system.exists("local", &new_path).await.map_err(|e| e.to_string())?
+        {
             let path_buf = std::path::PathBuf::from(&new_path);
             let parent = path_buf
                 .parent()
@@ -4667,7 +4870,8 @@ pub async fn fs_rename(
                     format!("{} ({}).{}", file_stem, counter, extension)
                 };
                 let candidate = parent.join(new_name).to_string_lossy().to_string();
-                if !std::path::Path::new(&candidate).exists() {
+                if !state.file_system.exists("local", &candidate).await.map_err(|e| e.to_string())?
+                {
                     new_path = candidate;
                     found_unique = true;
                     break;
@@ -5596,6 +5800,7 @@ pub async fn window_close(app: AppHandle) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
+/// Executes a shell command without blocking the async worker while the process runs.
 #[tauri::command]
 pub async fn ssh_exec(
     connection_id: String,
@@ -5610,10 +5815,11 @@ pub async fn ssh_exec(
             ("sh", "-c")
         };
 
-        let output = std::process::Command::new(shell)
+        let output = tokio::process::Command::new(shell)
             .arg(arg)
             .arg(&command)
             .output()
+            .await
             .map_err(|e| format!("Failed to execute local command: {}", e))?;
 
         if output.status.success() {
@@ -6271,8 +6477,7 @@ fn emit_transfer_outcome(
 }
 
 
-// Helper for recursive upload
-// Now takes AppHandle and transfer_id for emitting events
+/// Streams recursive uploads while async directory iteration keeps I/O off async workers.
 fn upload_recursive<'a>(
     sftp: &'a russh_sftp::client::SftpSession,
     local_path: &'a std::path::Path,
@@ -6285,11 +6490,16 @@ fn upload_recursive<'a>(
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
     Box::pin(async move {
         crate::transfers::check_cancelled(cancel_token)?;
-        if local_path.is_dir() {
+        if tokio::fs::metadata(local_path)
+            .await
+            .is_ok_and(|metadata| metadata.is_dir())
+        {
             crate::fs::ensure_remote_transfer_directory(sftp, remote_path).await?;
 
-            for entry in std::fs::read_dir(local_path).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
+            let mut entries = tokio::fs::read_dir(local_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
                 let path = entry.path();
                 let name = entry.file_name().to_string_lossy().to_string();
                 let new_remote = if remote_path.ends_with('/') {
@@ -6600,6 +6810,22 @@ pub async fn fs_transfer_resolve(state: State<'_, AppState>, transfer_id: String
     state.file_transfers.resolve_after_artifacts_removed(transfer_id, endpoint.as_ref()).await
 }
 
+/// Rechecks queued cancellation immediately before the legacy local copy mutates its destination.
+fn copy_legacy_local_upload(local: &Path, remote: &Path, cancel: &AtomicBool) -> anyhow::Result<u64> {
+    crate::transfers::check_cancelled(cancel).map_err(anyhow::Error::msg)?;
+    if local.is_dir() {
+        return Err(anyhow::anyhow!("Local directory copy not yet implemented"));
+    }
+    Ok(std::fs::copy(local, remote)?)
+}
+
+#[cfg(test)]
+mod transfer_preparation_tests;
+
+#[cfg(test)]
+mod ghost_binding_tests;
+
+/// Runs legacy uploads with local copy/size preparation on bounded bulk blocking workers.
 #[tauri::command]
 pub async fn sftp_put(
     app: AppHandle,
@@ -6627,12 +6853,12 @@ pub async fn sftp_put(
             crate::transfers::check_cancelled(&cancel_token)?;
             if connection_id == "local" {
                 // Local copy
-                let path = std::path::Path::new(&local);
-                if path.is_dir() {
-                    // Todo recursive local
-                    return Err("Local directory copy not yet implemented".to_string());
-                }
-                let transferred = std::fs::copy(&local, &remote).map_err(|e| e.to_string())?;
+                let copy_cancel = cancel_token.clone();
+                let transferred = crate::fs::run_local_bulk_io(move || {
+                    copy_legacy_local_upload(Path::new(&local), Path::new(&remote), &copy_cancel)
+                })
+                .await
+                .map_err(|e| e.to_string())?;
                 let _ = app_handle.emit("transfer-progress", TransferProgress {
                     id: tid.clone(), transferred, total: transferred,
                 });
@@ -6641,7 +6867,11 @@ pub async fn sftp_put(
                 let path = std::path::Path::new(&local);
 
                 // Calculate total size for progress bar
-                let mut total_size = get_local_size(path);
+                let size_path = path.to_path_buf();
+                let mut total_size =
+                    crate::fs::run_local_bulk_io(move || Ok(get_local_size(&size_path)))
+                        .await
+                        .map_err(|e| e.to_string())?;
                 if total_size == 0 {
                     total_size = 1;
                 } // Avoid division by zero
@@ -6929,7 +7159,7 @@ async fn copy_recursive_optimized(
     Ok(())
 }
 
-// Helper for recursive download
+/// Streams recursive downloads with local directory creation delegated to async filesystem I/O.
 fn download_recursive<'a>(
     sftp: &'a russh_sftp::client::SftpSession,
     remote_path: &'a str,
@@ -6950,7 +7180,7 @@ fn download_recursive<'a>(
 
         if metadata.file_type().is_dir() {
             // Create local directory
-            std::fs::create_dir_all(local_path)
+            tokio::fs::create_dir_all(local_path).await
                 .map_err(|e| format!("Failed to create local dir: {}", e))?;
 
             // List remote directory
@@ -8501,6 +8731,7 @@ pub async fn plugin_fs_write(
         .map_err(|e| e.to_string())
 }
 
+/// Lists plugin-visible local entries without blocking async runtime workers.
 #[tauri::command]
 pub async fn plugin_fs_list(
     path: String,
@@ -8508,7 +8739,8 @@ pub async fn plugin_fs_list(
 ) -> Result<Vec<FileEntry>, String> {
     state
         .file_system
-        .list_local(&path)
+        .list_local_async(&path)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -8747,11 +8979,146 @@ mod archive_result_tests {
     }
 }
 
+/// Tests the exact connection owner, generation and transport without retaining the registry lock.
+fn archive_binding_matches(
+    connection: Option<&ConnectionHandle>,
+    owner: &Arc<Mutex<()>>,
+    generation: u64,
+    session: &crate::ssh_command::SshSession,
+) -> bool {
+    connection.is_some_and(|current| {
+        Arc::ptr_eq(&current.reconnect_lock, owner)
+            && current.reconnect_generation == generation
+            && crate::sftp_read::is_current_session(&current.session, session)
+    })
+}
+
+/// Opens an archive channel with one owner-fenced SSH reconnect and no SFTP dependency.
+async fn archive_ssh_channel<Reconnect, Work>(
+    connections: &Mutex<HashMap<String, ConnectionHandle>>,
+    connection_id: &str,
+    reconnect: Reconnect,
+) -> Result<Channel<Msg>, String>
+where
+    Reconnect: FnOnce(Arc<Mutex<()>>, u64) -> Work,
+    Work: std::future::Future<Output = Result<(), String>>,
+{
+    let (owner, generation, session) = {
+        let connections = connections.lock().await;
+        let connection = connections
+            .get(connection_id)
+            .ok_or("Connection not found")?;
+        (
+            connection.reconnect_lock.clone(),
+            connection.reconnect_generation,
+            connection.session.clone(),
+        )
+    };
+    if let Some(session) = session {
+        let opened = session.lock().await.channel_open_session().await;
+        match opened {
+            Ok(channel) => {
+                if archive_binding_matches(
+                    connections.lock().await.get(connection_id),
+                    &owner,
+                    generation,
+                    &session,
+                ) {
+                    return Ok(channel);
+                }
+                let _ = channel.close().await;
+                return Err("Connection changed while opening archive channel".into());
+            }
+            Err(error @ russh::Error::ChannelOpenFailure(_)) => {
+                return Err(format!("Failed to open SSH channel: {error}"));
+            }
+            Err(_) => {
+                let mut connections = connections.lock().await;
+                if !archive_binding_matches(
+                    connections.get(connection_id),
+                    &owner,
+                    generation,
+                    &session,
+                ) {
+                    return Err("Connection changed before archive reconnect".into());
+                }
+                let connection = connections
+                    .get_mut(connection_id)
+                    .expect("verified archive connection");
+                connection.session = None;
+                connection.sftp_session = None;
+            }
+        }
+    }
+    reconnect(owner.clone(), generation).await?;
+    let (session, generation) = {
+        let connections = connections.lock().await;
+        let connection = connections
+            .get(connection_id)
+            .ok_or("Connection removed during archive reconnect")?;
+        if !reconnect_completed_by_sibling(
+            &owner,
+            generation,
+            &connection.reconnect_lock,
+            connection.reconnect_generation,
+            connection.session.is_some(),
+        )
+        .map_err(|()| "Connection changed during archive reconnect")?
+        {
+            return Err("Archive reconnect did not establish a new SSH transport".into());
+        }
+        (
+            connection
+                .session
+                .clone()
+                .ok_or("SSH session not initialised")?,
+            connection.reconnect_generation,
+        )
+    };
+    let channel = session
+        .lock()
+        .await
+        .channel_open_session()
+        .await
+        .map_err(|error| format!("Failed to open SSH channel after reconnect: {error}"))?;
+    if archive_binding_matches(
+        connections.lock().await.get(connection_id),
+        &owner,
+        generation,
+        &session,
+    ) {
+        return Ok(channel);
+    }
+    let _ = channel.close().await;
+    Err("Connection changed while opening archive channel".into())
+}
+
+/// Preserves the existing reconnect deadline using the captured owner and generation.
+async fn open_archive_channel(
+    state: &AppState,
+    connection_id: &str,
+) -> Result<Channel<Msg>, String> {
+    archive_ssh_channel(
+        &state.connections,
+        connection_id,
+        |owner, generation| async move {
+            tokio::time::timeout(
+                Duration::from_secs(12),
+                reconnect_stored_connection(connection_id, owner, generation, state),
+            )
+            .await
+            .map_err(|_| "DISCONNECTED: Auto-reconnect timed out after 12s".to_string())?
+        },
+    )
+    .await
+}
+
 /// Download selected remote files/directories as a .tar.gz archive.
 ///
 /// Uses SSH exec to run `tar -czf - -C <parent> <name> ...` on the server and
 /// streams the output directly to a local file â€” a single SSH channel handles
 /// everything regardless of how many files are selected.
+/// Reports archive bytes with an unknown total rather than scanning the tree first.
 #[tauri::command]
 pub async fn sftp_download_as_zip(
     app: AppHandle,
@@ -8778,35 +9145,16 @@ pub async fn sftp_download_as_zip(
         move |cancel_token| async move {
             let state_ref = app_handle.state::<AppState>();
             crate::transfers::check_cancelled(&cancel_token)?;
-            // Estimate total size after registration, so setup failures are terminal too.
-            let sftp = get_sftp_or_reconnect(&state_ref, &connection_id).await?;
-            let mut total_size = 0;
-            for path in &remote_paths {
-                crate::transfers::check_cancelled(&cancel_token)?;
-                total_size += get_remote_size(&sftp, path).await;
-            }
-            let total_size = total_size.max(1);
-            crate::transfers::check_cancelled(&cancel_token)?;
-            // Get the SSH session handle (not SFTP).
-            let session = {
-                let conns = state_ref.connections.lock().await;
-                conns
-                    .get(&connection_id)
-                    .ok_or_else(|| format!("Connection '{}' not found", connection_id))?
-                    .session
-                    .clone()
-                    .ok_or_else(|| "SSH session not initialised".to_string())?
-            };
-
+            // Compressed output has no known total; avoid a duplicate tree traversal.
+            let total_size = 0;
             let tar_cmd = remote_archive_command(&remote_paths)?;
 
-            // Open SSH exec channel.
-            let mut channel = session
-                .lock()
-                .await
-                .channel_open_session()
-                .await
-                .map_err(|e| format!("Failed to open SSH channel: {}", e))?;
+            // Open SSH directly, preserving reconnect without starting SFTP or scanning sizes.
+            let mut channel = open_archive_channel(&state_ref, &connection_id).await?;
+            if let Err(error) = crate::transfers::check_cancelled(&cancel_token) {
+                let _ = channel.close().await;
+                return Err(error);
+            }
             channel
                 .exec(true, tar_cmd.as_str())
                 .await
@@ -8814,10 +9162,9 @@ pub async fn sftp_download_as_zip(
 
             // Ensure parent directory exists.
             if let Some(parent) = std::path::Path::new(&local_path).parent() {
-                if !parent.exists() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("Cannot create output directory: {}", e))?;
-                }
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("Cannot create output directory: {}", e))?;
             }
 
             let mut out_file = tokio::fs::File::create(&local_path)
@@ -8857,7 +9204,7 @@ pub async fn sftp_download_as_zip(
                                     "transfer-progress",
                                     TransferProgress {
                                         id: tid.clone(),
-                                        transferred: bytes_written.min(total_size),
+                                        transferred: bytes_written,
                                         total: total_size,
                                     },
                                 );
@@ -8881,7 +9228,7 @@ pub async fn sftp_download_as_zip(
             let result = crate::transfers::finish_destination(&mut out_file, archive_result).await;
             archive_output_result(result, &local_path)?;
 
-            // Preserve actual archive bytes; total_size is only the source-size estimate.
+            // Preserve actual archive bytes; terminal success owns completion.
             let _ = app_handle.emit(
                 "transfer-progress",
                 TransferProgress {

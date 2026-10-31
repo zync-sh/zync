@@ -66,7 +66,7 @@ import {
     parentFilePath,
 } from './file-manager/filePathNav';
 import { fileMatchesQuery, fileMatchesSearchType } from './file-manager/fileSearchFilter';
-import { fileSelectionSummary } from './file-manager/fileSelectionSummary';
+import { filePropertiesEntries, fileSelectionSummary } from './file-manager/fileSelectionSummary';
 import { type FileVolume, loadLocalFileVolumes } from './file-manager/fileVolumes';
 import { PropertiesPanel } from './file-manager/PropertiesPanel';
 import type { FileEntry } from './file-manager/types';
@@ -2721,12 +2721,10 @@ export const FileManager = memo(function FileManager({
         };
     }, [editingFile]);
 
-    const propertiesEntries = useMemo(() => {
-        const names = selectedFiles.length > 0 ? selectedFiles : focusedFile ? [focusedFile] : [];
-        return names
-            .map((name) => files.find((file) => file.name === name))
-            .filter((file): file is FileEntry => Boolean(file));
-    }, [files, focusedFile, selectedFiles]);
+    const propertiesEntries = useMemo(
+        () => filePropertiesEntries(files, selectedFiles, focusedFile, isPropertiesOpen),
+        [files, focusedFile, selectedFiles, isPropertiesOpen],
+    );
     const inspectedFolder =
         propertiesEntries.length === 1 && propertiesEntries[0].type === 'd'
             ? propertiesEntries[0].path
@@ -2740,16 +2738,40 @@ export const FileManager = memo(function FileManager({
         inspectedFolder,
     );
     const [heldPropertiesFiles, setHeldPropertiesFiles] = useState<FileEntry[]>([]);
+    const heldPropertiesContext = useRef<{
+        key: string;
+        path: string;
+        listing: FileEntry[];
+    } | null>(null);
     useEffect(() => {
-        if (!isPropertiesOpen) {
+        if (isPropertiesOpen) {
+            heldPropertiesContext.current = { key: storeKey, path: currentPath, listing: files };
+            setHeldPropertiesFiles(propertiesEntries);
             return;
         }
-        setHeldPropertiesFiles(propertiesEntries);
-    }, [isPropertiesOpen, propertiesEntries]);
-    const inspectorFiles = isPropertiesOpen ? propertiesEntries : heldPropertiesFiles;
+        const held = heldPropertiesContext.current;
+        if (
+            held &&
+            (held.key !== storeKey || held.path !== currentPath || held.listing !== files)
+        ) {
+            heldPropertiesContext.current = null;
+            setHeldPropertiesFiles(EMPTY_FILES);
+        }
+    }, [isPropertiesOpen, propertiesEntries, storeKey, currentPath, files]);
+    // A closing inspector keeps metadata only while it still belongs to this browsing context.
+    const heldPropertiesCurrent =
+        heldPropertiesContext.current?.key === storeKey &&
+        heldPropertiesContext.current.path === currentPath &&
+        heldPropertiesContext.current.listing === files;
+    const inspectorFiles = isPropertiesOpen
+        ? propertiesEntries
+        : heldPropertiesCurrent
+          ? heldPropertiesFiles
+          : EMPTY_FILES;
+    // Retain permission details with the panel's held content during its closing animation.
     const permissionTarget =
-        activeConnectionId && propertiesEntries.length === 1
-            ? { connectionId: activeConnectionId, path: propertiesEntries[0].path }
+        activeConnectionId && inspectorFiles.length === 1
+            ? { connectionId: activeConnectionId, path: inspectorFiles[0].path }
             : null;
     const permissionEditor = useFilePermissionEditor(
         permissionTarget,

@@ -21,6 +21,8 @@
         "sourceMap": false
     },
     "include": [
+        "tests/ai/**/*.ts",
+        "tests/terminal/**/*.ts",
         "tests/files/**/*.ts",
         "tests/files/**/*.tsx",
         "tests/securityAssessment.test.ts",
@@ -32,8 +34,8 @@
         "tests/securityAssessment.browser.test.ts",
         "tests/globalSecurityAudits.browser.tsx",
         "tests/globalSecurityAudits.browser.test.ts",
-        "tests/dashboardConnection.browser.tsx",
-        "tests/dashboardConnection.browser.test.ts",
+        "tests/dashboard/**/*.ts",
+        "tests/dashboard/**/*.tsx",
         "tests/tunnelConnection.browser.tsx",
         "tests/tunnelConnection.browser.test.ts",
         "tests/reconnectPaneFocus.test.ts",
@@ -55,7 +57,7 @@
         "tests/terminalOutputFlow.test.ts",
         "tests/terminalRendererLifecycle.test.ts",
         "tests/terminalRendererMemory.browser.ts",
-        "tests/ghostCwdSafety.test.ts",
+        "tests/ghost/**/*.ts",
         "tests/ghostPromptSafety.test.ts",
         "tests/workspaceSplitControls.test.ts",
         "tests/paneTabRelease.browser.tsx",
