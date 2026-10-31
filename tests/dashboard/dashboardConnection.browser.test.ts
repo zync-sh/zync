@@ -277,6 +277,37 @@ try {
     await page.getByRole('button', { name: 'Release metadata save fixture', exact: true }).click();
     assert.deepEqual(errors, []);
     console.log('Dashboard dual-pane pending metadata save checks passed.');
+
+    await dashboard
+        .getByRole('button', { name: /Check Disk Space/ })
+        .first()
+        .click();
+    await page.getByText('Quick action fixture output', { exact: true }).waitFor();
+    assert.equal(
+        await page.locator('body').getAttribute('data-last-quick-action-target'),
+        'dashboard-fixture',
+    );
+    assert.equal(
+        await page.locator('body').getAttribute('data-last-quick-action-command'),
+        'df -h',
+    );
+
+    await page.goto(fixtureUrl, { waitUntil: 'domcontentloaded' });
+    await page
+        .getByRole('button', { name: 'Show two local dashboards fixture', exact: true })
+        .click();
+    await dashboard
+        .getByRole('button', { name: /Check Disk Space/ })
+        .first()
+        .click();
+    await page.getByText('Quick action fixture output', { exact: true }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-last-quick-action-target'), 'local');
+    assert.match(
+        (await page.locator('body').getAttribute('data-last-quick-action-command')) || '',
+        /Get-PSDrive/,
+    );
+    assert.deepEqual(errors, []);
+    console.log('Dashboard Quick Actions preserve remote and local connection targets.');
 } finally {
     await browser?.close();
     await server?.close();

@@ -79,6 +79,14 @@ window.ipcRenderer = {
         if (channel !== 'ssh:exec') {
             throw new Error(`Unexpected dashboard fixture command: ${channel}`);
         }
+        if (args.command === 'df -h' || args.command?.includes('Get-PSDrive')) {
+            if (typeof args.connectionId !== 'string') {
+                throw new Error('Quick Actions must supply connectionId');
+            }
+            document.body.dataset.lastQuickActionTarget = args.connectionId;
+            document.body.dataset.lastQuickActionCommand = args.command;
+            return 'Quick action fixture output';
+        }
         document.body.dataset.metricCalls = String(++calls);
         document.body.dataset.lastMetricTarget = args.connectionId;
         if (holdNext) {
