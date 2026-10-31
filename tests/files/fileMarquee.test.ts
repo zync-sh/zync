@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { fileGridInlineOffset } from '../../src/components/file-manager/fileGridLayout';
 import {
     clientRectsIntersect,
     gridNamesInMarquee,
@@ -86,3 +87,17 @@ runTest('gridNamesInMarquee uses cell geometry', () => {
 });
 
 console.log('fileMarquee tests passed.');
+
+runTest('centered virtual grid marquee stops at the actual first-column boundary', () => {
+    const files = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+    const offset = fileGridInlineOffset(338, 86, 6, 3);
+    assert.deepEqual(
+        gridNamesInMarquee(files, 3, 92, 102, 100 + offset, 0, 0, {
+            left: 101,
+            top: 6,
+            width: 111,
+            height: 30,
+        }),
+        ['a'],
+    );
+});

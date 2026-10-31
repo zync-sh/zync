@@ -1,28 +1,32 @@
 use super::api::{ApiClient, ShareRecord};
 use super::auth::AuthStore;
 use super::config::{to_ws_url, ShareConfig};
+use super::outbound::OutboundSender;
 use super::protocol::{
-    self, decode_data_frame, encode_data_frame, AgentOut, DataMsg, Envelope, ErrorMsg, Hello,
-    OkMsg, Open, TYPE_CLOSE, TYPE_DATA, TYPE_ERROR, TYPE_OPEN, TYPE_PING,
+    self, decode_data_frame, DataMsg, Envelope, ErrorMsg, Hello, OkMsg, Open, MAX_MESSAGE_BYTES,
+    TYPE_CLOSE, TYPE_DATA, TYPE_ERROR, TYPE_OPEN, TYPE_PING,
 };
 use super::proxy::handle_open;
 use super::stream::Stream;
 use base64::Engine;
+use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 
-const WS_MAX_MESSAGE_BYTES: usize = 1 << 20;
+// Match the relay's existing per-share admission limit.
+const MAX_ACTIVE_STREAMS: usize = 256;
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const STABLE_SESSION: Duration = Duration::from_secs(30);
@@ -53,29 +57,105 @@ struct AgentSlot {
     handle: JoinHandle<()>,
 }
 
+impl AgentSlot {
+    /// Wait for the agent future and its owned proxies to be dropped before returning.
+    async fn stop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.handle.abort();
+        let _ = (&mut self.handle).await;
+    }
+}
+
+impl Drop for AgentSlot {
+    /// Dropping an owner must cancel its agent rather than detach the join handle.
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.handle.abort();
+    }
+}
+
+// Mutations require exclusive access for their entire lifetime, including joins.
+// Agent tasks only use `statuses`, so joining cannot wait for this lifecycle lock.
+struct AgentLifecycle {
+    statuses: Arc<Mutex<HashMap<String, AgentSnapshot>>>,
+    slots: HashMap<String, AgentSlot>,
+}
+
+impl AgentLifecycle {
+    /// Join the previous owner before publishing and spawning its replacement.
+    async fn start(
+        &mut self,
+        snapshot: AgentSnapshot,
+        cancel: Arc<AtomicBool>,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) {
+        let share_id = snapshot.share_id.clone();
+        self.stop(&share_id).await;
+        self.statuses
+            .lock()
+            .await
+            .insert(share_id.clone(), snapshot);
+        self.slots.insert(
+            share_id,
+            AgentSlot {
+                cancel,
+                handle: tokio::spawn(task),
+            },
+        );
+    }
+
+    /// Join the captured agent before removing its status under exclusive ownership.
+    async fn stop(&mut self, share_id: &str) {
+        // Retain the handle until joined. If the caller is cancelled, the next
+        // lifecycle operation must still join this owner before replacing it.
+        if let Some(slot) = self.slots.get_mut(share_id) {
+            slot.stop().await;
+        }
+        self.slots.remove(share_id);
+        self.statuses.lock().await.remove(share_id);
+    }
+
+    /// Abort every captured agent before joining them and clearing their statuses.
+    async fn stop_all(&mut self) {
+        for slot in self.slots.values() {
+            slot.cancel.store(true, Ordering::Relaxed);
+            slot.handle.abort();
+        }
+        while let Some(share_id) = self.slots.keys().next().cloned() {
+            self.stop(&share_id).await;
+        }
+        self.statuses.lock().await.clear();
+    }
+}
+
 pub struct AgentManager {
     app: AppHandle,
     data_dir: PathBuf,
     config: ShareConfig,
     auth: Arc<AuthStore>,
     statuses: Arc<Mutex<HashMap<String, AgentSnapshot>>>,
-    slots: Mutex<HashMap<String, AgentSlot>>,
+    lifecycle: Mutex<AgentLifecycle>,
 }
 
 impl AgentManager {
+    /// Share status reads independently from serialized lifecycle mutations.
     pub fn new(
         app: AppHandle,
         data_dir: PathBuf,
         config: ShareConfig,
         auth: Arc<AuthStore>,
     ) -> Self {
+        let statuses = Arc::new(Mutex::new(HashMap::new()));
         Self {
             app,
             data_dir,
             config,
             auth,
-            statuses: Arc::new(Mutex::new(HashMap::new())),
-            slots: Mutex::new(HashMap::new()),
+            statuses: statuses.clone(),
+            lifecycle: Mutex::new(AgentLifecycle {
+                statuses,
+                slots: HashMap::new(),
+            }),
         }
     }
 
@@ -83,8 +163,8 @@ impl AgentManager {
         self.statuses.lock().await.values().cloned().collect()
     }
 
+    /// Serialize replacement with shutdown; start network work only after admission.
     pub async fn start(&self, share: ShareRecord) {
-        self.stop(&share.id).await;
         let cancel = Arc::new(AtomicBool::new(false));
         let snapshot = AgentSnapshot {
             share_id: share.id.clone(),
@@ -93,45 +173,31 @@ impl AgentManager {
             target_port: share.target_port,
             error: None,
         };
-        self.statuses
-            .lock()
-            .await
-            .insert(share.id.clone(), snapshot.clone());
-        let app = self.app.clone();
-        let data_dir = self.data_dir.clone();
-        let config = self.config.clone();
-        let auth = self.auth.clone();
-        let statuses = self.statuses.clone();
-        let cancel_task = cancel.clone();
-        let share_id = share.id.clone();
-        let handle = tokio::spawn(async move {
-            run_agent_loop(app, data_dir, config, auth, statuses, share, cancel_task).await;
-        });
-        self.slots
-            .lock()
-            .await
-            .insert(share_id, AgentSlot { cancel, handle });
+        let task = run_agent_loop(
+            self.app.clone(),
+            self.data_dir.clone(),
+            self.config.clone(),
+            self.auth.clone(),
+            self.statuses.clone(),
+            share,
+            cancel.clone(),
+        );
+        let mut lifecycle = self.lifecycle.lock().await;
+        lifecycle.start(snapshot, cancel, task).await;
         self.emit().await;
     }
 
+    /// Cancel and join the share's agent before removing its visible status.
     pub async fn stop(&self, share_id: &str) {
-        let slot = self.slots.lock().await.remove(share_id);
-        if let Some(slot) = slot {
-            slot.cancel.store(true, Ordering::Relaxed);
-            slot.handle.abort();
-        }
-        self.statuses.lock().await.remove(share_id);
+        let mut lifecycle = self.lifecycle.lock().await;
+        lifecycle.stop(share_id).await;
         self.emit().await;
     }
 
+    /// Serialize global shutdown with starts and stops through the final status event.
     pub async fn stop_all(&self) {
-        let mut slots = self.slots.lock().await;
-        for (_, slot) in slots.drain() {
-            slot.cancel.store(true, Ordering::Relaxed);
-            slot.handle.abort();
-        }
-        self.statuses.lock().await.clear();
-        drop(slots);
+        let mut lifecycle = self.lifecycle.lock().await;
+        lifecycle.stop_all().await;
         self.emit().await;
     }
 
@@ -151,6 +217,7 @@ struct ResumeFile {
 
 use serde::Deserialize;
 
+/// Reconnect one share only after the previous session has released its proxies.
 async fn run_agent_loop(
     app: AppHandle,
     data_dir: PathBuf,
@@ -214,19 +281,7 @@ async fn run_agent_loop(
         }
 
         let started = Instant::now();
-        let on_online = {
-            let app = app.clone();
-            let statuses = statuses.clone();
-            let share = share.clone();
-            move || {
-                let app = app.clone();
-                let statuses = statuses.clone();
-                let share = share.clone();
-                tokio::spawn(async move {
-                    emit_status(&app, &statuses, &share, AgentConnState::Online, None).await;
-                });
-            }
-        };
+        let on_online = emit_status(&app, &statuses, &share, AgentConnState::Online, None);
         let result = run_session(
             &config.relay_url,
             ticket.clone(),
@@ -360,6 +415,7 @@ enum SessionResult {
     Err(String),
 }
 
+/// Connect to the relay and keep its handshake, status update and proxies owned.
 async fn run_session(
     relay_url: &str,
     ticket: Option<String>,
@@ -367,7 +423,7 @@ async fn run_session(
     session_id: Option<String>,
     target: &str,
     cancel: Arc<AtomicBool>,
-    on_online: impl FnOnce(),
+    on_online: impl Future<Output = ()>,
 ) -> SessionResult {
     let ws_url = match to_ws_url(&format!("{relay_url}/agent")) {
         Ok(u) => u,
@@ -383,8 +439,9 @@ async fn run_session(
         }
     }
     let mut ws_config = WebSocketConfig::default();
-    ws_config.max_message_size = Some(WS_MAX_MESSAGE_BYTES);
-    ws_config.max_frame_size = Some(WS_MAX_MESSAGE_BYTES);
+    ws_config.max_message_size = Some(MAX_MESSAGE_BYTES);
+    ws_config.max_frame_size = Some(MAX_MESSAGE_BYTES);
+    ws_config.max_write_buffer_size = 2 * MAX_MESSAGE_BYTES;
 
     let connect = tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false);
     let (ws, _) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, connect).await {
@@ -402,6 +459,31 @@ async fn run_session(
         Err(_) => return SessionResult::Err("handshake timeout".into()),
     };
 
+    run_connected_session(
+        ws,
+        ticket,
+        resume_token,
+        session_id,
+        target,
+        cancel,
+        on_online,
+    )
+    .await
+}
+
+/// Own all proxy futures inside the relay session so every exit drops pending I/O.
+async fn run_connected_session<S>(
+    ws: tokio_tungstenite::WebSocketStream<S>,
+    ticket: Option<String>,
+    resume_token: Option<String>,
+    session_id: Option<String>,
+    target: &str,
+    cancel: Arc<AtomicBool>,
+    on_online: impl Future<Output = ()>,
+) -> SessionResult
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let (mut sink, mut stream) = ws.split();
     let hello = Hello::new(ticket, resume_token, session_id);
     let hello_json = match serde_json::to_string(&hello) {
@@ -469,70 +551,70 @@ async fn run_session(
     if negotiated > protocol::PROTOCOL_MAX_VERSION {
         return SessionResult::Err(format!("unsupported protocol version {negotiated}"));
     }
-    on_online();
+    on_online.await;
     let binary_data = negotiated == 2;
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<AgentOut>();
-    let write = {
-        let tx = tx.clone();
-        move |v: AgentOut| tx.send(v).map_err(|_| "agent write closed".to_string())
-    };
-    let streams = Arc::new(Mutex::new(HashMap::<i64, Stream>::new()));
+    let (write, mut rx) = OutboundSender::data_channel(binary_data);
+    let (control, mut control_rx) = OutboundSender::control_channel();
+    // A watch version coalesces a burst into one pending reply. Pings received
+    // during a Pong flush leave one further notification for the next iteration.
+    let (pong_tx, mut pong_rx) = watch::channel(());
     let target = target.to_string();
 
     let writer_task = async {
-        while let Some(out) = rx.recv().await {
-            let sent = match out {
-                AgentOut::Json(value) => {
-                    let Ok(payload) = serde_json::to_string(&value) else {
-                        continue;
-                    };
-                    sink.send(Message::Text(payload.into())).await
+        loop {
+            let frame = tokio::select! {
+                changed = pong_rx.changed() => {
+                    if changed.is_err()
+                        || sink.send(Message::Text(r#"{"type":"pong"}"#.into())).await.is_err()
+                    {
+                        break;
+                    }
+                    continue;
                 }
-                AgentOut::Data { stream_id, chunk } if binary_data => {
-                    sink.send(Message::Binary(encode_data_frame(stream_id, &chunk).into()))
-                        .await
-                }
-                AgentOut::Data { stream_id, chunk } => {
-                    use base64::Engine;
-                    let payload = serde_json::json!({
-                        "type": "data",
-                        "stream_id": stream_id,
-                        "chunk": base64::engine::general_purpose::STANDARD.encode(chunk),
-                    });
-                    let Ok(text) = serde_json::to_string(&payload) else {
-                        continue;
-                    };
-                    sink.send(Message::Text(text.into())).await
-                }
+                Some(frame) = control_rx.recv() => frame,
+                Some(frame) = rx.recv() => frame,
+                else => break,
             };
-            if sent.is_err() {
+            if frame.write_to(&mut sink).await.is_err() {
                 break;
             }
         }
     };
 
     let reader_task = async {
-        while let Some(msg) = stream.next().await {
+        let mut streams = HashMap::<i64, Stream>::new();
+        // These futures are polled here, never spawned: dropping the reader also
+        // drops HTTP sends/bodies, local sockets and their channel receivers.
+        let mut proxies = FuturesUnordered::new();
+        loop {
+            let msg = tokio::select! {
+                biased;
+                Some(stream_id) = proxies.next(), if !proxies.is_empty() => {
+                    streams.remove(&stream_id);
+                    continue;
+                }
+                msg = stream.next() => match msg {
+                    Some(msg) => msg,
+                    None => break,
+                },
+            };
             if cancel.load(Ordering::Relaxed) {
                 break;
             }
             if let Ok(Message::Binary(b)) = &msg {
                 if let Some((stream_id, chunk)) = decode_data_frame(b) {
-                    let sender = {
-                        let guard = streams.lock().await;
-                        guard.get(&stream_id).map(|st| st.data_sender())
-                    };
+                    let sender = streams.get(&stream_id).map(|st| st.data_sender());
                     if let Some(tx) = sender {
                         match tx.try_send(bytes::Bytes::copy_from_slice(chunk)) {
                             Ok(()) => {}
                             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                if let Some(st) = streams.lock().await.remove(&stream_id) {
+                                if let Some(st) = streams.get(&stream_id) {
                                     st.cancel();
                                 }
                             }
                             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                streams.lock().await.remove(&stream_id);
+                                // HTTP can discard body input while its response is pending.
                             }
                         }
                     }
@@ -573,22 +655,31 @@ async fn run_session(
             };
             match env.kind.as_str() {
                 TYPE_PING => {
-                    let _ = tx.send(AgentOut::Json(serde_json::json!({ "type": "pong" })));
+                    pong_tx.send_replace(());
                 }
                 TYPE_OPEN => {
                     let open: Open = match serde_json::from_str(&data) {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
+                    if streams.contains_key(&open.stream_id) {
+                        return SessionResult::Err("duplicate active stream id".into());
+                    }
+                    // Count cancelled/output-blocked proxies until they finish.
+                    if proxies.len() >= MAX_ACTIVE_STREAMS {
+                        if let Err(e) = reject_open(&control, open.stream_id) {
+                            return SessionResult::Err(e);
+                        }
+                        continue;
+                    }
                     let (st, readers) = Stream::new(open.stream_id);
-                    streams.lock().await.insert(open.stream_id, st);
+                    streams.insert(open.stream_id, st);
                     let write = write.clone();
                     let target = target.clone();
-                    let streams = streams.clone();
                     let stream_id = open.stream_id;
-                    tokio::spawn(async move {
+                    proxies.push(async move {
                         handle_open(&target, open, readers, write).await;
-                        streams.lock().await.remove(&stream_id);
+                        stream_id
                     });
                 }
                 TYPE_DATA => {
@@ -600,22 +691,19 @@ async fn run_session(
                         Ok(b) => b,
                         Err(_) => continue,
                     };
-                    let sender = {
-                        let guard = streams.lock().await;
-                        guard.get(&msg.stream_id).map(|st| st.data_sender())
-                    };
+                    let sender = streams.get(&msg.stream_id).map(|st| st.data_sender());
                     if let Some(tx) = sender {
                         match tx.try_send(bytes::Bytes::from(raw)) {
                             Ok(()) => {}
                             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                                // Slow/local stream backlog — drop only this stream so
+                                // Slow/local stream backlog — cancel only this stream so
                                 // the session keeps handling other streams and pings.
-                                if let Some(st) = streams.lock().await.remove(&msg.stream_id) {
+                                if let Some(st) = streams.get(&msg.stream_id) {
                                     st.cancel();
                                 }
                             }
                             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                streams.lock().await.remove(&msg.stream_id);
+                                // HTTP can discard body input while its response is pending.
                             }
                         }
                     }
@@ -625,7 +713,7 @@ async fn run_session(
                         Ok(v) => v,
                         Err(_) => continue,
                     };
-                    if let Some(st) = streams.lock().await.get_mut(&msg.stream_id) {
+                    if let Some(st) = streams.get_mut(&msg.stream_id) {
                         let _ = st.finish_request_body();
                     }
                 }
@@ -651,6 +739,15 @@ async fn run_session(
         }
         _ = wait_cancel(&cancel) => SessionResult::Ok(ok),
     }
+}
+
+/// Refuse excess work using existing protocol frames without blocking the reader.
+fn reject_open(control: &OutboundSender, stream_id: i64) -> Result<(), String> {
+    control.try_json(serde_json::json!({
+        "type": "end", "stream_id": stream_id, "status": 503,
+        "headers": { "Content-Length": ["0"], "X-Zync-Error": ["overloaded"] },
+    }))?;
+    control.try_json(serde_json::json!({ "type": "close", "stream_id": stream_id }))
 }
 
 fn resume_path(data_dir: &Path, share_id: &str) -> PathBuf {
@@ -699,16 +796,4 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 #[cfg(test)]
-mod loopback_tests {
-    use super::is_loopback_host;
-
-    #[test]
-    fn accepts_loopback_only() {
-        assert!(is_loopback_host("127.0.0.1"));
-        assert!(is_loopback_host("localhost"));
-        assert!(is_loopback_host("::1"));
-        assert!(is_loopback_host("[::1]"));
-        assert!(!is_loopback_host("example.com"));
-        assert!(!is_loopback_host("8.8.8.8"));
-    }
-}
+mod tests;

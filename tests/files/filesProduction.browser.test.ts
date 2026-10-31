@@ -13,6 +13,9 @@ import { runFilesTransferSafetyChecks } from './helpers/filesTransferSafetyCheck
 import { runFilesWorkspaceMotionChecks } from './helpers/filesWorkspaceMotionChecks';
 
 const transferSafetyOnly = process.argv.includes('--transfer-safety-only');
+const listSpacingOnly = process.argv.includes('--list-spacing-only');
+const listControlsOnly = process.argv.includes('--list-controls-only');
+const gridAlignmentOnly = process.argv.includes('--grid-alignment-only');
 const focusOnly = process.argv.includes('--focus-only');
 const permissionsOnly = process.argv.includes('--permissions-only');
 const administratorOnly = process.argv.includes('--admin-permissions-only');
@@ -93,6 +96,8 @@ try {
     browser = await chromium.launch({
         channel: process.env.ZYNC_BROWSER_CHANNEL || 'msedge',
         headless: true,
+        // Exercise native scrollbar gestures, which Playwright hides by default in headless mode.
+        ignoreDefaultArgs: ['--hide-scrollbars'],
     });
     const context = await browser.newContext({
         viewport: { width: 1200, height: 800 },
@@ -137,7 +142,702 @@ try {
         await mkdir(process.env.ZYNC_FILES_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: `${process.env.ZYNC_FILES_SCREENSHOTS}/${name}.png` });
     };
-    if (folderSizeMemoryOnly) {
+    if (gridAlignmentOnly) {
+        await listing.waitFor();
+        await page.getByRole('button', { name: 'Hide places', exact: true }).click();
+        await page.getByRole('button', { name: 'View', exact: true }).click();
+        await page.getByRole('menuitemradio', { name: 'Grid view', exact: true }).click();
+        await page.mouse.move(0, 0);
+        await listing.focus();
+        await page.keyboard.press('Escape');
+        await page.locator('[data-zync-tooltip]').waitFor({ state: 'detached' });
+        const nativeBefore = await page.evaluate(() => window.filesUiTest.calls.length);
+        for (const count of [31, 1000]) {
+            await page.evaluate((count) => window.filesUiTest.gridAlignmentFiles(count), count);
+            await listing.locator(`[aria-setsize="${count}"]`).first().waitFor();
+            for (const [zoom, icon] of [
+                [0, 48],
+                [1, 64],
+                [2, 96],
+                [3, 168],
+                [4, 256],
+            ]) {
+                await page.evaluate(
+                    (gridZoom) => window.filesUiTest.preference({ gridZoom }),
+                    zoom,
+                );
+                for (const width of [240, 280, 320, 380, 480, 640, 900, 1200, 1600]) {
+                    await page.setViewportSize({ width, height: 800 });
+                    await page.waitForFunction((icon) => {
+                        const viewport = document.querySelector<HTMLElement>(
+                            '.files-selection > div > [role="presentation"]',
+                        )!;
+                        const first = viewport.querySelector<HTMLElement>('[data-file-name]')!;
+                        const grid = first.parentElement!.parentElement!;
+                        const tracks = getComputedStyle(grid)
+                            .gridTemplateColumns.split(' ')
+                            .map(parseFloat);
+                        const gap = parseFloat(getComputedStyle(grid).columnGap);
+                        const artwork = first.querySelector<HTMLElement>('.files-grid-artwork')!;
+                        return (
+                            parseFloat(artwork.style.getPropertyValue('--files-grid-icon-size')) ===
+                                icon &&
+                            tracks.length ===
+                                Math.max(
+                                    1,
+                                    Math.floor((viewport.clientWidth + gap) / (tracks[0] + gap)),
+                                )
+                        );
+                    }, icon);
+                    const geometry = await listing.evaluate((el, icon) => {
+                        const viewport = el.querySelector<HTMLElement>(
+                            ':scope > div > [role="presentation"]',
+                        )!;
+                        const bounds = viewport.getBoundingClientRect();
+                        const options = [
+                            ...viewport.querySelectorAll<HTMLElement>('[data-file-name]'),
+                        ];
+                        const grid = options[0].parentElement!.parentElement!;
+                        const style = getComputedStyle(grid);
+                        const tracks = style.gridTemplateColumns.split(' ').map(parseFloat);
+                        const gap = parseFloat(style.columnGap);
+                        const cells = options.map((option) =>
+                            option.parentElement!.getBoundingClientRect(),
+                        );
+                        const start = cells[0].left;
+                        const span =
+                            tracks.reduce((sum, track) => sum + track, 0) +
+                            gap * (tracks.length - 1);
+                        const left = start - bounds.left;
+                        const right = viewport.clientWidth - left - span;
+                        const align = cells.every(
+                            (cell, index) =>
+                                Math.abs(
+                                    cell.left - start - (index % tracks.length) * (tracks[0] + gap),
+                                ) <= 1,
+                        );
+                        const fits = options.every((option, index) => {
+                            const tile = option.getBoundingClientRect();
+                            const art = option
+                                .querySelector<HTMLElement>('.files-grid-artwork')!
+                                .getBoundingClientRect();
+                            return (
+                                tile.left >= cells[index].left - 1 &&
+                                tile.right <= cells[index].right + 1 &&
+                                tile.bottom <= cells[index].bottom + 1 &&
+                                art.left >= tile.left - 1 &&
+                                art.right <= tile.right + 1 &&
+                                art.bottom <= tile.bottom + 1 &&
+                                (viewport.clientWidth < icon + 16 ||
+                                    Math.abs(art.width - icon) <= 1)
+                            );
+                        });
+                        return {
+                            columns: tracks.length,
+                            left,
+                            right,
+                            align,
+                            fits,
+                            rendered: options.length,
+                            noOverflow:
+                                viewport.scrollWidth <= viewport.clientWidth &&
+                                el.scrollWidth <= el.clientWidth,
+                            noAnimation:
+                                viewport.getAnimations({ subtree: true }).length === 0 &&
+                                options.every(
+                                    (option) => getComputedStyle(option).transform === 'none',
+                                ),
+                        };
+                    }, icon);
+                    check(
+                        `${count} files, ${width}px, zoom ${zoom}: fixed columns align with balanced outer space (${JSON.stringify(geometry)})`,
+                        geometry.align &&
+                            Math.abs(geometry.left - geometry.right) <= 1 &&
+                            geometry.left >= -1,
+                    );
+                    check(
+                        `${count} files, ${width}px, zoom ${zoom}: artwork and long captions fit their rows`,
+                        geometry.fits,
+                    );
+                    check(
+                        `${count} files, ${width}px, zoom ${zoom}: wrapping has no animation or horizontal overflow`,
+                        geometry.noAnimation &&
+                            geometry.noOverflow &&
+                            (count !== 1000 || geometry.rendered < count),
+                    );
+                    if (count === 31 && zoom === 0 && [280, 380, 640, 1200].includes(width)) {
+                        await screenshot(`files-grid-alignment-${width}`);
+                    }
+                }
+            }
+            await page.evaluate(() => window.filesUiTest.preference({ gridZoom: 0 }));
+            await page.setViewportSize({ width: 380, height: 800 });
+            await page.waitForFunction(
+                () =>
+                    document
+                        .querySelector<HTMLElement>('.files-grid-artwork')
+                        ?.style.getPropertyValue('--files-grid-icon-size') === '48px',
+            );
+            const band = await listing.evaluate((el) => {
+                const viewport = el.querySelector<HTMLElement>(
+                    ':scope > div > [role="presentation"]',
+                )!;
+                viewport.scrollTop = 0;
+                const first = viewport.querySelector<HTMLElement>('[data-file-name]')!;
+                const box = first.getBoundingClientRect();
+                return {
+                    start: viewport.getBoundingClientRect().left + 1,
+                    end: box.right - 2,
+                    top: box.top + 2,
+                    bottom: box.bottom - 2,
+                    name: first.dataset.fileName,
+                };
+            });
+            await page.mouse.move(band.start, band.top);
+            await page.mouse.down();
+            await page.mouse.move(band.end, band.bottom, { steps: 8 });
+            await page.mouse.up();
+            const selected = await listing
+                .locator('[aria-selected="true"]')
+                .evaluateAll((nodes) =>
+                    nodes.map((node) => (node as HTMLElement).dataset.fileName),
+                );
+            check(
+                `${count}-file centered grid marquee selects only the first visual cell`,
+                selected.length === 1 && selected[0] === band.name,
+            );
+            await page.keyboard.press('Escape');
+        }
+        check(
+            'responsive grid alignment adds no native requests',
+            await page.evaluate(
+                (before) => window.filesUiTest.calls.length === before,
+                nativeBefore,
+            ),
+        );
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+        console.log(`Responsive Files grid alignment checks passed (${checks}).`);
+    } else if (listControlsOnly) {
+        await listing.waitFor();
+        await page.getByRole('button', { name: 'Hide places', exact: true }).click();
+        await page.setViewportSize({ width: 380, height: 800 });
+        const viewport = listing.locator('[data-file-list-viewport]');
+        await item('assets').locator('[data-file-select]').click();
+        await listing.focus();
+        const beforeKeys = await page.evaluate(() => ({
+            writes: window.filesUiTest.layoutWrites.length,
+            selected: [
+                ...document.querySelectorAll<HTMLElement>('[aria-selected="true"][data-file-name]'),
+            ].map((el) => el.dataset.fileName),
+        }));
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(
+            () => document.querySelector<HTMLElement>('[data-file-list-viewport]')!.scrollLeft > 0,
+        );
+        check(
+            'List Right scrolls horizontally without moving focus or changing selection',
+            await page.evaluate(
+                (selected) =>
+                    JSON.stringify(
+                        [
+                            ...document.querySelectorAll<HTMLElement>(
+                                '[aria-selected="true"][data-file-name]',
+                            ),
+                        ].map((el) => el.dataset.fileName),
+                    ) === JSON.stringify(selected),
+                beforeKeys.selected,
+            ),
+        );
+        await page.keyboard.press('Shift+ArrowLeft');
+        check(
+            'List Shift+Left scrolls back without extending selection or saving preferences',
+            (await viewport.evaluate((el) => el.scrollLeft === 0)) &&
+                (await page.evaluate(
+                    (before) =>
+                        window.filesUiTest.layoutWrites.length === before.writes &&
+                        JSON.stringify(
+                            [
+                                ...document.querySelectorAll<HTMLElement>(
+                                    '[aria-selected="true"][data-file-name]',
+                                ),
+                            ].map((el) => el.dataset.fileName),
+                        ) === JSON.stringify(before.selected),
+                    beforeKeys,
+                )),
+        );
+        check(
+            'Files horizontal scrollbar has a larger native target',
+            await viewport.evaluate(
+                (el) => (el as HTMLElement).offsetHeight - el.clientHeight >= 10,
+            ),
+        );
+        await page.setViewportSize({ width: 640, height: 800 });
+        const gutters: number[] = [];
+        for (const zoom of [0, 2, 0]) {
+            await page.evaluate((listZoom) => window.filesUiTest.preference({ listZoom }), zoom);
+            await page.waitForFunction(
+                (rowHeight) => {
+                    const viewport = document.querySelector<HTMLElement>(
+                        '[data-file-list-viewport]',
+                    )!;
+                    const heading = document.querySelector<HTMLElement>(
+                        '.files-list-heading-viewport',
+                    )!;
+                    const row = viewport.querySelector<HTMLElement>('[data-file-name]')!;
+                    return (
+                        row.parentElement!.getBoundingClientRect().height === rowHeight &&
+                        heading.clientWidth === viewport.clientWidth &&
+                        parseFloat(heading.style.marginRight) ===
+                            viewport.offsetWidth - viewport.clientWidth
+                    );
+                },
+                zoom === 2 ? 74 : 38,
+            );
+            const gutter = await viewport.evaluate(
+                (el) => (el as HTMLElement).offsetWidth - el.clientWidth,
+            );
+            gutters.push(gutter);
+            check(
+                `list zoom ${zoom} keeps headings aligned when the vertical scrollbar changes`,
+                await item('assets').evaluate((row) => {
+                    const heading = row
+                        .closest('.files-listing')!
+                        .querySelector<HTMLElement>('.files-list-heading-viewport')!;
+                    const cell = row.querySelector<HTMLElement>('.files-list-column-size')!;
+                    const column = heading.querySelector<HTMLElement>('.files-list-column-size')!;
+                    return (
+                        Math.abs(
+                            cell.getBoundingClientRect().left - column.getBoundingClientRect().left,
+                        ) <= 1
+                    );
+                }),
+            );
+        }
+        check(
+            'zoom adds and removes the actual vertical scrollbar gutter',
+            gutters[0] === 0 && gutters[1] >= 10 && gutters[2] === 0,
+        );
+        await viewport.evaluate((el) => {
+            el.scrollLeft = 0;
+        });
+        await page.setViewportSize({ width: 1200, height: 800 });
+        const resizer = page.getByRole('separator', { name: 'Resize Name column', exact: true });
+        await resizer.focus();
+        const beforeHandleKeys = await page.evaluate(() => ({
+            selected: [
+                ...document.querySelectorAll<HTMLElement>('[data-file-name][aria-selected="true"]'),
+            ].map((el) => el.dataset.fileName),
+            focused: document
+                .querySelector('[role="listbox"]')!
+                .getAttribute('aria-activedescendant'),
+            clipboard: JSON.stringify(window.filesUiTest.clipboard()),
+            reads: window.filesUiTest.listingReads.length,
+        }));
+        for (const key of ['F2', 'Delete', 'Enter', 'ArrowDown', 'End', 'r']) {
+            await resizer.press(key);
+        }
+        // Synthetic modified keys reach application handlers without touching the OS clipboard.
+        for (const key of ['a', 'c', 'v']) {
+            await resizer.dispatchEvent('keydown', { key, ctrlKey: true, bubbles: true });
+        }
+        check(
+            'focused resize handles exclude ordinary and modified file shortcuts',
+            await page.evaluate(
+                (before) =>
+                    document.querySelectorAll('[role="dialog"]').length === 0 &&
+                    document.activeElement?.getAttribute('role') === 'separator' &&
+                    document
+                        .querySelector('[role="listbox"]')!
+                        .getAttribute('aria-activedescendant') === before.focused &&
+                    JSON.stringify(
+                        [
+                            ...document.querySelectorAll<HTMLElement>(
+                                '[data-file-name][aria-selected="true"]',
+                            ),
+                        ].map((el) => el.dataset.fileName),
+                    ) === JSON.stringify(before.selected) &&
+                    JSON.stringify(window.filesUiTest.clipboard()) === before.clipboard &&
+                    window.filesUiTest.listingReads.length === before.reads,
+                beforeHandleKeys,
+            ),
+        );
+
+        const start = (await resizer.boundingBox())!;
+        const writesBefore = await page.evaluate(() => window.filesUiTest.layoutWrites.length);
+        await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+        await page.mouse.down();
+        await page.evaluate(
+            () =>
+                new Promise<void>((resolve) =>
+                    requestAnimationFrame(() =>
+                        requestAnimationFrame(() => {
+                            globalThis.filesRowRenders = {};
+                            resolve();
+                        }),
+                    ),
+                ),
+        );
+        await page.mouse.move(start.x + start.width / 2 + 96, start.y + start.height / 2, {
+            steps: 12,
+        });
+        await page.waitForFunction(
+            () => document.querySelector<HTMLElement>('.files-name-heading')!.clientWidth === 496,
+        );
+        check(
+            'drag preview keeps heading and virtual rows aligned',
+            await item('assets').evaluate(
+                (row) =>
+                    Math.abs(
+                        row.children[0].getBoundingClientRect().width -
+                            row
+                                .closest('.files-listing')!
+                                .querySelector('.files-name-heading')!
+                                .getBoundingClientRect().width,
+                    ) <= 1,
+            ),
+        );
+        check(
+            'dragging does not rerender file rows or write storage',
+            await page.evaluate(
+                (before) =>
+                    window.filesUiTest.layoutWrites.length === before &&
+                    Object.entries(globalThis.filesRowRenders ?? {})
+                        .filter(([key]) => !key.startsWith('@'))
+                        .every(([, count]) => count === 0),
+                writesBefore,
+            ),
+        );
+        await page.mouse.up();
+        await page.waitForFunction(
+            (before) => window.filesUiTest.layoutWrites.length === before + 1,
+            writesBefore,
+        );
+        check(
+            'release saves one width change while retaining selection and sort',
+            (await item('assets').getAttribute('aria-selected')) === 'true' &&
+                (await page
+                    .locator('.files-list-column-name button')
+                    .getAttribute('aria-pressed')) === 'true',
+        );
+        const second = (await resizer.boundingBox())!;
+        const committedWrites = await page.evaluate(() => window.filesUiTest.layoutWrites.length);
+        await page.mouse.move(second.x + 5, second.y + 12);
+        await page.mouse.down();
+        await page.mouse.move(second.x + 69, second.y + 12, { steps: 6 });
+        await page.keyboard.press('Escape');
+        await page.mouse.up();
+        check(
+            'Escape cancels a resize and restores its original width without saving',
+            (await resizer.getAttribute('aria-valuenow')) === '31' &&
+                (await page.evaluate(
+                    (before) => window.filesUiTest.layoutWrites.length === before,
+                    committedWrites,
+                )),
+        );
+        await resizer.focus();
+        await page.keyboard.press('Home');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.press('Shift+ArrowRight');
+        check(
+            'resize handles support reset and fine/coarse keyboard adjustments',
+            (await resizer.getAttribute('aria-valuenow')) === '28',
+        );
+        await resizer.press('Escape');
+        check(
+            'Escape on an idle resize handle still clears Files selection',
+            (await page.locator('[data-file-name][aria-selected="true"]').count()) === 0 &&
+                (await listing.getAttribute('aria-activedescendant')) === null,
+        );
+        await page.getByRole('button', { name: /^Sort by Size,/ }).click();
+        for (const name of ['Type', 'Owner:Group']) {
+            await page.getByRole('button', { name: 'View', exact: true }).click();
+            await page.getByRole('menuitem', { name: 'Columns in this pane', exact: true }).hover();
+            await page.getByRole('menuitemcheckbox', { name, exact: true }).click();
+        }
+        const savedWrites = await page.evaluate(() => window.filesUiTest.layoutWrites.length);
+        await page.evaluate(() => window.filesUiTest.remount());
+        await resizer.waitFor();
+        check(
+            'remount restores width, optional columns, and sort without writing again',
+            (await resizer.getAttribute('aria-valuenow')) === '28' &&
+                (await page.locator('.files-list-column-type').count()) === 0 &&
+                (await page.locator('.files-list-column-owner').count()) > 1 &&
+                (await page
+                    .locator('.files-list-column-size button')
+                    .getAttribute('aria-pressed')) === 'true' &&
+                (await page.evaluate(
+                    (before) => window.filesUiTest.layoutWrites.length === before,
+                    savedWrites,
+                )),
+        );
+        await page.reload();
+        await resizer.waitFor();
+        check(
+            'reopening the workspace restores its saved layout from local storage',
+            (await resizer.getAttribute('aria-valuenow')) === '28' &&
+                (await page.locator('.files-list-column-type').count()) === 0 &&
+                (await page.locator('.files-list-column-owner').count()) > 1 &&
+                (await page
+                    .locator('.files-list-column-size button')
+                    .getAttribute('aria-pressed')) === 'true' &&
+                (await page.evaluate(() => window.filesUiTest.layoutWrites.length === 0)),
+        );
+        await page.mouse.move(0, 0);
+        await screenshot('files-list-controls-restored');
+        const readCount = await page.evaluate(() => window.filesUiTest.listingReads.length);
+        const current = (await resizer.boundingBox())!;
+        await page.mouse.move(current.x + 5, current.y + 12);
+        await page.mouse.down();
+        await page.mouse.move(current.x + 69, current.y + 12, { steps: 6 });
+        await page.evaluate(() => window.filesUiTest.remount());
+        await page.mouse.up();
+        check(
+            'unmount during resize discards the preview and pending frame',
+            (await resizer.getAttribute('aria-valuenow')) === '28' &&
+                (await page.evaluate(() => window.filesUiTest.layoutWrites.length === 0)),
+        );
+        check(
+            'layout changes do not read directories or invoke native mutation commands',
+            await page.evaluate(
+                (before) =>
+                    window.filesUiTest.listingReads.length === before &&
+                    !window.filesUiTest.calls.some((call) =>
+                        /write|mkdir|rename|unlink|remove/.test(call),
+                    ),
+                readCount,
+            ),
+        );
+        await page.evaluate(() => window.filesUiTest.twoPanes());
+        check(
+            'a new sibling pane has independent layout defaults',
+            (await page
+                .locator('.files-manager')
+                .nth(1)
+                .getByRole('separator', { name: 'Resize Name column', exact: true })
+                .getAttribute('aria-valuenow')) === '25',
+        );
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+        console.log(`Files list controls checks passed (${checks}).`);
+    } else if (listSpacingOnly) {
+        await page.getByRole('listbox').waitFor();
+        if (await page.getByRole('button', { name: 'Hide places', exact: true }).isVisible()) {
+            await page.getByRole('button', { name: 'Hide places', exact: true }).click();
+        }
+        await page.getByRole('button', { name: 'View', exact: true }).click();
+        await page.getByRole('menuitemradio', { name: 'List view', exact: true }).click();
+        let enabledDetails = ['type'];
+        for (const details of [[], ['type'], ['type', 'owner']]) {
+            await page.setViewportSize({ width: 1200, height: 800 });
+            for (const [column, name] of [
+                ['type', 'Type'],
+                ['owner', 'Owner:Group'],
+            ]) {
+                if (enabledDetails.includes(column) !== details.includes(column)) {
+                    await page.getByRole('button', { name: 'View', exact: true }).click();
+                    await page
+                        .getByRole('menuitem', { name: 'Columns in this pane', exact: true })
+                        .hover();
+                    await page.getByRole('menuitemcheckbox', { name, exact: true }).click();
+                }
+            }
+            enabledDetails = details;
+            for (const width of [1200, 900, 640, 480, 380, 340, 320, 280, 256]) {
+                await page.setViewportSize({ width, height: 800 });
+                const viewport = listing.locator(':scope > div > [role="presentation"]');
+                await viewport.evaluate((el) => {
+                    el.scrollLeft = 0;
+                });
+                await page.waitForFunction(() => {
+                    const heading = document.querySelector<HTMLElement>(
+                        '.files-list-heading-viewport',
+                    )!;
+                    const viewport = document.querySelector<HTMLElement>(
+                        '.files-selection > div > [role="presentation"]',
+                    )!;
+                    return heading.scrollLeft === viewport.scrollLeft;
+                });
+                const geometry = await item('assets').evaluate((row) => {
+                    const listing = row.closest<HTMLElement>('.files-listing')!;
+                    const heading = listing.querySelector<HTMLElement>('.files-name-heading')!;
+                    const name = row.querySelector<HTMLElement>('[aria-label="assets"]')!;
+                    const tracks = getComputedStyle(row).gridTemplateColumns.split(' ').length;
+                    const visibleCells = [...row.children].filter(
+                        (cell) => getComputedStyle(cell).display !== 'none',
+                    );
+                    const aligned = visibleCells.every((cell, index) => {
+                        const header =
+                            index === 0
+                                ? heading
+                                : listing.querySelector<HTMLElement>(
+                                      `.files-name-heading ~ .${[...cell.classList].find((name) => name.startsWith('files-list-column-'))}`,
+                                  );
+                        return (
+                            header &&
+                            Math.abs(
+                                header.getBoundingClientRect().left -
+                                    cell.getBoundingClientRect().left,
+                            ) <= 1
+                        );
+                    });
+                    return {
+                        widths: visibleCells.map((cell) => cell.getBoundingClientRect().width),
+                        canvasWidth: row.getBoundingClientRect().width,
+                        viewportWidth: row.parentElement!.parentElement!.clientWidth,
+                        scrollWidth: row.parentElement!.parentElement!.scrollWidth,
+                        nameWidth: name.getBoundingClientRect().width,
+                        tracks,
+                        visibleCells: visibleCells.length,
+                        columnOrder: visibleCells.map((cell, index) =>
+                            index === 0
+                                ? 'name'
+                                : [...cell.classList]
+                                      .find((name) => name.startsWith('files-list-column-'))!
+                                      .replace('files-list-column-', ''),
+                        ),
+                        aligned,
+                        headingAlignment: Math.abs(
+                            heading.getBoundingClientRect().left +
+                                parseFloat(getComputedStyle(heading).paddingLeft) -
+                                name.getBoundingClientRect().left,
+                        ),
+                        overflow:
+                            listing.scrollWidth > listing.clientWidth ||
+                            row.scrollWidth > row.clientWidth,
+                    };
+                });
+                check(
+                    `${width}px ${details.join('+') || 'base'} columns keep filenames readable (${JSON.stringify(geometry)})`,
+                    geometry.nameWidth >= 300 && geometry.widths[0] === 400,
+                );
+                check(
+                    `${width}px listing reserves tracks only for visible columns`,
+                    geometry.tracks === geometry.visibleCells,
+                );
+                check(
+                    `${width}px headings and cells stay aligned on the fixed canvas`,
+                    geometry.aligned && geometry.headingAlignment <= 1 && !geometry.overflow,
+                );
+                const expectedColumns = ['name', 'modified', ...details, 'size'];
+                check(
+                    `${width}px keeps Date second and Size last, with optional details between`,
+                    JSON.stringify(geometry.columnOrder) === JSON.stringify(expectedColumns),
+                );
+                check(
+                    `${width}px horizontal scrolling is available when the canvas exceeds the viewport`,
+                    geometry.canvasWidth <= geometry.viewportWidth + 1 ||
+                        geometry.scrollWidth > geometry.viewportWidth,
+                );
+                if (details.length === 1 && details.includes('type')) {
+                    await page.mouse.move(width - 4, 780);
+                    await listing.focus();
+                    await page.keyboard.press('Escape');
+                    await page
+                        .locator('[data-zync-tooltip]')
+                        .waitFor({ state: 'detached', timeout: 5000 });
+                    await screenshot(`files-list-spacing-${width}`);
+                }
+                if (width === 380 && details.length === 1) {
+                    await item('assets').locator('[data-file-select]').click();
+                    const bar = await viewport.evaluate((el) => {
+                        const box = el.getBoundingClientRect();
+                        return {
+                            left: box.left,
+                            y:
+                                box.top +
+                                el.clientHeight +
+                                ((el as HTMLElement).offsetHeight - el.clientHeight) / 2,
+                            width: el.clientWidth,
+                            thumb: (el.clientWidth * el.clientWidth) / el.scrollWidth,
+                        };
+                    });
+                    await screenshot('files-scrollbar-before');
+                    await page.mouse.move(bar.left + bar.thumb / 2, bar.y);
+                    await page.mouse.down();
+                    await page.mouse.move(bar.left + bar.width - 12, bar.y, { steps: 8 });
+                    await page.mouse.up();
+                    await screenshot('files-scrollbar-after');
+                    await page.waitForFunction(
+                        () =>
+                            document.querySelector<HTMLElement>(
+                                '.files-selection > div > [role="presentation"]',
+                            )!.scrollLeft > 0,
+                        undefined,
+                        { timeout: 5000 },
+                    );
+                    check(
+                        'dragging the native horizontal scrollbar scrolls without changing selection',
+                        (await item('assets').getAttribute('aria-selected')) === 'true',
+                    );
+                    await viewport.evaluate((el) => {
+                        el.scrollLeft = 0;
+                    });
+                    await page
+                        .locator('.files-list-heading-viewport .files-list-column-size button')
+                        .focus();
+                    await page.waitForFunction(
+                        () => {
+                            const heading = document.querySelector<HTMLElement>(
+                                '.files-list-heading-viewport',
+                            )!;
+                            const viewport = document.querySelector<HTMLElement>(
+                                '.files-selection > div > [role="presentation"]',
+                            )!;
+                            return (
+                                viewport.scrollLeft > 0 &&
+                                viewport.scrollLeft === heading.scrollLeft
+                            );
+                        },
+                        undefined,
+                        { timeout: 5000 },
+                    );
+                    check(
+                        'keyboard focus of an offscreen sort button scrolls headings and rows together',
+                        true,
+                    );
+                }
+                await viewport.evaluate((el) => {
+                    el.scrollLeft = el.scrollWidth;
+                });
+                await page.waitForFunction(() => {
+                    const heading = document.querySelector<HTMLElement>(
+                        '.files-list-heading-viewport',
+                    )!;
+                    const viewport = document.querySelector<HTMLElement>(
+                        '.files-selection > div > [role="presentation"]',
+                    )!;
+                    return heading.scrollLeft === viewport.scrollLeft;
+                });
+                check(
+                    `${width}px scrolling reaches Size with headings and rows aligned`,
+                    await item('assets').evaluate((row) => {
+                        const listing = row.closest<HTMLElement>('.files-listing')!;
+                        const viewport = row.parentElement!.parentElement!;
+                        const cell = row
+                            .querySelector<HTMLElement>('.files-list-column-size')!
+                            .getBoundingClientRect();
+                        const heading = listing
+                            .querySelector<HTMLElement>(
+                                '.files-name-heading ~ .files-list-column-size',
+                            )!
+                            .getBoundingClientRect();
+                        return (
+                            Math.abs(cell.left - heading.left) <= 1 &&
+                            cell.right <=
+                                viewport.getBoundingClientRect().left + viewport.clientWidth + 1
+                        );
+                    }),
+                );
+                if (width === 380 && details.length === 1) {
+                    await screenshot('files-list-spacing-380-scrolled');
+                }
+            }
+        }
+        assert.deepEqual(errors, []);
+        assert.deepEqual(requests, []);
+        console.log(`Responsive Files list spacing checks passed (${checks}).`);
+    } else if (folderSizeMemoryOnly) {
         await listing.waitFor();
         const cdp = await context.newCDPSession(page);
         for (let cycle = 0; cycle < 5; cycle++) {
@@ -566,7 +1266,7 @@ try {
                         getComputedStyle(el).boxShadow === 'none' &&
                         [...el.querySelectorAll<HTMLElement>('[data-focused]')].every(
                             (option) =>
-                                !getComputedStyle(option).boxShadow.includes('0px 0px 0px 2px'),
+                                !getComputedStyle(option).boxShadow.includes('0px 0px 0px 1px'),
                         ),
                 );
             check(
@@ -583,7 +1283,7 @@ try {
                     return (
                         el.contains(option) &&
                         option?.getAttribute('data-file-name') === 'assets' &&
-                        getComputedStyle(option).boxShadow.includes('2px')
+                        getComputedStyle(option).boxShadow.includes('0px 0px 0px 1px')
                     );
                 }),
             );
@@ -607,7 +1307,7 @@ try {
             );
             await page.keyboard.press('Escape');
             await page.evaluate(() => window.dispatchEvent(new Event('zync:files-panel-show')));
-            await page.locator('.files-list-columns button:visible').last().focus();
+            await page.locator('.files-list-columns [role="separator"]').last().focus();
             await page.keyboard.press('Tab');
             check(
                 'Tab entry restores normal native keyboard focus styling after quiet activation',
@@ -694,10 +1394,9 @@ try {
                 .locator('.files-name-heading')
                 .evaluate((el) => el.clientWidth);
             check(
-                'default metadata is Name, Size and Modified, with fluid bounded filename width',
-                initialNameWidth > 400 &&
-                    initialNameWidth <= 672 &&
-                    (await page.locator('.files-list-column-type').count()) === 0 &&
+                'default metadata is Name, Modified, Type and Size, with a fixed filename width',
+                initialNameWidth === 400 &&
+                    (await page.locator('.files-list-column-type').count()) > 1 &&
                     (await page.locator('.files-list-column-owner').count()) === 0,
             );
             await page.setViewportSize({ width: 1600, height: 800 });
@@ -716,9 +1415,8 @@ try {
                         .getBoundingClientRect().width,
                 }));
             check(
-                `wider panes give names more space while retaining compact metadata tracks (${initialNameWidth} → ${JSON.stringify(wideColumns)})`,
-                wideColumns.name > initialNameWidth + 40 &&
-                    wideColumns.name <= 672 &&
+                `wider panes retain the same column widths (${initialNameWidth} → ${JSON.stringify(wideColumns)})`,
+                wideColumns.name === initialNameWidth &&
                     wideColumns.size === 80 &&
                     wideColumns.modified === 144,
             );
@@ -1094,7 +1792,7 @@ try {
                 'keyboard focus remains distinct from the selection rail',
                 await page
                     .locator('.files-option[data-focused]')
-                    .evaluate((el) => getComputedStyle(el).boxShadow.includes('2px')),
+                    .evaluate((el) => getComputedStyle(el).boxShadow.includes('0px 0px 0px 1px')),
             );
             await page.keyboard.press('Escape');
             const newButton = page.getByRole('button', { name: 'New', exact: true });
@@ -1438,14 +2136,39 @@ try {
                     (await page.getByRole('button', { name: 'Back', exact: true }).count()) === 1,
             );
             check(
-                'narrow list hides metadata without horizontal overflow',
+                'narrow list retains metadata within its horizontally scrollable viewport',
                 (await page
-                    .locator('.files-list-column-modified')
+                    .locator('.files-list-column-size')
                     .first()
-                    .evaluate((el) => getComputedStyle(el).display === 'none')) &&
+                    .evaluate((el) => getComputedStyle(el).display !== 'none')) &&
+                    (await page.locator('.files-list-column-modified').first().isVisible()) &&
+                    (await listing
+                        .locator(':scope > div > [role="presentation"]')
+                        .evaluate((el) => el.scrollWidth > el.clientWidth)) &&
                     (await page
                         .locator('.files-manager')
                         .evaluate((el) => el.scrollWidth <= el.clientWidth)),
+            );
+            check(
+                'narrow list retains readable fixed-width filenames and every enabled track',
+                await listing
+                    .locator('[role="option"]')
+                    .first()
+                    .evaluate((row) => {
+                        const name = [...row.querySelectorAll<HTMLElement>('[aria-label]')].find(
+                            (element) =>
+                                element.getAttribute('aria-label') ===
+                                row.getAttribute('data-file-name'),
+                        );
+                        const visibleCells = [...row.children].filter(
+                            (cell) => getComputedStyle(cell).display !== 'none',
+                        );
+                        return (
+                            Boolean(name && name.getBoundingClientRect().width >= 96) &&
+                            getComputedStyle(row).gridTemplateColumns.split(' ').length ===
+                                visibleCells.length
+                        );
+                    }),
             );
             await checkGutters('narrow summary and list retain matching reduced gutters');
             await screenshot('files-production-narrow');
@@ -1513,6 +2236,13 @@ try {
             await page.getByRole('menuitem', { name: 'Columns in this pane', exact: true }).hover();
             await page.getByRole('menuitemcheckbox', { name: 'Type', exact: true }).click();
             check(
+                'default Type column can be hidden in this pane',
+                (await page.locator('.files-list-column-type').count()) === 0,
+            );
+            await page.getByRole('button', { name: 'View', exact: true }).click();
+            await page.getByRole('menuitem', { name: 'Columns in this pane', exact: true }).hover();
+            await page.getByRole('menuitemcheckbox', { name: 'Type', exact: true }).click();
+            check(
                 'optional columns affect both headings and rows without persistence writes',
                 (await page.locator('.files-list-column-type').count()) > 1 &&
                     (await page.evaluate(() =>
@@ -1548,11 +2278,11 @@ try {
             );
             await page.setViewportSize({ width: 1200, height: 800 });
             check(
-                'medium panes hide Owner without losing Type or overflowing',
+                'medium panes retain Owner and Type without overflowing the Files surface',
                 (await page
                     .locator('.files-list-column-owner')
                     .first()
-                    .evaluate((el) => getComputedStyle(el).display === 'none')) &&
+                    .evaluate((el) => getComputedStyle(el).display !== 'none')) &&
                     (await page.locator('.files-list-column-type').first().isVisible()) &&
                     (await page
                         .locator('.files-listing')
@@ -1560,11 +2290,11 @@ try {
             );
             await page.setViewportSize({ width: 900, height: 800 });
             check(
-                'smaller panes prioritize names and base metadata over optional columns',
+                'smaller panes retain Type and base metadata for horizontal scrolling',
                 (await page
                     .locator('.files-list-column-type')
                     .first()
-                    .evaluate((el) => getComputedStyle(el).display === 'none')) &&
+                    .evaluate((el) => getComputedStyle(el).display !== 'none')) &&
                     (await page.locator('.files-list-column-modified').first().isVisible()) &&
                     (await page
                         .locator('.files-listing')
@@ -2421,6 +3151,18 @@ try {
             await pathInput.fill('/home/deploy/project/');
             await folderSuggestions.getByRole('option', { name: 'tests', exact: true }).waitFor();
             await page.setViewportSize({ width: 320, height: 640 });
+            // Portal placement reacts to viewport resizing through ResizeObserver.
+            await page.waitForFunction(() => {
+                const bounds = document
+                    .querySelector<HTMLElement>('.files-path-completions')
+                    ?.getBoundingClientRect();
+                return (
+                    bounds &&
+                    bounds.left >= 0 &&
+                    bounds.right <= window.innerWidth &&
+                    bounds.bottom <= window.innerHeight
+                );
+            });
             check(
                 'typing suggestions remain viewport-bounded and focused in a narrow split',
                 (await folderSuggestions.evaluate((el) => {

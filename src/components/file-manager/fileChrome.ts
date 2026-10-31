@@ -7,11 +7,17 @@ export const FILE_RECENT_LIMIT_MAX = 20;
 export const FILE_RECENT_LIMIT_CHOICES = [3, 5, 10, 15] as const;
 
 export function clampFileRecentLimit(value: number | undefined): number {
-  if (!Number.isFinite(value)) return FILE_RECENT_LIMIT;
-  const n = Math.floor(value as number);
-  if (n < 1) return 1;
-  if (n > FILE_RECENT_LIMIT_MAX) return FILE_RECENT_LIMIT_MAX;
-  return n;
+    if (!Number.isFinite(value)) {
+        return FILE_RECENT_LIMIT;
+    }
+    const n = Math.floor(value as number);
+    if (n < 1) {
+        return 1;
+    }
+    if (n > FILE_RECENT_LIMIT_MAX) {
+        return FILE_RECENT_LIMIT_MAX;
+    }
+    return n;
 }
 
 /** Readable inline Places width; narrow panes use the shared dialog. */
@@ -25,17 +31,18 @@ export const FILE_INSPECTOR_LISTING_MIN_WIDTH_PX = 400;
 export const FILE_GRID_VIRTUALIZE_AFTER = 96;
 
 export const FILE_GRID_ZOOM = [
-  { minTrack: 86, gap: 6, rowHeight: 96, icon: 48 },
-  { minTrack: 96, gap: 6, rowHeight: 112, icon: 64 },
-  { minTrack: 108, gap: 8, rowHeight: 136, icon: 96 },
-  { minTrack: 168, gap: 8, rowHeight: 200, icon: 168 },
-  { minTrack: 256, gap: 10, rowHeight: 268, icon: 256 },
+    // Each track includes the tile and cell insets; rows also reserve the full caption.
+    { minTrack: 100, gap: 6, rowHeight: 108, icon: 48 },
+    { minTrack: 112, gap: 6, rowHeight: 124, icon: 64 },
+    { minTrack: 128, gap: 8, rowHeight: 156, icon: 96 },
+    { minTrack: 184, gap: 8, rowHeight: 248, icon: 168 },
+    { minTrack: 272, gap: 10, rowHeight: 336, icon: 256 },
 ] as const;
 
 export const FILE_LIST_ZOOM = [
-  { icon: 20, rowHeight: 38 },
-  { icon: 32, rowHeight: 44 },
-  { icon: 64, rowHeight: 74 },
+    { icon: 20, rowHeight: 38 },
+    { icon: 32, rowHeight: 44 },
+    { icon: 64, rowHeight: 74 },
 ] as const;
 
 /** Sidebar artwork stays subordinate to file entries, without becoming tiny at normal density. */
@@ -44,15 +51,27 @@ export const FILE_PLACE_ICON_PX = 18;
 export type FileClickPolicy = 'single' | 'double';
 
 export function clampFileGridZoom(level: number): number {
-  if (!Number.isFinite(level)) return 1;
-  if (level < 0) return 0;
-  if (level > FILE_GRID_ZOOM.length - 1) return FILE_GRID_ZOOM.length - 1;
-  return Math.floor(level);
+    if (!Number.isFinite(level)) {
+        return 1;
+    }
+    if (level < 0) {
+        return 0;
+    }
+    if (level > FILE_GRID_ZOOM.length - 1) {
+        return FILE_GRID_ZOOM.length - 1;
+    }
+    return Math.floor(level);
 }
 
 export function clampFileListZoom(level: number): number {
-  if (!Number.isFinite(level)) return 1;
-  if (level < 0) return 0;
-  if (level > FILE_LIST_ZOOM.length - 1) return FILE_LIST_ZOOM.length - 1;
-  return Math.floor(level);
+    if (!Number.isFinite(level)) {
+        return 1;
+    }
+    if (level < 0) {
+        return 0;
+    }
+    if (level > FILE_LIST_ZOOM.length - 1) {
+        return FILE_LIST_ZOOM.length - 1;
+    }
+    return Math.floor(level);
 }

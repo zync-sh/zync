@@ -11,7 +11,7 @@ export interface DrawerMotionFrame extends MotionFrame {
     opacity: string;
     gap: number;
     contentWidth: number;
-    listLayout: string | undefined;
+    listTracks: string | undefined;
     activeOptionValid: boolean;
     optionMinWidth: number | null;
     tileTrackWidth: number | null;
@@ -199,9 +199,15 @@ export async function runFilesDrawerChecks({
                                 : box.left - content.right,
                         contentWidth: content.width,
                         scrollTop: scroll?.scrollTop,
-                        listLayout:
-                            el.parentElement!.querySelector<HTMLElement>('[data-file-list-layout]')
-                                ?.dataset.fileListLayout,
+                        listTracks: el.parentElement!.querySelector<HTMLElement>(
+                            '.files-list-columns',
+                        )
+                            ? getComputedStyle(
+                                  el.parentElement!.querySelector<HTMLElement>(
+                                      '.files-list-columns',
+                                  )!,
+                              ).gridTemplateColumns
+                            : undefined,
                         activeOptionValid:
                             !activeId || Boolean(activeOption && listbox.contains(activeOption)),
                         moving: el.parentElement!.hasAttribute('data-file-layout-moving'),
@@ -218,6 +224,11 @@ export async function runFilesDrawerChecks({
                         tileTrackWidth:
                             firstOption?.parentElement!.getBoundingClientRect().width ?? null,
                         viewportWidth: scroll?.clientWidth ?? null,
+                        inlineOffset:
+                            firstOption && scrollBounds
+                                ? firstOption.parentElement!.getBoundingClientRect().left -
+                                  scrollBounds.left
+                                : 0,
                         tiles,
                         contentAnimations: activeContentAnimations.length,
                         drawerTiming: widthTransition
@@ -448,35 +459,31 @@ export async function runFilesDrawerChecks({
     );
 
     await page.setViewportSize({ width: 684, height: 600 });
-    await page.waitForFunction(
-        () =>
-            document.querySelector<HTMLElement>('[data-file-list-layout]')?.dataset
-                .fileListLayout === 'size',
-    );
-    for (const [button, tier] of [
-        ['Hide places', 'modified'],
-        ['Show places', 'size'],
-    ]) {
+    const fixedTracks = await page
+        .locator('.files-list-columns')
+        .first()
+        .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
+    for (const button of ['Hide places', 'Show places']) {
         const frames = await sampleToggle('left', button);
-        const changes = frames.filter(
-            (frame, index) => index > 0 && frame.listLayout !== frames[index - 1].listLayout,
+        check(
+            `684px list ${button.toLowerCase()} preserves column widths throughout motion`,
+            frames.every((frame) => frame.listTracks === fixedTracks),
         );
         check(
-            `684px list ${button.toLowerCase()} commits metadata layout at most once`,
-            changes.length <= 1,
-        );
-        check(
-            `684px list ${button.toLowerCase()} finishes in the correct responsive tier`,
-            (await page
-                .locator('[data-file-list-layout]')
-                .getAttribute('data-file-list-layout')) === tier &&
-                (await page
-                    .locator('.files-list-column-modified')
-                    .first()
-                    .evaluate(
-                        (el, visible) => (getComputedStyle(el).display !== 'none') === visible,
-                        tier === 'modified',
-                    )),
+            `684px list ${button.toLowerCase()} retains all columns and horizontal scrolling`,
+            await listing.evaluate((el) => {
+                const viewport = el.querySelector<HTMLElement>(
+                    ':scope > div > [role="presentation"]',
+                )!;
+                return (
+                    viewport.scrollWidth > viewport.clientWidth &&
+                    [
+                        ...el.querySelectorAll<HTMLElement>(
+                            '.files-list-column-size, .files-list-column-modified, .files-list-column-type',
+                        ),
+                    ].every((cell) => getComputedStyle(cell).display !== 'none')
+                );
+            }),
         );
     }
     await runFilesGridViewportChecks({ page, check, sampleToggle });

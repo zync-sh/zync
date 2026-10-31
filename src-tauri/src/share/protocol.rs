@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub const PROTOCOL_VERSION: i32 = 1;
 pub const PROTOCOL_MAX_VERSION: i32 = 2;
 pub const BIN_TYPE_DATA: u8 = 1;
+pub const MAX_MESSAGE_BYTES: usize = 1 << 20;
 
 pub const TYPE_HELLO: &str = "hello";
 pub const TYPE_OK: &str = "ok";
@@ -63,11 +64,6 @@ pub struct OkMsg {
     pub resume_token: Option<String>,
     #[serde(default)]
     pub v: i32,
-}
-
-pub enum AgentOut {
-    Json(serde_json::Value),
-    Data { stream_id: i64, chunk: Vec<u8> },
 }
 
 pub fn encode_data_frame(stream_id: i64, chunk: &[u8]) -> Vec<u8> {

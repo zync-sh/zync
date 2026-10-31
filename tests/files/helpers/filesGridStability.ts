@@ -10,6 +10,7 @@ export interface MotionTile {
 }
 
 export interface MotionFrame {
+    inlineOffset?: number;
     columns: number | null;
     scrollTop: number | undefined;
     contentAnimations: number;
@@ -35,7 +36,7 @@ export function tilesHaveNoAnimation(frames: MotionFrame[]) {
     );
 }
 
-/** Compare identities in viewport coordinates, excluding genuine wraps and user scrolling. */
+/** Compare identities within their centered grid, excluding genuine wraps and user scrolling. */
 export function tracksStayStill(frames: MotionFrame[]) {
     let comparisons = 0;
     for (let index = 1; index < frames.length; index++) {
@@ -56,7 +57,12 @@ export function tracksStayStill(frames: MotionFrame[]) {
             comparisons++;
             if (
                 (['x', 'y', 'width', 'height'] as const).some(
-                    (key) => Math.abs(prior[key] - tile[key]) > 0.75,
+                    (key) =>
+                        Math.abs(
+                            prior[key] -
+                                (key === 'x' ? (previous.inlineOffset ?? 0) : 0) -
+                                (tile[key] - (key === 'x' ? (current.inlineOffset ?? 0) : 0)),
+                        ) > 0.75,
                 )
             ) {
                 return false;

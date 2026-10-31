@@ -4,7 +4,20 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Files column controls:** Resize list columns by dragging or keyboard, and
+  restore widths, visible columns and sorting for each workspace/pane. Layout
+  choices are saved locally after completed changes. ([7850716a])
+
 ### Changed
+
+- **Files list layout:** Keep Name, Date modified, Type and Size in fixed columns
+  with horizontal scrolling in narrow panes. Left/Right scroll without changing
+  selection; Files scrollbars have larger targets. ([7850716a])
+- **Responsive Files grid:** Balance spacing across pane sizes, reserve room for
+  icons and wrapped filenames, and keep drag selection aligned in large folders.
+  Grid items wrap immediately without added animation. ([3a0eb5da])
 
 - **Feature-based tests:** Grouped Files suites, browser helpers, fixtures and
   native harnesses under `tests/files/`, converted JavaScript test logic to strict
@@ -17,6 +30,24 @@ All notable changes to Zync are documented in this file. The format is based on 
   skips checkouts without the project runner; committed checks use a merge base. ([148a5d26])
 
 ### Fixed
+
+- **SOCKS connection lifetime:** Apply the five-second timeout to negotiation and
+  SSH channel setup, allowing established connections to continue relaying until
+  they close or the tunnel stops. ([984adfe8])
+
+- **Public URL backpressure:** Bound outgoing buffering and pause response producers
+  on slow relay connections. Preserve the relay's existing 256-stream capacity and
+  coalesce heartbeat replies during stalls. Excess requests receive 503 without
+  starting another local proxy connection. ([093f96cc])
+
+- **Public URL cleanup:** Stopping a share or ending its relay session cancels
+  pending requests and active local proxy connections, preventing them from
+  accumulating across reconnects. Stopped agents cannot publish late Online updates.
+  Overlapping Start, Stop and Stop All actions preserve replacement agent status. ([6e19291c])
+
+- **Files keyboard focus:** Remove the large listing outline and use a thinner
+  row indicator. Resize handles own their keyboard shortcuts while preserving
+  Escape, and list headings realign when zoom changes the scrollbar gutter. ([7850716a])
 
 - **Accurate test-language checks:** Ordinary regular-expression `.test()` calls
   no longer count as new JavaScript test cases. Recognized registrations and
@@ -3217,3 +3248,9 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [fcc5d546]: https://github.com/zync-sh/zync/commit/fcc5d5468ba729b2b5ffd3adc01b15de8f81fef0
 [5d65c1f8]: https://github.com/zync-sh/zync/commit/5d65c1f80bb333ca8125b6fc4f2cf29c2ec243ed
 [ab4820be]: https://github.com/zync-sh/zync/commit/ab4820be6590188c702bbd35cab9891fe9e1524f
+
+[7850716a]: https://github.com/zync-sh/zync/commit/7850716ad541d9afa50a983ca670361492b7980c
+[3a0eb5da]: https://github.com/zync-sh/zync/commit/3a0eb5da3a916d3586fb836f027a700eecc1e14f
+[6e19291c]: https://github.com/zync-sh/zync/commit/6e19291c1b7c29313bfb40052cd2030bb2ba2be6
+[093f96cc]: https://github.com/zync-sh/zync/commit/093f96cc62b09924e0c86488994152d86c7ae72f
+[984adfe8]: https://github.com/zync-sh/zync/commit/984adfe8d455ca2267dc9309cf679d5339e8312d

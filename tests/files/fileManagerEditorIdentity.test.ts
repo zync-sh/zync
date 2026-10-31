@@ -18,7 +18,7 @@ assert.equal(
 const manager = fs.readFileSync('src/components/FileManager.tsx', 'utf8');
 assert.match(
     manager,
-    /const sourceConnectionId = activeConnectionId;[\s\S]*?connectionId: sourceConnectionId,[\s\S]*?isCurrentEditorRead\(sourceConnectionId, editorConnectionRef\.current, requestId, editorReadRequestRef\.current\)/,
+    /const sourceConnectionId = activeConnectionId;[\s\S]*?connectionId: sourceConnectionId,[\s\S]*?isCurrentEditorRead\(\s*sourceConnectionId,\s*editorConnectionRef\.current,\s*requestId,\s*editorReadRequestRef\.current,?\s*\)/,
     'read results must be checked against the captured connection and latest request',
 );
 assert.match(

@@ -8,6 +8,7 @@ mod api;
 mod auth;
 mod commands;
 mod config;
+mod outbound;
 mod protocol;
 mod proxy;
 mod stream;

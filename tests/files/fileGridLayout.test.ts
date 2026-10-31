@@ -5,6 +5,7 @@ import {
     FILE_LIST_COLUMNS,
     FILE_LIST_SORT_INITIAL,
     fileGridColumnPitch,
+    fileGridInlineOffset,
     fileGridScrollTarget,
     fileHoverHint,
     fileIconGridTemplateColumns,
@@ -88,8 +89,8 @@ runTest('grid columns retain minimum tracks and share marquee geometry during re
 runTest('computeFileGridMetrics zoom minTrack is independent of viewport', () => {
     const a = computeFileGridMetrics(200, false, 2);
     const b = computeFileGridMetrics(900, false, 2);
-    assert.equal(a.minTrack, 108);
-    assert.equal(b.minTrack, 108);
+    assert.equal(a.minTrack, 128);
+    assert.equal(b.minTrack, 128);
     assert.equal(a.gap, 8);
     assert.ok(b.columnCount > a.columnCount);
 });
@@ -101,17 +102,8 @@ runTest('fileGridScrollTarget rejects a cell past the live grid', () => {
     assert.equal(fileGridScrollTarget(0, 8, 0), null);
 });
 
-runTest('FILE_LIST_COLUMNS includes name flex track and size column', () => {
-    assert.equal(
-        FILE_LIST_COLUMNS.includes('min(var(--files-name-limit, 25rem), calc(100% - 14rem))'),
-        true,
-    );
-    assert.equal(FILE_LIST_COLUMNS.includes('5rem'), true);
-    assert.equal(
-        FILE_LIST_COLUMNS.endsWith('9rem'),
-        true,
-        'default has only Name, Size and Modified',
-    );
+runTest('FILE_LIST_COLUMNS preserves fixed Name, Modified and Size tracks', () => {
+    assert.equal(FILE_LIST_COLUMNS, '25rem 9rem 5rem');
 });
 
 runTest('formatFileListDate uses time today and short date otherwise', () => {
@@ -171,3 +163,10 @@ runTest('fileHoverHint lists name and folder', () => {
 });
 
 console.log('fileGridLayout tests passed.');
+
+runTest('fixed grid tracks share centered offsets with virtual marquee geometry', () => {
+    assert.equal(fileGridInlineOffset(338, 86, 6, 3), 34);
+    assert.equal(fileGridInlineOffset(178, 86, 6, 2), 0);
+    assert.equal(fileGridInlineOffset(60, 108, 8, 1), 0);
+    assert.equal(fileGridInlineOffset(80, 108, 8, 2), 0);
+});

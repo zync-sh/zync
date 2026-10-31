@@ -1,4 +1,5 @@
-use super::protocol::{header_get, is_websocket, AgentOut, Open, MODE_TCP};
+use super::outbound::{OutboundSender, DATA_CHUNK_BYTES as CHUNK_SIZE};
+use super::protocol::{header_get, is_websocket, Open, MODE_TCP};
 use super::stream::{is_cancelled, StreamReaders};
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -10,7 +11,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-const CHUNK_SIZE: usize = 24 * 1024;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn http_proxy_client() -> reqwest::Client {
@@ -65,57 +65,61 @@ fn http_proxy_client_for(addr: SocketAddr) -> reqwest::Client {
 
 pub struct FrameWriter {
     stream_id: i64,
-    write: Box<dyn Fn(AgentOut) -> Result<(), String> + Send + Sync>,
+    write: OutboundSender,
     sent_end: bool,
     sent_close: bool,
 }
 
 impl FrameWriter {
-    pub fn new(
-        stream_id: i64,
-        write: impl Fn(AgentOut) -> Result<(), String> + Send + Sync + 'static,
-    ) -> Self {
+    /// Bind ordered, backpressured output to one relay stream.
+    pub fn new(stream_id: i64, write: OutboundSender) -> Self {
         Self {
             stream_id,
-            write: Box::new(write),
+            write,
             sent_end: false,
             sent_close: false,
         }
     }
 
-    pub fn end(
+    /// Publish response headers before any body data, awaiting queue admission.
+    pub async fn end(
         &mut self,
         status: u16,
         headers: HashMap<String, Vec<String>>,
     ) -> Result<(), String> {
+        self.write
+            .send_json(serde_json::json!({
+                "type": "end",
+                "stream_id": self.stream_id,
+                "status": status,
+                "headers": headers,
+            }))
+            .await?;
         self.sent_end = true;
-        (self.write)(AgentOut::Json(serde_json::json!({
-            "type": "end",
-            "stream_id": self.stream_id,
-            "status": status,
-            "headers": headers,
-        })))
+        Ok(())
     }
 
-    pub fn data(&self, chunk: &[u8]) -> Result<(), String> {
-        if chunk.is_empty() {
-            return Ok(());
+    /// Forward bounded chunks in order without copying ahead of queue admission.
+    pub async fn data(&self, chunk: &[u8]) -> Result<(), String> {
+        for piece in chunk.chunks(CHUNK_SIZE) {
+            self.write.send_data(self.stream_id, piece).await?;
         }
-        (self.write)(AgentOut::Data {
-            stream_id: self.stream_id,
-            chunk: chunk.to_vec(),
-        })
+        Ok(())
     }
 
-    pub fn close(&mut self) -> Result<(), String> {
+    /// Admit the terminal frame after all preceding stream output, at most once.
+    pub async fn close(&mut self) -> Result<(), String> {
         if self.sent_close {
             return Ok(());
         }
+        self.write
+            .send_json(serde_json::json!({
+                "type": "close",
+                "stream_id": self.stream_id,
+            }))
+            .await?;
         self.sent_close = true;
-        (self.write)(AgentOut::Json(serde_json::json!({
-            "type": "close",
-            "stream_id": self.stream_id,
-        })))
+        Ok(())
     }
 
     pub fn has_sent_end(&self) -> bool {
@@ -123,30 +127,42 @@ impl FrameWriter {
     }
 }
 
-pub async fn handle_open(
-    target: &str,
-    open: Open,
-    readers: StreamReaders,
-    write: impl Fn(AgentOut) -> Result<(), String> + Send + Sync + Clone + 'static,
-) {
+/// Proxy one admitted stream; cancellation also interrupts blocked output and HTTP I/O.
+pub async fn handle_open(target: &str, open: Open, readers: StreamReaders, write: OutboundSender) {
     let mut w = FrameWriter::new(open.stream_id, write);
-    let result = if open.mode == MODE_TCP {
-        proxy_tcp(target, readers, &mut w).await
-    } else if is_websocket(&open) {
-        proxy_websocket(target, &open, readers, &mut w).await
-    } else {
-        proxy_http(target, &open, readers, &mut w).await
+    let mut cancel = readers.cancel_rx.clone();
+    let result = {
+        let proxy = async {
+            if open.mode == MODE_TCP {
+                proxy_tcp(target, readers, &mut w).await
+            } else if is_websocket(&open) {
+                proxy_websocket(target, &open, readers, &mut w).await
+            } else {
+                proxy_http(target, &open, readers, &mut w).await
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = async {
+                let cancelled = *cancel.borrow();
+                if !cancelled {
+                    let _ = cancel.changed().await;
+                }
+            } => Ok(()),
+            result = proxy => result,
+        }
     };
     if result.is_err() && !w.has_sent_end() {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".into(), vec!["text/plain".into()]);
         headers.insert("X-Zync-Error".into(), vec!["dial".into()]);
-        let _ = w.end(502, headers);
-        let _ = w.data(b"bad gateway");
+        let _ = w.end(502, headers).await;
+        let _ = w.data(b"bad gateway").await;
     }
-    let _ = w.close();
+    let _ = w.close().await;
 }
 
+/// Stream HTTP response output through the bounded relay queue.
 async fn proxy_http(
     target: &str,
     open: &Open,
@@ -238,7 +254,7 @@ async fn proxy_http(
             .or_default()
             .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
     }
-    w.end(status, headers)?;
+    w.end(status, headers).await?;
 
     let mut body = resp.bytes_stream();
     while let Some(next) = body.next().await {
@@ -246,13 +262,12 @@ async fn proxy_http(
             break;
         }
         let chunk = next.map_err(|e| e.to_string())?;
-        for piece in chunk.chunks(CHUNK_SIZE) {
-            w.data(piece)?;
-        }
+        w.data(&chunk).await?;
     }
     Ok(())
 }
 
+/// Relay a raw upgrade with ordered output and cancellation-aware backpressure.
 async fn proxy_websocket(
     target: &str,
     open: &Open,
@@ -301,9 +316,9 @@ async fn proxy_websocket(
     stream.write_all(&req).await.map_err(|e| e.to_string())?;
 
     let (status, headers, leftover) = read_http_headers(&mut stream).await?;
-    w.end(status, headers)?;
+    w.end(status, headers).await?;
     if !leftover.is_empty() {
-        w.data(&leftover)?;
+        w.data(&leftover).await?;
     }
 
     let (mut read_half, mut write_half) = stream.into_split();
@@ -320,7 +335,7 @@ async fn proxy_websocket(
             match read_half.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if w.data(&buf[..n]).is_err() {
+                    if w.data(&buf[..n]).await.is_err() {
                         break;
                     }
                 }
@@ -335,6 +350,7 @@ async fn proxy_websocket(
     Ok(())
 }
 
+/// Relay TCP bytes without reading ahead of bounded outbound admission.
 async fn proxy_tcp(
     target: &str,
     mut readers: StreamReaders,
@@ -347,7 +363,7 @@ async fn proxy_tcp(
         "Content-Type".into(),
         vec!["application/octet-stream".into()],
     );
-    w.end(200, headers)?;
+    w.end(200, headers).await?;
 
     let (mut read_half, mut write_half) = stream.into_split();
     let uplink = async {
@@ -375,7 +391,7 @@ async fn proxy_tcp(
             match read_half.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if w.data(&buf[..n]).is_err() {
+                    if w.data(&buf[..n]).await.is_err() {
                         break;
                     }
                 }

@@ -53,6 +53,7 @@ async fn read_exact_or_cancel(
     }
 }
 
+/// Bounds SOCKS negotiation and SSH setup, then relays until completion or cancellation.
 async fn run_socks5_client(
     client: &mut TcpStream,
     session: Arc<Mutex<Handle<Client>>>,
@@ -64,13 +65,13 @@ async fn run_socks5_client(
     let handshake = async {
         let mut greeting = [0u8; 2];
         if !read_exact_or_cancel(client, &mut greeting, cancel).await? {
-            return Ok(());
+            return Ok(None);
         }
 
         let nmethods = greeting[1] as usize;
         let mut methods = vec![0u8; nmethods];
         if !read_exact_or_cancel(client, &mut methods, cancel).await? {
-            return Ok(());
+            return Ok(None);
         }
 
         let mut full_greeting = greeting.to_vec();
@@ -105,7 +106,7 @@ async fn run_socks5_client(
                         )
                         .await
                 } => result,
-                _ = cancel.recv() => return Ok(()),
+                _ = cancel.recv() => return Ok(None),
             }
         };
 
@@ -127,29 +128,34 @@ async fn run_socks5_client(
             }
         };
 
+        // Own a close-on-drop stream before the reply can fail or time out.
+        let stream = channel.into_stream();
         client.write_all(&connect_success_reply()).await?;
-
-        let mut stream = channel.into_stream();
-        tokio::select! {
-            result = tokio::io::copy_bidirectional(client, &mut stream) => {
-                if let Err(error) = result {
-                    eprintln!(
-                        "[TUNNEL][SOCKS] relay error to {}:{} — {error}",
-                        target.host,
-                        target.port
-                    );
-                }
-            }
-            _ = cancel.recv() => {}
-        }
-
-        Ok(())
+        Ok(Some((stream, target)))
     };
 
-    match tokio::time::timeout(SOCKS_HANDSHAKE_TIMEOUT, handshake).await {
-        Ok(result) => result,
-        Err(_) => Ok(()),
+    let Some((mut stream, target)) =
+        (match tokio::time::timeout(SOCKS_HANDSHAKE_TIMEOUT, handshake).await {
+            Ok(result) => result?,
+            Err(_) => return Ok(()),
+        })
+    else {
+        return Ok(());
+    };
+
+    tokio::select! {
+        result = tokio::io::copy_bidirectional(client, &mut stream) => {
+            if let Err(error) = result {
+                eprintln!(
+                    "[TUNNEL][SOCKS] relay error to {}:{} — {error}",
+                    target.host,
+                    target.port
+                );
+            }
+        }
+        _ = cancel.recv() => {}
     }
+    Ok(())
 }
 
 async fn read_connect_target(
@@ -219,3 +225,6 @@ async fn read_connect_target(
     request.extend_from_slice(&body);
     parse_connect_request(&request)
 }
+
+#[cfg(test)]
+mod tests;

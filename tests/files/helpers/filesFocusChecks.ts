@@ -18,7 +18,7 @@ export async function runFilesFocusChecks({
             (el) =>
                 getComputedStyle(el).boxShadow === 'none' &&
                 [...el.querySelectorAll<HTMLElement>('[data-focused]')].every(
-                    (option) => !getComputedStyle(option).boxShadow.includes('0px 0px 0px 2px'),
+                    (option) => !getComputedStyle(option).boxShadow.includes('0px 0px 0px 1px'),
                 ),
         );
     const hasControlRing = (control: Locator) =>
@@ -26,6 +26,18 @@ export async function runFilesFocusChecks({
             (el) => el.matches(':focus-visible') && getComputedStyle(el).boxShadow.includes('1px'),
         );
     await file.waitFor();
+    await listing.focus();
+    await page.keyboard.press('Home');
+    check(
+        'keyboard row focus uses a thin 1px ring without outlining the listing',
+        await listing.evaluate((el) => {
+            const row = document.getElementById(el.getAttribute('aria-activedescendant')!)!;
+            return (
+                getComputedStyle(el).boxShadow === 'none' &&
+                getComputedStyle(row).boxShadow.includes('0px 0px 0px 1px')
+            );
+        }),
+    );
 
     await page.keyboard.press('Escape');
     await page.waitForFunction(
@@ -33,6 +45,16 @@ export async function runFilesFocusChecks({
             !document
                 .querySelector<HTMLElement>('.files-selection')
                 ?.hasAttribute('aria-activedescendant'),
+    );
+    check(
+        'clearing keyboard row focus leaves no large listing ring',
+        await listing.evaluate(
+            (el) =>
+                el === document.activeElement &&
+                el.matches(':focus-visible') &&
+                !el.hasAttribute('aria-activedescendant') &&
+                getComputedStyle(el).boxShadow === 'none',
+        ),
     );
     await page.evaluate(() => window.dispatchEvent(new Event('zync:files-panel-show')));
     await page.keyboard.press('Control+v');
@@ -130,7 +152,7 @@ export async function runFilesFocusChecks({
             return (
                 document.activeElement === el &&
                 option &&
-                getComputedStyle(option).boxShadow.includes('0px 0px 0px 2px')
+                getComputedStyle(option).boxShadow.includes('0px 0px 0px 1px')
             );
         }),
     );
@@ -143,7 +165,7 @@ export async function runFilesFocusChecks({
         (await listing.evaluate((el) => el === document.activeElement)) && (await quietListing()),
     );
 
-    await page.locator('.files-list-columns button:visible').last().focus();
+    await page.locator('.files-list-columns [role="separator"]').last().focus();
     await page.keyboard.press('Tab');
     check(
         'Tab entry after pointer modal dismissal restores keyboard focus visibility',
@@ -152,7 +174,7 @@ export async function runFilesFocusChecks({
             return (
                 document.activeElement === el &&
                 option &&
-                getComputedStyle(option).boxShadow.includes('0px 0px 0px 2px')
+                getComputedStyle(option).boxShadow.includes('0px 0px 0px 1px')
             );
         }),
     );

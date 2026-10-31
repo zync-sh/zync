@@ -4,8 +4,6 @@
 .files-listing {
   container: files-listing / inline-size;
   padding: 0.5rem var(--files-content-gutter) 1.5rem;
-  /* Define beside the shared track value so wide and narrow variants resolve alike. */
-  --files-name-limit: clamp(25rem, 60cqi, 42rem);
 }
 /* The summary and both views share one responsive inset, including narrow splits. */
 .files-contents-header, .files-listing { --files-content-gutter: 1.5rem; }
@@ -14,8 +12,19 @@
 /* A marquee temporarily owns its descendants, including filename select-text overrides. */
 .files-listing[data-file-marquee-active],
 .files-listing[data-file-marquee-active] * { -webkit-user-select: none; user-select: none; }
-/* Grow useful name space without sending metadata to the far edge of wide panes. */
+/* Fixed columns scroll together; the virtual viewport keeps its vertical scrollbar visible. */
 .files-list-columns { grid-template-columns: var(--files-list-columns); }
+.files-list-heading-viewport > .files-list-columns { min-width: var(--files-list-width); }
+/* Fixed artwork scales down only when a pane cannot fit its selected zoom size. */
+.files-grid-artwork { width: min(100%, var(--files-grid-icon-size)); aspect-ratio: 1; }
+.files-grid-artwork > *, .files-grid-artwork :is(svg, img) { width: 100% !important; height: 100% !important; }
+/* Larger native targets are scoped to Files, including the horizontal list scrollbar. */
+.files-listing [role="presentation"] { scrollbar-width: auto; }
+.files-listing [role="presentation"]::-webkit-scrollbar { width: 10px; height: 10px; }
+.files-column-resizer { position: absolute; inset-block: 0; inset-inline-end: 0; width: 10px; cursor: col-resize; touch-action: none; user-select: none; }
+.files-column-resizer::after { content: ''; position: absolute; inset-block: 5px; inset-inline-end: 1px; width: 1px; background: var(--color-app-border); }
+.files-column-resizer:hover::after, .files-column-resizer:focus-visible::after { background: var(--color-app-accent); }
+.files-column-resizer:focus-visible { outline: 1px solid var(--color-control-focus); outline-offset: -1px; }
 /* Name aligns after the 24px selection target, icon, two 8px gaps and 8px cell inset. */
 .files-name-heading { padding-left: calc(var(--files-list-icon-width) + 3rem); }
 .files-summary-main { display: flex; align-items: center; }
@@ -40,9 +49,8 @@
   border-color: var(--color-app-accent);
   color: var(--files-selection-foreground, var(--color-foreground-on-accent, #ffffff));
 }
-/* Auto-focus keeps shortcuts ready; only subsequent user focus/input reveals its indicator. */
-.files-manager:not([data-files-quiet-focus]) .files-selection:focus-visible:not([aria-activedescendant]) { border-radius: 0.375rem; box-shadow: inset 0 0 0 1px var(--color-control-focus, var(--color-app-accent)); }
-.files-manager:not([data-files-quiet-focus]) .files-selection:focus-visible .files-option[data-focused] { box-shadow: inset 0 0 0 2px var(--color-control-focus, var(--color-app-accent)); }
+/* Keyboard focus marks only the active item, never the whole listing surface. */
+.files-manager:not([data-files-quiet-focus]) .files-selection:focus-visible .files-option[data-focused] { box-shadow: inset 0 0 0 1px var(--color-control-focus, var(--color-app-accent)); }
 
 .files-list-option[aria-selected="true"] { box-shadow: inset 2px 0 var(--color-app-accent); }
 @container files-content (max-width: 620px) {
@@ -69,27 +77,13 @@
   .files-query-editor .files-action-trigger { max-width: 100%; }
 }
 
-/* One measured tier for headings and rows; freeze discrete changes during drawer motion. */
-.files-listing[data-file-list-layout]:not([data-file-list-layout="all"]) .files-list-columns {
-  grid-template-columns: minmax(0, min(var(--files-name-limit), calc(100% - 14rem - var(--files-type-width, 0rem)))) 5rem 9rem var(--files-type-track,);
-}
-.files-listing[data-file-list-layout]:not([data-file-list-layout="all"]) .files-list-column-owner { display: none; }
-.files-listing:is([data-file-list-layout="modified"], [data-file-list-layout="size"], [data-file-list-layout="name"]) .files-list-columns {
-  grid-template-columns: minmax(0, min(var(--files-name-limit), calc(100% - 14rem))) 5rem 9rem;
-}
-.files-listing:is([data-file-list-layout="modified"], [data-file-list-layout="size"], [data-file-list-layout="name"]) .files-list-column-type { display: none; }
-.files-listing:is([data-file-list-layout="size"], [data-file-list-layout="name"]) .files-list-columns { grid-template-columns: minmax(0, 1fr) 5rem; }
-.files-listing:is([data-file-list-layout="size"], [data-file-list-layout="name"]) .files-list-column-modified { display: none; }
-.files-listing[data-file-list-layout="name"] .files-list-columns { grid-template-columns: minmax(0, 1fr); }
-.files-listing[data-file-list-layout="name"] .files-list-column-size { display: none; }
-
 @media (forced-colors: active) {
   .files-path-bar button:focus-visible { outline: 1px solid Highlight; outline-offset: -1px; }
   .files-path-completions [role="option"][aria-selected="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .files-selection-box { background-color: Canvas; border-color: CanvasText; color: CanvasText; }
   .files-option[aria-selected="true"] .files-selection-box { background-color: Highlight; border-color: Highlight; color: HighlightText; forced-color-adjust: none; }
   .files-option[aria-selected="true"] { outline: 1px solid Highlight; outline-offset: -1px; }
-  .files-manager:not([data-files-quiet-focus]) .files-selection:focus-visible .files-option[data-focused] { outline: 2px solid CanvasText; outline-offset: -2px; }
+  .files-manager:not([data-files-quiet-focus]) .files-selection:focus-visible .files-option[data-focused] { outline: 1px solid CanvasText; outline-offset: -1px; }
 }
 @media (pointer: coarse) {
   .files-place-remove { opacity: 1; }

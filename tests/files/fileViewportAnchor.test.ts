@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 
-import { fileListLayoutForWidth } from '../../src/components/file-manager/fileListPresentation';
 import {
     captureFileViewportAnchor as capture,
     fileViewportAnchorTop as restore,
@@ -38,16 +37,3 @@ assert.equal(
     'visible next row may start below the top edge',
 );
 console.log('File viewport anchor tests passed (identity, offset, reversal, removal, boundaries).');
-for (const [width, tier] of [
-    [300, 'name'],
-    [301, 'size'],
-    [480, 'size'],
-    [481, 'modified'],
-    [800, 'modified'],
-    [801, 'type'],
-    [1000, 'type'],
-    [1001, 'all'],
-] as const) {
-    assert.equal(fileListLayoutForWidth(width), tier);
-}
-console.log('File list layout boundary tests passed.');

@@ -7,10 +7,10 @@ const source = fs.readFileSync(
     'utf8',
 );
 const connectionErrorHandler = source.match(
-    /const handleConnectionError = useCallback\([\s\S]*?\}, \[instanceId\]\);/,
+    /const handleConnectionError = useCallback\([\s\S]*?\},\s*\[\s*instanceId\s*,?\s*\],?\s*\);/,
 )?.[0];
 const saveHandler = source.match(
-    /const handleSaveFile = useCallback\([\s\S]*?\}, \[editingFile, editingFileTarget, handleConnectionError\]\);/,
+    /const handleSaveFile = useCallback\([\s\S]*?\},\s*\[\s*editingFile,\s*editingFileTarget,\s*handleConnectionError\s*,?\s*\],?\s*\);/,
 )?.[0];
 
 assert.ok(connectionErrorHandler, 'connection error handler must exist');

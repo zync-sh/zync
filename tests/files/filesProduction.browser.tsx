@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import builtinIconCatalog from '../../plugin-api/builtin-icon-themes.json';
+import { FILE_LIST_LAYOUT_STORAGE_KEY } from '../../src/components/file-manager/fileListPresentation';
 import type { FileEntry } from '../../src/components/file-manager/types';
 import { SidebarChrome, SidebarContent } from '../../src/components/layout/sidebar/SidebarChrome';
 import { LayoutMotionScope } from '../../src/components/ui/LayoutMotion';
@@ -80,6 +81,14 @@ for (const [key, value] of Object.entries({
     document.documentElement.style.setProperty(key, value);
 }
 const calls: string[] = [];
+const layoutWrites: string[] = [];
+const saveLocal = Storage.prototype.setItem;
+Storage.prototype.setItem = function (key: string, value: string) {
+    if (key === FILE_LIST_LAYOUT_STORAGE_KEY) {
+        layoutWrites.push(value);
+    }
+    return saveLocal.call(this, key, value);
+};
 const folderSizeTests = new URLSearchParams(location.search).get('folderSizes') === '1';
 const folderSizes = createFolderSizeFixture(folderSizeTests);
 if (folderSizeTests) {
@@ -122,6 +131,7 @@ if (editorTests) {
 }
 const MATERIAL_ICON_THEME_ID = iconPlugins.find((plugin) => plugin.manifest.iconTheme)!.manifest.id;
 let reloadIconPlugins: (() => Promise<boolean>) | undefined;
+let remountFiles: (() => void) | undefined;
 let setSurfaceActive: ((active: boolean) => void) | undefined;
 let failNextListing: string | null = null;
 let deferNextFolderRead = false;
@@ -319,9 +329,11 @@ const filesUiTest = {
     editor: editorTests ? permissionFixture.control : undefined,
     calls,
     settingsWrites,
+    layoutWrites,
     listingReads,
     pluginCalls,
     surfaceActive: (active: boolean) => setSurfaceActive?.(active),
+    remount: () => remountFiles?.(),
     iconPluginEnabled: async (id: string, enabled: boolean) => {
         iconPlugins = iconPlugins.map((plugin) =>
             plugin.manifest.id === id ? { ...plugin, enabled } : plugin,
@@ -375,6 +387,21 @@ const filesUiTest = {
             files: {
                 [host]: Array.from({ length: count }, (_, i) =>
                     entry(`file-${String(i).padStart(4, '0')}.ts`),
+                ),
+            },
+        }),
+    gridAlignmentFiles: (count: number) =>
+        useAppStore.setState({
+            files: {
+                [host]: Array.from({ length: count }, (_, index) =>
+                    entry(
+                        index === 0
+                            ? 'antigravity-server'
+                            : index % 3 === 0
+                              ? `folder-${index}-with-a-long-name`
+                              : `file-${index}-with-a-long-name.ts`,
+                        index % 3 === 0 ? 'd' : '-',
+                    ),
                 ),
             },
         }),
@@ -457,10 +484,13 @@ const root = createRoot(document.getElementById('root')!);
 /** Keep a real Files instance mounted when its workspace surface is hidden. */
 function StandaloneFilesPreview() {
     const [active, setActive] = useState(true);
+    const [generation, setGeneration] = useState(0);
     useEffect(() => {
+        remountFiles = () => setGeneration((value) => value + 1);
         setSurfaceActive = setActive;
         return () => {
             setSurfaceActive = undefined;
+            remountFiles = undefined;
         };
     }, []);
     return (
@@ -470,6 +500,7 @@ function StandaloneFilesPreview() {
                 style={{ display: active ? 'flex' : 'none' }}
             >
                 <FileManager
+                    key={generation}
                     connectionId={transferSafety ? undefined : host}
                     surface="pane"
                     active={active}

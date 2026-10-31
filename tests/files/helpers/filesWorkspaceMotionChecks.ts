@@ -35,13 +35,22 @@ async function sampleMotion(page: Page, listing: Locator, action: () => Promise<
                         .closest<HTMLElement>('.files-manager')!
                         .querySelector<HTMLElement>('[data-file-layout-moving]')!,
                 ),
-                listLayout: el
+                listTracks: el
                     .closest<HTMLElement>('.files-manager')!
-                    .querySelector<HTMLElement>('[data-file-list-layout]')?.dataset.fileListLayout,
+                    .querySelector<HTMLElement>('.files-list-columns')
+                    ? getComputedStyle(
+                          el
+                              .closest<HTMLElement>('.files-manager')!
+                              .querySelector<HTMLElement>('.files-list-columns')!,
+                      ).gridTemplateColumns
+                    : undefined,
                 columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
                 width: bounds.width,
                 scrollTop: viewport.scrollTop,
                 contentAnimations: animations.length,
+                inlineOffset: options[0]
+                    ? options[0].parentElement!.getBoundingClientRect().left - bounds.left
+                    : 0,
                 tiles: options
                     .filter((node) => {
                         const box = node.getBoundingClientRect();
@@ -274,23 +283,18 @@ export async function runFilesWorkspaceMotionChecks({
     await button('Collapse main sidebar').click();
     await page.setViewportSize({ width: 1100, height: 600 });
     await page.getByRole('button', { name: 'List view', exact: true }).click();
-    await page.waitForFunction(
-        () =>
-            document.querySelector<HTMLElement>('[data-file-list-layout]')?.dataset
-                .fileListLayout === 'type',
-    );
+    const fixedTracks = await page
+        .locator('.files-list-columns')
+        .first()
+        .evaluate((el) => getComputedStyle(el).gridTemplateColumns);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     const listFrames = await sampleMotion(page, listing, () =>
         button('Expand main sidebar').click(),
     );
-    const tierChanges = listFrames.filter(
-        (frame, index) => index > 0 && frame.listLayout !== listFrames[index - 1].listLayout,
-    );
     check(
-        'List metadata uses inherited motion and changes tier only once at completion',
+        'List columns retain fixed positions throughout inherited sidebar motion',
         listFrames.some((frame) => frame.moving) &&
-            tierChanges.length === 1 &&
-            listFrames.at(-1)!.listLayout === 'modified',
+            listFrames.every((frame) => frame.listTracks === fixedTracks),
     );
     await button('Collapse main sidebar').click();
     await settle(page);
