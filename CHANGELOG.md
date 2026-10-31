@@ -90,6 +90,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Fixed
 
+- **Ghost reconnect behavior:** Keep captured autocomplete requests on their
+  current SSH transport instead of starting a reconnect they cannot adopt. ([8c71793c])
+- **Dashboard Quick Actions:** Route background commands with the selected
+  connection ID for both local and remote dashboards. ([de076f65])
+
 - **Windows path-completion crash:** Prevent oversized async state from exhausting
   native debug IPC stack frames. Filesystem and reconnect work remain lazy, with
   unchanged stack limits, timeouts and cancellation behavior. ([fafa1575])
@@ -3329,3 +3334,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [8ed5d09d]: https://github.com/zync-sh/zync/commit/8ed5d09dcdc9940bb2020e04693d22eba1da8139
 [caa4fe00]: https://github.com/zync-sh/zync/commit/caa4fe00582b98aa91832f81cf6417cddf5894f6
 [4d79ba0f]: https://github.com/zync-sh/zync/commit/4d79ba0fc3721baeb65737ee54b9f568a84ffb85
+[8c71793c]: https://github.com/zync-sh/zync/commit/8c71793c43b489cc3b4957c8445be917a83fd8fc
+[de076f65]: https://github.com/zync-sh/zync/commit/de076f65a8cb9280b842df6e5ce56abc2ff4e6ff
