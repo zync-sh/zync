@@ -12,6 +12,15 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Vault list rendering:** Isolate credential row painting to reduce offscreen
+  rendering work while retaining native scrolling and all row actions. ([718dc895])
+
+- **Vault refresh performance:** Coalesce overlapping status and item refreshes
+  while preserving a fresh follow-up for later requests. Lock, reset and vault
+  changes fence obsolete responses without retaining additional decrypted data.
+  Item reads invalidated by mutations wait for completion and retry before
+  callers settle, preserving fresh read errors when the vault is unavailable. ([abb99367])
+
 - **Ghost performance for large input:** Bound suggestion tracking and Ghost
   history to 8 KiB per command, skip oversized inference before IPC and parsing,
   and reuse unchanged line measurements. Complete pasted text still reaches the
@@ -3355,3 +3364,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [de076f65]: https://github.com/zync-sh/zync/commit/de076f65a8cb9280b842df6e5ce56abc2ff4e6ff
 [93a8245f]: https://github.com/zync-sh/zync/commit/93a8245fc1a9602be68684b67ed87d279c69f391
 [4b097fb5]: https://github.com/zync-sh/zync/commit/4b097fb56e023e3b8f20d6dcbaaf6fc4bf7d376a
+[abb99367]: https://github.com/zync-sh/zync/commit/abb9936791b40b1bc1f09f2cee8b3cd1d0be8736
+[718dc895]: https://github.com/zync-sh/zync/commit/718dc89582953a47902f44695d78beaa5b39d004
