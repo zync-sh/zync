@@ -12,6 +12,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Ghost performance for large input:** Bound suggestion tracking and Ghost
+  history to 8 KiB per command, skip oversized inference before IPC and parsing,
+  and reuse unchanged line measurements. Complete pasted text still reaches the
+  terminal; ordinary suggestions resume after a line reset. ([4b097fb5])
+
 - **Terminal input flow control:** Send complete pastes in ordered, acknowledged
   packets and bound native delivery buffers. Queued input cannot reach a
   replacement shell; interrupted delivery reports uncertainty without replaying
@@ -3349,3 +3354,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [8c71793c]: https://github.com/zync-sh/zync/commit/8c71793c43b489cc3b4957c8445be917a83fd8fc
 [de076f65]: https://github.com/zync-sh/zync/commit/de076f65a8cb9280b842df6e5ce56abc2ff4e6ff
 [93a8245f]: https://github.com/zync-sh/zync/commit/93a8245fc1a9602be68684b67ed87d279c69f391
+[4b097fb5]: https://github.com/zync-sh/zync/commit/4b097fb56e023e3b8f20d6dcbaaf6fc4bf7d376a
