@@ -12,6 +12,18 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Terminal input flow control:** Send complete pastes in ordered, acknowledged
+  packets and bound native delivery buffers. Queued input cannot reach a
+  replacement shell; interrupted delivery reports uncertainty without replaying
+  commands. No paste-size limit is added. ([93a8245f])
+
+- **Terminal paste and resize correctness:** Preserve leading Unicode BOM
+  characters, coalesce resize requests until acknowledged, and bind them to the
+  current shell. Input synchronizes pending terminal geometry, including during
+  divider dragging; SSH resize stalls no longer block output or discard the
+  final requested size. SSH sender shutdown preserves queued final output and
+  exit status, avoiding false connection-loss events when only one pane closes. ([93a8245f])
+
 - **Ghost cache memory:** Release expired directory listings during idle and bound
   retained cache payloads. Oversized listings still return complete suggestions
   and share acquisition between callers already waiting for the same directory. ([4d79ba0f])
@@ -3336,3 +3348,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [4d79ba0f]: https://github.com/zync-sh/zync/commit/4d79ba0fc3721baeb65737ee54b9f568a84ffb85
 [8c71793c]: https://github.com/zync-sh/zync/commit/8c71793c43b489cc3b4957c8445be917a83fd8fc
 [de076f65]: https://github.com/zync-sh/zync/commit/de076f65a8cb9280b842df6e5ce56abc2ff4e6ff
+[93a8245f]: https://github.com/zync-sh/zync/commit/93a8245fc1a9602be68684b67ed87d279c69f391
