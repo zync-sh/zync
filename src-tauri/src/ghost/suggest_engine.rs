@@ -6,12 +6,13 @@ use crate::ghost::manager::GhostManager;
 use crate::ghost::path_suggest::{
     path_suggestion, shell_id_indicates_wsl, uses_windows_paths, PathSuggestParams, PathSuggestion,
 };
-use crate::ghost::suffix::{normalize_suggestion_suffix, normalize_suggestion_suffix_with_reason};
+use crate::ghost::suffix::normalize_suggestion_suffix_with_reason;
 use crate::ghost::suggest_types::{GhostSuggestV2Request, GhostSuggestV2Response};
 use crate::ghost::token::{
     has_active_path_argument, has_unmatched_quote_on_active_token, is_bare_directory_listing_line,
     should_prefer_path_suggestion, should_use_ghost_for_line,
 };
+use crate::ghost::types::{ghost_input_within_budget, MAX_GHOST_COMMAND_BYTES};
 
 const HISTORY_CONFIDENCE: f32 = 0.72;
 const PATH_CONFIDENCE: f32 = 0.84;
@@ -48,6 +49,7 @@ pub async fn suggest_v2(
     .await
 }
 
+/// Reject oversized lines before shell parsing, history ranking or polling filesystem work.
 async fn suggest_with_path_provider(
     request: &GhostSuggestV2Request,
     manager: &GhostManager,
@@ -55,6 +57,9 @@ async fn suggest_with_path_provider(
     path: impl Future<Output = PathSuggestion>,
 ) -> GhostSuggestV2Response {
     let line = &request.prefix;
+    if !ghost_input_within_budget(line) {
+        return GhostSuggestV2Response::empty("input_too_long");
+    }
     if !should_use_ghost_for_line(line) {
         return GhostSuggestV2Response::empty("no_command");
     }
@@ -117,6 +122,7 @@ async fn suggest_with_path_provider(
     GhostSuggestV2Response::empty("no_match")
 }
 
+/// Bound provider suffixes before normalization/debug copies and the final complete command before IPC.
 fn hit_normalized(
     line: &str,
     raw_suffix: &str,
@@ -124,8 +130,14 @@ fn hit_normalized(
     source: &str,
     debug: bool,
 ) -> GhostSuggestV2Response {
+    if !ghost_input_within_budget(raw_suffix) {
+        return GhostSuggestV2Response::empty("input_too_long");
+    }
+    let normalized = normalize_suggestion_suffix_with_reason(line, raw_suffix);
+    if line.len().saturating_add(normalized.suffix.len()) > *MAX_GHOST_COMMAND_BYTES {
+        return GhostSuggestV2Response::empty("input_too_long");
+    }
     if debug {
-        let normalized = normalize_suggestion_suffix_with_reason(line, raw_suffix);
         GhostSuggestV2Response::hit_with_debug(
             normalized.suffix,
             confidence,
@@ -133,7 +145,7 @@ fn hit_normalized(
             Some(format!("{}:{}", source, normalized.spacing_reason)),
         )
     } else {
-        GhostSuggestV2Response::hit(normalize_suggestion_suffix(line, raw_suffix), confidence)
+        GhostSuggestV2Response::hit(normalized.suffix, confidence)
     }
 }
 
@@ -182,6 +194,44 @@ mod tests {
             recent_commands: None,
             providers: Default::default(),
             debug: Some(true),
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_lines_never_poll_filesystem_or_rank_history() {
+        let dir = test_dir("input-budget");
+        let mgr = GhostManager::new(&dir);
+        for prefix in [
+            format!("cat {}", "x".repeat(*MAX_GHOST_COMMAND_BYTES)),
+            format!("echo {}", "界".repeat(*MAX_GHOST_COMMAND_BYTES / 3)),
+        ] {
+            let result = suggest_with_path_provider(&request(&prefix), &mgr, false, async {
+                panic!("oversized input must not poll the path provider");
+            })
+            .await;
+            assert!(result.suffix.is_empty());
+            assert_eq!(result.suppress_reason.as_deref(), Some("input_too_long"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn normalized_completions_are_bounded_with_and_without_debug() {
+        for debug in [false, true] {
+            for suffix in [
+                "x".repeat(*MAX_GHOST_COMMAND_BYTES),
+                "界".repeat(*MAX_GHOST_COMMAND_BYTES),
+            ] {
+                let result = hit_normalized("echo ", &suffix, 1.0, "fixture", debug);
+                assert!(result.suffix.is_empty());
+                assert!(result.raw_suffix.is_none());
+                assert_eq!(result.suppress_reason.as_deref(), Some("input_too_long"));
+            }
+            let boundary = "x".repeat(*MAX_GHOST_COMMAND_BYTES - 5);
+            assert_eq!(
+                hit_normalized("echo ", &boundary, 1.0, "fixture", debug).suffix,
+                boundary
+            );
         }
     }
 

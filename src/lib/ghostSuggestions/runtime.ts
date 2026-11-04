@@ -83,7 +83,7 @@ export function bindGhostTrackerRuntime({
                 return;
             }
             tracker.setSuggestion(suffix);
-            onSuggestion(suffix, request.line);
+            onSuggestion(tracker.getSuggestion(), request.line);
         } catch {
             // A rejected provider or publication callback cannot strand the next request.
         } finally {

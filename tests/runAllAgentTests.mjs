@@ -80,6 +80,7 @@ const tests = [
     'tests/terminalOutputFlow.test.mjs',
     'tests/terminalRendererLifecycle.test.mjs',
     '.tmp-agent-tests/tests/ghost/ghostCwdSafety.test.js',
+    '.tmp-agent-tests/tests/ghost/ghostInputBudget.test.js',
     'tests/ghostPromptSafety.test.mjs',
     '.tmp-agent-tests/tests/files/folderSizes.test.js',
     '.tmp-agent-tests/tests/files/filePermissions.test.js',
@@ -301,6 +302,7 @@ const selectedTests = browserRun
         ? tests.filter(
               (file) =>
                   file.startsWith('.tmp-agent-tests/tests/ghost/') ||
+                  file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
                   file === 'tests/ghostPromptSafety.test.mjs' ||
                   file === 'tests/terminalShellContext.test.mjs',
           )

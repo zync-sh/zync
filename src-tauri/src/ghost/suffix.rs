@@ -14,6 +14,7 @@ pub struct NormalizedSuffix {
 ///
 /// Normalize only strips a duplicate leading space when the line already ends
 /// with whitespace. It never invents a leading space (that caused `ls blk`).
+#[cfg(test)]
 pub fn normalize_suggestion_suffix(line: &str, suffix: &str) -> String {
     normalize_suggestion_suffix_with_reason(line, suffix).suffix
 }

@@ -2,8 +2,8 @@ use crate::ghost::context::RankingContext;
 use crate::ghost::parser::extract_search_prefix;
 use crate::ghost::ranking::{best_suffix_for_prefix, ranked_candidates_for_prefix};
 use crate::ghost::types::{
-    FrecencyEntry, GhostData, LegacyGhostData, ScopeHistory, MAX_HISTORY, MIN_PREFIX_LEN,
-    SAVE_INTERVAL,
+    ghost_input_within_budget, FrecencyEntry, GhostData, LegacyGhostData, ScopeHistory,
+    MAX_HISTORY, MIN_PREFIX_LEN, SAVE_INTERVAL,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ impl GhostManager {
     pub fn new(data_dir: &PathBuf) -> Self {
         let persist_path = data_dir.join("ghost_history.json");
 
-        let data = std::fs::read_to_string(&persist_path)
+        let mut data = std::fs::read_to_string(&persist_path)
             .ok()
             .and_then(|s| {
                 serde_json::from_str::<GhostData>(&s).ok().or_else(|| {
@@ -45,6 +45,16 @@ impl GhostManager {
                 })
             })
             .unwrap_or_default();
+
+        // Older versions could persist oversized commands and score keys. Release
+        // them before ranking or cloning snapshots; persist cleanup on the next save.
+        for scope in data.scopes.values_mut() {
+            scope
+                .history
+                .retain(|command| ghost_input_within_budget(command));
+            scope.history.truncate(MAX_HISTORY);
+            Self::prune_evicted_scores(scope);
+        }
 
         Self {
             data: Mutex::new(data),
@@ -108,6 +118,9 @@ impl GhostManager {
 
     /// Add `command` to history and bump its frecency score.
     pub async fn commit(&self, command: String, scope: Option<&str>) {
+        if !ghost_input_within_budget(&command) {
+            return;
+        }
         let trimmed = command.trim().to_string();
         if trimmed.len() < MIN_PREFIX_LEN {
             return;
@@ -169,12 +182,16 @@ impl GhostManager {
             .await
     }
 
+    /// Rank only bounded prefixes before parsing or acquiring history state.
     pub async fn suggest_with_context(
         &self,
         prefix: String,
         scope: Option<&str>,
         context: RankingContext<'_>,
     ) -> Option<String> {
+        if !ghost_input_within_budget(&prefix) {
+            return None;
+        }
         let Some(trimmed_prefix) = extract_search_prefix(&prefix) else {
             return None;
         };
@@ -197,6 +214,9 @@ impl GhostManager {
     /// Called when the user explicitly accepts a suggestion (Tab / →).
     /// Gives an extra frecency bump and saves immediately.
     pub async fn accept(&self, command: String, scope: Option<&str>) {
+        if !ghost_input_within_budget(&command) {
+            return;
+        }
         let trimmed = command.trim().to_string();
         if trimmed.len() < MIN_PREFIX_LEN {
             return;
@@ -252,6 +272,9 @@ impl GhostManager {
 
         // Oldest first so newer file entries end up closer to index 0.
         for cmd in commands.iter().rev() {
+            if !ghost_input_within_budget(cmd) {
+                continue;
+            }
             let trimmed = cmd.trim().to_string();
             if trimmed.len() < MIN_PREFIX_LEN
                 || !crate::ghost::token::history_entry_safe_to_store(&trimmed)
@@ -288,12 +311,16 @@ impl GhostManager {
         imported
     }
 
+    /// Bound candidate prefixes before shell parsing and history ranking.
     pub async fn candidates(
         &self,
         prefix: String,
         scope: Option<&str>,
         limit: usize,
     ) -> Vec<String> {
+        if !ghost_input_within_budget(&prefix) {
+            return Vec::new();
+        }
         let Some(trimmed_prefix) = extract_search_prefix(&prefix) else {
             return Vec::new();
         };
@@ -338,6 +365,112 @@ mod tests {
         p.push(format!("zync-ghost-test-{}-{}", name, std::process::id()));
         let _ = std::fs::create_dir_all(&p);
         p
+    }
+
+    #[tokio::test]
+    async fn command_budget_applies_to_commit_accept_seed_and_prefixes() {
+        use crate::ghost::types::MAX_GHOST_COMMAND_BYTES;
+        let dir = test_dir("command-byte-budget");
+        let mgr = GhostManager::new(&dir);
+        let boundary = format!("echo {}", "x".repeat(*MAX_GHOST_COMMAND_BYTES - 5));
+        let oversized = format!("echo {}", "界".repeat(*MAX_GHOST_COMMAND_BYTES / 3));
+        for command in [format!("{boundary}x"), oversized] {
+            mgr.commit(command.clone(), Some("rejected")).await;
+            mgr.accept(command.clone(), Some("rejected")).await;
+            assert!(!mgr.data.lock().await.scopes.contains_key("rejected"));
+            // A rejected lookup must not wait for history state, let alone parse it.
+            let _guard = mgr.data.lock().await;
+            let suggestion = mgr.suggest(command.clone(), Some("local"));
+            tokio::pin!(suggestion);
+            assert!(matches!(
+                futures_util::poll!(&mut suggestion),
+                std::task::Poll::Ready(None)
+            ));
+            let candidates = mgr.candidates(command, Some("local"), 12);
+            tokio::pin!(candidates);
+            assert!(
+                matches!(futures_util::poll!(&mut candidates), std::task::Poll::Ready(candidates) if candidates.is_empty())
+            );
+        }
+        mgr.commit(boundary.clone(), Some("local")).await;
+        mgr.accept(boundary.clone(), Some("local")).await;
+        assert_eq!(
+            mgr.data.lock().await.scopes["local"].history,
+            vec![boundary.clone()]
+        );
+        assert_eq!(
+            mgr.suggest("echo ".into(), Some("local"))
+                .await
+                .unwrap()
+                .len(),
+            boundary.len() - 5
+        );
+        assert_eq!(
+            mgr.seed_shell_history(
+                Some("imported"),
+                &[format!("{boundary}x"), "git status".into()]
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            mgr.data.lock().await.scopes["imported"].history,
+            vec!["git status"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn persisted_current_and_legacy_history_release_oversized_commands_and_score_keys() {
+        use crate::ghost::types::{
+            FrecencyEntry, GhostData, ScopeHistory, MAX_GHOST_COMMAND_BYTES,
+        };
+        for legacy in [false, true] {
+            let dir = test_dir(if legacy {
+                "budget-load-legacy"
+            } else {
+                "budget-load-current"
+            });
+            let oversized = format!("echo {}", "x".repeat(*MAX_GHOST_COMMAND_BYTES));
+            let scope = ScopeHistory {
+                history: vec![oversized.clone(), "git status".into()],
+                scores: [oversized, "git status".into(), "orphaned score".into()]
+                    .into_iter()
+                    .map(|command| (command, FrecencyEntry::new_with_bump()))
+                    .collect(),
+            };
+            let json = if legacy {
+                serde_json::json!({"history": scope.history, "scores": scope.scores})
+            } else {
+                serde_json::to_value(GhostData {
+                    scopes: [("local".into(), scope)].into_iter().collect(),
+                    ..Default::default()
+                })
+                .unwrap()
+            };
+            std::fs::write(
+                dir.join("ghost_history.json"),
+                serde_json::to_vec(&json).unwrap(),
+            )
+            .unwrap();
+            let mgr = GhostManager::new(&dir);
+            {
+                let data = mgr.data.lock().await;
+                assert_eq!(data.scopes["local"].history, vec!["git status"]);
+                assert_eq!(data.scopes["local"].scores.len(), 1);
+            }
+            assert_eq!(
+                mgr.suggest("git st".into(), Some("local")).await,
+                Some("atus".into())
+            );
+            mgr.accept("git status".into(), Some("local")).await;
+            let saved: GhostData =
+                serde_json::from_slice(&std::fs::read(dir.join("ghost_history.json")).unwrap())
+                    .unwrap();
+            assert_eq!(saved.scopes["local"].history, vec!["git status"]);
+            assert_eq!(saved.scopes["local"].scores.len(), 1);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     #[tokio::test]

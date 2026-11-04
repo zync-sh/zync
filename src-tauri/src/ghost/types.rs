@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Score decays by 50% every 72 hours.
@@ -10,6 +11,19 @@ pub const MAX_HISTORY: usize = 1_000;
 pub const SAVE_INTERVAL: u32 = 5;
 /// Minimum prefix length before we attempt a suggestion.
 pub const MIN_PREFIX_LEN: usize = 1;
+
+/// Shared Ghost-only command budget; terminal delivery is never truncated by this policy.
+pub static MAX_GHOST_COMMAND_BYTES: LazyLock<usize> = LazyLock::new(|| {
+    serde_json::from_str(include_str!(
+        "../../../src/lib/ghostSuggestions/inputBudgetBytes.json"
+    ))
+    .expect("bundled Ghost command byte budget must be valid")
+});
+
+/// Native strings are already UTF-8, so budget admission needs no scan or encoded copy.
+pub fn ghost_input_within_budget(text: &str) -> bool {
+    text.len() <= *MAX_GHOST_COMMAND_BYTES
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrecencyEntry {
