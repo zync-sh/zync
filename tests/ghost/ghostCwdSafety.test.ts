@@ -92,6 +92,7 @@ try {
         'pushd elsewhere',
     ]) {
         queueTerminalInput(sessionId, `${command}\r`);
+        await new Promise<void>((resolve) => setImmediate(resolve));
         equal(
             getTerminalGhostCwd(sessionId),
             undefined,
@@ -127,7 +128,12 @@ try {
         '/prompt-before-ready',
         'ready cannot overwrite an earlier live prompt',
     );
-    equal(invoked.length, 0, 'ready does not seed PTY CWD from separate WSL or SFTP processes');
+    equal(
+        invoked.filter((command) => !['terminal:write', 'terminal:resize'].includes(command))
+            .length,
+        0,
+        'ready does not seed PTY CWD from separate WSL or SFTP processes',
+    );
     entry.starting = true;
     const commandEpoch = entry.ghostCommandEpoch;
     queueTerminalInput(sessionId, 'cd waiting-for-ready\r');
@@ -138,6 +144,7 @@ try {
     );
     confirmTerminalGhostCwd(sessionId, '/prompt-while-starting', 2);
     handleTerminalReady(sessionId, 2);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     equal(
         entry.ghostCommandEpoch,
         (commandEpoch ?? 0) + 1,

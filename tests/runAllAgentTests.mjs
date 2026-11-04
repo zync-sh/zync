@@ -50,11 +50,11 @@ function normalizeEmittedImports(directory) {
 const [feature, ...testArguments] = process.argv.slice(2);
 const browserRun = feature === 'files' && testArguments[0] === '--browser';
 if (
-    (feature && feature !== 'files' && feature !== 'ghost') ||
+    (feature && feature !== 'files' && feature !== 'ghost' && feature !== 'terminal') ||
     (testArguments.length > 0 && !browserRun)
 ) {
     console.error(
-        'Usage: node tests/runAllAgentTests.mjs [files [--browser [browser flags]] | ghost]',
+        'Usage: node tests/runAllAgentTests.mjs [files [--browser [browser flags]] | ghost | terminal]',
     );
     process.exit(1);
 }
@@ -255,7 +255,7 @@ const tests = [
     'tests/terminalRendererController.test.mjs',
     'tests/terminalRendererDiagnostics.test.mjs',
     '.tmp-agent-tests/tests/terminal/terminalRendererSetup.test.js',
-    'tests/terminalInputPipeline.test.mjs',
+    '.tmp-agent-tests/tests/terminal/terminalInputPipeline.test.js',
     'tests/terminalInputQueue.test.mjs',
     'tests/terminalPtyLifecycle.test.mjs',
     'tests/terminalPtyKeyTranslations.test.mjs',
@@ -263,11 +263,19 @@ const tests = [
     'tests/terminalReconnectFlow.test.mjs',
     'tests/terminalSpawnContext.test.mjs',
     'tests/terminalLazyPty.test.mjs',
+    'tests/terminalIdlePty.test.mjs',
+    'tests/terminalIdleHostSuspend.test.mjs',
+    'tests/terminalActivity.test.mjs',
+    'tests/terminalLifecycleListeners.test.mjs',
+    'tests/terminalIdleSuspendNotice.test.mjs',
+    'tests/terminalXtermOptions.test.mjs',
+    'tests/terminalTabClose.test.mjs',
+    'tests/terminalScrollbackPreserve.test.mjs',
     'tests/terminalConnectionWakeup.test.mjs',
-    'tests/terminalLifecycleIntegration.test.mjs',
+    '.tmp-agent-tests/tests/terminal/terminalLifecycleIntegration.test.js',
     'tests/terminalOutputPayload.test.mjs',
     'tests/terminalPanelRestore.test.mjs',
-    'tests/terminalResizeSync.test.mjs',
+    '.tmp-agent-tests/tests/terminal/terminalResizeSync.test.js',
     'tests/terminalFit.test.mjs',
     'tests/terminalReconnectReset.test.mjs',
     'tests/sidebarSubmit.test.mjs',
@@ -296,14 +304,20 @@ const selectedTests = browserRun
                   file === 'tests/ghostPromptSafety.test.mjs' ||
                   file === 'tests/terminalShellContext.test.mjs',
           )
-        : tests;
+        : feature === 'terminal'
+          ? tests.filter(
+                (file) =>
+                    file.startsWith('tests/terminal') ||
+                    file.startsWith('.tmp-agent-tests/tests/terminal/'),
+            )
+          : tests;
 
 for (const file of selectedTests) {
     const args = file.startsWith('tests/terminal')
         ? [
               '--input-type=module',
               '--eval',
-              `globalThis.window={ipcRenderer:{invoke:async()=>undefined,send:()=>{},on:()=>()=>{}},dispatchEvent:()=>true};await import(${JSON.stringify(pathToFileURL(path.resolve(file)).href)})`,
+              `globalThis.window={ipcRenderer:{invoke:async()=>undefined,send:()=>{},on:()=>()=>{}},dispatchEvent:()=>true};globalThis.document={body:{getAttribute:()=> 'dark'}};await import(${JSON.stringify(pathToFileURL(path.resolve(file)).href)})`,
           ]
         : [file, ...(browserRun ? testArguments.slice(1) : [])];
     const result = spawnSync(process.execPath, args, { stdio: 'inherit' });

@@ -2200,28 +2200,44 @@ pub async fn terminal_output_failed(
 }
 
 #[tauri::command]
+/// Acknowledges writer completion for an installed owner, rejecting input from replaced sessions.
 pub async fn terminal_write(
     term_id: String,
     data: String,
+    generation: Option<u32>,
+    channel_id: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let owner = match (generation, channel_id) {
+        (Some(generation), Some(channel_id)) => Some((generation, channel_id)),
+        (None, None) => None,
+        _ => return Err("Terminal input owner is incomplete".into()),
+    };
     state
         .pty_manager
-        .write(&term_id, &data)
+        .write_for_owner(&term_id, &data, owner)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
+/// Completes a size update for its installed owner, rejecting stale renderer requests.
 pub async fn terminal_resize(
     term_id: String,
     rows: u16,
     cols: u16,
+    generation: Option<u32>,
+    channel_id: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let owner = match (generation, channel_id) {
+        (Some(generation), Some(channel_id)) => Some((generation, channel_id)),
+        (None, None) => None,
+        _ => return Err("Terminal resize owner is incomplete".into()),
+    };
     state
         .pty_manager
-        .resize(&term_id, cols, rows)
+        .resize_for_owner(&term_id, cols, rows, owner)
         .await
         .map_err(|e| e.to_string())
 }

@@ -6,6 +6,30 @@ import type { ITerminalAddon, Terminal } from '@xterm/xterm';
 
 import type { InputTracker } from '../ghostSuggestions/inputTracker.js';
 
+/** Original unsent text and one acknowledged delivery owned by a single PTY incarnation. */
+export interface TerminalInputWrite {
+    generation: number;
+    outputChannel?: Channel;
+    sources: Array<string | undefined>;
+    head: number;
+    offset: number;
+    running: boolean;
+    inFlightBytes: number;
+    started: boolean;
+    failed: boolean;
+    onDiscard(): void;
+}
+
+/** One resize acknowledgment and the revision of the latest requested geometry for a PTY owner. */
+export interface TerminalResizeWrite {
+    generation: number;
+    outputChannel?: Channel;
+    running: boolean;
+    revision: number;
+    pending?: Promise<void>;
+    failed?: boolean;
+}
+
 /** Module-level xterm instances preserved across component remounts. */
 export interface TerminalCache {
     term: Terminal;
@@ -23,11 +47,13 @@ export interface TerminalCache {
     listenerAttached: boolean;
     pendingInput: string;
     pendingInputBytes: number;
+    inputWrite?: TerminalInputWrite;
     inputFlushTimer: ReturnType<Window['setTimeout']> | null;
     /** Latest fitted size from the UI (retained while PTY is starting). */
     desiredResize: { rows: number; cols: number } | null;
-    /** Last size successfully sent to the backend PTY. */
+    /** Last size acknowledged by the matching backend PTY owner. */
     lastResize: { rows: number; cols: number } | null;
+    resizeWrite?: TerminalResizeWrite;
     unlisten?: UnlistenFn[];
     /** Streaming PTY output channel passed to terminal:create. */
     outputChannel?: Channel;
@@ -103,8 +129,11 @@ export function invalidateTerminalGhostCwd(termId: string): void {
     cached.ghostTracker?.dismissSuggestion();
 }
 
-/** Discard queued terminal input and cancel its scheduled flush. */
-export function clearTerminalPendingInput(termId: string | null | undefined): void {
+/** Discards queued input and its timer; optionally reports an unsent tail beyond the submitted packet. */
+export function clearTerminalPendingInput(
+    termId: string | null | undefined,
+    notifyDiscard = false,
+): void {
     if (!termId) {
         return;
     }
@@ -119,6 +148,13 @@ export function clearTerminalPendingInput(termId: string | null | undefined): vo
         cached.inputFlushTimer = null;
     }
 
+    if (notifyDiscard && cached.pendingInputBytes > (cached.inputWrite?.inFlightBytes ?? 0)) {
+        cached.inputWrite?.onDiscard();
+    }
+    if (cached.inputWrite) {
+        cached.inputWrite.sources.length = 0;
+    }
+    cached.inputWrite = undefined;
     cached.pendingInput = '';
     cached.pendingInputBytes = 0;
 }
