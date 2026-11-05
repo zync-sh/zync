@@ -12,6 +12,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Vault restore performance:** Batch local credential writes while preserving
+  conflict decisions, remote revisions, history, and per-record failure results.
+  Aborted batches retry individually; uncertain commits report failure without
+  replay. Oversized records remain supported. ([10b76fc2])
+
 - **Vault list rendering:** Isolate credential row painting to reduce offscreen
   rendering work while retaining native scrolling and all row actions. ([718dc895])
 
@@ -3366,3 +3371,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [4b097fb5]: https://github.com/zync-sh/zync/commit/4b097fb56e023e3b8f20d6dcbaaf6fc4bf7d376a
 [abb99367]: https://github.com/zync-sh/zync/commit/abb9936791b40b1bc1f09f2cee8b3cd1d0be8736
 [718dc895]: https://github.com/zync-sh/zync/commit/718dc89582953a47902f44695d78beaa5b39d004
+[10b76fc2]: https://github.com/zync-sh/zync/commit/10b76fc2034a54a3f6fe721442fa554555c83ddd
