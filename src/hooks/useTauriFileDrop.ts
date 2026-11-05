@@ -1,5 +1,5 @@
 import { type EventCallback, listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { disposeTauriListener } from '../lib/tauriListeners.js';
 
@@ -109,11 +109,13 @@ export function registerFileDropListeners(
     return dispose;
 }
 
-/** Retain the current drop callback without rebuilding native listeners on each render. */
+/** Use the latest committed drop callback without rebuilding native listeners. */
 export function useTauriFileDrop(onDrop: (paths: string[]) => void) {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const onDropRef = useRef(onDrop);
-    onDropRef.current = onDrop;
+    useLayoutEffect(() => {
+        onDropRef.current = onDrop;
+    }, [onDrop]);
     useEffect(
         () => registerFileDropListeners((paths) => onDropRef.current(paths), setIsDraggingOver),
         [],
