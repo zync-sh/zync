@@ -12,6 +12,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Port Forwarding feedback:** A forward's border pulses while it starts in
+  list or grid view, and its Start button shows **Starting…** until the attempt
+  finishes. Running forwards have a steady green highlight. With reduced
+  motion enabled, the starting border also stays steady. ([3ed7e190])
+
 - **AI conversation rendering:** Show long conversations in pages, with access
   to older messages and complete tool output. Live updates reuse finished
   message rendering, and auto-scroll resumes when the conversation fits on one
@@ -3397,3 +3402,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [c1f57934]: https://github.com/zync-sh/zync/commit/c1f5793423e368361fdd7062a975ff392be4441e
 [64739d08]: https://github.com/zync-sh/zync/commit/64739d08e860c9608d663c5d7bbc9e8eed19620f
 [1f9712ca]: https://github.com/zync-sh/zync/commit/1f9712ca9a75432fb0b3326a31aefc9fe0467630
+[3ed7e190]: https://github.com/zync-sh/zync/commit/3ed7e190ca739a31d775b078a9529782b059da13
