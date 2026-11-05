@@ -52,6 +52,8 @@ else
 fi
 
 OUT_NAME="$(basename "$OUTPUT_PATH")"
+# Extraction can leave owner-only modes. Make the packaged tree usable by other users.
+chmod -R a+rX -- "$ROOT"
 echo "==> Repacking -> $OUT_NAME"
 ARCH=x86_64 "${APPIMAGETOOL[@]}" "$ROOT" "$WORK/$OUT_NAME"
 chmod +x "$WORK/$OUT_NAME"
