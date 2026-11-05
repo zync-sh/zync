@@ -75,7 +75,7 @@ const tests = [
     '.tmp-agent-tests/tests/dashboard/dashboardMetadata.test.js',
     '.tmp-agent-tests/tests/securityAssessment.test.js',
     'tests/securityPanelRetry.test.mjs',
-    '.tmp-agent-tests/tests/userTunnelActions.test.js',
+    '.tmp-agent-tests/tests/tunnels/userTunnelActions.test.js',
     '.tmp-agent-tests/tests/tunnelConnectionLifecycle.test.js',
     'tests/featureConnectionWorkspace.test.mjs',
     '.tmp-agent-tests/tests/vaultSshCertificate.test.js',

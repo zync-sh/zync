@@ -43,7 +43,7 @@
         "tests/tunnelConnection.browser.tsx",
         "tests/tunnelConnection.browser.test.ts",
         "tests/reconnectPaneFocus.test.ts",
-        "tests/userTunnelActions.test.ts",
+        "tests/tunnels/userTunnelActions.test.ts",
         "tests/tunnelConnectionLifecycle.test.ts",
         "tests/featureConnectionWorkspace.test.ts",
         "tests/vaultSshCertificate.browser.tsx",
