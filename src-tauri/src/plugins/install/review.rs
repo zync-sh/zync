@@ -443,6 +443,7 @@ fn inspect_marketplace_staged_package(
     })
 }
 
+/// Bind update review to the installed identity, exact digest, version and previously granted permissions.
 fn attach_installed_update_context(
     app: &AppHandle,
     inspection: &mut PluginInstallInspection,
@@ -465,7 +466,9 @@ fn attach_installed_update_context(
         ));
     }
     let installed_digest = digest_directory(&target_dir)?;
-    if inspection.registry_version.is_some() && requires_marketplace_version_check(&installed_manifest) {
+    if inspection.registry_version.is_some()
+        && requires_marketplace_version_check(&installed_manifest)
+    {
         validate_marketplace_update(
             &installed_manifest.version,
             &installed_digest,
@@ -827,10 +830,9 @@ mod tests {
 
     #[test]
     fn marketplace_migration_accepts_legacy_installed_versions() {
-        let mut installed: Manifest = serde_json::from_str(
-            r#"{"id":"dev.example.demo","name":"Demo","version":"1"}"#,
-        )
-        .unwrap();
+        let mut installed: Manifest =
+            serde_json::from_str(r#"{"id":"dev.example.demo","name":"Demo","version":"1"}"#)
+                .unwrap();
         assert!(!requires_marketplace_version_check(&installed));
 
         installed.extensions.manifest_version = Some(2);

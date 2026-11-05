@@ -110,21 +110,17 @@ impl PluginBrokerState {
         }
     }
 
+    /// Register one freshly verified package without rescanning or hashing unrelated packages.
     pub fn start_runtime(
         &self,
         app: &AppHandle,
         plugin_id: &str,
     ) -> Result<PluginRuntimeRegistration> {
-        let plugin = PluginScanner::scan(app)?
-            .into_iter()
-            .find(|plugin| plugin.manifest.id == plugin_id)
-            .ok_or_else(|| anyhow!("Plugin is not installed"))?;
+        let (plugin, package_digest) = PluginScanner::load_runtime_plugin(app, plugin_id)?;
         if !plugin.enabled || plugin.script.is_none() {
             return Err(anyhow!("Plugin is disabled or has no worker runtime"));
         }
 
-        let package_digest =
-            runtime_package_digest(&plugin.path, plugin_id, &plugin.manifest.version)?;
         let runtime_instance_id = uuid::Uuid::new_v4().to_string();
         let mut runtimes = self
             .runtimes
@@ -610,10 +606,7 @@ impl PluginBrokerState {
         app: &AppHandle,
         plugin_id: &str,
     ) -> Result<PaneAssetBinding> {
-        let plugin = PluginScanner::scan(app)?
-            .into_iter()
-            .find(|plugin| plugin.manifest.id == plugin_id)
-            .ok_or_else(|| anyhow!("Plugin is not installed"))?;
+        let (plugin, package_digest) = PluginScanner::load_runtime_plugin(app, plugin_id)?;
         if !plugin.enabled
             || plugin.manifest.manifest_version() < 2
             || plugin.manifest.manifest_type.as_deref() != Some("editor-provider")
@@ -628,8 +621,6 @@ impl PluginBrokerState {
             .as_ref()
             .and_then(|editor| editor.entry.clone())
             .ok_or_else(|| anyhow!("Editor provider does not declare an entry"))?;
-        let package_digest =
-            runtime_package_digest(&plugin.path, &plugin.manifest.id, &plugin.manifest.version)?;
         let runtime_instance_id = uuid::Uuid::new_v4().to_string();
         {
             let mut runtimes = self

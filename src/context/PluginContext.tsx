@@ -1,55 +1,70 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ipcRenderer } from '../lib/tauri-ipc';
-import { registerThemePluginModes } from '../lib/themeModeRegistry';
-import { applyCspStyleNonce } from '../lib/cspStyleNonce';
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+
 import { notify } from '../features/notifications';
 import {
     rejectAllPendingPluginNotifyActions,
     rejectPendingPluginNotifyActionsForPlugin,
 } from '../features/notifications/pluginNotifyAction';
-import { useAppStore } from '../store/useAppStore';
-import { buildWorkspaceViewRegistrations } from '../features/workspace/application/viewRegistrationAdapters';
-import { confirmPluginTerminalAction } from '../features/plugins/confirmPluginTerminalAction';
-import {
-    filterUnsupportedHostThemes,
-    filterTrustedBuiltinThemeChoices,
-    handleWorkerTerminalCommand,
-    isTrustedBuiltinTheme,
-    postCurrentWorkerResponse,
-} from '../features/plugins/pluginCommandBridge';
-import type { Plugin } from '../features/plugins/types';
-import {
-    authorizePluginCapability,
-    clearNativePluginRuntimeFailures,
-    clearNativePluginSafeMode,
-    getNativePluginRecoveryStatus,
-    recordNativePluginRuntimeFailure,
-    bindNativePluginPaneConnection,
-    resetNativePluginRuntimes,
-    startNativePluginRuntime,
-    stopNativePluginRuntime,
-    unbindNativePluginPaneConnection,
-    type NativePluginRecoveryStatus,
-    type PluginRuntimeFailureKind,
-} from '../features/plugins/runtime/nativePluginRuntime';
-import { PluginPaneBindingQueue, postAfterPaneBinding } from '../features/plugins/runtime/pluginPaneBindingQueue';
-import { PluginMessageRateLimiter } from '../features/plugins/runtime/pluginMessageRateLimiter';
-import { parsePluginWorkerMessage } from '../features/plugins/runtime/pluginMessageEnvelope';
-import { createPluginReloadQueue, PluginLifecycleGeneration } from '../features/plugins/runtime/pluginReloadQueue';
-import {
-    PluginRuntimeSupervisor,
-    type PluginRuntimeHealth,
-} from '../features/plugins/runtime/pluginRuntimeSupervisor';
-import { autoRollbackPlugin } from '../features/plugins/runtime/pluginAutoRollback';
-import {
-    getPluginManagementDetails,
-    rollbackPluginVersion,
-} from '../features/plugins/management/pluginManagement';
 import { createPluginMessageBroker } from '../features/plugins/broker/pluginMessageBroker';
 import type {
     PluginCommandContribution,
     PluginPanelContribution,
 } from '../features/plugins/broker/types';
+import { confirmPluginTerminalAction } from '../features/plugins/confirmPluginTerminalAction';
+import {
+    getPluginManagementDetails,
+    rollbackPluginVersion,
+} from '../features/plugins/management/pluginManagement';
+import {
+    filterTrustedBuiltinThemeChoices,
+    filterUnsupportedHostThemes,
+    handleWorkerTerminalCommand,
+    isTrustedBuiltinTheme,
+    postCurrentWorkerResponse,
+} from '../features/plugins/pluginCommandBridge';
+import {
+    authorizePluginCapability,
+    bindNativePluginPaneConnection,
+    clearNativePluginRuntimeFailures,
+    clearNativePluginSafeMode,
+    getNativePluginRecoveryStatus,
+    type NativePluginRecoveryStatus,
+    type PluginRuntimeFailureKind,
+    recordNativePluginRuntimeFailure,
+    resetNativePluginRuntimes,
+    startNativePluginRuntime,
+    stopNativePluginRuntime,
+    unbindNativePluginPaneConnection,
+} from '../features/plugins/runtime/nativePluginRuntime';
+import { autoRollbackPlugin } from '../features/plugins/runtime/pluginAutoRollback';
+import { parsePluginWorkerMessage } from '../features/plugins/runtime/pluginMessageEnvelope';
+import { PluginMessageRateLimiter } from '../features/plugins/runtime/pluginMessageRateLimiter';
+import {
+    PluginPaneBindingQueue,
+    postAfterPaneBinding,
+} from '../features/plugins/runtime/pluginPaneBindingQueue';
+import {
+    createPluginReloadQueue,
+    PluginLifecycleGeneration,
+} from '../features/plugins/runtime/pluginReloadQueue';
+import {
+    type PluginRuntimeHealth,
+    PluginRuntimeSupervisor,
+} from '../features/plugins/runtime/pluginRuntimeSupervisor';
+import type { Plugin } from '../features/plugins/types';
+import { buildWorkspaceViewRegistrations } from '../features/workspace/application/viewRegistrationAdapters';
+import { applyCspStyleNonce } from '../lib/cspStyleNonce';
+import { ipcRenderer } from '../lib/tauri-ipc';
+import { registerThemePluginModes } from '../lib/themeModeRegistry';
+import { useAppStore } from '../store/useAppStore';
 
 export type { Plugin } from '../features/plugins/types';
 
@@ -65,7 +80,12 @@ interface PluginContextType {
     reloadPlugins: (healthCheckPluginId?: string) => Promise<boolean>;
     retryPluginRuntime: (pluginId: string) => Promise<boolean>;
     exitPluginSafeMode: () => Promise<boolean>;
-    postPaneMessage: (pluginId: string, panelId: string, paneInstanceId: string, message: unknown) => boolean;
+    postPaneMessage: (
+        pluginId: string,
+        panelId: string,
+        paneInstanceId: string,
+        message: unknown,
+    ) => boolean;
     registerPaneMessageTarget: (
         pluginId: string,
         panelId: string,
@@ -84,12 +104,14 @@ const PluginContext = createContext<PluginContextType>({
     panels: [],
     runtimeHealth: [],
     pluginSafeMode: false,
-    executeCommand: () => { },
+    /** Ignore command execution before the plugin provider has mounted. */
+    executeCommand: () => {},
     reloadPlugins: async () => false,
     retryPluginRuntime: async () => false,
     exitPluginSafeMode: async () => false,
     postPaneMessage: () => false,
-    registerPaneMessageTarget: () => () => { },
+    /** Return inert pane cleanup until a provider owns the runtime. */
+    registerPaneMessageTarget: () => () => {},
 });
 
 export const usePlugins = () => useContext(PluginContext);
@@ -98,13 +120,16 @@ const PLUGIN_HEARTBEAT_INTERVAL_MS = 5_000;
 const PLUGIN_HEARTBEAT_TIMEOUT_MS = 15_000;
 const PLUGIN_ACTIVATION_TIMEOUT_MS = 5_000;
 
+/** Recognize pre-v2 worker routes that require the explicit legacy permission bridge. */
 function requiresLegacyWorkerBridge(type: string): boolean {
-    return type.startsWith('api:fs:')
-        || type.startsWith('api:window:')
-        || type === 'api:theme:set'
-        || type === 'api:statusbar:set'
-        || type === 'api:plugins:load'
-        || type === 'api:terminal:send';
+    return (
+        type.startsWith('api:fs:') ||
+        type.startsWith('api:window:') ||
+        type === 'api:theme:set' ||
+        type === 'api:statusbar:set' ||
+        type === 'api:plugins:load' ||
+        type === 'api:terminal:send'
+    );
 }
 
 // The code that runs INSIDE the Web Worker
@@ -154,7 +179,7 @@ for (const [name, replacement] of Object.entries(blockedNetworkGlobals)) {
 const zync = {
     callbacks: {},
     commandHandlers: {},
-    pendingRequests: {},
+    pendingRequests: new Map(),
     
     on: (event, callback) => {
         if (!zync.callbacks[event]) zync.callbacks[event] = [];
@@ -172,17 +197,55 @@ const zync = {
     },
 
     // Generic Request helper
-    request: (type, payload) => {
+    request: (() => {
+        // Only short host-control reads get a response deadline. Native I/O and user-controlled
+        // work keep their existing operation policies; accepted writes are never abandoned here.
+        const MAX_PENDING_REQUESTS = 256;
+        const REQUEST_RESPONSE_TIMEOUT_MS = 120_000;
+        const BOUNDED_RESPONSE_REQUESTS = new Set([
+            'api:terminal:context', 'api:panel:post-message',
+        ]);
+        let nextRequestId = 0;
+        return (type, payload) => {
         return new Promise((resolve, reject) => {
-             const requestId = Math.random().toString(36).substring(7);
-             zync.pendingRequests[requestId] = { resolve, reject };
-             const requestPayload = { requestId };
-             for (const [key, value] of Object.entries(payload || {})) {
-                 if (value !== undefined) requestPayload[key] = value;
+             if (zync.pendingRequests.size >= MAX_PENDING_REQUESTS) {
+                 reject(new Error('Too many outstanding plugin requests; wait for an earlier response.'));
+                 return;
              }
-             self.postMessage({ type, payload: requestPayload });
+             const requestId = String(++nextRequestId);
+             let timer;
+             const finish = (failed, value) => {
+                 if (zync.pendingRequests.get(requestId) !== entry) return;
+                 zync.pendingRequests.delete(requestId);
+                 if (timer !== undefined) clearTimeout(timer);
+                 if (failed) reject(value);
+                 else resolve(value);
+             };
+             const pause = () => {
+                 if (timer !== undefined) clearTimeout(timer);
+                 timer = undefined;
+             };
+             const resume = () => {
+                 pause();
+                 if (BOUNDED_RESPONSE_REQUESTS.has(type)) {
+                     timer = setTimeout(() => finish(true, new Error('Plugin response timed out; operation outcome is unknown.')), REQUEST_RESPONSE_TIMEOUT_MS);
+                 }
+             };
+             const entry = { resolve: result => finish(false, result), reject: error => finish(true, error), pause, resume };
+             zync.pendingRequests.set(requestId, entry);
+             const requestPayload = { requestId };
+             try {
+                 for (const [key, value] of Object.entries(payload || {})) {
+                     if (key !== 'requestId' && value !== undefined) requestPayload[key] = value;
+                 }
+                 resume();
+                 self.postMessage({ type, payload: requestPayload });
+             } catch (error) {
+                 finish(true, error);
+             }
         });
-    },
+        };
+    })(),
 
     ui: {
         /**
@@ -329,18 +392,23 @@ const zync = {
 
 self.onmessage = async (e) => {
     const { type, payload } = e.data;
+
+    if (type === 'host:request:phase') {
+        const handler = zync.pendingRequests.get(payload && payload.requestId);
+        if (handler) {
+            if (payload.waitingForUser) handler.pause();
+            else handler.resume();
+        }
+        return;
+    }
     
     // Handle Responses
     if (type.endsWith(':response')) {
          const { requestId, result, error } = payload;
-         // Special handling for Quick Pick legacy format (optional, but good for robust)
-         // Actually, if we standardized zync.request, we use zync.pendingRequests
-         
-         const handler = zync.pendingRequests[requestId];
+         const handler = zync.pendingRequests.get(requestId);
          if (handler) {
              if (error) handler.reject(error);
              else handler.resolve(result); // Result might be selectedItem or file content
-             delete zync.pendingRequests[requestId];
          }
          return;
     }
@@ -391,6 +459,7 @@ self.onmessage = async (e) => {
 self.zync = zync;
 `;
 
+/** Own sandbox workers, native runtime identities, contributions and generation-fenced cleanup. */
 export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [plugins, setPlugins] = useState<Plugin[]>([]);
     const [loaded, setLoaded] = useState(false);
@@ -399,71 +468,100 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     useEffect(() => {
         // A single transient metadata snapshot serves UI and store-level split guards.
         // This never opens panels, persists plugin runtime data or grants permissions.
-        useAppStore.getState().setWorkspaceViewRegistry(buildWorkspaceViewRegistrations(panels, plugins));
+        useAppStore
+            .getState()
+            .setWorkspaceViewRegistry(buildWorkspaceViewRegistrations(panels, plugins));
     }, [panels, plugins]);
     const [runtimeHealth, setRuntimeHealth] = useState<PluginRuntimeHealth[]>([]);
     const [pluginSafeMode, setPluginSafeMode] = useState(false);
     const runtimeSupervisor = useRef(new PluginRuntimeSupervisor<Worker>());
-    const paneMessageTargets = useRef(new Map<string, {
-        panelId: string;
-        post: (message: unknown) => void;
-        ready: Promise<void>;
-    }>());
+    const paneMessageTargets = useRef(
+        new Map<
+            string,
+            {
+                panelId: string;
+                post: (message: unknown) => void;
+                ready: Promise<void>;
+            }
+        >(),
+    );
     const paneBindingQueue = useRef(new PluginPaneBindingQueue());
     const trustedBuiltinThemes = useRef<Plugin[]>([]);
-    const messageBroker = useMemo(() => createPluginMessageBroker<Worker>({
-        runtime: {
-            getRuntimeInstanceId: pluginId => runtimeSupervisor.current.getRuntimeInstanceId(pluginId),
-            isCurrentWorker: (pluginId, worker) => (
-                runtimeSupervisor.current.isCurrentWorker(pluginId, worker)
-            ),
-            isCurrentRuntime: (pluginId, runtimeInstanceId) => (
-                runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)
-            ),
-        },
-        getPaneMessageTarget: (pluginId, paneInstanceId) => (
-            paneMessageTargets.current.get(`${pluginId}\0${paneInstanceId}`)
-        ),
-        registerCommand: command => {
-            setCommands(previous => previous.some(existing => existing.id === command.id)
-                ? previous
-                : [...previous, command]);
-        },
-        registerPanel: panel => {
-            setPanels(previous => previous.some(existing => existing.id === panel.id)
-                ? previous
-                : [...previous, panel]);
-        },
-        dispatch: (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail })),
-    }), []);
-    const reloadPluginsRef = useRef<(healthCheckPluginId?: string) => Promise<boolean>>(async () => false);
+    const messageBroker = useMemo(
+        () =>
+            createPluginMessageBroker<Worker>({
+                runtime: {
+                    /** Resolve the active native runtime identity for a plugin. */
+                    getRuntimeInstanceId: (pluginId) =>
+                        runtimeSupervisor.current.getRuntimeInstanceId(pluginId),
+                    /** Reject messages from a worker superseded by reload or recovery. */
+                    isCurrentWorker: (pluginId, worker) =>
+                        runtimeSupervisor.current.isCurrentWorker(pluginId, worker),
+                    /** Check the captured native runtime still belongs to this plugin generation. */
+                    isCurrentRuntime: (pluginId, runtimeInstanceId) =>
+                        runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId),
+                },
+                /** Resolve only the current host-owned pane message destination. */
+                getPaneMessageTarget: (pluginId, paneInstanceId) =>
+                    paneMessageTargets.current.get(`${pluginId}\0${paneInstanceId}`),
+                /** Replace a command contribution by identity without duplicating its registration. */
+                registerCommand: (command) => {
+                    setCommands((previous) =>
+                        previous.some((existing) => existing.id === command.id)
+                            ? previous
+                            : [...previous, command],
+                    );
+                },
+                /** Replace a panel contribution by identity while retaining its owning plugin. */
+                registerPanel: (panel) => {
+                    setPanels((previous) =>
+                        previous.some((existing) => existing.id === panel.id)
+                            ? previous
+                            : [...previous, panel],
+                    );
+                },
+                dispatch: (type, detail) => window.dispatchEvent(new CustomEvent(type, { detail })),
+            }),
+        [],
+    );
+    const reloadPluginsRef = useRef<(healthCheckPluginId?: string) => Promise<boolean>>(
+        async () => false,
+    );
     const reloadQueue = useRef(createPluginReloadQueue());
     const lifecycleGeneration = useRef(new PluginLifecycleGeneration());
     const autoRollbackInFlight = useRef(new Set<string>());
     const autoRollbackAttemptedVersions = useRef(new Set<string>());
     const editorProviders = useMemo(
-        () => plugins.filter((plugin) => (
-            plugin.enabled
-            && plugin.manifest.type === 'editor-provider'
-            && (!pluginSafeMode || plugin.path.startsWith('builtin://'))
-        )),
-        [pluginSafeMode, plugins]
+        () =>
+            plugins.filter(
+                (plugin) =>
+                    plugin.enabled &&
+                    plugin.manifest.type === 'editor-provider' &&
+                    (!pluginSafeMode || plugin.path.startsWith('builtin://')),
+            ),
+        [pluginSafeMode, plugins],
     );
 
     const attemptAutomaticRollback = useCallback(async (pluginId: string) => {
-        if (autoRollbackInFlight.current.has(pluginId)) return;
+        if (autoRollbackInFlight.current.has(pluginId)) {
+            return;
+        }
         autoRollbackInFlight.current.add(pluginId);
         try {
             const details = await getPluginManagementDetails(pluginId);
             const attemptKey = `${pluginId}@${details.version}`;
-            if (!details.rollback || autoRollbackAttemptedVersions.current.has(attemptKey)) return;
+            if (!details.rollback || autoRollbackAttemptedVersions.current.has(attemptKey)) {
+                return;
+            }
             autoRollbackAttemptedVersions.current.add(attemptKey);
 
             const result = await autoRollbackPlugin(pluginId, {
                 rollback: rollbackPluginVersion,
                 clearFailures: clearNativePluginRuntimeFailures,
-                clearQuarantine: id => runtimeSupervisor.current.clearQuarantine(id),
-                reloadAndCheck: id => reloadPluginsRef.current(id),
+                /** Clear local runtime quarantine before retrying a retained plugin version. */
+                clearQuarantine: (id) => runtimeSupervisor.current.clearQuarantine(id),
+                /** Reload the selected plugin and await its activation health check. */
+                reloadAndCheck: (id) => reloadPluginsRef.current(id),
             });
             if (result.status === 'restored') {
                 notify.warning(
@@ -487,32 +585,40 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     }, []);
 
-    const persistFailureAndRecover = useCallback((
-        pluginId: string,
-        failureKind: PluginRuntimeFailureKind,
-    ) => {
-        void recordNativePluginRuntimeFailure(pluginId, failureKind)
-            .catch(error => {
-                console.error('[Plugins] Failed to persist runtime diagnostic:', error);
-            })
-            .finally(() => {
-                const health = runtimeSupervisor.current.snapshot()
-                    .find(item => item.pluginId === pluginId);
-                if (health?.status === 'quarantined') void attemptAutomaticRollback(pluginId);
-            });
-    }, [attemptAutomaticRollback]);
+    const persistFailureAndRecover = useCallback(
+        (pluginId: string, failureKind: PluginRuntimeFailureKind) => {
+            void recordNativePluginRuntimeFailure(pluginId, failureKind)
+                .catch((error) => {
+                    console.error('[Plugins] Failed to persist runtime diagnostic:', error);
+                })
+                .finally(() => {
+                    const health = runtimeSupervisor.current
+                        .snapshot()
+                        .find((item) => item.pluginId === pluginId);
+                    if (health?.status === 'quarantined') {
+                        void attemptAutomaticRollback(pluginId);
+                    }
+                });
+        },
+        [attemptAutomaticRollback],
+    );
 
-    const cleanUpFailedRuntime = useCallback((
-        pluginId: string,
-        runtimeInstanceId: string | null,
-        failureKind: PluginRuntimeFailureKind,
-    ) => {
-        rejectPendingPluginNotifyActionsForPlugin(pluginId, 'Plugin runtime stopped');
-        setCommands(previous => previous.filter(command => command.pluginId !== pluginId));
-        setPanels(previous => previous.filter(panel => panel.pluginId !== pluginId));
-        if (runtimeInstanceId) void stopNativePluginRuntime(runtimeInstanceId);
-        persistFailureAndRecover(pluginId, failureKind);
-    }, [persistFailureAndRecover]);
+    const cleanUpFailedRuntime = useCallback(
+        (
+            pluginId: string,
+            runtimeInstanceId: string | null,
+            failureKind: PluginRuntimeFailureKind,
+        ) => {
+            rejectPendingPluginNotifyActionsForPlugin(pluginId, 'Plugin runtime stopped');
+            setCommands((previous) => previous.filter((command) => command.pluginId !== pluginId));
+            setPanels((previous) => previous.filter((panel) => panel.pluginId !== pluginId));
+            if (runtimeInstanceId) {
+                void stopNativePluginRuntime(runtimeInstanceId);
+            }
+            persistFailureAndRecover(pluginId, failureKind);
+        },
+        [persistFailureAndRecover],
+    );
 
     useEffect(() => {
         const unsubscribeHealth = runtimeSupervisor.current.subscribe(setRuntimeHealth);
@@ -531,25 +637,38 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             lifecycleGeneration.current.invalidate();
             window.clearInterval(heartbeatTimer);
             rejectAllPendingPluginNotifyActions('Plugins shutting down');
-            runtimeSupervisor.current.stopAll(pluginId => {
+            runtimeSupervisor.current.stopAll((pluginId) => {
                 rejectPendingPluginNotifyActionsForPlugin(pluginId, 'Plugins shutting down');
             });
             paneMessageTargets.current.clear();
             paneBindingQueue.current.clear();
             unsubscribeHealth();
             // Let an in-flight start release its lease before resetting the broker.
-            void reloadQueue.current(() => resetNativePluginRuntimes()).catch((error) => {
-                console.error('[Plugins] Failed to reset native runtimes during shutdown:', error);
-            });
+            void reloadQueue
+                .current(() => resetNativePluginRuntimes())
+                .catch((error) => {
+                    console.error(
+                        '[Plugins] Failed to reset native runtimes during shutdown:',
+                        error,
+                    );
+                });
             trustedBuiltinThemes.current = [];
-            document.querySelectorAll('style[data-zync-builtin-theme]').forEach(style => style.remove());
+            document
+                .querySelectorAll('style[data-zync-builtin-theme]')
+                .forEach((style) => style.remove());
         };
     }, []);
 
-    const reloadPluginsUnsafe = async (healthCheckPluginId: string | undefined, isCurrent: () => boolean): Promise<boolean> => {
+    /** Reload verified plugins under a captured lifecycle generation and release stale starts. */
+    const reloadPluginsUnsafe = async (
+        healthCheckPluginId: string | undefined,
+        isCurrent: () => boolean,
+    ): Promise<boolean> => {
         try {
-            if (!isCurrent()) return false;
-            runtimeSupervisor.current.stopAll(pluginId => {
+            if (!isCurrent()) {
+                return false;
+            }
+            runtimeSupervisor.current.stopAll((pluginId) => {
                 rejectPendingPluginNotifyActionsForPlugin(pluginId, 'Plugin reloaded');
             });
             // Registrations and routing belong to the Workers just stopped, even if reload fails.
@@ -558,7 +677,9 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             paneMessageTargets.current.clear();
             paneBindingQueue.current.clear();
             await resetNativePluginRuntimes();
-            if (!isCurrent()) return false;
+            if (!isCurrent()) {
+                return false;
+            }
             if (healthCheckPluginId) {
                 // An explicit activation check is a fresh generation. Old crash-loop state
                 // must not prevent the package the user just installed or restored from starting.
@@ -566,7 +687,9 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 runtimeSupervisor.current.clearQuarantine(healthCheckPluginId);
             }
             const loadedPlugins: Plugin[] = await ipcRenderer.invoke('plugins:load');
-            if (!isCurrent()) return false;
+            if (!isCurrent()) {
+                return false;
+            }
             let recovery: NativePluginRecoveryStatus;
             try {
                 recovery = await getNativePluginRecoveryStatus();
@@ -576,14 +699,16 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 console.warn('[Plugins] Recovery history is unavailable:', error);
                 throw new Error('Plugin startup blocked: recovery history is unavailable.');
             }
-            if (!isCurrent()) return false;
+            if (!isCurrent()) {
+                return false;
+            }
             // Ignore the retired global flag from older hosts and saved state.
             recovery.safeMode = false;
             setPluginSafeMode(false);
-            recovery.diagnostics.forEach(diagnostic => {
+            recovery.diagnostics.forEach((diagnostic) => {
                 runtimeSupervisor.current.restoreFailures(
                     diagnostic.pluginId,
-                    diagnostic.failures.map(failure => failure.atMs),
+                    diagnostic.failures.map((failure) => failure.atMs),
                     diagnostic.failures[diagnostic.failures.length - 1]?.kind,
                 );
             });
@@ -591,41 +716,50 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             // Only app-owned built-in themes may style the host document or start a theme runtime.
             const hostCompatiblePlugins = filterUnsupportedHostThemes(loadedPlugins);
-            const enabledPlugins = hostCompatiblePlugins.filter(plugin => plugin.enabled);
+            const enabledPlugins = hostCompatiblePlugins.filter((plugin) => plugin.enabled);
             trustedBuiltinThemes.current = enabledPlugins.filter(isTrustedBuiltinTheme);
-            runtimeSupervisor.current.syncKnownPlugins(hostCompatiblePlugins.map(plugin => ({
-                pluginId: plugin.manifest.id,
-                enabled: plugin.enabled,
-                runnable: typeof plugin.script === 'string' && plugin.script.length > 0,
-                safeModeBlocked: recovery.safeMode && !plugin.path.startsWith('builtin://'),
-            })));
-            const runnablePlugins = hostCompatiblePlugins.filter((plugin): plugin is Plugin & { script: string } => (
-                plugin.enabled
-                && (!recovery.safeMode || plugin.path.startsWith('builtin://'))
-                && typeof plugin.script === 'string'
-                && plugin.script.length > 0
-            ));
+            runtimeSupervisor.current.syncKnownPlugins(
+                hostCompatiblePlugins.map((plugin) => ({
+                    pluginId: plugin.manifest.id,
+                    enabled: plugin.enabled,
+                    runnable: typeof plugin.script === 'string' && plugin.script.length > 0,
+                    safeModeBlocked: recovery.safeMode && !plugin.path.startsWith('builtin://'),
+                })),
+            );
+            const runnablePlugins = hostCompatiblePlugins.filter(
+                (plugin): plugin is Plugin & { script: string } =>
+                    plugin.enabled &&
+                    (!recovery.safeMode || plugin.path.startsWith('builtin://')) &&
+                    typeof plugin.script === 'string' &&
+                    plugin.script.length > 0,
+            );
             const healthCheckPlugin = healthCheckPluginId
-                ? hostCompatiblePlugins.find(plugin => plugin.manifest.id === healthCheckPluginId)
+                ? hostCompatiblePlugins.find((plugin) => plugin.manifest.id === healthCheckPluginId)
                 : undefined;
-            if (healthCheckPluginId && !healthCheckPlugin) return false;
+            if (healthCheckPluginId && !healthCheckPlugin) {
+                return false;
+            }
             const targetBlockedBySafeMode = Boolean(
-                healthCheckPlugin
-                && recovery.safeMode
-                && !healthCheckPlugin.path.startsWith('builtin://'),
+                healthCheckPlugin &&
+                    recovery.safeMode &&
+                    !healthCheckPlugin.path.startsWith('builtin://'),
             );
             let targetRuntimeCheck: 'healthy' | 'failed' | 'unchecked' = !healthCheckPlugin
                 ? 'healthy'
-                : targetBlockedBySafeMode
-                    || !healthCheckPlugin.enabled
-                    || typeof healthCheckPlugin.script !== 'string'
-                    || healthCheckPlugin.script.length === 0
-                    ? 'unchecked'
-                    : 'failed';
+                : targetBlockedBySafeMode ||
+                    !healthCheckPlugin.enabled ||
+                    typeof healthCheckPlugin.script !== 'string' ||
+                    healthCheckPlugin.script.length === 0
+                  ? 'unchecked'
+                  : 'failed';
 
-            document.querySelectorAll('style[data-zync-builtin-theme]').forEach(style => style.remove());
-            enabledPlugins.forEach(plugin => {
-                if (!isTrustedBuiltinTheme(plugin) || !plugin.style) return;
+            document
+                .querySelectorAll('style[data-zync-builtin-theme]')
+                .forEach((style) => style.remove());
+            enabledPlugins.forEach((plugin) => {
+                if (!isTrustedBuiltinTheme(plugin) || !plugin.style) {
+                    return;
+                }
                 const style = document.createElement('style');
                 applyCspStyleNonce(style);
                 style.dataset.zyncBuiltinTheme = plugin.manifest.id;
@@ -640,7 +774,9 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             setPlugins(loadedPlugins);
             // Initialize Workers
             for (const plugin of runnablePlugins) {
-                if (!runtimeSupervisor.current.beginStart(plugin.manifest.id)) continue;
+                if (!runtimeSupervisor.current.beginStart(plugin.manifest.id)) {
+                    continue;
+                }
                 let runtimeInstanceId: string | null = null;
                 try {
                     runtimeInstanceId = await startNativePluginRuntime(plugin.manifest.id);
@@ -649,7 +785,11 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         return false;
                     }
                     // Combine bootstrap + user script
-                    const blobContent = [WORKER_BOOTSTRAP, '\n\n// USER SCRIPT START\n\n', plugin.script];
+                    const blobContent = [
+                        WORKER_BOOTSTRAP,
+                        '\n\n// USER SCRIPT START\n\n',
+                        plugin.script,
+                    ];
                     const blob = new Blob(blobContent, { type: 'application/javascript' });
                     const workerUrl = URL.createObjectURL(blob);
 
@@ -657,11 +797,12 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     URL.revokeObjectURL(workerUrl);
                     const messageRateLimiter = new PluginMessageRateLimiter();
                     let finishActivationCheck: ((healthy: boolean) => void) | null = null;
-                    const activationCheck = plugin.manifest.id === healthCheckPluginId
-                        ? new Promise<boolean>(resolve => {
-                            finishActivationCheck = resolve;
-                        })
-                        : null;
+                    const activationCheck =
+                        plugin.manifest.id === healthCheckPluginId
+                            ? new Promise<boolean>((resolve) => {
+                                  finishActivationCheck = resolve;
+                              })
+                            : null;
 
                     // Handle messages FROM the worker
                     worker.onmessage = (e) => {
@@ -672,7 +813,11 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                                 'Plugin Worker exceeded the host message rate limit',
                             );
                             if (crashedRuntimeId) {
-                                cleanUpFailedRuntime(plugin.manifest.id, crashedRuntimeId, 'worker-error');
+                                cleanUpFailedRuntime(
+                                    plugin.manifest.id,
+                                    crashedRuntimeId,
+                                    'worker-error',
+                                );
                             }
                             return;
                         }
@@ -684,15 +829,20 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                                 'Plugin Worker sent an invalid or oversized message',
                             );
                             if (crashedRuntimeId) {
-                                cleanUpFailedRuntime(plugin.manifest.id, crashedRuntimeId, 'worker-error');
+                                cleanUpFailedRuntime(
+                                    plugin.manifest.id,
+                                    crashedRuntimeId,
+                                    'worker-error',
+                                );
                             }
                             return;
                         }
                         const { type, payload } = message;
                         if (type === 'host:heartbeat:pong') {
-                            const nonce = payload !== null && typeof payload === 'object'
-                                ? (payload as Record<string, unknown>).nonce
-                                : undefined;
+                            const nonce =
+                                payload !== null && typeof payload === 'object'
+                                    ? (payload as Record<string, unknown>).nonce
+                                    : undefined;
                             runtimeSupervisor.current.acknowledgeHeartbeat(
                                 plugin.manifest.id,
                                 worker,
@@ -717,7 +867,9 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                         );
                         finishActivationCheck?.(false);
                         finishActivationCheck = null;
-                        if (!crashedRuntimeId) return;
+                        if (!crashedRuntimeId) {
+                            return;
+                        }
                         cleanUpFailedRuntime(plugin.manifest.id, crashedRuntimeId, 'worker-error');
                     };
 
@@ -727,16 +879,18 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     worker.postMessage({ type: 'init' });
 
                     if (activationCheck) {
-                        const timeout = new Promise<boolean>(resolve => {
+                        const timeout = new Promise<boolean>((resolve) => {
                             window.setTimeout(() => resolve(false), PLUGIN_ACTIVATION_TIMEOUT_MS);
                         });
                         const runtimeHealthy = await Promise.race([activationCheck, timeout]);
-                        if (!isCurrent()) return false;
+                        if (!isCurrent()) {
+                            return false;
+                        }
                         targetRuntimeCheck = runtimeHealthy ? 'healthy' : 'failed';
-                        if (!runtimeHealthy && runtimeSupervisor.current.isCurrentWorker(
-                            plugin.manifest.id,
-                            worker,
-                        )) {
+                        if (
+                            !runtimeHealthy &&
+                            runtimeSupervisor.current.isCurrentWorker(plugin.manifest.id, worker)
+                        ) {
                             const crashedRuntimeId = runtimeSupervisor.current.markCrash(
                                 plugin.manifest.id,
                                 worker,
@@ -751,9 +905,10 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                             }
                         }
                     }
-
                 } catch (err) {
-                    if (!isCurrent()) return false;
+                    if (!isCurrent()) {
+                        return false;
+                    }
                     console.error(`[Plugin] Failed to start ${plugin.manifest.id}:`, err);
                     runtimeSupervisor.current.markStartFailure(plugin.manifest.id, err);
                     persistFailureAndRecover(plugin.manifest.id, 'start-failure');
@@ -766,13 +921,16 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 }
             }
 
-            if (!isCurrent()) return false;
+            if (!isCurrent()) {
+                return false;
+            }
             setLoaded(true);
             // Recovery state can restore a crash-loop quarantine before any new Worker starts.
             // Defer rollback until this reload has fully released the current generation.
-            runtimeSupervisor.current.snapshot()
-                .filter(health => health.status === 'quarantined')
-                .forEach(health => {
+            runtimeSupervisor.current
+                .snapshot()
+                .filter((health) => health.status === 'quarantined')
+                .forEach((health) => {
                     window.setTimeout(() => void attemptAutomaticRollback(health.pluginId), 0);
                 });
             return targetRuntimeCheck !== 'failed';
@@ -787,31 +945,45 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return reloadQueue.current(() => reloadPluginsUnsafe(healthCheckPluginId, isCurrent));
     };
 
-    const respond = (requester: Worker, pluginId: string, type: string, payload: Record<string, unknown>) => {
+    /** Deliver a response only to the worker that still owns this plugin generation. */
+    const respond = (
+        requester: Worker,
+        pluginId: string,
+        type: string,
+        payload: Record<string, unknown>,
+    ) => {
         postCurrentWorkerResponse(
             requester,
-            candidate => runtimeSupervisor.current.isCurrentWorker(pluginId, candidate),
+            (candidate) => runtimeSupervisor.current.isCurrentWorker(pluginId, candidate),
             type,
             payload,
         );
     };
 
+    /** Route current worker requests through the host broker and explicit legacy adapters. */
     const handlePluginMessage = async (
         pluginId: string,
         rawType: unknown,
         rawPayload: unknown,
         requester: Worker,
     ) => {
-        if (!runtimeSupervisor.current.isCurrentWorker(pluginId, requester)) return;
-        if (typeof rawType !== 'string') return;
+        if (!runtimeSupervisor.current.isCurrentWorker(pluginId, requester)) {
+            return;
+        }
+        if (typeof rawType !== 'string') {
+            return;
+        }
         const type = rawType;
-        const payload = rawPayload !== null && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
-            ? rawPayload as Record<string, unknown>
-            : {};
+        const payload =
+            rawPayload !== null && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+                ? (rawPayload as Record<string, unknown>)
+                : {};
         if (requiresLegacyWorkerBridge(type)) {
             const runtimeInstanceId = runtimeSupervisor.current.getRuntimeInstanceId(pluginId);
             try {
-                if (!runtimeInstanceId) throw new Error('Plugin runtime is not registered');
+                if (!runtimeInstanceId) {
+                    throw new Error('Plugin runtime is not registered');
+                }
                 await authorizePluginCapability(runtimeInstanceId, 'legacy.compatibility');
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -822,30 +994,49 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 return;
             }
             if (
-                !runtimeSupervisor.current.isCurrentWorker(pluginId, requester)
-                || !runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)
-            ) return;
+                !runtimeSupervisor.current.isCurrentWorker(pluginId, requester) ||
+                !runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)
+            ) {
+                return;
+            }
         }
-        if (type === 'api:terminal:send' && await handleWorkerTerminalCommand({
-            type,
-            payload,
-            pluginId,
-            requester,
-            isCurrent: candidate => runtimeSupervisor.current.isCurrentWorker(pluginId, candidate as Worker),
-            confirm: confirmPluginTerminalAction,
-            getActiveConnectionId: () => useAppStore.getState().activeConnectionId,
-            dispatch: (eventType, detail) => window.dispatchEvent(new CustomEvent(eventType, { detail })),
-        })) return;
-        if (await messageBroker.handleMessage(pluginId, type, rawPayload, requester)) return;
+        if (
+            type === 'api:terminal:send' &&
+            (await handleWorkerTerminalCommand({
+                type,
+                payload,
+                pluginId,
+                requester,
+                /** Fence asynchronous terminal work to its captured worker and native runtime. */
+                isCurrent: (candidate) =>
+                    runtimeSupervisor.current.isCurrentWorker(pluginId, candidate as Worker),
+                confirm: confirmPluginTerminalAction,
+                getActiveConnectionId: () => useAppStore.getState().activeConnectionId,
+                /** Publish terminal host events through the existing application event channel. */
+                dispatch: (eventType, detail) =>
+                    window.dispatchEvent(new CustomEvent(eventType, { detail })),
+            }))
+        ) {
+            return;
+        }
+        if (await messageBroker.handleMessage(pluginId, type, rawPayload, requester)) {
+            return;
+        }
 
         // Manifest v1 compatibility stays here until the published migration window closes.
         switch (type) {
             case 'api:statusbar:set':
-                window.dispatchEvent(new CustomEvent('zync:statusbar:set', { detail: { id: payload.id, text: payload.text } }));
+                window.dispatchEvent(
+                    new CustomEvent('zync:statusbar:set', {
+                        detail: { id: payload.id, text: payload.text },
+                    }),
+                );
                 break;
             case 'api:theme:set': {
                 const theme = typeof payload.theme === 'string' ? payload.theme : '';
-                if (!theme) break;
+                if (!theme) {
+                    break;
+                }
                 console.log('[PluginContext] Theme set requested:', theme);
                 useAppStore.getState().updateSettings({ theme });
                 notify.success(`Theme changed to ${theme}`, { source: `plugin:${pluginId}` });
@@ -853,22 +1044,29 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
             case 'api:window:showQuickPick': {
                 const items = Array.isArray(payload.items)
-                    ? payload.items.filter((item): item is Record<string, unknown> => (
-                        item !== null && typeof item === 'object' && !Array.isArray(item)
-                    ))
+                    ? payload.items.filter(
+                          (item): item is Record<string, unknown> =>
+                              item !== null && typeof item === 'object' && !Array.isArray(item),
+                      )
                     : [];
                 // Dispatch event for CommandPalette to handle
-                window.dispatchEvent(new CustomEvent('zync:quick-pick', {
-                    detail: {
-                        items: pluginId === 'com.zync.theme.manager'
-                            ? filterTrustedBuiltinThemeChoices(items, trustedBuiltinThemes.current)
-                            : items,
-                        options: payload.options,
-                        requestId: payload.requestId,
-                        pluginId,
-                        requester,
-                    }
-                }));
+                window.dispatchEvent(
+                    new CustomEvent('zync:quick-pick', {
+                        detail: {
+                            items:
+                                pluginId === 'com.zync.theme.manager'
+                                    ? filterTrustedBuiltinThemeChoices(
+                                          items,
+                                          trustedBuiltinThemes.current,
+                                      )
+                                    : items,
+                            options: payload.options,
+                            requestId: payload.requestId,
+                            pluginId,
+                            requester,
+                        },
+                    }),
+                );
                 break;
             }
             case 'api:plugins:load':
@@ -876,14 +1074,14 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                     const list = await ipcRenderer.invoke('plugins:load');
                     respond(requester, pluginId, 'api:plugins:load', {
                         requestId: payload.requestId,
-                        result: filterUnsupportedHostThemes(list)
+                        result: filterUnsupportedHostThemes(list),
                     });
                 } catch (e) {
                     console.error('[PluginContext] Failed to load plugins for worker:', e);
                     respond(requester, pluginId, 'api:plugins:load', {
                         requestId: payload.requestId,
                         result: [],
-                        error: String(e)
+                        error: String(e),
                     });
                 }
                 break;
@@ -891,50 +1089,92 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             // File System Bridge
             case 'api:fs:read':
                 try {
-                    const content = await ipcRenderer.invoke('plugin_fs_read', { path: payload.path });
-                    respond(requester, pluginId, type, { requestId: payload.requestId, result: content });
+                    const content = await ipcRenderer.invoke('plugin_fs_read', {
+                        path: payload.path,
+                    });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        result: content,
+                    });
                 } catch (e: any) {
-                    respond(requester, pluginId, type, { requestId: payload.requestId, error: e.toString() });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        error: e.toString(),
+                    });
                 }
                 break;
             case 'api:fs:write':
                 try {
-                    await ipcRenderer.invoke('plugin_fs_write', { path: payload.path, content: payload.content });
-                    respond(requester, pluginId, type, { requestId: payload.requestId, result: true });
+                    await ipcRenderer.invoke('plugin_fs_write', {
+                        path: payload.path,
+                        content: payload.content,
+                    });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        result: true,
+                    });
                 } catch (e: any) {
-                    respond(requester, pluginId, type, { requestId: payload.requestId, error: e.toString() });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        error: e.toString(),
+                    });
                 }
                 break;
             case 'api:fs:list':
                 try {
-                    const entries = await ipcRenderer.invoke('plugin_fs_list', { path: payload.path });
-                    respond(requester, pluginId, type, { requestId: payload.requestId, result: entries });
+                    const entries = await ipcRenderer.invoke('plugin_fs_list', {
+                        path: payload.path,
+                    });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        result: entries,
+                    });
                 } catch (e: any) {
-                    respond(requester, pluginId, type, { requestId: payload.requestId, error: e.toString() });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        error: e.toString(),
+                    });
                 }
                 break;
             case 'api:fs:exists':
                 try {
-                    const exists = await ipcRenderer.invoke('plugin_fs_exists', { path: payload.path });
-                    respond(requester, pluginId, type, { requestId: payload.requestId, result: exists });
+                    const exists = await ipcRenderer.invoke('plugin_fs_exists', {
+                        path: payload.path,
+                    });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        result: exists,
+                    });
                 } catch (e: any) {
-                    respond(requester, pluginId, type, { requestId: payload.requestId, error: e.toString() });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        error: e.toString(),
+                    });
                 }
                 break;
             case 'api:fs:mkdir':
                 try {
                     await ipcRenderer.invoke('plugin_fs_create_dir', { path: payload.path });
-                    respond(requester, pluginId, type, { requestId: payload.requestId, result: true });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        result: true,
+                    });
                 } catch (e: any) {
-                    respond(requester, pluginId, type, { requestId: payload.requestId, error: e.toString() });
+                    respond(requester, pluginId, type, {
+                        requestId: payload.requestId,
+                        error: e.toString(),
+                    });
                 }
                 break;
         }
     };
 
+    /** Dispatch a registered command to its current plugin worker. */
     const executeCommand = (id: string) => {
-        const cmd = commands.find(c => c.id === id);
-        if (!cmd) return;
+        const cmd = commands.find((c) => c.id === id);
+        if (!cmd) {
+            return;
+        }
 
         const worker = runtimeSupervisor.current.getWorker(cmd.pluginId);
         if (worker) {
@@ -943,9 +1183,12 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
     reloadPluginsRef.current = reloadPlugins;
 
+    /** Clear retryable runtime failure state and reload the selected plugin. */
     const retryPluginRuntime = async (pluginId: string): Promise<boolean> => {
         try {
-            const health = runtimeSupervisor.current.snapshot().find(item => item.pluginId === pluginId);
+            const health = runtimeSupervisor.current
+                .snapshot()
+                .find((item) => item.pluginId === pluginId);
             if (health?.status === 'quarantined') {
                 await clearNativePluginRuntimeFailures(pluginId);
                 runtimeSupervisor.current.clearQuarantine(pluginId);
@@ -968,76 +1211,109 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     };
 
-    const postPaneMessage = useCallback((pluginId: string, panelId: string, paneInstanceId: string, message: unknown): boolean => {
-        const worker = runtimeSupervisor.current.getWorker(pluginId);
-        const key = `${pluginId}\0${paneInstanceId}`;
-        const target = paneMessageTargets.current.get(key);
-        if (!worker || !target || target.panelId !== panelId) return false;
-        // A frame can start before native binding finishes, or disappear during a split.
-        void postAfterPaneBinding(
-            target.ready,
-            () => paneMessageTargets.current.get(key) === target
-                && runtimeSupervisor.current.isCurrentWorker(pluginId, worker),
-            () => worker.postMessage({
-                type: 'pane:message',
-                payload: { panelId, paneInstanceId, message },
-            }),
-        ).catch(error => console.error('[Plugins] Pane connection is unavailable:', error));
-        return true;
-    }, [cleanUpFailedRuntime]);
-
-    const registerPaneMessageTarget = useCallback((
-        pluginId: string,
-        panelId: string,
-        paneInstanceId: string,
-        connectionId: string,
-        post: (message: unknown) => void,
-        onBound?: (runtime: string) => void,
-    ) => {
-        const key = `${pluginId}\0${paneInstanceId}`;
-        const target = { panelId, post, ready: Promise.resolve() };
-        paneMessageTargets.current.set(key, target);
-        const runtimeInstanceId = runtimeSupervisor.current.getRuntimeInstanceId(pluginId);
-        if (runtimeInstanceId) {
-            target.ready = paneBindingQueue.current.enqueue(key, async () => {
-                if (!runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) return;
-                try {
-                    await bindNativePluginPaneConnection(
-                        runtimeInstanceId,
-                        panelId,
-                        paneInstanceId,
-                        connectionId,
-                    );
-                    if (paneMessageTargets.current.get(key) === target
-                        && runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) onBound?.(runtimeInstanceId);
-                } catch (error) {
-                    if (runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) throw error;
-                }
-            });
-            void target.ready.catch(error => console.error('[Plugins] Failed to bind pane connection:', error));
-        }
-        return () => {
-            if (paneMessageTargets.current.get(key) === target) {
-                paneMessageTargets.current.delete(key);
-                if (runtimeInstanceId) {
-                    void paneBindingQueue.current.enqueue(key, () => (
-                        unbindNativePluginPaneConnection(runtimeInstanceId, paneInstanceId)
-                    )).catch(error => {
-                        console.error('[Plugins] Failed to unbind pane connection:', error);
-                    });
-                }
+    const postPaneMessage = useCallback(
+        (pluginId: string, panelId: string, paneInstanceId: string, message: unknown): boolean => {
+            const worker = runtimeSupervisor.current.getWorker(pluginId);
+            const key = `${pluginId}\0${paneInstanceId}`;
+            const target = paneMessageTargets.current.get(key);
+            if (!worker || !target || target.panelId !== panelId) {
+                return false;
             }
-        };
-    }, []);
+            // A frame can start before native binding finishes, or disappear during a split.
+            void postAfterPaneBinding(
+                target.ready,
+                () =>
+                    paneMessageTargets.current.get(key) === target &&
+                    runtimeSupervisor.current.isCurrentWorker(pluginId, worker),
+                () =>
+                    worker.postMessage({
+                        type: 'pane:message',
+                        payload: { panelId, paneInstanceId, message },
+                    }),
+            ).catch((error) => console.error('[Plugins] Pane connection is unavailable:', error));
+            return true;
+        },
+        [cleanUpFailedRuntime],
+    );
+
+    const registerPaneMessageTarget = useCallback(
+        (
+            pluginId: string,
+            panelId: string,
+            paneInstanceId: string,
+            connectionId: string,
+            post: (message: unknown) => void,
+            onBound?: (runtime: string) => void,
+        ) => {
+            const key = `${pluginId}\0${paneInstanceId}`;
+            const target = { panelId, post, ready: Promise.resolve() };
+            paneMessageTargets.current.set(key, target);
+            const runtimeInstanceId = runtimeSupervisor.current.getRuntimeInstanceId(pluginId);
+            if (runtimeInstanceId) {
+                target.ready = paneBindingQueue.current.enqueue(key, async () => {
+                    if (!runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)) {
+                        return;
+                    }
+                    try {
+                        await bindNativePluginPaneConnection(
+                            runtimeInstanceId,
+                            panelId,
+                            paneInstanceId,
+                            connectionId,
+                        );
+                        if (
+                            paneMessageTargets.current.get(key) === target &&
+                            runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)
+                        ) {
+                            onBound?.(runtimeInstanceId);
+                        }
+                    } catch (error) {
+                        if (
+                            runtimeSupervisor.current.isCurrentRuntime(pluginId, runtimeInstanceId)
+                        ) {
+                            throw error;
+                        }
+                    }
+                });
+                void target.ready.catch((error) =>
+                    console.error('[Plugins] Failed to bind pane connection:', error),
+                );
+            }
+            return () => {
+                if (paneMessageTargets.current.get(key) === target) {
+                    paneMessageTargets.current.delete(key);
+                    if (runtimeInstanceId) {
+                        void paneBindingQueue.current
+                            .enqueue(key, () =>
+                                unbindNativePluginPaneConnection(runtimeInstanceId, paneInstanceId),
+                            )
+                            .catch((error) => {
+                                console.error('[Plugins] Failed to unbind pane connection:', error);
+                            });
+                    }
+                }
+            };
+        },
+        [],
+    );
 
     // Listen for Quick Pick selections from UI
     useEffect(() => {
+        /** Return a quick-pick result to its captured current requester. */
         const handleQuickPickSelect = (e: any) => {
-            const { requestId, pluginId, selectedItem, requester = runtimeSupervisor.current.getWorker(pluginId) } = e.detail;
-            if (!requester) return;
+            const {
+                requestId,
+                pluginId,
+                selectedItem,
+                requester = runtimeSupervisor.current.getWorker(pluginId),
+            } = e.detail;
+            if (!requester) {
+                return;
+            }
             postCurrentWorkerResponse(
                 requester,
-                (candidate: Worker) => runtimeSupervisor.current.isCurrentWorker(pluginId, candidate),
+                (candidate: Worker) =>
+                    runtimeSupervisor.current.isCurrentWorker(pluginId, candidate),
                 'api:window:showQuickPick',
                 { requestId, result: selectedItem },
             );
@@ -1048,21 +1324,23 @@ export const PluginProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }, []);
 
     return (
-        <PluginContext.Provider value={{
-            plugins,
-            editorProviders,
-            loaded,
-            commands,
-            panels,
-            runtimeHealth,
-            pluginSafeMode,
-            executeCommand,
-            reloadPlugins,
-            retryPluginRuntime,
-            exitPluginSafeMode,
-            postPaneMessage,
-            registerPaneMessageTarget,
-        }}>
+        <PluginContext.Provider
+            value={{
+                plugins,
+                editorProviders,
+                loaded,
+                commands,
+                panels,
+                runtimeHealth,
+                pluginSafeMode,
+                executeCommand,
+                reloadPlugins,
+                retryPluginRuntime,
+                exitPluginSafeMode,
+                postPaneMessage,
+                registerPaneMessageTarget,
+            }}
+        >
             {children}
         </PluginContext.Provider>
     );
