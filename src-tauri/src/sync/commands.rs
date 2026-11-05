@@ -31,7 +31,7 @@ use super::types::{
 };
 use crate::vault::credential::{normalize_record_credential, CredentialEnvelope};
 use crate::vault::crypto::{decrypt_record, encrypt_record, EncryptedEnvelope, SecretKey};
-use crate::vault::store::VaultService;
+use crate::vault::store::{VaultRestoreBatch, VaultRestoreBatchError, VaultService};
 use crate::vault::types::PlaintextRecord;
 use crate::vault::types::VaultStatus;
 use base64::Engine;
@@ -1718,6 +1718,245 @@ async fn ensure_unlocked_vault_for_credential_restore(
     }
 }
 
+// Work windows limit additional decrypted payload and lock hold time, never restore size.
+const CREDENTIAL_RESTORE_BATCH_RECORDS: usize = 32;
+const CREDENTIAL_RESTORE_BATCH_BYTES: usize = 1024 * 1024;
+
+/// One validated provider record retained only until its bounded write window completes.
+struct PreparedCredentialRestore {
+    object_name: String,
+    logical_id: String,
+    plaintext: SyncCredentialPlaintextV1,
+}
+
+/// Route the same restore policy through either a shared transaction or the single-write fallback.
+enum CredentialRestoreWriter<'a, 'vault> {
+    Direct(&'a VaultService),
+    Batch(&'a mut VaultRestoreBatch<'vault>),
+}
+
+impl CredentialRestoreWriter<'_, '_> {
+    /// Resolve identity from the active write view, including earlier records in a batch.
+    fn item_get_by_logical_id(
+        &self,
+        id: &str,
+    ) -> Result<PlaintextRecord, crate::vault::error::VaultError> {
+        match self {
+            Self::Direct(svc) => svc.item_get_by_logical_id(id),
+            Self::Batch(batch) => batch.item_get_by_logical_id(id),
+        }
+    }
+    /// Preserve the existing native tombstone implementation in both write modes.
+    fn item_delete(&mut self, id: &str) -> Result<(), crate::vault::error::VaultError> {
+        match self {
+            Self::Direct(svc) => svc.item_delete(id),
+            Self::Batch(batch) => batch.item_delete(id),
+        }
+    }
+    /// Create through the existing sync-specific validation and encryption path.
+    fn item_create_from_sync(
+        &mut self,
+        label: &str,
+        kind: &str,
+        values: &BTreeMap<String, String>,
+        notes: Option<&str>,
+        credential: Option<&CredentialEnvelope>,
+        id: &str,
+        revision: u64,
+        updated_at: u64,
+    ) -> Result<PlaintextRecord, crate::vault::error::VaultError> {
+        match self {
+            Self::Direct(svc) => svc.item_create_from_sync(
+                label, kind, values, notes, credential, id, revision, updated_at,
+            ),
+            Self::Batch(batch) => batch.item_create_from_sync(
+                label, kind, values, notes, credential, id, revision, updated_at,
+            ),
+        }
+    }
+    /// Retain remote revisions/timestamps and revision snapshots through either write mode.
+    fn item_apply_sync_restore(
+        &mut self,
+        item_id: &str,
+        logical_id: &str,
+        label: &str,
+        kind: &str,
+        values: &BTreeMap<String, String>,
+        notes: Option<&str>,
+        credential: Option<&CredentialEnvelope>,
+        revision: u64,
+        updated_at: u64,
+    ) -> Result<PlaintextRecord, crate::vault::error::VaultError> {
+        match self {
+            Self::Direct(svc) => svc.item_apply_sync_restore(
+                item_id, logical_id, label, kind, values, notes, credential, revision, updated_at,
+            ),
+            Self::Batch(batch) => batch.item_apply_sync_restore(
+                item_id, logical_id, label, kind, values, notes, credential, revision, updated_at,
+            ),
+        }
+    }
+}
+
+/// Apply the existing create/update/delete/conflict rules without committing a result early.
+fn apply_credential_restore(
+    writer: &mut CredentialRestoreWriter<'_, '_>,
+    logical_id: &str,
+    plaintext: &SyncCredentialPlaintextV1,
+    resolve_conflict_logical_ids: &HashSet<String>,
+) -> anyhow::Result<RestoreDecision> {
+    match writer.item_get_by_logical_id(logical_id) {
+        Ok(existing) => {
+            let decision = decide_restore_action(Some(&existing), plaintext);
+            match decision {
+                RestoreDecision::UpdateExisting => writer
+                    .item_apply_sync_restore(
+                        &existing.id,
+                        logical_id,
+                        &plaintext.label,
+                        &plaintext.kind,
+                        &plaintext.secret_values,
+                        plaintext.notes.as_deref(),
+                        plaintext.credential.as_ref(),
+                        plaintext.revision,
+                        plaintext.updated_at,
+                    )
+                    .map(|_| decision)
+                    .map_err(|e| anyhow::anyhow!("[vault_update_failed] {e}")),
+                RestoreDecision::ApplyDelete => writer
+                    .item_delete(&existing.id)
+                    .map(|_| decision)
+                    .map_err(|e| anyhow::anyhow!("[vault_delete_failed] {e}")),
+                RestoreDecision::Conflict if resolve_conflict_logical_ids.contains(logical_id) => {
+                    writer
+                        .item_apply_sync_restore(
+                            &existing.id,
+                            logical_id,
+                            &plaintext.label,
+                            &plaintext.kind,
+                            &plaintext.secret_values,
+                            plaintext.notes.as_deref(),
+                            plaintext.credential.as_ref(),
+                            plaintext.revision,
+                            plaintext.updated_at,
+                        )
+                        .map(|_| RestoreDecision::UpdateExisting)
+                        .map_err(|e| anyhow::anyhow!("[vault_update_failed] {e}"))
+                }
+                _ => Ok::<_, anyhow::Error>(decision),
+            }
+        }
+        Err(crate::vault::error::VaultError::RecordNotFound(_)) => {
+            let decision = decide_restore_action(None, plaintext);
+            match decision {
+                RestoreDecision::RestoreNew => writer
+                    .item_create_from_sync(
+                        &plaintext.label,
+                        &plaintext.kind,
+                        &plaintext.secret_values,
+                        plaintext.notes.as_deref(),
+                        plaintext.credential.as_ref(),
+                        logical_id,
+                        plaintext.revision,
+                        plaintext.updated_at,
+                    )
+                    .map(|_| decision)
+                    .map_err(|e| anyhow::anyhow!("[vault_create_failed] {e}")),
+                _ => Ok::<_, anyhow::Error>(decision),
+            }
+        }
+        Err(error) => Err(anyhow::anyhow!("[vault_lookup_failed] {error}")),
+    }
+}
+
+/// Commit once; retry safely aborted windows individually, never replay an uncertain commit.
+fn apply_credential_restore_chunk(
+    svc: &VaultService,
+    records: &[PreparedCredentialRestore],
+    resolve_conflict_ids: &HashSet<String>,
+) -> Vec<Result<RestoreDecision, String>> {
+    if records.is_empty() {
+        return Vec::new();
+    }
+    let result: Result<Vec<RestoreDecision>, VaultRestoreBatchError<anyhow::Error>> = svc
+        .with_sync_restore_batch(|batch| {
+            let mut writer = CredentialRestoreWriter::Batch(batch);
+            records
+                .iter()
+                .map(|record| {
+                    apply_credential_restore(
+                        &mut writer,
+                        &record.logical_id,
+                        &record.plaintext,
+                        resolve_conflict_ids,
+                    )
+                })
+                .collect()
+        });
+    match result {
+        Ok(decisions) => decisions.into_iter().map(Ok).collect(),
+        Err(VaultRestoreBatchError::Aborted(_)) => {
+            let mut writer = CredentialRestoreWriter::Direct(svc);
+            records
+                .iter()
+                .map(|record| {
+                    apply_credential_restore(
+                        &mut writer,
+                        &record.logical_id,
+                        &record.plaintext,
+                        resolve_conflict_ids,
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .collect()
+        }
+        Err(VaultRestoreBatchError::Commit(error)) => records
+            .iter()
+            .map(|_| Err(format!("[vault_commit_failed] {error}")))
+            .collect(),
+    }
+}
+
+/// Apply a bounded write window under one vault guard and count only completed durable outcomes.
+async fn flush_credential_restore_chunk(
+    vault: &Mutex<VaultService>,
+    records: &mut Vec<PreparedCredentialRestore>,
+    resolve_conflict_ids: &HashSet<String>,
+    stats: &mut CredentialRestoreStats,
+) {
+    if records.is_empty() {
+        return;
+    }
+    let outcomes = {
+        let svc = vault.lock().await;
+        apply_credential_restore_chunk(&svc, records, resolve_conflict_ids)
+    };
+    for (record, outcome) in records.drain(..).zip(outcomes) {
+        match outcome {
+            Ok(RestoreDecision::RestoreNew) => stats.restored = stats.restored.saturating_add(1),
+            Ok(RestoreDecision::UpdateExisting) => stats.updated = stats.updated.saturating_add(1),
+            Ok(RestoreDecision::ApplyDelete) => {
+                stats.tombstones_applied = stats.tombstones_applied.saturating_add(1)
+            }
+            Ok(RestoreDecision::SkipStale | RestoreDecision::SkipAlreadyDeleted) => {
+                stats.skipped = stats.skipped.saturating_add(1)
+            }
+            Ok(RestoreDecision::Conflict) => {
+                stats.conflicts = stats.conflicts.saturating_add(1);
+                eprintln!("[sync] Conflict detected for '{}' (same revision/timestamp with divergent payload)", record.logical_id);
+            }
+            Err(error) => {
+                stats.failed = stats.failed.saturating_add(1);
+                eprintln!(
+                    "[sync] Failed applying provider object '{}': {}",
+                    record.object_name, error
+                );
+            }
+        }
+    }
+}
+
+/// Restore every selected provider record using bounded local transactions and unchanged transport.
 async fn restore_credentials_from_provider_records(
     app: &tauri::AppHandle,
     vault: &Mutex<VaultService>,
@@ -1747,11 +1986,33 @@ async fn restore_credentials_from_provider_records(
     let remote_objects =
         credential_objects_for_restore(&manifest.sync_collection_id, requested_logical_ids, listed);
 
-    let mut stats = CredentialRestoreStats {
-        scanned: remote_objects.len() as u64,
-        ..CredentialRestoreStats::default()
-    };
     let downloaded = read_provider_objects_parallel(kind, app, remote_objects).await;
+    Ok(restore_downloaded_credentials(
+        vault,
+        downloaded,
+        &manifest.sync_collection_id,
+        secret_key,
+        requested_logical_ids,
+        resolve_conflict_logical_ids,
+    )
+    .await)
+}
+
+/// Parse/filter downloaded payloads outside the vault lock and apply bounded local write windows.
+async fn restore_downloaded_credentials(
+    vault: &Mutex<VaultService>,
+    downloaded: Vec<(ProviderCredentialObject, Result<Vec<u8>, String>)>,
+    collection_id: &str,
+    secret_key: &SecretKey,
+    requested_logical_ids: Option<&HashSet<String>>,
+    resolve_conflict_logical_ids: &HashSet<String>,
+) -> CredentialRestoreStats {
+    let mut stats = CredentialRestoreStats {
+        scanned: downloaded.len() as u64,
+        ..Default::default()
+    };
+    let mut pending = Vec::with_capacity(CREDENTIAL_RESTORE_BATCH_RECORDS);
+    let mut pending_bytes = 0usize;
 
     for (object, payload_result) in downloaded {
         let payload = match payload_result {
@@ -1766,8 +2027,21 @@ async fn restore_credentials_from_provider_records(
             }
         };
 
+        // An oversized record is still restored on its own, never rejected by this work budget.
+        if !pending.is_empty()
+            && payload.len() > CREDENTIAL_RESTORE_BATCH_BYTES.saturating_sub(pending_bytes)
+        {
+            flush_credential_restore_chunk(
+                vault,
+                &mut pending,
+                resolve_conflict_logical_ids,
+                &mut stats,
+            )
+            .await;
+            pending_bytes = 0;
+        }
         let (logical_id, plaintext) =
-            match parse_remote_sync_record(&payload, &manifest.sync_collection_id, secret_key) {
+            match parse_remote_sync_record(&payload, collection_id, secret_key) {
                 Ok(parsed) => parsed,
                 Err(error) => {
                     if error.starts_with("[sync_collection_mismatch]") {
@@ -1790,100 +2064,34 @@ async fn restore_credentials_from_provider_records(
             }
         }
 
-        let outcome = {
-            let svc = vault.lock().await;
-            match svc.item_get_by_logical_id(&logical_id) {
-                Ok(existing) => {
-                    let decision = decide_restore_action(Some(&existing), &plaintext);
-                    match decision {
-                        RestoreDecision::UpdateExisting => svc
-                            .item_apply_sync_restore(
-                                &existing.id,
-                                &logical_id,
-                                &plaintext.label,
-                                &plaintext.kind,
-                                &plaintext.secret_values,
-                                plaintext.notes.as_deref(),
-                                plaintext.credential.as_ref(),
-                                plaintext.revision,
-                                plaintext.updated_at,
-                            )
-                            .map(|_| decision)
-                            .map_err(|e| format!("[vault_update_failed] {e}")),
-                        RestoreDecision::ApplyDelete => svc
-                            .item_delete(&existing.id)
-                            .map(|_| decision)
-                            .map_err(|e| format!("[vault_delete_failed] {e}")),
-                        RestoreDecision::Conflict
-                            if resolve_conflict_logical_ids.contains(&logical_id) =>
-                        {
-                            svc.item_apply_sync_restore(
-                                &existing.id,
-                                &logical_id,
-                                &plaintext.label,
-                                &plaintext.kind,
-                                &plaintext.secret_values,
-                                plaintext.notes.as_deref(),
-                                plaintext.credential.as_ref(),
-                                plaintext.revision,
-                                plaintext.updated_at,
-                            )
-                            .map(|_| RestoreDecision::UpdateExisting)
-                            .map_err(|e| format!("[vault_update_failed] {e}"))
-                        }
-                        _ => Ok::<_, String>(decision),
-                    }
-                }
-                Err(crate::vault::error::VaultError::RecordNotFound(_)) => {
-                    let decision = decide_restore_action(None, &plaintext);
-                    match decision {
-                        RestoreDecision::RestoreNew => svc
-                            .item_create_from_sync(
-                                &plaintext.label,
-                                &plaintext.kind,
-                                &plaintext.secret_values,
-                                plaintext.notes.as_deref(),
-                                plaintext.credential.as_ref(),
-                                &logical_id,
-                                plaintext.revision,
-                                plaintext.updated_at,
-                            )
-                            .map(|_| decision)
-                            .map_err(|e| format!("[vault_create_failed] {e}")),
-                        _ => Ok::<_, String>(decision),
-                    }
-                }
-                Err(error) => Err(format!("[vault_lookup_failed] {error}")),
-            }
-        };
-
-        match outcome {
-            Ok(RestoreDecision::RestoreNew) => stats.restored = stats.restored.saturating_add(1),
-            Ok(RestoreDecision::UpdateExisting) => stats.updated = stats.updated.saturating_add(1),
-            Ok(RestoreDecision::ApplyDelete) => {
-                stats.tombstones_applied = stats.tombstones_applied.saturating_add(1)
-            }
-            Ok(RestoreDecision::SkipStale | RestoreDecision::SkipAlreadyDeleted) => {
-                stats.skipped = stats.skipped.saturating_add(1)
-            }
-            Ok(RestoreDecision::Conflict) => {
-                stats.conflicts = stats.conflicts.saturating_add(1);
-                eprintln!(
-                    "[sync] Conflict detected for '{}' (same revision/timestamp with divergent payload)",
-                    logical_id
-                );
-            }
-            Err(error) => {
-                stats.failed = stats.failed.saturating_add(1);
-                eprintln!(
-                    "[sync] Failed applying provider object '{}': {}",
-                    object.object_name, error
-                );
-            }
+        pending.push(PreparedCredentialRestore {
+            object_name: object.object_name,
+            logical_id,
+            plaintext,
+        });
+        pending_bytes = pending_bytes.saturating_add(payload.len());
+        if pending.len() >= CREDENTIAL_RESTORE_BATCH_RECORDS
+            || pending_bytes >= CREDENTIAL_RESTORE_BATCH_BYTES
+        {
+            flush_credential_restore_chunk(
+                vault,
+                &mut pending,
+                resolve_conflict_logical_ids,
+                &mut stats,
+            )
+            .await;
+            pending_bytes = 0;
         }
     }
+    flush_credential_restore_chunk(
+        vault,
+        &mut pending,
+        resolve_conflict_logical_ids,
+        &mut stats,
+    )
+    .await;
 
-    Ok(stats)
+    stats
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -4429,6 +4637,398 @@ mod tests {
             updated_at,
             deleted,
         }
+    }
+
+    struct RestoreTestVault {
+        service: VaultService,
+        _directory: tempfile::TempDir,
+    }
+
+    fn restore_test_vault() -> RestoreTestVault {
+        let directory = tempfile::tempdir().expect("temporary restore vault");
+        let mut service = VaultService::new(directory.path().into());
+        service
+            .initialize("restore fixture passphrase", false)
+            .expect("initialize fixture");
+        RestoreTestVault {
+            service,
+            _directory: directory,
+        }
+    }
+
+    fn prepare_restore(mut record: SyncCredentialPlaintextV1) -> PreparedCredentialRestore {
+        record.normalize();
+        PreparedCredentialRestore {
+            object_name: format!("fixture-{}", record.logical_id),
+            logical_id: record.logical_id.clone(),
+            plaintext: record,
+        }
+    }
+
+    fn restore_payload(
+        record: SyncCredentialPlaintextV1,
+        collection: &str,
+        key: &SecretKey,
+    ) -> (ProviderCredentialObject, Result<Vec<u8>, String>) {
+        let aad = credential_aad(collection, &record.logical_id, record.revision);
+        let encrypted =
+            encrypt_record(key, &serde_json::to_vec(&record).unwrap(), aad.as_bytes()).unwrap();
+        let envelope = SyncCredentialEncryptedV1 {
+            version: 1,
+            provider: "google".into(),
+            sync_collection_id: collection.into(),
+            logical_id: record.logical_id.clone(),
+            revision: record.revision,
+            updated_at: record.updated_at,
+            aad,
+            nonce: base64::engine::general_purpose::STANDARD.encode(encrypted.nonce),
+            ciphertext: base64::engine::general_purpose::STANDARD.encode(encrypted.ciphertext),
+        };
+        (
+            ProviderCredentialObject {
+                object_name: format!("fixture-{}", record.logical_id),
+                object_id: None,
+            },
+            Ok(serde_json::to_vec(&envelope).unwrap()),
+        )
+    }
+
+    #[test]
+    fn restore_batch_preserves_conflicts_revisions_history_and_convergence() {
+        let fixture = restore_test_vault();
+        let records = vec![
+            prepare_restore(remote_record("a", 1, 100, "initial", false)),
+            prepare_restore(remote_record("a", 2, 200, "replacement", false)),
+            prepare_restore(remote_record("a", 1, 100, "stale", false)),
+            prepare_restore(remote_record("a", 2, 200, "divergent", false)),
+            prepare_restore(remote_record("missing", 5, 500, "", true)),
+            prepare_restore(remote_record("unchanged", 1, 100, "same", false)),
+        ];
+        let decisions = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new())
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            decisions,
+            vec![
+                RestoreDecision::RestoreNew,
+                RestoreDecision::UpdateExisting,
+                RestoreDecision::SkipStale,
+                RestoreDecision::Conflict,
+                RestoreDecision::SkipAlreadyDeleted,
+                RestoreDecision::RestoreNew
+            ]
+        );
+        assert_eq!(fixture.service.restore_commits.get(), 1);
+        let live = fixture.service.item_get_by_logical_id("a").unwrap();
+        assert_eq!(
+            (live.revision, live.created_at, live.updated_at),
+            (2, 100, 200)
+        );
+        assert_eq!(
+            live.secret_values,
+            secret_values_from_legacy("ssh-private-key", "replacement")
+        );
+        let history = fixture.service.item_revision_history(&live.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].revision, 1);
+        let repeat = vec![prepare_restore(remote_record(
+            "unchanged",
+            1,
+            100,
+            "same",
+            false,
+        ))];
+        assert_eq!(
+            apply_credential_restore_chunk(&fixture.service, &repeat, &HashSet::new())[0]
+                .as_ref()
+                .unwrap(),
+            &RestoreDecision::SkipStale
+        );
+        assert_eq!(
+            fixture.service.restore_commits.get(),
+            1,
+            "unchanged windows must not commit"
+        );
+        let conflict = vec![prepare_restore(remote_record(
+            "a", 2, 200, "resolved", false,
+        ))];
+        let selected = HashSet::from(["a".to_string()]);
+        assert_eq!(
+            apply_credential_restore_chunk(&fixture.service, &conflict, &selected)[0]
+                .as_ref()
+                .unwrap(),
+            &RestoreDecision::UpdateExisting
+        );
+        assert_eq!(
+            fixture.service.item_get_by_logical_id("a").unwrap().id,
+            live.id
+        );
+        assert_eq!(
+            fixture
+                .service
+                .item_revision_history(&live.id)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn restore_batch_preserves_order_when_a_tombstone_precedes_recreation() {
+        let fixture = restore_test_vault();
+        let initial = prepare_restore(remote_record("a", 1, 100, "old", false));
+        apply_credential_restore_chunk(&fixture.service, &[initial], &HashSet::new())[0]
+            .as_ref()
+            .unwrap();
+        let old_id = fixture
+            .service
+            .item_get_by_logical_id("a")
+            .unwrap()
+            .id
+            .clone();
+        let records = vec![
+            prepare_restore(remote_record("a", 2, 200, "", true)),
+            prepare_restore(remote_record("a", 3, 300, "new", false)),
+            prepare_restore(remote_record("a", 4, 400, "latest", false)),
+        ];
+        let decisions = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new())
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            decisions,
+            vec![
+                RestoreDecision::ApplyDelete,
+                RestoreDecision::RestoreNew,
+                RestoreDecision::UpdateExisting
+            ]
+        );
+        let live = fixture.service.item_get_by_logical_id("a").unwrap();
+        assert_ne!(live.id, old_id);
+        assert_eq!(
+            (live.revision, live.created_at, live.updated_at),
+            (4, 300, 400)
+        );
+        assert!(fixture.service.item_get(&old_id).is_err());
+        assert_eq!(fixture.service.item_list().unwrap().len(), 1);
+        assert_eq!(
+            fixture.service.item_revision_history(&live.id).unwrap()[0].revision,
+            3
+        );
+        assert_eq!(fixture.service.restore_commits.get(), 2);
+    }
+
+    #[test]
+    fn restore_batch_failure_keeps_valid_neighbors_and_avoids_duplicate_history() {
+        let fixture = restore_test_vault();
+        let records = vec![
+            prepare_restore(remote_record("a", 1, 100, "first", false)),
+            prepare_restore(remote_record("a", 2, 200, "updated", false)),
+            prepare_restore(remote_record("invalid", 1, 100, "", false)),
+            prepare_restore(remote_record("b", 1, 100, "last", false)),
+        ];
+        let outcomes = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new());
+        assert!(outcomes[0].is_ok() && outcomes[1].is_ok() && outcomes[3].is_ok());
+        assert!(outcomes[2]
+            .as_ref()
+            .unwrap_err()
+            .starts_with("[vault_create_failed]"));
+        let live = fixture.service.item_get_by_logical_id("a").unwrap();
+        assert_eq!(live.revision, 2);
+        assert_eq!(
+            fixture
+                .service
+                .item_revision_history(&live.id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(fixture.service.item_list().unwrap().len(), 2);
+        assert_eq!(
+            fixture.service.restore_commits.get(),
+            3,
+            "aborted batch must not count as a durable write"
+        );
+    }
+
+    #[test]
+    fn restore_commit_failure_reports_failed_records_without_replaying() {
+        let fixture = restore_test_vault();
+        fixture.service.fail_next_restore_commit.set(true);
+        let records = vec![
+            prepare_restore(remote_record("a", 1, 100, "one", false)),
+            prepare_restore(remote_record("b", 1, 100, "two", false)),
+        ];
+        let outcomes = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new());
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().all(|result| result
+            .as_ref()
+            .unwrap_err()
+            .starts_with("[vault_commit_failed]")));
+        assert_eq!(fixture.service.item_list().unwrap().len(), 0);
+        assert_eq!(fixture.service.restore_commits.get(), 0);
+    }
+
+    #[test]
+    fn restore_uncertain_commit_never_claims_success_or_replays_visible_writes() {
+        let fixture = restore_test_vault();
+        fixture.service.fail_after_restore_commit.set(true);
+        let records = vec![
+            prepare_restore(remote_record("a", 1, 100, "one", false)),
+            prepare_restore(remote_record("a", 2, 200, "two", false)),
+        ];
+        let outcomes = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new());
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().all(|result| result
+            .as_ref()
+            .unwrap_err()
+            .starts_with("[vault_commit_failed]")));
+        let live = fixture.service.item_get_by_logical_id("a").unwrap();
+        assert_eq!(live.revision, 2);
+        assert_eq!(
+            fixture
+                .service
+                .item_revision_history(&live.id)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(fixture.service.restore_commits.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn restore_downloaded_records_obey_count_and_byte_work_windows_without_caps() {
+        let fixture = restore_test_vault();
+        let key = crate::vault::crypto::generate_vek();
+        let count = CREDENTIAL_RESTORE_BATCH_RECORDS * 2 + 3;
+        let downloaded = (0..count)
+            .map(|i| {
+                restore_payload(
+                    remote_record(&format!("count-{i}"), 1, 100, "fixture", false),
+                    "collection",
+                    &key,
+                )
+            })
+            .collect();
+        let vault = Mutex::new(fixture.service);
+        let stats = restore_downloaded_credentials(
+            &vault,
+            downloaded,
+            "collection",
+            &key,
+            None,
+            &HashSet::new(),
+        )
+        .await;
+        assert_eq!(
+            (stats.scanned, stats.restored, stats.failed),
+            (count as u64, count as u64, 0)
+        );
+        assert_eq!(vault.lock().await.restore_commits.get(), 3);
+        let large = "x".repeat(CREDENTIAL_RESTORE_BATCH_BYTES + 1);
+        let downloaded = vec![
+            restore_payload(
+                remote_record("before", 1, 100, "small", false),
+                "collection",
+                &key,
+            ),
+            restore_payload(
+                remote_record("oversized", 1, 100, &large, false),
+                "collection",
+                &key,
+            ),
+            restore_payload(
+                remote_record("after", 1, 100, "small", false),
+                "collection",
+                &key,
+            ),
+        ];
+        let stats = restore_downloaded_credentials(
+            &vault,
+            downloaded,
+            "collection",
+            &key,
+            None,
+            &HashSet::new(),
+        )
+        .await;
+        assert_eq!((stats.restored, stats.failed), (3, 0));
+        let svc = vault.lock().await;
+        assert_eq!(svc.restore_commits.get(), 6);
+        assert_eq!(
+            svc.item_get_by_logical_id("oversized")
+                .unwrap()
+                .secret_values,
+            secret_values_from_legacy("ssh-private-key", &large)
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_downloaded_records_preserve_filter_parse_and_download_failure_counts() {
+        let fixture = restore_test_vault();
+        let key = crate::vault::crypto::generate_vek();
+        let mut downloaded = vec![
+            restore_payload(
+                remote_record("selected", 1, 100, "one", false),
+                "collection",
+                &key,
+            ),
+            restore_payload(
+                remote_record("filtered", 1, 100, "two", false),
+                "collection",
+                &key,
+            ),
+            restore_payload(
+                remote_record("foreign", 1, 100, "three", false),
+                "other-collection",
+                &key,
+            ),
+        ];
+        downloaded.push((
+            ProviderCredentialObject {
+                object_name: "malformed".into(),
+                object_id: None,
+            },
+            Ok(b"invalid json".to_vec()),
+        ));
+        downloaded.push((
+            ProviderCredentialObject {
+                object_name: "download-error".into(),
+                object_id: None,
+            },
+            Err("fixture download failure".into()),
+        ));
+        let vault = Mutex::new(fixture.service);
+        let filter = HashSet::from(["selected".to_string()]);
+        let stats = restore_downloaded_credentials(
+            &vault,
+            downloaded,
+            "collection",
+            &key,
+            Some(&filter),
+            &HashSet::new(),
+        )
+        .await;
+        assert_eq!(
+            (stats.scanned, stats.restored, stats.skipped, stats.failed),
+            (5, 1, 2, 2)
+        );
+        assert_eq!(vault.lock().await.item_list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_locked_vault_reports_each_record_as_failed_without_writes() {
+        let mut fixture = restore_test_vault();
+        fixture.service.lock();
+        let records = vec![
+            prepare_restore(remote_record("a", 1, 100, "one", false)),
+            prepare_restore(remote_record("b", 1, 100, "two", false)),
+        ];
+        let results = apply_credential_restore_chunk(&fixture.service, &records, &HashSet::new());
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(Result::is_err));
+        assert_eq!(fixture.service.restore_commits.get(), 0);
     }
 
     fn test_capabilities() -> ProviderCapabilities {
