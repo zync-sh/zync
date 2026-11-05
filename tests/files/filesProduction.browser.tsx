@@ -24,6 +24,7 @@ import {
 import '../../src/index.css';
 
 const accessTests = new URLSearchParams(location.search).get('access') === '1';
+const navigationMemoryTests = new URLSearchParams(location.search).get('navigationMemory') === '1';
 const windowsTests = new URLSearchParams(location.search).get('windows') === '1';
 const administratorTests = new URLSearchParams(location.search).get('admin') === '1';
 const host = accessTests || windowsTests ? 'local' : 'files-ui-fixture';
@@ -173,6 +174,12 @@ window.ipcRenderer = {
             return transferSafety.invoke(command, args ?? {});
         }
         if (command === 'fs_list') {
+            if (navigationMemoryTests && args?.path?.startsWith('/navigation-memory/')) {
+                return Array.from({ length: 1000 }, (_, index) => ({
+                    ...entry(`item-${index}.ts`, index % 5 === 0 ? 'd' : '-'),
+                    path: `${args.path}/item-${index}.ts`,
+                }));
+            }
             listingReads.push(args?.path ?? '');
             if (failNextListing) {
                 const message = failNextListing;
@@ -326,6 +333,12 @@ useAppStore.setState((state) => ({
 }));
 
 const filesUiTest = {
+    navigateMemoryListing: async (index: number) => {
+        if (!navigationMemoryTests) {
+            throw new Error('Navigation memory fixture is not enabled');
+        }
+        await useAppStore.getState().loadFiles(host, `/navigation-memory/${index}`);
+    },
     editor: editorTests ? permissionFixture.control : undefined,
     calls,
     settingsWrites,

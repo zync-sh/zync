@@ -5,7 +5,58 @@ use std::fs;
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+use std::sync::{Arc, OnceLock};
 use std::time::UNIX_EPOCH;
+use tokio::sync::Semaphore;
+
+// Keep slow disks from occupying Tokio's entire blocking pool.
+const LOCAL_IO_CONCURRENCY: usize = 4;
+static LOCAL_IO_GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+// Reserve separate admission for long copies, deletes and transfer size scans.
+const LOCAL_BULK_IO_CONCURRENCY: usize = 2;
+static LOCAL_BULK_IO_GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+/// Runs interactive local I/O on bounded blocking workers; running work owns its permit.
+pub(crate) async fn run_local_io<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let gate = LOCAL_IO_GATE
+        .get_or_init(|| Arc::new(Semaphore::new(LOCAL_IO_CONCURRENCY)))
+        .clone();
+    run_local_io_with_gate(gate, operation).await
+}
+
+/// Bounds bulk local work independently so it cannot consume interactive I/O permits.
+pub(crate) async fn run_local_bulk_io<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let gate = LOCAL_BULK_IO_GATE
+        .get_or_init(|| Arc::new(Semaphore::new(LOCAL_BULK_IO_CONCURRENCY)))
+        .clone();
+    run_local_io_with_gate(gate, operation).await
+}
+
+/// Keeps the admission permit with running work so caller cancellation cannot admit excess work.
+async fn run_local_io_with_gate<T, F>(gate: Arc<Semaphore>, operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let permit = gate
+        .acquire_owned()
+        .await
+        .map_err(|_| anyhow!("Local filesystem worker pool closed"))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation()
+    })
+    .await
+    .map_err(|error| anyhow!("Local filesystem worker failed: {error}"))?
+}
 
 /// Decode the complete SFTP entry kind, not overlapping mode-bit predicates.
 fn remote_entry_is_directory(attributes: &russh_sftp::protocol::FileAttributes) -> bool {
@@ -133,6 +184,30 @@ fn local_home_dir() -> String {
     }
 }
 
+/// Uses the same home-directory fallback for full listings and lightweight completions.
+fn local_listing_path(path: &str) -> String {
+    if path.is_empty() {
+        local_home_dir()
+    } else {
+        path.to_string()
+    }
+}
+
+/// Preserves the existing directory/symlink-first listing order for local callers.
+fn sort_local_entries(entries: &mut [FileEntry]) {
+    entries.sort_by(|a, b| {
+        let a_dir = a.r#type == "d" || a.r#type == "l";
+        let b_dir = b.r#type == "d" || b.r#type == "l";
+        if a_dir && !b_dir {
+            std::cmp::Ordering::Less
+        } else if !a_dir && b_dir {
+            std::cmp::Ordering::Greater
+        } else {
+            a.name.cmp(&b.name)
+        }
+    });
+}
+
 pub struct FileSystem;
 
 fn editor_file_too_large(max_bytes: u64) -> anyhow::Error {
@@ -151,11 +226,12 @@ impl FileSystem {
         Self
     }
 
+    /// Dispatches legacy local listings through the bounded blocking worker boundary.
     #[allow(dead_code)]
     pub async fn list_dir(&self, connection_id: &str, path: &str) -> Result<Vec<FileEntry>> {
         // Deprecated: logic moved to commands.rs for proper dispatch
         if connection_id == "local" {
-            self.list_local(path)
+            self.list_local_async(path).await
         } else {
             Err(anyhow!(
                 "Remote connection not handled in list_dir, use list_remote"
@@ -163,12 +239,9 @@ impl FileSystem {
         }
     }
 
+    /// Lists full local metadata synchronously for callers already running off the async executor.
     pub fn list_local(&self, path: &str) -> Result<Vec<FileEntry>> {
-        let path = if path.is_empty() {
-            local_home_dir()
-        } else {
-            path.to_string()
-        };
+        let path = local_listing_path(path);
 
         let dir = fs::read_dir(&path).map_err(|e| anyhow!("Failed to read directory: {}", e))?;
         let mut entries = Vec::new();
@@ -226,20 +299,52 @@ impl FileSystem {
             });
         }
 
-        // Sort directories and symlinks first, then files
-        entries.sort_by(|a, b| {
-            let a_dir = a.r#type == "d" || a.r#type == "l";
-            let b_dir = b.r#type == "d" || b.r#type == "l";
-            if a_dir && !b_dir {
-                std::cmp::Ordering::Less
-            } else if !a_dir && b_dir {
-                std::cmp::Ordering::Greater
-            } else {
-                a.name.cmp(&b.name)
-            }
-        });
+        sort_local_entries(&mut entries);
 
         Ok(entries)
+    }
+
+    /// Collects a full local listing without blocking an async runtime worker.
+    pub async fn list_local_async(&self, path: &str) -> Result<Vec<FileEntry>> {
+        let path = path.to_owned();
+        run_local_io(move || FileSystem::new().list_local(&path)).await
+    }
+
+    /// Lists completion names and kinds without loading owners, sizes or modification times.
+    pub async fn list_local_names_async(&self, path: &str) -> Result<Vec<FileEntry>> {
+        let path = path.to_owned();
+        run_local_io(move || {
+            let path = local_listing_path(&path);
+            let directory =
+                fs::read_dir(path).map_err(|error| anyhow!("Failed to read directory: {error}"))?;
+            let mut entries = Vec::new();
+            for entry in directory {
+                let entry = entry.map_err(|error| anyhow!("Failed to read entry: {error}"))?;
+                let kind = entry
+                    .file_type()
+                    .map_err(|error| anyhow!("Failed to read file type: {error}"))?;
+                entries.push(FileEntry {
+                    name: entry.file_name().to_string_lossy().to_string(),
+                    path: entry.path().to_string_lossy().to_string(),
+                    r#type: if kind.is_symlink() {
+                        "l"
+                    } else if kind.is_dir() {
+                        "d"
+                    } else {
+                        "-"
+                    }
+                    .into(),
+                    size: 0,
+                    last_modified: 0,
+                    permissions: String::new(),
+                    owner: String::new(),
+                    group: String::new(),
+                });
+            }
+            sort_local_entries(&mut entries);
+            Ok(entries)
+        })
+        .await
     }
 
     pub async fn list_remote(
@@ -326,9 +431,14 @@ impl FileSystem {
         }
     }
 
+    /// Reads local text with the existing lossy UTF-8 conversion on a blocking worker.
     pub async fn read_file(&self, _connection_id: &str, path: &str) -> Result<String> {
-        let content = fs::read(path).map_err(|e| anyhow!("Failed to read file: {}", e))?;
-        Ok(String::from_utf8_lossy(&content).to_string())
+        let path = path.to_owned();
+        run_local_io(move || {
+            let content = fs::read(path).map_err(|e| anyhow!("Failed to read file: {}", e))?;
+            Ok(String::from_utf8_lossy(&content).to_string())
+        })
+        .await
     }
 
     pub fn read_local_limited(&self, path: &str, max_bytes: u64) -> Result<String> {
@@ -341,73 +451,116 @@ impl FileSystem {
         limited_text(content, max_bytes)
     }
 
+    /// Runs the bounded editor reader without blocking the async executor.
+    pub async fn read_local_limited_async(&self, path: &str, max_bytes: u64) -> Result<String> {
+        let path = path.to_owned();
+        run_local_io(move || FileSystem::new().read_local_limited(&path, max_bytes)).await
+    }
+
+    /// Writes local text through the bounded worker pool, preserving remote dispatch errors.
     pub async fn write_file(&self, connection_id: &str, path: &str, content: &str) -> Result<()> {
         if connection_id == "local" {
-            fs::write(path, content).map_err(|e| anyhow!("Failed to write file: {}", e))
+            let path = path.to_owned();
+            let content = content.to_owned();
+            run_local_io(move || {
+                fs::write(path, content).map_err(|e| anyhow!("Failed to write file: {}", e))
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
+    /// Creates a new local file atomically on a worker without overwriting existing entries.
     pub async fn create_file(&self, connection_id: &str, path: &str) -> Result<()> {
         if connection_id == "local" {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .map_err(|e| anyhow!("Failed to create file: {}", e))?;
-            Ok(())
+            let path = path.to_owned();
+            run_local_io(move || {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)
+                    .map_err(|e| anyhow!("Failed to create file: {}", e))?;
+                Ok(())
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
 
+    /// Creates the local directory tree as one bounded worker operation.
     pub async fn create_dir(&self, connection_id: &str, path: &str) -> Result<()> {
         if connection_id == "local" {
-            fs::create_dir_all(path).map_err(|e| anyhow!("Failed to create directory: {}", e))
+            let path = path.to_owned();
+            run_local_io(move || {
+                fs::create_dir_all(path).map_err(|e| anyhow!("Failed to create directory: {}", e))
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
 
+    /// Performs the existing local rename on a bounded worker.
     pub async fn rename(&self, connection_id: &str, old_path: &str, new_path: &str) -> Result<()> {
         if connection_id == "local" {
-            fs::rename(old_path, new_path).map_err(|e| anyhow!("Failed to rename: {}", e))
+            let old_path = old_path.to_owned();
+            let new_path = new_path.to_owned();
+            run_local_io(move || {
+                fs::rename(old_path, new_path).map_err(|e| anyhow!("Failed to rename: {}", e))
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
 
+    /// Runs complete local deletion, including recursive work, on a bounded bulk worker.
     pub async fn delete(&self, connection_id: &str, path: &str) -> Result<()> {
         if connection_id == "local" {
-            let metadata =
-                fs::metadata(path).map_err(|e| anyhow!("Failed to read metadata: {}", e))?;
-            if metadata.is_dir() {
-                fs::remove_dir_all(path).map_err(|e| anyhow!("Failed to delete directory: {}", e))
-            } else {
-                fs::remove_file(path).map_err(|e| anyhow!("Failed to delete file: {}", e))
-            }
+            let path = path.to_owned();
+            run_local_bulk_io(move || {
+                let metadata =
+                    fs::metadata(&path).map_err(|e| anyhow!("Failed to read metadata: {}", e))?;
+                if metadata.is_dir() {
+                    fs::remove_dir_all(path)
+                        .map_err(|e| anyhow!("Failed to delete directory: {}", e))
+                } else {
+                    fs::remove_file(path).map_err(|e| anyhow!("Failed to delete file: {}", e))
+                }
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
 
+    /// Copies a local file or complete recursive tree as one bounded bulk worker operation.
     pub async fn copy(&self, connection_id: &str, from: &str, to: &str) -> Result<()> {
         if connection_id == "local" {
-            let metadata = fs::metadata(from).map_err(|e| anyhow!("Source not found: {}", e))?;
-            if metadata.is_dir() {
-                Self::copy_dir_recursive(from, to)
-            } else {
-                fs::copy(from, to).map_err(|e| anyhow!("Failed to copy file: {}", e))?;
-                Ok(())
-            }
+            let from = from.to_owned();
+            let to = to.to_owned();
+            run_local_bulk_io(move || {
+                let metadata =
+                    fs::metadata(&from).map_err(|e| anyhow!("Source not found: {}", e))?;
+                if metadata.is_dir() {
+                    Self::copy_dir_recursive(&from, &to)
+                } else {
+                    fs::copy(from, to).map_err(|e| anyhow!("Failed to copy file: {}", e))?;
+                    Ok(())
+                }
+            })
+            .await
         } else {
             Err(anyhow!("Remote connection not yet implemented"))
         }
     }
 
+    /// Checks local existence on a worker while retaining the existing inaccessible-path behavior.
     pub async fn exists(&self, connection_id: &str, path: &str) -> Result<bool> {
         if connection_id == "local" {
-            Ok(std::path::Path::new(path).exists())
+            let path = path.to_owned();
+            run_local_io(move || Ok(std::path::Path::new(&path).exists())).await
         } else {
             Err(anyhow!(
                 "Remote connection not yet implemented in exists() - use exists_remote"
@@ -429,6 +582,7 @@ impl FileSystem {
         Ok(String::from_utf8_lossy(&content).to_string())
     }
 
+    /// Reads at most the editor limit plus one byte, rejecting files that exceed the limit.
     pub async fn read_remote_limited(
         &self,
         sftp: &russh_sftp::client::SftpSession,
@@ -438,10 +592,17 @@ impl FileSystem {
         use russh_sftp::protocol::OpenFlags;
         use tokio::io::AsyncReadExt;
 
-        if sftp.metadata(path).await?.size.is_some_and(|size| size > max_bytes) {
+        if sftp
+            .metadata(path)
+            .await?
+            .size
+            .is_some_and(|size| size > max_bytes)
+        {
             return Err(editor_file_too_large(max_bytes));
         }
-        let file = sftp.open_with_flags(path, OpenFlags::READ).await
+        let file = sftp
+            .open_with_flags(path, OpenFlags::READ)
+            .await
             .map_err(|e| anyhow!("Failed to open remote file: {}", e))?;
         let mut content = Vec::new();
         file.take(max_bytes + 1).read_to_end(&mut content).await?;
@@ -585,7 +746,7 @@ impl FileSystem {
         }
     }
 
-    // Helper for streaming file copy
+    /// Streams one remote file and completes destination flushing/close before reporting success.
     async fn copy_file_remote(
         &self,
         sftp: &russh_sftp::client::SftpSession,
@@ -635,7 +796,9 @@ impl FileSystem {
             }
 
             // Preserve the existing optional remote fsync, then always await CLOSE.
-            dest.flush().await.map_err(|error| format!("Flush error: {error}"))?;
+            dest.flush()
+                .await
+                .map_err(|error| format!("Flush error: {error}"))?;
             Ok(())
         }
         .await;
@@ -647,7 +810,7 @@ impl FileSystem {
         Ok(())
     }
 
-    // Helper for recursive dir copy - Manually boxed for recursion
+    /// Recursively copies remote entries using a boxed future while preserving directory checks.
     fn copy_dir_recursive_remote<'a>(
         &'a self,
         sftp: &'a russh_sftp::client::SftpSession,
@@ -657,7 +820,9 @@ impl FileSystem {
         Box::pin(async move {
             println!("[FS] Copying directory from '{}' to '{}'", from, to);
 
-            ensure_remote_transfer_directory(sftp, to).await.map_err(|error| anyhow!(error))?;
+            ensure_remote_transfer_directory(sftp, to)
+                .await
+                .map_err(|error| anyhow!(error))?;
 
             // List source
             let entries = sftp
@@ -783,6 +948,325 @@ impl FileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    const TEST_DEADLINE: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn bulk_and_interactive_local_io_have_independent_admission() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_str().unwrap();
+        let source = directory.path().join("source.txt");
+        let destination = directory.path().join("copy.txt");
+        std::fs::write(&source, b"contents").unwrap();
+        let fs = FileSystem::new();
+        let bulk_gate = LOCAL_BULK_IO_GATE
+            .get_or_init(|| Arc::new(Semaphore::new(LOCAL_BULK_IO_CONCURRENCY)))
+            .clone();
+        let held_bulk = bulk_gate
+            .acquire_many_owned(LOCAL_BULK_IO_CONCURRENCY as u32)
+            .await
+            .unwrap();
+        let mut pending_bulk = Box::pin(run_local_bulk_io(|| Ok(())));
+        assert!(futures_util::poll!(&mut pending_bulk).is_pending());
+
+        timeout(TEST_DEADLINE, async {
+            assert_eq!(fs.list_local_async(root).await.unwrap().len(), 1);
+            assert_eq!(fs.list_local_names_async(root).await.unwrap().len(), 1);
+            assert_eq!(
+                fs.read_local_limited_async(source.to_str().unwrap(), 8)
+                    .await
+                    .unwrap(),
+                "contents"
+            );
+            assert!(fs.exists("local", source.to_str().unwrap()).await.unwrap());
+        })
+        .await
+        .expect("bulk saturation must not block interactive reads");
+        drop(held_bulk);
+        timeout(TEST_DEADLINE, pending_bulk).await.unwrap().unwrap();
+
+        let interactive_gate = LOCAL_IO_GATE
+            .get_or_init(|| Arc::new(Semaphore::new(LOCAL_IO_CONCURRENCY)))
+            .clone();
+        let _held_interactive = interactive_gate
+            .acquire_many_owned(LOCAL_IO_CONCURRENCY as u32)
+            .await
+            .unwrap();
+        timeout(TEST_DEADLINE, async {
+            fs.copy(
+                "local",
+                source.to_str().unwrap(),
+                destination.to_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(std::fs::read(&destination).unwrap(), b"contents");
+            fs.delete("local", destination.to_str().unwrap())
+                .await
+                .unwrap();
+            assert!(!destination.exists());
+        })
+        .await
+        .expect("bulk mutations must use their own admission pool");
+    }
+
+    #[tokio::test]
+    async fn blocking_work_keeps_executor_responsive_and_owns_permit_after_cancellation() {
+        let gate = Arc::new(Semaphore::new(1));
+        let (started, started_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let first_gate = gate.clone();
+        let first = tokio::spawn(run_local_io_with_gate(first_gate, move || {
+            let _ = started.send(());
+            let _ = release_rx.recv_timeout(TEST_DEADLINE);
+            Ok(())
+        }));
+        timeout(TEST_DEADLINE, started_rx).await.unwrap().unwrap();
+        assert!(
+            !first.is_finished(),
+            "executor must observe the blocked worker before it finishes"
+        );
+        timeout(
+            Duration::from_millis(250),
+            tokio::time::sleep(Duration::from_millis(5)),
+        )
+        .await
+        .unwrap();
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        assert_eq!(
+            gate.available_permits(),
+            0,
+            "the running worker retains admission"
+        );
+
+        let second_started = Arc::new(AtomicBool::new(false));
+        let observed = second_started.clone();
+        let mut second = Box::pin(run_local_io_with_gate(gate.clone(), move || {
+            observed.store(true, Ordering::SeqCst);
+            Ok(7)
+        }));
+        assert!(futures_util::poll!(&mut second).is_pending());
+        assert!(!second_started.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        assert_eq!(timeout(TEST_DEADLINE, second).await.unwrap().unwrap(), 7);
+        assert_eq!(gate.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancelled_admission_does_not_enqueue_detached_work() {
+        let gate = Arc::new(Semaphore::new(1));
+        let held = gate.clone().acquire_owned().await.unwrap();
+        let called = Arc::new(AtomicBool::new(false));
+        let observed = called.clone();
+        let mut pending = Box::pin(run_local_io_with_gate(gate.clone(), move || {
+            observed.store(true, Ordering::SeqCst);
+            Ok(())
+        }));
+        assert!(futures_util::poll!(&mut pending).is_pending());
+        drop(pending);
+        drop(held);
+        run_local_io_with_gate(gate, || Ok(())).await.unwrap();
+        assert!(!called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn concurrent_local_operations_respect_worker_capacity() {
+        let gate = Arc::new(Semaphore::new(2));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (started, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..6 {
+            let active = active.clone();
+            let peak = peak.clone();
+            let started = started.clone();
+            let release_rx = release_rx.clone();
+            tasks.spawn(run_local_io_with_gate(gate.clone(), move || {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                let _ = started.send(());
+                let released = release_rx.lock().unwrap().recv_timeout(TEST_DEADLINE);
+                active.fetch_sub(1, Ordering::SeqCst);
+                released.map_err(|error| anyhow!("fixture release failed: {error}"))?;
+                Ok(())
+            }));
+        }
+        for _ in 0..2 {
+            timeout(TEST_DEADLINE, started_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(gate.available_permits(), 0);
+        assert_eq!(active.load(Ordering::SeqCst), 2);
+        for _ in 0..6 {
+            release.send(()).unwrap();
+        }
+        timeout(TEST_DEADLINE, async {
+            while let Some(result) = tasks.join_next().await {
+                result.unwrap().unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        assert_eq!(gate.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn worker_panic_reports_failure_and_releases_admission() {
+        let gate = Arc::new(Semaphore::new(1));
+        let result = run_local_io_with_gate(gate.clone(), || -> Result<()> {
+            panic!("fixture worker panic")
+        })
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .starts_with("Local filesystem worker failed:"));
+        assert_eq!(gate.available_permits(), 1);
+        assert_eq!(run_local_io_with_gate(gate, || Ok(42)).await.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn local_worker_crud_preserves_existing_operations_and_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let fs = FileSystem::new();
+        let nested = root.join("source").join("nested");
+        let source = nested.join("source.txt");
+        fs.create_dir("local", nested.to_str().unwrap())
+            .await
+            .unwrap();
+        fs.create_file("local", source.to_str().unwrap())
+            .await
+            .unwrap();
+        fs.write_file("local", source.to_str().unwrap(), "abcd")
+            .await
+            .unwrap();
+        assert!(fs
+            .create_file("local", source.to_str().unwrap())
+            .await
+            .is_err());
+        assert_eq!(
+            fs.read_file("local", source.to_str().unwrap())
+                .await
+                .unwrap(),
+            "abcd"
+        );
+        assert_eq!(
+            fs.read_local_limited_async(source.to_str().unwrap(), 4)
+                .await
+                .unwrap(),
+            "abcd"
+        );
+        assert!(fs
+            .read_local_limited_async(source.to_str().unwrap(), 3)
+            .await
+            .unwrap_err()
+            .to_string()
+            .starts_with("FILE_TOO_LARGE:"));
+        let renamed = nested.join("renamed.txt");
+        fs.rename("local", source.to_str().unwrap(), renamed.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(!fs.exists("local", source.to_str().unwrap()).await.unwrap());
+        assert!(fs.exists("local", renamed.to_str().unwrap()).await.unwrap());
+        let file_copy = root.join("file-copy.txt");
+        fs.copy(
+            "local",
+            renamed.to_str().unwrap(),
+            file_copy.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let tree_copy = root.join("tree-copy");
+        fs.copy(
+            "local",
+            root.join("source").to_str().unwrap(),
+            tree_copy.to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read(tree_copy.join("nested/renamed.txt")).unwrap(),
+            b"abcd"
+        );
+        fs.delete("local", file_copy.to_str().unwrap())
+            .await
+            .unwrap();
+        fs.delete("local", tree_copy.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(!file_copy.exists());
+        assert!(!tree_copy.exists());
+        assert!(fs
+            .delete("local", file_copy.to_str().unwrap())
+            .await
+            .unwrap_err()
+            .to_string()
+            .starts_with("Failed to read metadata:"));
+        assert!(fs
+            .write_file("remote", source.to_str().unwrap(), "untouched")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Remote connection not yet implemented"));
+        assert_eq!(std::fs::read(renamed).unwrap(), b"abcd");
+    }
+
+    #[tokio::test]
+    async fn lightweight_listings_keep_names_kinds_and_order_without_full_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir(root.join("z-directory")).unwrap();
+        std::fs::write(root.join("a-file"), b"\xffdata").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("a-file"), root.join("m-link")).unwrap();
+        let fs = FileSystem::new();
+        let full = fs.list_local_async(root.to_str().unwrap()).await.unwrap();
+        let names = fs
+            .list_local_names_async(root.to_str().unwrap())
+            .await
+            .unwrap();
+        let expected: Vec<_> = full
+            .iter()
+            .map(|entry| (&entry.name, &entry.path, &entry.r#type))
+            .collect();
+        let actual: Vec<_> = names
+            .iter()
+            .map(|entry| (&entry.name, &entry.path, &entry.r#type))
+            .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(names.last().unwrap().name, "a-file");
+        for entry in names {
+            assert_eq!((entry.size, entry.last_modified), (0, 0));
+            assert!(
+                entry.owner.is_empty() && entry.group.is_empty() && entry.permissions.is_empty()
+            );
+        }
+        assert_eq!(
+            fs.read_file("local", root.join("a-file").to_str().unwrap())
+                .await
+                .unwrap(),
+            "\u{fffd}data"
+        );
+        let legacy = fs.list_dir("local", root.to_str().unwrap()).await.unwrap();
+        assert_eq!(legacy.len(), full.len());
+        let missing = root.join("missing");
+        assert!(fs
+            .list_local_async(missing.to_str().unwrap())
+            .await
+            .unwrap_err()
+            .to_string()
+            .starts_with("Failed to read directory:"));
+    }
 
     #[test]
     fn remote_directory_routing_requires_exact_directory_kind() {
@@ -799,7 +1283,11 @@ mod tests {
         ] {
             let mut attributes = FileAttributes::default();
             attributes.permissions = mode;
-            assert_eq!(remote_entry_is_directory(&attributes), expected, "mode {mode:?}");
+            assert_eq!(
+                remote_entry_is_directory(&attributes),
+                expected,
+                "mode {mode:?}"
+            );
         }
     }
 
@@ -825,7 +1313,10 @@ mod tests {
     #[test]
     fn limited_text_accepts_boundary_and_rejects_growth() {
         assert_eq!(limited_text(b"abcd".to_vec(), 4).unwrap(), "abcd");
-        assert!(limited_text(b"abcde".to_vec(), 4).unwrap_err().to_string().starts_with("FILE_TOO_LARGE:"));
+        assert!(limited_text(b"abcde".to_vec(), 4)
+            .unwrap_err()
+            .to_string()
+            .starts_with("FILE_TOO_LARGE:"));
     }
 
     #[test]
@@ -834,10 +1325,16 @@ mod tests {
         let result = (|| {
             fs::write(&path, b"abcd")?;
             let reader = FileSystem::new();
-            assert_eq!(reader.read_local_limited(path.to_str().unwrap(), 4)?, "abcd");
+            assert_eq!(
+                reader.read_local_limited(path.to_str().unwrap(), 4)?,
+                "abcd"
+            );
             fs::write(&path, b"abcde")?;
-            assert!(reader.read_local_limited(path.to_str().unwrap(), 4)
-                .unwrap_err().to_string().starts_with("FILE_TOO_LARGE:"));
+            assert!(reader
+                .read_local_limited(path.to_str().unwrap(), 4)
+                .unwrap_err()
+                .to_string()
+                .starts_with("FILE_TOO_LARGE:"));
             Ok::<(), anyhow::Error>(())
         })();
         let _ = fs::remove_file(&path);

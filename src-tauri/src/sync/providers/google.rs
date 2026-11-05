@@ -10,7 +10,51 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+
+mod token_cache;
+use token_cache::{AccessToken, TokenCache};
+
+static TOKEN_CACHES: OnceLock<Mutex<HashMap<PathBuf, Arc<TokenCache>>>> = OnceLock::new();
+
+/// Reuses one account-generation cache and refresh gate for each provider data root.
+fn token_cache(data_dir: &Path) -> Arc<TokenCache> {
+    TOKEN_CACHES
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(data_dir.to_path_buf())
+        .or_default()
+        .clone()
+}
+
+/// Evicts only the rejected access token; a newer connection's token remains valid.
+fn invalidate_rejected_token(token: &str) {
+    let Some(caches) = TOKEN_CACHES.get() else {
+        return;
+    };
+    for cache in caches
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+    {
+        cache.reject(token);
+    }
+}
+
+/// Preserves HTTP failures while removing rejected credentials from the memory cache.
+fn checked_drive_response(
+    response: reqwest::Response,
+    token: &str,
+) -> SyncResult<reqwest::Response> {
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        invalidate_rejected_token(token);
+    }
+    response
+        .error_for_status()
+        .map_err(|error| sync_err("provider_http_failed", error.to_string()))
+}
 
 /// Loaded from .env at build time (src-tauri/.env → GOOGLE_CLIENT_ID=...).
 const GOOGLE_CLIENT_ID: &str = match option_env!("GOOGLE_CLIENT_ID") {
@@ -401,25 +445,32 @@ async fn refresh_google_access_token(tokens: &mut StoredTokens) -> SyncResult<()
     Ok(())
 }
 
+/// Reuses an unexpired memory token and shares one refresh among concurrent callers.
 async fn get_valid_google_token(data_dir: &Path) -> SyncResult<String> {
-    let mut tokens = load_tokens(data_dir, GOOGLE_TOKENS_KEY).ok_or_else(|| {
-        sync_err(
-            "provider_not_connected",
-            "Not connected to Google Drive. Please connect first.",
-        )
-    })?;
+    token_cache(data_dir)
+        .token(|| async {
+            let mut tokens = load_tokens(data_dir, GOOGLE_TOKENS_KEY).ok_or_else(|| {
+                sync_err(
+                    "provider_not_connected",
+                    "Not connected to Google Drive. Please connect first.",
+                )
+            })?;
+            refresh_google_access_token(&mut tokens).await?;
+            save_tokens(data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
+            AccessToken::from_tokens(&tokens)
+        })
+        .await
+}
 
-    if tokens.access_token.is_none() || now_secs() >= tokens.expires_at {
-        refresh_google_access_token(&mut tokens).await?;
+/// Updates presentation metadata under the same gate as connection credential writes.
+async fn record_google_sync(data_dir: &Path, timestamp: u64) -> SyncResult<()> {
+    let cache = token_cache(data_dir);
+    let _gate = cache.refresh.lock().await;
+    if let Some(mut tokens) = load_tokens_metadata(data_dir, GOOGLE_TOKENS_KEY) {
+        tokens.last_sync = Some(timestamp);
         save_tokens(data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
     }
-
-    tokens.access_token.clone().ok_or_else(|| {
-        sync_err(
-            "oauth_token_refresh_failed",
-            "No access token available after refresh.",
-        )
-    })
+    Ok(())
 }
 
 fn token_has_scope(scope_value: Option<&str>, required_scope: &str) -> bool {
@@ -480,6 +531,7 @@ async fn find_vault_file(token: &str) -> SyncResult<Option<String>> {
     find_file_by_name(token, VAULT_FILENAME).await
 }
 
+/// Finds the newest matching object and invalidates rejected access tokens.
 async fn find_file_by_name(token: &str, file_name: &str) -> SyncResult<Option<String>> {
     let escaped_name = file_name.replace('\'', "\\'");
     let resp: DriveFileList = http_client()?
@@ -494,9 +546,8 @@ async fn find_file_by_name(token: &str, file_name: &str) -> SyncResult<Option<St
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
-        .error_for_status()
-        .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
+        .map_err(|e| sync_err("provider_http_failed", e.to_string()))
+        .and_then(|response| checked_drive_response(response, token))?
         .json()
         .await
         .map_err(|e| sync_err("provider_http_failed", e.to_string()))?;
@@ -504,6 +555,7 @@ async fn find_file_by_name(token: &str, file_name: &str) -> SyncResult<Option<St
     Ok(resp.files.into_iter().next().map(|f| f.id))
 }
 
+/// Lists matching objects while preserving paging and rejecting stale authentication.
 async fn find_files_by_name_prefix(
     token: &str,
     prefix: &str,
@@ -532,9 +584,8 @@ async fn find_files_by_name_prefix(
             .header("Authorization", format!("Bearer {token}"))
             .send()
             .await
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
-            .error_for_status()
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
+            .map_err(|e| sync_err("provider_http_failed", e.to_string()))
+            .and_then(|response| checked_drive_response(response, token))?
             .json()
             .await
             .map_err(|e| sync_err("provider_http_failed", e.to_string()))?;
@@ -659,6 +710,7 @@ async fn upload_vault_bytes(
     upload_named_bytes(token, VAULT_FILENAME, file_bytes, existing_id).await
 }
 
+/// Uploads bytes without retrying mutations; rejected access tokens are evicted.
 async fn upload_named_bytes(
     token: &str,
     file_name: &str,
@@ -677,9 +729,8 @@ async fn upload_named_bytes(
             .body(file_bytes)
             .send()
             .await
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
-            .error_for_status()
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?;
+            .map_err(|e| sync_err("provider_http_failed", e.to_string()))
+            .and_then(|response| checked_drive_response(response, token))?;
     } else {
         let boundary = "zync_vault_mp_boundary";
         let metadata = serde_json::json!({
@@ -700,9 +751,8 @@ async fn upload_named_bytes(
             .body(body)
             .send()
             .await
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
-            .error_for_status()
-            .map_err(|e| sync_err("provider_http_failed", e.to_string()))?;
+            .map_err(|e| sync_err("provider_http_failed", e.to_string()))
+            .and_then(|response| checked_drive_response(response, token))?;
     }
 
     Ok(())
@@ -722,15 +772,15 @@ fn build_multipart_related(metadata: &str, content: &[u8], boundary: &str) -> Ve
     body
 }
 
+/// Downloads one encrypted object and evicts access tokens rejected by Drive.
 async fn download_vault_bytes(token: &str, file_id: &str) -> SyncResult<Vec<u8>> {
     let bytes = http_client()?
         .get(format!("{GDRIVE_API}/files/{file_id}?alt=media"))
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
-        .error_for_status()
-        .map_err(|e| sync_err("provider_http_failed", e.to_string()))?
+        .map_err(|e| sync_err("provider_http_failed", e.to_string()))
+        .and_then(|response| checked_drive_response(response, token))?
         .bytes()
         .await
         .map_err(|e| sync_err("provider_http_failed", e.to_string()))?;
@@ -798,6 +848,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
         }
     }
 
+    /// Publishes OAuth credentials only if no newer connect/disconnect superseded this flow.
     async fn connect(&self, app: &tauri::AppHandle) -> SyncResult<ProviderIdentity> {
         if GOOGLE_CLIENT_ID.is_empty() {
             return Err(sync_err(
@@ -806,6 +857,9 @@ impl VaultProviderV1 for GoogleVaultProvider {
             ));
         }
 
+        let provider_data_dir = data_dir(app);
+        let cache = token_cache(&provider_data_dir);
+        let generation = cache.generation();
         let verifier = gen_random_base64url();
         let challenge = code_challenge_s256(&verifier);
         let state = gen_random_base64url();
@@ -908,8 +962,10 @@ impl VaultProviderV1 for GoogleVaultProvider {
             email: identity.email.clone(),
             avatar_url: identity.avatar_url.clone(),
         };
-        let provider_data_dir = data_dir(app);
+        let _gate = cache.refresh.lock().await;
+        let generation = cache.replace(generation)?;
         save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
+        cache.publish(generation, AccessToken::from_tokens(&tokens)?)?;
 
         Ok(ProviderIdentity {
             email: identity.email,
@@ -917,8 +973,14 @@ impl VaultProviderV1 for GoogleVaultProvider {
         })
     }
 
+    /// Fences outstanding refreshes before revocation and serialized local credential deletion.
     async fn disconnect(&self, app: &tauri::AppHandle) -> SyncResult<()> {
         let provider_data_dir = data_dir(app);
+        let cache = token_cache(&provider_data_dir);
+        cache.invalidate();
+        let _gate = cache.refresh.lock().await;
+        // A refresh can win the gate after the first fence; clear its publication too.
+        cache.invalidate();
         let tokens = load_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY);
         let revoke_token = tokens.as_ref().and_then(|t| t.refresh_token.clone());
         let revoke_result = if let Some(token) = revoke_token.as_deref() {
@@ -961,6 +1023,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
         })
     }
 
+    /// Uploads the encrypted vault and serializes its completion metadata.
     async fn upload_vault_blob(&self, app: &tauri::AppHandle, payload: Vec<u8>) -> SyncResult<u64> {
         let provider_data_dir = data_dir(app);
         let token = get_valid_google_token(&provider_data_dir).await?;
@@ -968,13 +1031,11 @@ impl VaultProviderV1 for GoogleVaultProvider {
         upload_vault_bytes(&token, payload, existing_id).await?;
 
         let ts = now_secs();
-        if let Some(mut tokens) = load_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY) {
-            tokens.last_sync = Some(ts);
-            save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
-        }
+        record_google_sync(&provider_data_dir, ts).await?;
         Ok(ts)
     }
 
+    /// Downloads the encrypted vault and serializes its completion metadata.
     async fn download_vault_blob(&self, app: &tauri::AppHandle) -> SyncResult<(Vec<u8>, u64)> {
         let provider_data_dir = data_dir(app);
         let token = get_valid_google_token(&provider_data_dir).await?;
@@ -987,13 +1048,11 @@ impl VaultProviderV1 for GoogleVaultProvider {
         let bytes = download_vault_bytes(&token, &file_id).await?;
 
         let ts = now_secs();
-        if let Some(mut tokens) = load_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY) {
-            tokens.last_sync = Some(ts);
-            save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
-        }
+        record_google_sync(&provider_data_dir, ts).await?;
         Ok((bytes, ts))
     }
 
+    /// Uploads one encrypted record and serializes completion metadata.
     async fn upload_credential_record(
         &self,
         app: &tauri::AppHandle,
@@ -1006,13 +1065,11 @@ impl VaultProviderV1 for GoogleVaultProvider {
         upload_named_bytes(&token, object_name, payload, existing_id).await?;
 
         let ts = now_secs();
-        if let Some(mut tokens) = load_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY) {
-            tokens.last_sync = Some(ts);
-            save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
-        }
+        record_google_sync(&provider_data_dir, ts).await?;
         Ok(ts)
     }
 
+    /// Uploads a batch and serializes its final completion metadata.
     async fn upload_credential_records(
         &self,
         app: &tauri::AppHandle,
@@ -1033,10 +1090,7 @@ impl VaultProviderV1 for GoogleVaultProvider {
             latest_synced_at = now_secs();
         }
 
-        if let Some(mut tokens) = load_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY) {
-            tokens.last_sync = Some(latest_synced_at);
-            save_tokens(&provider_data_dir, GOOGLE_TOKENS_KEY, &tokens).await?;
-        }
+        record_google_sync(&provider_data_dir, latest_synced_at).await?;
         Ok(latest_synced_at)
     }
 
@@ -1183,6 +1237,88 @@ mod tests {
             GOOGLE_DRIVE_SCOPE
         ));
         assert!(!token_has_scope(None, GOOGLE_DRIVE_SCOPE));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_http_response_evicts_only_its_cached_access_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = token_cache(directory.path());
+        let tokens = StoredTokens {
+            access_token: Some("fixture-rejected".into()),
+            refresh_token: None,
+            has_refresh_token: true,
+            expires_at: now_secs() + 3600,
+            last_sync: None,
+            email: None,
+            avatar_url: None,
+        };
+        cache
+            .publish(
+                cache.generation(),
+                AccessToken::from_tokens(&tokens).unwrap(),
+            )
+            .unwrap();
+        let response =
+            reqwest::Response::from(hyper::Response::builder().status(401).body("").unwrap());
+        assert_eq!(
+            checked_drive_response(response, "fixture-rejected")
+                .unwrap_err()
+                .code,
+            "provider_http_failed"
+        );
+        assert_eq!(
+            cache
+                .token(|| async {
+                    let tokens = StoredTokens {
+                        access_token: Some("fixture-fresh".into()),
+                        ..tokens
+                    };
+                    AccessToken::from_tokens(&tokens)
+                })
+                .await
+                .unwrap(),
+            "fixture-fresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_metadata_writes_preserve_disk_secrecy_and_memory_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let tokens = StoredTokens {
+            access_token: Some("fixture-memory-only".into()),
+            refresh_token: None,
+            has_refresh_token: true,
+            expires_at: now_secs() + 3600,
+            last_sync: None,
+            email: Some("fixture@example.invalid".into()),
+            avatar_url: None,
+        };
+        std::fs::write(
+            tokens_path(directory.path(), GOOGLE_TOKENS_KEY),
+            serde_json::to_vec(&tokens_for_disk(&tokens)).unwrap(),
+        )
+        .unwrap();
+        let cache = token_cache(directory.path());
+        cache
+            .publish(
+                cache.generation(),
+                AccessToken::from_tokens(&tokens).unwrap(),
+            )
+            .unwrap();
+        record_google_sync(directory.path(), 123).await.unwrap();
+        let disk =
+            std::fs::read_to_string(tokens_path(directory.path(), GOOGLE_TOKENS_KEY)).unwrap();
+        assert!(!disk.contains("fixture-memory-only"));
+        assert_eq!(
+            load_tokens_metadata(directory.path(), GOOGLE_TOKENS_KEY)
+                .unwrap()
+                .last_sync,
+            Some(123)
+        );
+        assert_eq!(
+            get_valid_google_token(directory.path()).await.unwrap(),
+            "fixture-memory-only"
+        );
     }
 
     #[test]

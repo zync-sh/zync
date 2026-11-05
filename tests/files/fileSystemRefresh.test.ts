@@ -1,8 +1,14 @@
+import assert from 'node:assert/strict';
+
 import { createStore } from 'zustand/vanilla';
 
 import type { FileEntry } from '../../src/components/file-manager/types';
 import { acquireFileDestination } from '../../src/features/files/application/fileDestinationReservations';
 import { bindNotifyDispatcher, unbindNotifyDispatcher } from '../../src/features/notifications';
+import {
+    markConnectionBackendLive,
+    markConnectionBackendOffline,
+} from '../../src/lib/terminal/connectionBackend';
 import { createTransferSlice } from '../../src/store/transferSlice';
 import type { AppStore } from '../../src/store/useAppStore';
 
@@ -10,6 +16,7 @@ interface ListingRequest {
     connectionId: string;
     path: string;
     resolve: (entries: FileEntry[]) => void;
+    reject: (error: unknown) => void;
 }
 
 function equal(actual: unknown, expected: unknown, message: string): void {
@@ -37,7 +44,9 @@ Object.defineProperty(globalThis, 'window', {
                 if (requests.length >= 8) {
                     throw new Error('Unexpected unbounded refresh requests');
                 }
-                return new Promise<FileEntry[]>((resolve) => requests.push({ ...args, resolve }));
+                return new Promise<FileEntry[]>((resolve, reject) =>
+                    requests.push({ ...args, resolve, reject }),
+                );
             },
         },
     },
@@ -63,6 +72,19 @@ function fixture(connectionId = `refresh-fixture-${++serial}`) {
         return initial as AppStore;
     });
     return { store, connectionId };
+}
+
+/** Gives shared-read cases a real transport identity and releases it even after assertion failures. */
+async function withLiveConnection(
+    test: (value: ReturnType<typeof fixture>) => Promise<void>,
+): Promise<void> {
+    const value = fixture();
+    markConnectionBackendLive(value.connectionId);
+    try {
+        await test(value);
+    } finally {
+        markConnectionBackendOffline(value.connectionId);
+    }
 }
 
 function entry(name: string, folder: string): FileEntry {
@@ -124,6 +146,596 @@ function assertDisposedPane(state: AppStore, key: string): void {
 }
 
 try {
+    await run(
+        'live split panes share raw acquisition while keeping projections and histories separate',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                const path = '/folder with spaces ';
+                const left = filesStoreKey(connectionId, 'left');
+                const right = filesStoreKey(connectionId, 'right');
+                store.getState().setPath(connectionId, '/before-left', 'left');
+                store.getState().setPath(connectionId, '/before-right', 'right');
+                const first = store.getState().loadFiles(connectionId, path, false, false, 'left');
+                const second = store
+                    .getState()
+                    .loadFiles(connectionId, path, false, false, 'right');
+                equal(
+                    requests.length,
+                    1,
+                    'Matching literal paths and live transports need one native read',
+                );
+                takeRequest(path).resolve([entry('shared', path)]);
+                await Promise.all([first, second]);
+                sameValues(
+                    store.getState().history[left],
+                    ['/before-left', path],
+                    'Keep left navigation history',
+                );
+                sameValues(
+                    store.getState().history[right],
+                    ['/before-right', path],
+                    'Keep right navigation history',
+                );
+                equal(
+                    store.getState().files[left][0].name,
+                    'shared',
+                    'Project the shared data into the left pane',
+                );
+                equal(
+                    store.getState().files[right][0].name,
+                    'shared',
+                    'Project the shared data into the right pane',
+                );
+                equal(
+                    store.getState().files[left] === store.getState().files[right],
+                    false,
+                    'Each pane owns its mapped listing',
+                );
+                const later = store.getState().refreshFiles(connectionId, 'left');
+                takeRequest(path).resolve([entry('later', path)]);
+                await later;
+                equal(
+                    store.getState().files[left][0].name,
+                    'later',
+                    'Settled reads are not retained as a directory cache',
+                );
+                equal(
+                    store.getState().files[right][0].name,
+                    'shared',
+                    'Refresh only projects into the requested pane',
+                );
+            });
+        },
+    );
+
+    await run(
+        'large shared listings reuse complete metadata while pane arrays remain independent',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                const path = '/large';
+                const count = 10000;
+                const nativeEntries = Array.from({ length: count }, (_, index) =>
+                    Object.freeze(entry(`file-${index}`, path)),
+                );
+                Object.freeze(nativeEntries);
+                const left = filesStoreKey(connectionId, 'left');
+                const right = filesStoreKey(connectionId, 'right');
+                const first = store.getState().loadFiles(connectionId, path, false, false, 'left');
+                const second = store
+                    .getState()
+                    .loadFiles(connectionId, path, false, false, 'right');
+                equal(requests.length, 1, 'Large matching panes still share native acquisition');
+                takeRequest(path).resolve(nativeEntries);
+                await Promise.all([first, second]);
+                const leftEntries = store.getState().files[left];
+                const rightEntries = store.getState().files[right];
+                equal(leftEntries === nativeEntries, false, 'A pane must own its array');
+                equal(rightEntries === nativeEntries, false, 'The raw array stays independent');
+                equal(leftEntries === rightEntries, false, 'Split panes must own different arrays');
+                for (let index = 0; index < count; index++) {
+                    equal(
+                        leftEntries[index],
+                        nativeEntries[index],
+                        'Reuse complete native metadata',
+                    );
+                    equal(
+                        rightEntries[index],
+                        nativeEntries[index],
+                        'Share immutable metadata across panes',
+                    );
+                }
+                leftEntries.pop();
+                equal(
+                    nativeEntries.length,
+                    count,
+                    'Pane array edits must not change the raw reply',
+                );
+                equal(rightEntries.length, count, 'Pane array edits must not change sibling rows');
+            });
+        },
+    );
+
+    await run(
+        'legacy identity fields normalize without changing complete native metadata',
+        async () => {
+            const { store, connectionId } = fixture();
+            const path = '/legacy';
+            const complete = Object.freeze(entry('complete', path));
+            const missingOwner = Object.freeze({
+                ...entry('missing-owner', path),
+                owner: undefined,
+                group: 'team',
+            });
+            const missingGroup = Object.freeze({
+                ...entry('missing-group', path),
+                owner: 'operator',
+                group: null,
+            });
+            const invalidBoth = Object.freeze({
+                ...entry('invalid-both', path),
+                owner: 17,
+                group: false,
+            });
+            const nativeEntries = [
+                complete,
+                missingOwner,
+                missingGroup,
+                invalidBoth,
+            ] as unknown as FileEntry[];
+            const pending = store.getState().loadFiles(connectionId, path);
+            takeRequest(path).resolve(nativeEntries);
+            await pending;
+            const loaded = store.getState().files[connectionId];
+            equal(loaded[0], complete, 'Complete metadata needs no replacement object');
+            for (let index = 1; index < loaded.length; index++) {
+                equal(
+                    loaded[index] === nativeEntries[index],
+                    false,
+                    'Normalize only legacy entries',
+                );
+                assert.deepEqual(
+                    loaded[index],
+                    {
+                        ...nativeEntries[index],
+                        owner: index === 2 ? 'operator' : '',
+                        group: index === 1 ? 'team' : '',
+                    },
+                    'Preserve every listing field while filling only missing identities',
+                );
+            }
+            equal(missingOwner.owner, undefined, 'Do not mutate a shared legacy owner');
+            equal(missingGroup.group, null, 'Do not mutate a shared legacy group');
+            equal(invalidBoth.owner, 17, 'Invalid legacy input is left unchanged');
+        },
+    );
+
+    await run(
+        'repeated navigation releases settled reads and closed background panes stay disposed',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                const instanceId = 'browsing';
+                const key = filesStoreKey(connectionId, instanceId);
+                store.getState().setPath(connectionId, '/start', instanceId);
+                for (let index = 0; index < 24; index++) {
+                    const path = `/folder-${index % 3}`;
+                    const pending = store
+                        .getState()
+                        .loadFiles(connectionId, path, false, false, instanceId);
+                    equal(
+                        requests.length,
+                        1,
+                        'Revisiting a settled directory requires one new read',
+                    );
+                    takeRequest(path).resolve([Object.freeze(entry(`result-${index}`, path))]);
+                    await pending;
+                    equal(
+                        store.getState().files[key][0].name,
+                        `result-${index}`,
+                        'Never retain an earlier directory outcome',
+                    );
+                    equal(store.getState().currentPath[key], path, 'Keep current navigation');
+                    equal(
+                        store.getState().isLoading[key],
+                        false,
+                        'Each read settles its loading state',
+                    );
+                }
+                equal(
+                    store.getState().history[key].length,
+                    25,
+                    'Keep the original navigation history',
+                );
+                store.getState().disposeFilesInstance(connectionId, instanceId);
+                await store.getState().refreshConnectionFiles(connectionId);
+                equal(requests.length, 0, 'Background refresh must not reopen a closed pane');
+                assertDisposedPane(store.getState(), key);
+                const reopened = store
+                    .getState()
+                    .loadFiles(connectionId, '/folder-2', false, false, instanceId);
+                equal(requests.length, 1, 'A reopened pane must acquire a new directory outcome');
+                takeRequest('/folder-2').resolve([entry('reopened', '/folder-2')]);
+                await reopened;
+                sameValues(
+                    store.getState().history[key],
+                    ['/folder-2'],
+                    'A reopened pane starts a fresh history',
+                );
+            });
+        },
+    );
+
+    await run(
+        'one connection refresh invalidates each unique path once across duplicate panes',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                store.getState().setPath(connectionId, '/shared');
+                store.getState().setPath(connectionId, '/shared', 'left');
+                store.getState().setPath(connectionId, '/other', 'right');
+                const refreshed = store.getState().refreshConnectionFiles(connectionId);
+                equal(
+                    requests.length,
+                    2,
+                    'A settled connection refresh needs one read per distinct path',
+                );
+                takeRequest('/shared').resolve([entry('fresh', '/shared')]);
+                takeRequest('/other').resolve([]);
+                await refreshed;
+                equal(
+                    requests.length,
+                    0,
+                    'The second matching pane must not queue another redundant refresh',
+                );
+                equal(
+                    store.getState().files[connectionId][0].name,
+                    'fresh',
+                    'Update the base view',
+                );
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'left')][0].name,
+                    'fresh',
+                    'Update its split sibling',
+                );
+            });
+        },
+    );
+
+    await run(
+        'refresh bursts wait for one fresh read without extending earlier callers through later mutations',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                store.getState().setPath(connectionId, '/shared');
+                store.getState().setPath(connectionId, '/shared', 'right');
+                const original = store.getState().loadFiles(connectionId, '/shared');
+                const old = takeRequest('/shared');
+                let firstFinished = false;
+                const firstRefresh = store
+                    .getState()
+                    .refreshConnectionFiles(connectionId)
+                    .then(() => {
+                        firstFinished = true;
+                    });
+                const burstRefresh = store.getState().refreshConnectionFiles(connectionId);
+                equal(requests.length, 0, 'Invalidations coalesce behind the active acquisition');
+                old.resolve([entry('old', '/shared')]);
+                await original;
+                equal(
+                    firstFinished,
+                    false,
+                    'A refresh cannot settle using data requested before its invalidation',
+                );
+                equal(
+                    requests.length,
+                    1,
+                    'The whole burst starts one fresh read after the old read',
+                );
+                const fresh = takeRequest('/shared');
+                let laterFinished = false;
+                const laterRefresh = store
+                    .getState()
+                    .refreshFiles(connectionId)
+                    .then(() => {
+                        laterFinished = true;
+                    });
+                fresh.resolve([entry('fresh', '/shared')]);
+                await Promise.all([firstRefresh, burstRefresh]);
+                equal(
+                    firstFinished,
+                    true,
+                    'Earlier refresh callers finish after their own fresh read',
+                );
+                equal(
+                    laterFinished,
+                    false,
+                    'A later invalidation still waits for its own fresh read',
+                );
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'right')][0].name,
+                    'fresh',
+                    'The unaffected sibling projects its own fresh result',
+                );
+                takeRequest('/shared').resolve([entry('latest', '/shared')]);
+                await laterRefresh;
+                equal(
+                    store.getState().files[connectionId][0].name,
+                    'latest',
+                    'The newest request owns the final listing',
+                );
+            });
+        },
+    );
+
+    await run(
+        'manual refresh preserves freshness while a sibling navigates independently',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                store.getState().setPath(connectionId, '/shared', 'left');
+                const left = store
+                    .getState()
+                    .loadFiles(connectionId, '/shared', false, false, 'left');
+                const right = store
+                    .getState()
+                    .loadFiles(connectionId, '/shared', false, false, 'right');
+                const shared = takeRequest('/shared');
+                const refreshed = store.getState().refreshFiles(connectionId, 'left');
+                const navigation = store
+                    .getState()
+                    .loadFiles(connectionId, '/elsewhere', false, false, 'right');
+                takeRequest('/elsewhere').resolve([entry('destination', '/elsewhere')]);
+                await navigation;
+                shared.resolve([entry('old', '/shared')]);
+                await Promise.all([left, right]);
+                takeRequest('/shared').resolve([entry('fresh', '/shared')]);
+                await refreshed;
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'left')][0].name,
+                    'fresh',
+                    'Manual refresh sees a post-invalidation read',
+                );
+                equal(
+                    store.getState().currentPath[filesStoreKey(connectionId, 'right')],
+                    '/elsewhere',
+                    'A shared reply cannot undo sibling navigation',
+                );
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'right')][0].name,
+                    'destination',
+                    'Keep the independently acquired destination',
+                );
+            });
+        },
+    );
+
+    await run(
+        'closing queued owners skips native work and reopening gets a new lifetime read',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                const closingKey = filesStoreKey(connectionId, 'closing');
+                const original = store
+                    .getState()
+                    .loadFiles(connectionId, '/shared', false, false, 'closing');
+                const old = takeRequest('/shared');
+                const refreshed = store.getState().refreshFiles(connectionId, 'closing');
+                store.getState().disposeFilesInstance(connectionId, 'closing');
+                old.resolve([entry('old', '/shared')]);
+                await Promise.all([original, refreshed]);
+                equal(
+                    requests.length,
+                    0,
+                    'A queued read without any surviving owner must not reach native',
+                );
+                assertDisposedPane(store.getState(), closingKey);
+
+                const first = store
+                    .getState()
+                    .loadFiles(connectionId, '/reopened', false, false, 'closing');
+                const previousLifetime = takeRequest('/reopened');
+                store.getState().disposeFilesInstance(connectionId, 'closing');
+                const reopened = store
+                    .getState()
+                    .loadFiles(connectionId, '/reopened', false, false, 'closing');
+                equal(
+                    requests.length,
+                    0,
+                    'Reopened views queue behind the previous native acquisition',
+                );
+                previousLifetime.resolve([entry('obsolete', '/reopened')]);
+                await first;
+                equal(
+                    store.getState().files[closingKey],
+                    undefined,
+                    'The former lifetime cannot populate its replacement',
+                );
+                takeRequest('/reopened').resolve([entry('new-lifetime', '/reopened')]);
+                await reopened;
+                equal(
+                    store.getState().files[closingKey][0].name,
+                    'new-lifetime',
+                    'The replacement receives a fresh acquisition',
+                );
+            });
+        },
+    );
+
+    await run(
+        'transport replacement fences old success and failure while metadata changes preserve valid reads',
+        async () => {
+            for (const rejectOld of [false, true]) {
+                await withLiveConnection(async ({ store, connectionId }) => {
+                    const oldLoad = store.getState().loadFiles(connectionId, '/shared');
+                    const old = takeRequest('/shared');
+                    markConnectionBackendOffline(connectionId);
+                    markConnectionBackendLive(connectionId);
+                    const replacement = store.getState().loadFiles(connectionId, '/shared');
+                    const current = takeRequest('/shared');
+                    // An icon update changes the config object without replacing the live transport.
+                    store.setState({
+                        connections: [
+                            { id: connectionId, icon: 'ubuntu' } as AppStore['connections'][number],
+                        ],
+                    });
+                    current.resolve([entry('replacement', '/shared')]);
+                    await replacement;
+                    if (rejectOld) {
+                        old.reject(new Error('Connection not found'));
+                    } else {
+                        old.resolve([entry('old', '/shared')]);
+                    }
+                    await oldLoad;
+                    equal(
+                        store.getState().files[connectionId][0].name,
+                        'replacement',
+                        'Obsolete transports cannot overwrite the current listing',
+                    );
+                    equal(
+                        store.getState().error[connectionId],
+                        null,
+                        'Old errors cannot mark or disconnect the replacement',
+                    );
+                    equal(
+                        store.getState().isLoading[connectionId],
+                        false,
+                        'Current transport completion owns the spinner',
+                    );
+                });
+            }
+        },
+    );
+
+    await run(
+        'untracked reads are isolated and cannot publish into a newly observed transport',
+        async () => {
+            const { store, connectionId } = fixture();
+            const first = store.getState().loadFiles(connectionId, '/shared', false, false, 'left');
+            const second = store
+                .getState()
+                .loadFiles(connectionId, '/shared', false, false, 'right');
+            equal(
+                requests.length,
+                2,
+                'Without a transport identity reads remain conservatively independent',
+            );
+            const one = takeRequest('/shared');
+            const two = takeRequest('/shared');
+            markConnectionBackendLive(connectionId);
+            try {
+                one.resolve([entry('old', '/shared')]);
+                two.resolve([entry('old', '/shared')]);
+                await Promise.all([first, second]);
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'left')],
+                    undefined,
+                    'An untracked old reply cannot publish into a live replacement',
+                );
+                equal(
+                    store.getState().isLoading[filesStoreKey(connectionId, 'right')],
+                    false,
+                    'Revoke orphaned loading after epoch acquisition',
+                );
+            } finally {
+                markConnectionBackendOffline(connectionId);
+            }
+        },
+    );
+
+    await run(
+        'failed acquisitions are retried and sharing never crosses store ownership',
+        async () => {
+            await withLiveConnection(async ({ store, connectionId }) => {
+                store.getState().setPath(connectionId, '/shared');
+                const failed = store.getState().loadFiles(connectionId, '/shared');
+                takeRequest('/shared').reject(new Error('Permission denied'));
+                await failed;
+                const retry = store.getState().refreshFiles(connectionId);
+                takeRequest('/shared').resolve([entry('retry', '/shared')]);
+                await retry;
+                equal(
+                    store.getState().files[connectionId][0].name,
+                    'retry',
+                    'A failed flight must release its key for retries',
+                );
+
+                const other = fixture(connectionId).store;
+                const one = store
+                    .getState()
+                    .loadFiles(connectionId, '/isolated', false, false, 'one');
+                const two = other
+                    .getState()
+                    .loadFiles(connectionId, '/isolated', false, false, 'two');
+                equal(requests.length, 2, 'Separate app stores must not share native reads');
+                takeRequest('/isolated').resolve([entry('first-store', '/isolated')]);
+                takeRequest('/isolated').resolve([entry('second-store', '/isolated')]);
+                await Promise.all([one, two]);
+                equal(
+                    store.getState().files[filesStoreKey(connectionId, 'one')][0].name,
+                    'first-store',
+                    'Keep the first store result',
+                );
+                equal(
+                    other.getState().files[filesStoreKey(connectionId, 'two')][0].name,
+                    'second-store',
+                    'Keep the second store result',
+                );
+            });
+        },
+    );
+
+    await run(
+        'epoch changes during pending home resolution release inherited loading without restoring closed panes',
+        async () => {
+            for (const closePane of [false, true]) {
+                await withLiveConnection(async ({ store, connectionId }) => {
+                    const instanceId = 'home';
+                    const key = filesStoreKey(connectionId, instanceId);
+                    const original = store
+                        .getState()
+                        .loadFiles(connectionId, '/old', false, false, instanceId);
+                    const old = takeRequest('/old');
+                    const homeReady = deferred();
+                    nativeOverride = async (command) => {
+                        equal(
+                            command,
+                            'fs_cwd',
+                            'Home resolution must not submit a listing before identity is rechecked',
+                        );
+                        await homeReady.promise;
+                        return '/home/current';
+                    };
+                    try {
+                        const home = store
+                            .getState()
+                            .loadFiles(connectionId, '~', false, false, instanceId);
+                        equal(
+                            store.getState().isLoading[key],
+                            true,
+                            'The superseded listing left a pending spinner',
+                        );
+                        markConnectionBackendOffline(connectionId);
+                        markConnectionBackendLive(connectionId);
+                        if (closePane) {
+                            store.getState().disposeFilesInstance(connectionId, instanceId);
+                        }
+                        old.resolve([entry('obsolete', '/old')]);
+                        await original;
+                        homeReady.resolve();
+                        await home;
+                        if (closePane) {
+                            assertDisposedPane(store.getState(), key);
+                        } else {
+                            equal(
+                                store.getState().isLoading[key],
+                                false,
+                                'An abandoned home lookup must release inherited loading',
+                            );
+                        }
+                    } finally {
+                        homeReady.resolve();
+                        nativeOverride = null;
+                    }
+                });
+            }
+        },
+    );
+
     await run('Keep Both shares filename rules while preserving dotted folder names', async () => {
         sameValues(
             splitFileName('project.v2', true),
@@ -805,8 +1417,8 @@ try {
                     equal(mutations, 1, 'Submit the deletion once');
                     sameValues(
                         reads.sort(),
-                        [directory, directory, '/other'].sort(),
-                        'Reconcile base and split panes at their current paths',
+                        (local ? [directory, '/other'] : [directory, directory, '/other']).sort(),
+                        'Reconcile every pane while proven local transport reads share a path',
                     );
                     sameValues(
                         store.getState().files[peer].map((file) => file.path),
@@ -1014,8 +1626,8 @@ try {
                 }
                 equal(command, 'fs_list', 'Completion only reads metadata');
                 const request = args as { connectionId: string; path: string };
-                return new Promise<FileEntry[]>((resolve) => {
-                    requests.push({ ...request, resolve });
+                return new Promise<FileEntry[]>((resolve, reject) => {
+                    requests.push({ ...request, resolve, reject });
                     if (++reads === 2) {
                         refreshing.resolve();
                     }

@@ -5,7 +5,7 @@ use russh::{Channel, ChannelMsg};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard};
 use tauri::ipc::Channel as IpcChannel;
 use tauri::{AppHandle, Emitter};
@@ -17,6 +17,41 @@ use crate::pty_output_flush::{
     record_flush_reason, FlushInstruction, FlushReason, OutputFlushPolicy,
 };
 use tokio::io::AsyncWriteExt;
+
+// Shared protocol packet size with inputPipeline.ts; queue slots bound remote buffered bytes.
+pub(crate) const TERMINAL_INPUT_CHUNK_BYTES: usize = 16 * 1024;
+const REMOTE_INPUT_QUEUE_CHUNKS: usize = 32;
+const REMOTE_RESIZE_QUEUE_REQUESTS: usize = 4;
+
+/// A size belongs to one installed SSH channel and completes only after sender admission.
+pub struct RemoteResize {
+    cols: u16,
+    rows: u16,
+    reply: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+}
+
+/// Keeps stalled control writes off the reader task and wakes callers on failure or cancellation.
+async fn run_remote_resizes<F, Fut>(
+    mut requests: mpsc::Receiver<RemoteResize>,
+    mut apply: F,
+) -> std::io::Result<()>
+where
+    F: FnMut(u16, u16) -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<()>>,
+{
+    while let Some(request) = requests.recv().await {
+        match apply(request.cols, request.rows).await {
+            Ok(()) => {
+                let _ = request.reply.send(Ok(()));
+            }
+            Err(error) => {
+                let _ = request.reply.send(Err(error.to_string()));
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
+}
 
 enum LocalReaderEvent {
     Data(Vec<u8>),
@@ -410,7 +445,7 @@ fn remote_wait_action(msg: Option<&ChannelMsg>) -> RemoteWaitAction {
     }
 }
 
-/// Return host-loss classification and the pane event payload when either I/O task ends.
+/// Classify receive exhaustion using any exit evidence drained before wait returned None.
 /// A recorded signal exit (`Some(None)`) is still pane-local, without a numeric status.
 fn remote_io_completion(recorded_exit: Option<Option<u32>>) -> (bool, Option<Option<u32>>) {
     (recorded_exit.is_none(), Some(recorded_exit.flatten()))
@@ -451,7 +486,7 @@ pub enum TerminalHandle {
     },
     Remote {
         input: Arc<RemoteInput>,
-        resize_tx: mpsc::Sender<(u16, u16)>, // Send resize events
+        resize_tx: mpsc::Sender<RemoteResize>,
         task_handle: Option<tokio::task::JoinHandle<()>>,
     },
 }
@@ -461,6 +496,18 @@ pub struct RemoteInput {
     send_gate: Mutex<()>,
     user_input_started: AtomicBool,
     startup_pending: AtomicBool,
+    admitted_bytes: AtomicU64,
+    write_progress: tokio::sync::watch::Sender<(u64, bool)>,
+}
+
+/// Aborted/unpolled readers and failed writers must release acknowledged-input waiters.
+struct RemoteInputLifetime(Arc<RemoteInput>);
+
+impl Drop for RemoteInputLifetime {
+    /// Marks this exact input stream stopped without touching a replacement PTY.
+    fn drop(&mut self) {
+        self.0.stop();
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -471,12 +518,65 @@ enum DeferredStartupClaim {
 }
 
 impl RemoteInput {
+    /// Reserves bounded queue admission before allocating a packet; callers hold the send gate.
+    async fn send_bytes(&self, data: &[u8]) -> std::result::Result<(), mpsc::error::SendError<()>> {
+        for bytes in data.chunks(TERMINAL_INPUT_CHUNK_BYTES) {
+            if self.write_progress.borrow().1 {
+                return Err(mpsc::error::SendError(()));
+            }
+            let permit = self.tx.reserve().await?;
+            if self.write_progress.borrow().1 {
+                return Err(mpsc::error::SendError(()));
+            }
+            self.admitted_bytes
+                .fetch_add(bytes.len() as u64, Ordering::Release);
+            permit.send(bytes.to_vec());
+        }
+        Ok(())
+    }
+
+    /// Initializes ordered admission and completion tracking for one remote input stream.
     fn new(tx: mpsc::Sender<Vec<u8>>, startup_pending: bool) -> Self {
         Self {
             tx,
             send_gate: Mutex::new(()),
             user_input_started: AtomicBool::new(false),
             startup_pending: AtomicBool::new(startup_pending),
+            admitted_bytes: AtomicU64::new(0),
+            write_progress: tokio::sync::watch::channel((0, false)).0,
+        }
+    }
+
+    /// Advances acknowledgments only after write_all completes on the SSH channel writer.
+    fn record_written(&self, bytes: usize) {
+        self.write_progress.send_modify(|(written, stopped)| {
+            if !*stopped {
+                *written += bytes as u64;
+            }
+        });
+    }
+
+    /// Wakes pending delivery on close/error; stopped streams cannot become writable again.
+    fn stop(&self) {
+        self.write_progress
+            .send_modify(|(_, stopped)| *stopped = true);
+    }
+
+    /// Waits for this ordered write's completion without retaining another packet copy.
+    async fn wait_written(&self, target: u64) -> Result<()> {
+        let mut progress = self.write_progress.subscribe();
+        loop {
+            let (written, stopped) = *progress.borrow_and_update();
+            if written >= target {
+                return Ok(());
+            }
+            if stopped {
+                return Err(anyhow!("Remote terminal input stream closed"));
+            }
+            progress
+                .changed()
+                .await
+                .map_err(|_| anyhow!("Remote terminal input stream closed"))?;
         }
     }
 
@@ -635,7 +735,10 @@ impl PtyManager {
                     task.abort();
                 }
             }
-            TerminalHandle::Remote { task_handle, .. } => {
+            TerminalHandle::Remote {
+                input, task_handle, ..
+            } => {
+                input.stop();
                 if let Some(task) = task_handle.take() {
                     task.abort();
                 }
@@ -933,7 +1036,7 @@ impl PtyManager {
         &self,
         creation: PtyCreation,
         generation: u32,
-        mut channel: Channel<Msg>,
+        channel: Channel<Msg>,
         cols: u16,
         rows: u16,
         app_handle: AppHandle,
@@ -1011,17 +1114,18 @@ impl PtyManager {
         }
 
         // Create channels for communication
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(32);
-        let (resize_tx, mut resize_rx) = mpsc::channel::<(u16, u16)>(4);
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(REMOTE_INPUT_QUEUE_CHUNKS);
+        let (resize_tx, resize_rx) = mpsc::channel(REMOTE_RESIZE_QUEUE_REQUESTS);
 
         let connection_id_for_transport = connection_id.clone();
         let output = Arc::new(PtyOutput::new(output_channel.clone(), generation));
+        let input = Arc::new(RemoteInput::new(tx, !remote_os_known));
         let mut session = PtySession {
             connection_id,
             output_channel: output_channel.clone(),
             output: output.clone(),
             handle: TerminalHandle::Remote {
-                input: Arc::new(RemoteInput::new(tx, !remote_os_known)),
+                input: input.clone(),
                 resize_tx,
                 task_handle: None,
             },
@@ -1031,13 +1135,17 @@ impl PtyManager {
         let term_id_clone = term_id.clone();
         let app_handle_clone = app_handle.clone();
         let input_writer = channel.make_writer();
+        let (mut channel, channel_writer) = channel.split();
+        let channel_writer = Arc::new(channel_writer);
         let state_for_exit = self.state.clone();
         let term_id_for_exit = term_id.clone();
         let (reader_start_tx, reader_start_rx) = tokio::sync::oneshot::channel();
+        let input_lifetime = RemoteInputLifetime(input.clone());
 
         // Install cleanup ownership before publishing ready; the task cannot
         // emit output/exit until the matching owner releases this startup gate.
         let task_handle = tokio::task::spawn(async move {
+            let _input_lifetime = input_lifetime;
             if reader_start_rx.await.is_err() {
                 return;
             }
@@ -1050,16 +1158,30 @@ impl PtyManager {
             );
             let mut recorded_exit = None;
             let mut output_failed = false;
-            // JoinSet owns this one task: aborting the reader also aborts its
-            // writer. A blocked remote input window cannot freeze receive/resize.
+            // Both send tasks belong to this reader. Stalled input/control sends
+            // must not freeze receive, output acknowledgment or session cleanup.
             let mut writers = tokio::task::JoinSet::new();
+            let writer_lifetime = RemoteInputLifetime(input.clone());
+            let writer_input = input.clone();
             writers.spawn(async move {
+                let _writer_lifetime = writer_lifetime;
                 tokio::pin!(input_writer);
                 while let Some(bytes) = rx.recv().await {
                     input_writer.as_mut().write_all(&bytes).await?;
+                    writer_input.record_written(bytes.len());
                 }
                 Ok::<(), std::io::Error>(())
             });
+            let resize_writer = channel_writer.clone();
+            writers.spawn(run_remote_resizes(resize_rx, move |cols, rows| {
+                let writer = resize_writer.clone();
+                async move {
+                    writer
+                        .window_change(cols as u32, rows as u32, 0, 0)
+                        .await
+                        .map_err(std::io::Error::other)
+                }
+            }));
             let drop_transport;
             let exit_code;
 
@@ -1109,20 +1231,12 @@ impl PtyManager {
                     }
 
                     _ = writers.join_next(), if !writers.is_empty() => {
-                        (drop_transport, exit_code) = remote_io_completion(recorded_exit);
-                        break;
+                        // Peer Close can stop sends before queued exit/output is read.
+                        // Only channel.wait() can distinguish pane exit from host loss.
+                        input.stop();
+                        writers.abort_all();
                     }
 
-                    Some((mut c, mut r)) = resize_rx.recv() => {
-                        while let Ok((latest_c, latest_r)) = resize_rx.try_recv() {
-                            c = latest_c;
-                            r = latest_r;
-                        }
-                        // Advisory resize must not monopolize the control loop
-                        // if the transport's outgoing queue temporarily stalls.
-                        let _ = tokio::time::timeout(std::time::Duration::from_millis(100),
-                            channel.window_change(c as u32, r as u32, 0, 0)).await;
-                    }
                 }
             }
 
@@ -1135,7 +1249,8 @@ impl PtyManager {
                 }
             }
             writers.abort_all();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), channel.close()).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), channel_writer.close())
+                .await;
 
             let owned = PtyManager::finish_session(
                 &state_for_exit,
@@ -1236,8 +1351,7 @@ impl PtyManager {
 
         if !startup_input.is_empty() {
             input
-                .tx
-                .send(startup_input.into_bytes())
+                .send_bytes(startup_input.as_bytes())
                 .await
                 .map_err(|error| anyhow!("Failed to finish remote terminal startup: {error}"))?;
         }
@@ -1292,8 +1406,7 @@ impl PtyManager {
             }
         };
         input
-            .tx
-            .send(cd_cmd.into_bytes())
+            .send_bytes(cd_cmd.as_bytes())
             .await
             .map_err(|e| anyhow!("Failed to send navigation to SSH task: {}", e))
     }
@@ -1301,12 +1414,28 @@ impl PtyManager {
     /// Clone the installed input handle under the short state lock, then perform
     /// serialized local or remote I/O without holding the lifecycle registry.
     pub async fn write(&self, term_id: &str, data: &str) -> Result<()> {
+        self.write_for_owner(term_id, data, None).await
+    }
+
+    /// Fences delayed IPC by generation/channel before cloning a handle; replacements never inherit input.
+    pub(crate) async fn write_for_owner(
+        &self,
+        term_id: &str,
+        data: &str,
+        owner: Option<(u32, u32)>,
+    ) -> Result<()> {
         let (local_writer_opt, remote_input_opt) = {
             let state = lock_pty_state(&self.state);
             let sessions = &state.sessions;
             let session = sessions
                 .get(term_id)
                 .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+
+            if owner.is_some_and(|(generation, channel_id)| {
+                !session.output.matches(generation, channel_id)
+            }) {
+                return Err(anyhow!("Terminal session changed before input admission"));
+            }
 
             match &session.handle {
                 TerminalHandle::Local { writer, .. } => (Some(writer.clone()), None),
@@ -1315,30 +1444,55 @@ impl PtyManager {
         }; // sessions lock is dropped here
 
         if let Some(writer) = local_writer_opt {
-            write_local_pty(writer, data.as_bytes().to_vec()).await?;
+            write_local_pty_chunks(writer, data.as_bytes()).await?;
         } else if let Some(input) = remote_input_opt {
             // Mark interaction before waiting for the send gate. Deferred
             // startup will either finish first or observe this and stand down.
             input.mark_user_input_started();
             let _send_guard = input.send_gate.lock().await;
             input
-                .tx
-                .send(data.as_bytes().to_vec())
+                .send_bytes(data.as_bytes())
                 .await
                 .map_err(|e| anyhow!("Failed to send input to SSH task: {}", e))?;
+            if owner.is_some() {
+                input
+                    .wait_written(input.admitted_bytes.load(Ordering::Acquire))
+                    .await?;
+            }
         }
 
         Ok(())
     }
 
-    /// Resize a live PTY without holding the session map during platform I/O.
+    /// Exercises ownerless resize callers without duplicating the native admission path.
+    #[cfg(test)]
     pub async fn resize(&self, term_id: &str, cols: u16, rows: u16) -> Result<()> {
+        self.resize_for_owner(term_id, cols, rows, None).await
+    }
+
+    /// Binds queued resize work to its installed generation/channel before awaiting platform I/O.
+    pub(crate) async fn resize_for_owner(
+        &self,
+        term_id: &str,
+        cols: u16,
+        rows: u16,
+        owner: Option<(u32, u32)>,
+    ) -> Result<()> {
+        if cols == 0 || rows == 0 {
+            return Err(anyhow!("Terminal dimensions must be nonzero"));
+        }
         let (local_master, remote_tx_opt) = {
             let state = lock_pty_state(&self.state);
             let sessions = &state.sessions;
             let session = sessions
                 .get(term_id)
                 .ok_or_else(|| anyhow!("Session not found: {}", term_id))?;
+
+            if owner.is_some_and(|(generation, channel_id)| {
+                !session.output.matches(generation, channel_id)
+            }) {
+                return Err(anyhow!("Terminal session changed before resize admission"));
+            }
 
             match &session.handle {
                 TerminalHandle::Local { master, .. } => (Some(master.clone()), None),
@@ -1367,10 +1521,15 @@ impl PtyManager {
         }
 
         if let Some(resize_tx) = remote_tx_opt {
+            let (reply, completed) = tokio::sync::oneshot::channel();
             resize_tx
-                .send((cols, rows))
+                .send(RemoteResize { cols, rows, reply })
                 .await
                 .map_err(|e| anyhow!("Failed to send resize to SSH task: {}", e))?;
+            completed
+                .await
+                .map_err(|_| anyhow!("Remote terminal closed before resize completion"))?
+                .map_err(|error| anyhow!("Failed to resize SSH terminal: {error}"))?;
         }
 
         Ok(())
@@ -1636,18 +1795,29 @@ fn wait_for_local_child(
 /// Serialize local input before dispatching blocking pipe I/O. Holding an owned
 /// guard through flush prevents paste/keystroke interleaving, including when the
 /// invoking future is cancelled after the blocking operation has started.
+#[cfg(test)]
 async fn write_local_pty(writer: LocalWriter, data: Vec<u8>) -> Result<()> {
+    write_local_pty_chunks(writer, &data).await
+}
+
+/// Keeps one local write's lock across bounded blocking packets without copying the complete paste.
+async fn write_local_pty_chunks(writer: LocalWriter, data: &[u8]) -> Result<()> {
     let mut writer = writer.lock_owned().await;
-    tokio::task::spawn_blocking(move || {
-        writer
-            .write_all(&data)
-            .map_err(|e| anyhow!("Failed to write to PTY: {}", e))?;
-        writer
-            .flush()
-            .map_err(|e| anyhow!("Failed to flush PTY: {}", e))
-    })
-    .await
-    .map_err(|e| anyhow!("PTY input task failed: {}", e))?
+    for bytes in data.chunks(TERMINAL_INPUT_CHUNK_BYTES) {
+        let bytes = bytes.to_vec();
+        writer = tokio::task::spawn_blocking(move || {
+            writer
+                .write_all(&bytes)
+                .map_err(|e| anyhow!("Failed to write to PTY: {}", e))?;
+            writer
+                .flush()
+                .map_err(|e| anyhow!("Failed to flush PTY: {}", e))?;
+            Ok::<_, anyhow::Error>(writer)
+        })
+        .await
+        .map_err(|e| anyhow!("PTY input task failed: {}", e))??;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1658,6 +1828,347 @@ mod tests {
         DeferredStartupClaim, NavigateShellStyle, RemoteInput, RemoteWaitAction,
     };
     use russh::ChannelMsg;
+
+    #[tokio::test]
+    async fn resize_owner_fences_replacements_and_waits_for_remote_completion() {
+        let manager = super::PtyManager::new();
+        let make_session = || {
+            let mut session = test_local_session(None, None);
+            let (tx, _rx) = tokio::sync::mpsc::channel(1);
+            let (resize_tx, resize_rx) = tokio::sync::mpsc::channel(2);
+            session.handle = super::TerminalHandle::Remote {
+                input: std::sync::Arc::new(RemoteInput::new(tx, false)),
+                resize_tx,
+                task_handle: None,
+            };
+            (session, resize_rx)
+        };
+        let (first, mut first_rx) = make_session();
+        let first_id = first.output_channel.id();
+        super::lock_pty_state(&manager.state)
+            .sessions
+            .insert("resize-owner".into(), first);
+        for owner in [Some((2, first_id)), Some((1, first_id.wrapping_add(1)))] {
+            assert!(manager
+                .resize_for_owner("resize-owner", 132, 31, owner)
+                .await
+                .is_err());
+        }
+        assert!(manager.resize("resize-owner", 0, 31).await.is_err());
+        assert!(manager.resize("resize-owner", 132, 0).await.is_err());
+        assert!(first_rx.try_recv().is_err());
+
+        let resize = manager.resize_for_owner("resize-owner", 132, 31, Some((1, first_id)));
+        tokio::pin!(resize);
+        assert!(futures_util::poll!(&mut resize).is_pending());
+        let first_request = first_rx.recv().await.unwrap();
+        assert_eq!((first_request.cols, first_request.rows), (132, 31));
+        assert!(futures_util::poll!(&mut resize).is_pending());
+
+        // The admitted request continues only on its captured old channel.
+        let (replacement, mut replacement_rx) = make_session();
+        let replacement_id = replacement.output_channel.id();
+        super::lock_pty_state(&manager.state)
+            .sessions
+            .insert("resize-owner".into(), replacement);
+        first_request.reply.send(Ok(())).unwrap();
+        resize.await.unwrap();
+        assert!(replacement_rx.try_recv().is_err());
+        assert!(manager
+            .resize_for_owner("resize-owner", 202, 42, Some((1, first_id)))
+            .await
+            .is_err());
+        assert!(replacement_rx.try_recv().is_err());
+
+        let resize = manager.resize_for_owner("resize-owner", 202, 42, Some((1, replacement_id)));
+        tokio::pin!(resize);
+        assert!(futures_util::poll!(&mut resize).is_pending());
+        let request = replacement_rx.recv().await.unwrap();
+        assert_eq!((request.cols, request.rows), (202, 42));
+        request.reply.send(Ok(())).unwrap();
+        resize.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn remote_resize_errors_and_closed_reply_never_acknowledge_success() {
+        for reply_error in [true, false] {
+            let manager = super::PtyManager::new();
+            let mut session = test_local_session(None, None);
+            let (tx, _rx) = tokio::sync::mpsc::channel(1);
+            let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel(1);
+            session.handle = super::TerminalHandle::Remote {
+                input: std::sync::Arc::new(RemoteInput::new(tx, false)),
+                resize_tx,
+                task_handle: None,
+            };
+            super::lock_pty_state(&manager.state)
+                .sessions
+                .insert("resize-failure".into(), session);
+            let resize = manager.resize("resize-failure", 64, 20);
+            tokio::pin!(resize);
+            assert!(futures_util::poll!(&mut resize).is_pending());
+            let request = resize_rx.recv().await.unwrap();
+            if reply_error {
+                request
+                    .reply
+                    .send(Err("fixture sender closed".into()))
+                    .unwrap();
+                assert!(resize
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("fixture sender closed"));
+            } else {
+                drop(request);
+                assert!(resize
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("closed before resize completion"));
+            }
+            drop(resize_rx);
+            assert!(manager.resize("resize-failure", 64, 20).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_resize_worker_waits_for_sender_and_releases_all_waiters_on_abort() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(2);
+        let (started, entered) = tokio::sync::oneshot::channel();
+        let (release, blocked) = tokio::sync::oneshot::channel::<()>();
+        let mut gate = Some((started, blocked));
+        let task = tokio::spawn(super::run_remote_resizes(receiver, move |cols, rows| {
+            let (started, blocked) = gate.take().unwrap();
+            async move {
+                started.send((cols, rows)).unwrap();
+                let _ = blocked.await;
+                Ok(())
+            }
+        }));
+        let (reply, mut completed) = tokio::sync::oneshot::channel();
+        requests
+            .send(super::RemoteResize {
+                cols: 132,
+                rows: 31,
+                reply,
+            })
+            .await
+            .unwrap();
+        assert_eq!(entered.await.unwrap(), (132, 31));
+        assert!(matches!(
+            completed.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        let (reply, queued) = tokio::sync::oneshot::channel();
+        requests
+            .send(super::RemoteResize {
+                cols: 202,
+                rows: 42,
+                reply,
+            })
+            .await
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(completed.await.is_err());
+        assert!(queued.await.is_err());
+        drop(release);
+    }
+
+    #[tokio::test]
+    async fn remote_resize_worker_acknowledges_only_success_and_returns_sender_failure() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(2);
+        let (reply, first) = tokio::sync::oneshot::channel();
+        requests
+            .send(super::RemoteResize {
+                cols: 132,
+                rows: 31,
+                reply,
+            })
+            .await
+            .unwrap();
+        let (reply, second) = tokio::sync::oneshot::channel();
+        requests
+            .send(super::RemoteResize {
+                cols: 64,
+                rows: 20,
+                reply,
+            })
+            .await
+            .unwrap();
+        let task = tokio::spawn(super::run_remote_resizes(
+            receiver,
+            |cols, rows| async move {
+                if (cols, rows) == (132, 31) {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other("fixture failed resize"))
+                }
+            },
+        ));
+        first.await.unwrap().unwrap();
+        assert!(second
+            .await
+            .unwrap()
+            .unwrap_err()
+            .contains("fixture failed resize"));
+        assert!(task
+            .await
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("fixture failed resize"));
+    }
+
+    #[tokio::test]
+    async fn remote_input_packets_bound_queue_bytes_and_preserve_complete_large_writes() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(super::REMOTE_INPUT_QUEUE_CHUNKS);
+        let input = RemoteInput::new(tx, false);
+        let data = "界🦀".repeat(super::TERMINAL_INPUT_CHUNK_BYTES * 6);
+        let send = input.send_bytes(data.as_bytes());
+        tokio::pin!(send);
+        assert!(futures_util::poll!(&mut send).is_pending());
+        assert_eq!(rx.len(), super::REMOTE_INPUT_QUEUE_CHUNKS);
+        let receive = async {
+            let mut received = Vec::new();
+            while received.len() < data.len() {
+                let packet = rx.recv().await.unwrap();
+                assert!(!packet.is_empty());
+                assert!(packet.len() <= super::TERMINAL_INPUT_CHUNK_BYTES);
+                received.extend(packet);
+            }
+            assert_eq!(received, data.as_bytes());
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let (result, ()) = tokio::join!(send, receive);
+            result.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_remote_input_reports_failed_admission() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let input = RemoteInput::new(tx, false);
+        drop(rx);
+        assert!(input.send_bytes(b"unsent").await.is_err());
+    }
+
+    /// Stopping either sender rejects fresh input and input waiting for a queue permit.
+    #[tokio::test]
+    async fn stopped_remote_input_rejects_admission_before_receiver_is_dropped() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let input = RemoteInput::new(tx, false);
+        input.send_bytes(b"already admitted").await.unwrap();
+        let waiting = input.send_bytes(b"waiting for space");
+        tokio::pin!(waiting);
+        assert!(futures_util::poll!(&mut waiting).is_pending());
+        input.stop();
+        assert!(input.send_bytes(b"after stop").await.is_err());
+        assert!(input.wait_written(1).await.is_err());
+        assert_eq!(rx.recv().await.unwrap(), b"already admitted");
+        assert!(waiting.await.is_err());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(input.admitted_bytes.load(super::Ordering::Acquire), 16);
+    }
+
+    #[tokio::test]
+    async fn large_local_input_keeps_every_byte_through_partial_packet_writes() {
+        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer: super::LocalWriter =
+            std::sync::Arc::new(tokio::sync::Mutex::new(Box::new(TestWriter {
+                gate: None,
+                bytes: bytes.clone(),
+                fail_write: false,
+                fail_flush: false,
+            })));
+        let data = "世🦀\r\x1b[201~".repeat(5000);
+        super::write_local_pty_chunks(writer, data.as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(*bytes.lock().unwrap(), data.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn input_owner_fences_generation_and_same_generation_channel_replacement() {
+        let manager = super::PtyManager::new();
+        let make_session = || {
+            let mut session = test_local_session(None, None);
+            let (tx, rx) = tokio::sync::mpsc::channel(2);
+            let (resize_tx, _) = tokio::sync::mpsc::channel(1);
+            let input = std::sync::Arc::new(RemoteInput::new(tx, false));
+            session.handle = super::TerminalHandle::Remote {
+                input: input.clone(),
+                resize_tx,
+                task_handle: None,
+            };
+            (session, input, rx)
+        };
+        let (first, first_input, mut first_rx) = make_session();
+        let first_id = first.output_channel.id();
+        let creation = manager
+            .begin_creation("input-owner", "test-local")
+            .await
+            .unwrap();
+        manager
+            .install_created_session(&creation, first)
+            .await
+            .unwrap();
+        assert!(manager
+            .write_for_owner("input-owner", "stale", Some((2, first_id)))
+            .await
+            .is_err());
+        assert!(first_rx.try_recv().is_err());
+        let first_write = manager.write_for_owner("input-owner", "first", Some((1, first_id)));
+        tokio::pin!(first_write);
+        assert!(futures_util::poll!(&mut first_write).is_pending());
+        assert_eq!(first_rx.recv().await.unwrap(), b"first");
+        first_input.record_written(5);
+        first_write.await.unwrap();
+        let (replacement, replacement_input, mut replacement_rx) = make_session();
+        let replacement_id = replacement.output_channel.id();
+        let creation = manager
+            .begin_creation("input-owner", "test-local")
+            .await
+            .unwrap();
+        manager
+            .install_created_session(&creation, replacement)
+            .await
+            .unwrap();
+        assert!(manager
+            .write_for_owner("input-owner", "old", Some((1, first_id)))
+            .await
+            .is_err());
+        assert!(replacement_rx.try_recv().is_err());
+        let new_write = manager.write_for_owner("input-owner", "new", Some((1, replacement_id)));
+        tokio::pin!(new_write);
+        assert!(futures_util::poll!(&mut new_write).is_pending());
+        assert_eq!(replacement_rx.recv().await.unwrap(), b"new");
+        replacement_input.record_written(3);
+        new_write.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn remote_ack_waits_for_write_completion_and_wakes_on_close() {
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let input = std::sync::Arc::new(RemoteInput::new(tx, false));
+        let wait = input.wait_written(5);
+        tokio::pin!(wait);
+        assert!(futures_util::poll!(&mut wait).is_pending());
+        input.record_written(4);
+        assert!(futures_util::poll!(&mut wait).is_pending());
+        input.record_written(1);
+        wait.await.unwrap();
+        let wait = input.wait_written(6);
+        tokio::pin!(wait);
+        assert!(futures_util::poll!(&mut wait).is_pending());
+        input.stop();
+        assert!(wait.await.is_err());
+        input.wait_written(5).await.unwrap();
+        input.record_written(1);
+        assert!(input.wait_written(6).await.is_err());
+    }
 
     /// A finite safety timeout keeps a synchronous-I/O regression from hanging
     /// the test process. Tests release this gate explicitly, without sleeps.
@@ -2580,26 +3091,188 @@ mod tests {
         assert_eq!(remote_wait_action(None), RemoteWaitAction::TransportDrop);
     }
 
-    /// Writer failure must follow the same exit-status rule as a closed receive channel.
-    #[tokio::test]
-    async fn remote_writer_failure_preserves_recorded_exit_and_connection_scope() {
+    /// Only receive exhaustion uses recorded exit evidence to classify connection scope.
+    #[test]
+    fn remote_receive_exhaustion_preserves_recorded_exit_and_connection_scope() {
         for (recorded_exit, expected_code, expected_transport_drop) in [
             (None, None, true),
             (Some(Some(0)), Some(0), false),
             (Some(Some(23)), Some(23), false),
             (Some(None), None, false),
         ] {
-            let mut writers = tokio::task::JoinSet::new();
-            writers.spawn(async {
-                Err::<(), _>(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
-            });
-            let failure = writers.join_next().await.unwrap().unwrap().unwrap_err();
-            assert_eq!(failure.kind(), std::io::ErrorKind::BrokenPipe);
             assert_eq!(
                 super::remote_io_completion(recorded_exit),
                 (expected_transport_drop, Some(expected_code)),
             );
         }
+    }
+
+    /// Sender failure cannot replace queued peer-close evidence with a host-loss decision.
+    #[tokio::test]
+    async fn remote_peer_close_leaves_exit_messages_readable_after_writer_failure() {
+        use russh::{client, server};
+        use std::sync::Arc;
+        use tokio::io::AsyncWriteExt;
+
+        struct Client {
+            key: russh::keys::PublicKey,
+            closed: Arc<tokio::sync::Notify>,
+        }
+        impl client::Handler for Client {
+            type Error = russh::Error;
+            async fn check_server_key(
+                &mut self,
+                key: &russh::keys::PublicKeyOrCertificate,
+            ) -> Result<bool, Self::Error> {
+                Ok(
+                    matches!(key, russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } if key == &self.key),
+                )
+            }
+            async fn channel_close(
+                &mut self,
+                _: russh::ChannelId,
+                _: &mut client::Session,
+            ) -> Result<(), Self::Error> {
+                self.closed.notify_one();
+                Ok(())
+            }
+        }
+        struct Server;
+        impl server::Handler for Server {
+            type Error = russh::Error;
+            async fn auth_none(&mut self, _: &str) -> Result<server::Auth, Self::Error> {
+                Ok(server::Auth::Accept)
+            }
+            async fn channel_open_session(
+                &mut self,
+                _: russh::Channel<server::Msg>,
+                reply: server::ChannelOpenHandle,
+                _: &mut server::Session,
+            ) -> Result<(), Self::Error> {
+                reply.accept().await;
+                Ok(())
+            }
+            async fn exec_request(
+                &mut self,
+                channel: russh::ChannelId,
+                command: &[u8],
+                session: &mut server::Session,
+            ) -> Result<(), Self::Error> {
+                if command == b"with-status" {
+                    session.exit_status_request(channel, 23)?;
+                }
+                session.data(channel, b"final output".to_vec())?;
+                session.eof(channel)?;
+                session.close(channel)?;
+                Ok(())
+            }
+        }
+        struct ServerTask(tokio::task::JoinHandle<()>);
+        impl Drop for ServerTask {
+            fn drop(&mut self) {
+                self.0.abort();
+            }
+        }
+
+        let key = russh::keys::PrivateKey::random(
+            &mut russh::keys::key::safe_rng(),
+            russh::keys::Algorithm::Ed25519,
+        )
+        .unwrap();
+        let expected = key.public_key().clone();
+        let config = Arc::new(server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let (local, remote) = tokio::io::duplex(64 * 1024);
+        let _server = ServerTask(tokio::spawn(async move {
+            let running = server::run_stream(config, remote, Server).await.unwrap();
+            let _ = running.await;
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let closed = Arc::new(tokio::sync::Notify::new());
+            let mut client = client::connect_stream(
+                Arc::new(client::Config::default()),
+                local,
+                Client {
+                    key: expected,
+                    closed: closed.clone(),
+                },
+            )
+            .await
+            .unwrap();
+            assert!(client.authenticate_none("fixture").await.unwrap().success());
+
+            let mut pending = Vec::new();
+            for status in [Some(23), None] {
+                let channel = client.channel_open_session().await.unwrap();
+                channel
+                    .exec(
+                        false,
+                        if status.is_some() {
+                            "with-status"
+                        } else {
+                            "without-status"
+                        },
+                    )
+                    .await
+                    .unwrap();
+                // Handler notification follows removal of this channel's receive sender.
+                // No channel.wait() has run, so all received messages remain queued.
+                closed.notified().await;
+                pending.push((status, channel));
+            }
+            // Peer Close alone leaves the shared transport usable. A subsequent
+            // transport shutdown fails senders before queued receive evidence drains.
+            let mut live = client.channel_open_session().await.unwrap();
+            client
+                .disconnect(russh::Disconnect::ByApplication, "fixture shutdown", "")
+                .await
+                .unwrap();
+            while !client.is_closed() {
+                tokio::task::yield_now().await;
+            }
+            for (status, channel) in pending {
+                let mut writer = Box::pin(channel.make_writer());
+                assert_eq!(
+                    writer.write_all(b"late input").await.unwrap_err().kind(),
+                    std::io::ErrorKind::BrokenPipe
+                );
+                assert!(channel.window_change(120, 40, 0, 0).await.is_err());
+
+                let (mut reader, _) = channel.split();
+                let mut recorded_exit = None;
+                let mut tail = Vec::new();
+                loop {
+                    let message = reader.wait().await;
+                    match remote_wait_action(message.as_ref()) {
+                        RemoteWaitAction::BufferOutput => {
+                            if let Some(ChannelMsg::Data { data }) = message {
+                                tail.extend_from_slice(data.as_ref());
+                            }
+                        }
+                        RemoteWaitAction::RecordExit { exit_code } => {
+                            recorded_exit = Some(exit_code)
+                        }
+                        RemoteWaitAction::PaneExit { .. } => break,
+                        RemoteWaitAction::TransportDrop => {
+                            panic!("peer close misclassified as host loss")
+                        }
+                        RemoteWaitAction::KeepWaiting => {}
+                    }
+                }
+                assert_eq!(recorded_exit, status.map(Some));
+                assert_eq!(tail, b"final output");
+                assert!(reader.wait().await.is_none());
+            }
+            // This pane received no peer Close: receive exhaustion is host loss.
+            assert_eq!(
+                remote_wait_action(live.wait().await.as_ref()),
+                RemoteWaitAction::TransportDrop
+            );
+        })
+        .await
+        .unwrap();
     }
 
     #[test]

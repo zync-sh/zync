@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::commands::AppState;
+use crate::commands::{AppState, GhostConnectionIdentity};
 use crate::fs::FileEntry;
-use crate::ghost::context::recent_entry_name_bonus;
+use crate::ghost::context::RecentEntryContext;
 use crate::ghost::token::{
     get_command_name, get_last_arg, has_path_separator, is_directory_command_for_backend,
     is_file_aware_command_for_backend, line_for_suggestion_parsing, strip_leading_unmatched_quote,
@@ -17,77 +16,52 @@ const REMOTE_FS_LIST_TIMEOUT_MS: u64 = 900;
 const WSL_FS_LIST_TIMEOUT_MS: u64 = 1200;
 const REMOTE_HOME_CACHE_TTL_MS: u64 = 60_000;
 
-struct CachedEntries {
-    at: Instant,
-    entries: Vec<FileEntry>,
-}
+mod cache;
+use cache::{BackendKey, ListingCache, ListingKey};
 
 struct CachedHome {
     at: Instant,
     path: String,
 }
 
-static FS_LIST_CACHE: OnceLock<Mutex<HashMap<String, CachedEntries>>> = OnceLock::new();
-static REMOTE_HOME_CACHE: OnceLock<Mutex<HashMap<String, CachedHome>>> = OnceLock::new();
-static WSL_HOME_CACHE: OnceLock<Mutex<HashMap<String, CachedHome>>> = OnceLock::new();
-
-fn fs_list_cache() -> &'static Mutex<HashMap<String, CachedEntries>> {
-    FS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+struct CachedRemoteHome {
+    identity: GhostConnectionIdentity,
+    home: CachedHome,
 }
 
-fn fresh_cached_entries(
-    cache: &Mutex<HashMap<String, CachedEntries>>,
-    key: &str,
-) -> Option<Vec<FileEntry>> {
-    let cache = cache.lock().ok()?;
-    let entry = cache.get(key)?;
-    (entry.at.elapsed() < Duration::from_millis(FS_LIST_CACHE_TTL_MS))
-        .then(|| entry.entries.clone())
+static FS_LIST_CACHE: OnceLock<ListingCache> = OnceLock::new();
+static REMOTE_HOME_CACHE: OnceLock<Mutex<HashMap<String, CachedRemoteHome>>> = OnceLock::new();
+static WSL_HOME_CACHE: OnceLock<Mutex<HashMap<Option<String>, CachedHome>>> = OnceLock::new();
+
+/// Provides one shared success cache and weak registry for concurrent listing requests.
+fn fs_list_cache() -> &'static ListingCache {
+    FS_LIST_CACHE.get_or_init(ListingCache::default)
 }
 
-/// Reuse only fresh listings, including a concurrent refresh after a failed request.
-async fn list_with_cache(
-    cache: &Mutex<HashMap<String, CachedEntries>>,
-    key: String,
-    request: impl Future<Output = Result<Vec<FileEntry>, String>>,
-) -> Result<Vec<FileEntry>, String> {
-    if let Some(hit) = fresh_cached_entries(cache, &key) {
-        return Ok(hit);
-    }
-    match request.await {
-        Ok(entries) => {
-            if let Ok(mut cache) = cache.lock() {
-                cache.insert(
-                    key,
-                    CachedEntries {
-                        at: Instant::now(),
-                        entries: entries.clone(),
-                    },
-                );
-                if cache.len() > 128 {
-                    cache.retain(|_, entry| {
-                        entry.at.elapsed() < Duration::from_millis(FS_LIST_CACHE_TTL_MS)
-                    });
-                    while cache.len() > 112 {
-                        if let Some(key) = cache.keys().next().cloned() {
-                            cache.remove(&key);
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            Ok(entries)
-        }
-        Err(error) => fresh_cached_entries(cache, &key).ok_or(error),
-    }
-}
-
-fn remote_home_cache() -> &'static Mutex<HashMap<String, CachedHome>> {
+/// Stores at most one generation's home value per connection id.
+fn remote_home_cache() -> &'static Mutex<HashMap<String, CachedRemoteHome>> {
     REMOTE_HOME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn wsl_home_cache() -> &'static Mutex<HashMap<String, CachedHome>> {
+/// Requires both a fresh timestamp and the actual captured connection identity.
+fn fresh_remote_home(
+    cache: &Mutex<HashMap<String, CachedRemoteHome>>,
+    connection_id: &str,
+    expected: &GhostConnectionIdentity,
+) -> Option<String> {
+    cache
+        .lock()
+        .ok()?
+        .get(connection_id)
+        .filter(|entry| {
+            entry.identity == *expected
+                && entry.home.at.elapsed() < Duration::from_millis(REMOTE_HOME_CACHE_TTL_MS)
+        })
+        .map(|entry| entry.home.path.clone())
+}
+
+/// Keeps the default WSL choice distinct from an explicitly named distro.
+fn wsl_home_cache() -> &'static Mutex<HashMap<Option<String>, CachedHome>> {
     WSL_HOME_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -129,52 +103,65 @@ fn expand_tilde_path_for_remote(path: &str, home: &str) -> String {
     path.to_string()
 }
 
-async fn get_remote_home_dir(state: &AppState, connection_id: &str) -> Option<String> {
-    {
-        let cache = remote_home_cache().lock().ok()?;
-        if let Some(entry) = cache.get(connection_id) {
-            if entry.at.elapsed() < Duration::from_millis(REMOTE_HOME_CACHE_TTL_MS) {
-                return Some(entry.path.clone());
-            }
-        }
+/// Reads cached home evidence only for the captured connection and transport generation.
+async fn get_remote_home_dir(
+    state: &AppState,
+    connection_id: &str,
+    expected: &GhostConnectionIdentity,
+) -> Option<String> {
+    if !crate::commands::ghost_identity_is_current(state, connection_id, expected).await {
+        return None;
     }
-    let home = crate::commands::ghost_fs_cwd(state, connection_id)
+    let hit = fresh_remote_home(remote_home_cache(), connection_id, expected);
+    if let Some(hit) = hit {
+        return crate::commands::ghost_identity_is_current(state, connection_id, expected)
+            .await
+            .then_some(hit);
+    }
+    let home = crate::commands::ghost_fs_cwd(state, connection_id, Some(expected))
         .await
         .ok()?;
     let trimmed = home.trim();
-    if !trimmed.starts_with('/') {
+    if !trimmed.starts_with('/')
+        || !crate::commands::ghost_identity_is_current(state, connection_id, expected).await
+    {
         return None;
     }
     if let Ok(mut cache) = remote_home_cache().lock() {
         cache.insert(
             connection_id.to_string(),
-            CachedHome {
-                at: Instant::now(),
-                path: trimmed.to_string(),
+            CachedRemoteHome {
+                identity: expected.clone(),
+                home: CachedHome {
+                    at: Instant::now(),
+                    path: trimmed.to_string(),
+                },
             },
         );
     }
     Some(trimmed.to_string())
 }
 
-async fn get_wsl_home_dir(shell_id: &str) -> Option<String> {
+/// Reuses home lookups for the selected WSL distro without string-key collisions.
+async fn get_wsl_home_dir(distro: Option<String>) -> Option<String> {
     {
         let cache = wsl_home_cache().lock().ok()?;
-        if let Some(entry) = cache.get(shell_id) {
+        if let Some(entry) = cache.get(&distro) {
             if entry.at.elapsed() < Duration::from_millis(REMOTE_HOME_CACHE_TTL_MS) {
                 return Some(entry.path.clone());
             }
         }
     }
-    let distro = parse_wsl_distro(shell_id);
-    let home = crate::commands::ghost_wsl_get_cwd(distro).await.ok()?;
+    let home = crate::commands::ghost_wsl_get_cwd(distro.clone())
+        .await
+        .ok()?;
     let trimmed = home.trim();
     if trimmed.is_empty() {
         return None;
     }
     if let Ok(mut cache) = wsl_home_cache().lock() {
         cache.insert(
-            shell_id.to_string(),
+            distro,
             CachedHome {
                 at: Instant::now(),
                 path: trimmed.to_string(),
@@ -312,26 +299,48 @@ fn normalize_entry_type(t: &str) -> &'static str {
     }
 }
 
-async fn invoke_fs_list(
+/// Captures a typed backend once so later awaits cannot silently retarget this request.
+async fn capture_backend(
     state: &AppState,
     connection_id: &str,
-    path: &str,
-    timeout_ms: u64,
     wsl_shell_id: Option<&str>,
-) -> Result<Vec<FileEntry>, String> {
-    let use_wsl = wsl_shell_id.is_some_and(shell_id_indicates_wsl);
-    let request = async {
-        if use_wsl {
-            let distro = wsl_shell_id.and_then(|id| parse_wsl_distro(id));
-            crate::commands::ghost_fs_list_wsl(distro, path.to_string()).await
-        } else {
-            crate::commands::ghost_fs_list(state, connection_id, path).await
+) -> Option<BackendKey> {
+    if let Some(shell_id) = wsl_shell_id.filter(|id| shell_id_indicates_wsl(id)) {
+        Some(BackendKey::Wsl(parse_wsl_distro(shell_id)))
+    } else if connection_id == "local" {
+        Some(BackendKey::Local)
+    } else {
+        Some(BackendKey::Remote {
+            id: connection_id.to_string(),
+            identity: crate::commands::ghost_connection_identity(state, connection_id).await?,
+        })
+    }
+}
+
+/// Verifies remote ownership before submission and after all cache or I/O awaits.
+async fn backend_is_current(state: &AppState, backend: &BackendKey) -> bool {
+    match backend {
+        BackendKey::Remote { id, identity } => {
+            crate::commands::ghost_identity_is_current(state, id, identity).await
         }
-    };
-    match tokio::time::timeout(Duration::from_millis(timeout_ms.max(50)), request).await {
-        Ok(Ok(entries)) => Ok(entries),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err("fs_list timeout".to_string()),
+        BackendKey::Local | BackendKey::Wsl(_) => true,
+    }
+}
+
+/// Queries the captured backend; its caller's deadline also covers shared-flight waiting.
+async fn invoke_fs_list(
+    state: &AppState,
+    backend: &BackendKey,
+    path: &str,
+) -> Result<Vec<FileEntry>, String> {
+    match backend {
+        BackendKey::Wsl(distro) => {
+            crate::commands::ghost_fs_list_wsl(distro.clone(), path.to_string()).await
+        }
+        BackendKey::Local => crate::commands::ghost_fs_list(state, "local", path, None).await,
+        BackendKey::Remote { id, identity } => {
+            crate::commands::ghost_fs_list(state, id, path, Some(identity)).await
+        }
     }
 }
 
@@ -422,6 +431,96 @@ fn classify_directory_path_partial(
     (partial, new_path_arg)
 }
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PathEntryRank<'a> {
+    recent: std::cmp::Reverse<i32>,
+    exact_case: std::cmp::Reverse<bool>,
+    directory: std::cmp::Reverse<bool>,
+    name: &'a str,
+}
+
+/// Computes each ordering key once, with symlinks eligible but below real directories.
+fn rank_path_entry<'a>(
+    entry: &'a FileEntry,
+    partial: &str,
+    recent: &RecentEntryContext,
+) -> PathEntryRank<'a> {
+    PathEntryRank {
+        recent: std::cmp::Reverse(recent.name_bonus(&entry.name)),
+        exact_case: std::cmp::Reverse(!partial.is_empty() && entry.name.starts_with(partial)),
+        directory: std::cmp::Reverse(normalize_entry_type(&entry.r#type) == "directory"),
+        name: &entry.name,
+    }
+}
+
+/// Uses one pass for inline completion and stable sorting only for multiple results.
+fn select_path_entries<'a>(
+    entries: &'a [FileEntry],
+    partial: &str,
+    windows: bool,
+    directory_only: bool,
+    limit: usize,
+    mut rank: impl FnMut(&'a FileEntry) -> PathEntryRank<'a>,
+) -> Vec<&'a FileEntry> {
+    let candidates = entries
+        .iter()
+        .filter(|entry| {
+            entry.name != "."
+                && entry.name != ".."
+                && entry.name != partial
+                && !entry.name.ends_with('~')
+                && path_entry_suffix(&entry.name, partial, windows).is_some()
+                && (!directory_only
+                    || matches!(normalize_entry_type(&entry.r#type), "directory" | "symlink"))
+        })
+        .map(|entry| (entry, rank(entry)));
+    let limit = limit.max(1);
+    if limit == 1 {
+        let mut best: Option<(&FileEntry, PathEntryRank<'_>)> = None;
+        for candidate in candidates {
+            // Strict comparison preserves the first full tie, matching stable sort.
+            if best
+                .as_ref()
+                .is_none_or(|(_, best_rank)| candidate.1 < *best_rank)
+            {
+                best = Some(candidate);
+            }
+        }
+        best.into_iter().map(|(entry, _)| entry).collect()
+    } else {
+        let mut ranked: Vec<_> = candidates.collect();
+        ranked.sort_by(|a, b| a.1.cmp(&b.1));
+        ranked
+            .into_iter()
+            .take(limit)
+            .map(|(entry, _)| entry)
+            .collect()
+    }
+}
+
+/// Preserves the existing suffix casing, new-argument spacing and directory separators.
+fn path_suggestion_suffix(
+    entry: &FileEntry,
+    partial: &str,
+    windows: bool,
+    sep: char,
+    new_path_arg: bool,
+) -> String {
+    let name_suffix = path_entry_suffix(&entry.name, partial, windows).unwrap_or_default();
+    let trailing_sep = if matches!(normalize_entry_type(&entry.r#type), "directory" | "symlink") {
+        sep.to_string()
+    } else {
+        String::new()
+    };
+    let piece = format!("{name_suffix}{trailing_sep}");
+    if new_path_arg && !piece.is_empty() && !piece.starts_with([' ', '\t']) {
+        format!(" {piece}")
+    } else {
+        piece
+    }
+}
+
+/// Resolves paths within one backend deadline, then preserves existing match ordering.
 async fn path_suggestions(params: PathSuggestionsParams<'_>) -> Option<Vec<String>> {
     let timeout_ms = fs_list_timeout_ms(params.connection_id, params.wsl_shell_id);
     let parse_line = line_for_suggestion_parsing(params.line);
@@ -484,151 +583,80 @@ async fn path_suggestions(params: PathSuggestionsParams<'_>) -> Option<Vec<Strin
         new_path_arg = classified_new;
     }
 
-    let use_wsl = params.wsl_shell_id.is_some_and(shell_id_indicates_wsl);
-
-    let mut effective_cwd = params.cwd.map(|s| s.to_string());
-    if let Some(ref cwd) = effective_cwd {
-        if cwd.contains('~') {
-            if params.connection_id != "local" {
-                let Some(home) = get_remote_home_dir(params.state, params.connection_id).await
-                else {
-                    return None;
-                };
-                effective_cwd = Some(expand_tilde_path_for_remote(cwd, &home));
-            } else if use_wsl {
-                let Some(shell_id) = params.wsl_shell_id else {
-                    return None;
-                };
-                let Some(home) = get_wsl_home_dir(shell_id).await else {
-                    return None;
-                };
+    let entries = tokio::time::timeout(Duration::from_millis(timeout_ms.max(50)), async {
+        let backend =
+            capture_backend(params.state, params.connection_id, params.wsl_shell_id).await?;
+        let use_wsl = matches!(backend, BackendKey::Wsl(_));
+        let mut effective_cwd = params.cwd.map(str::to_string);
+        if let Some(cwd) = effective_cwd.as_ref().filter(|cwd| cwd.contains('~')) {
+            let home = match &backend {
+                BackendKey::Remote { id, identity } => {
+                    Some(get_remote_home_dir(params.state, id, identity).await?)
+                }
+                BackendKey::Wsl(distro) => Some(get_wsl_home_dir(distro.clone()).await?),
+                BackendKey::Local => None,
+            };
+            if let Some(home) = home {
                 effective_cwd = Some(expand_tilde_path_for_remote(cwd, &home));
             }
         }
-    }
-
-    let Some(resolved_dir) = resolve_listing_dir(&dir, effective_cwd.as_deref(), sep) else {
-        return None;
-    };
-
-    let mut api_path = normalize_fs_list_path(
-        &strip_trailing_sep(&resolved_dir),
-        params.connection_id,
-        use_wsl,
-    );
-
-    if params.connection_id != "local" && api_path.contains('~') {
-        let Some(home) = get_remote_home_dir(params.state, params.connection_id).await else {
-            return None;
-        };
-        api_path = expand_tilde_path_for_remote(&api_path, &home);
-    } else if use_wsl {
-        if let Some(shell_id) = params.wsl_shell_id {
-            if api_path.contains('~') {
-                let Some(home) = get_wsl_home_dir(shell_id).await else {
-                    return None;
-                };
+        let resolved_dir = resolve_listing_dir(&dir, effective_cwd.as_deref(), sep)?;
+        let mut api_path = normalize_fs_list_path(
+            &strip_trailing_sep(&resolved_dir),
+            params.connection_id,
+            use_wsl,
+        );
+        if api_path.contains('~') {
+            let home = match &backend {
+                BackendKey::Remote { id, identity } => {
+                    Some(get_remote_home_dir(params.state, id, identity).await?)
+                }
+                BackendKey::Wsl(distro) => Some(get_wsl_home_dir(distro.clone()).await?),
+                BackendKey::Local => None,
+            };
+            if let Some(home) = home {
                 api_path = expand_tilde_path_for_remote(&api_path, &home);
             }
         }
-    }
-
-    let cache_key = if use_wsl {
-        format!(
-            "wsl:{}::{}",
-            params
-                .wsl_shell_id
-                .and_then(parse_wsl_distro)
-                .unwrap_or_else(|| "default".to_string()),
-            api_path
-        )
-    } else {
-        format!("{}::{}", params.connection_id, api_path)
-    };
-
-    let entries = list_with_cache(
-        fs_list_cache(),
-        cache_key,
-        invoke_fs_list(
-            params.state,
-            params.connection_id,
-            &api_path,
-            timeout_ms,
-            params.wsl_shell_id,
-        ),
-    )
+        fs_list_cache()
+            .list_if_current(
+                ListingKey {
+                    backend: backend.clone(),
+                    path: api_path.clone(),
+                },
+                invoke_fs_list(params.state, &backend, &api_path),
+                || backend_is_current(params.state, &backend),
+            )
+            .await
+            .ok()
+    })
     .await
-    .ok()?;
+    .ok()??;
 
     if entries.is_empty() {
         return Some(Vec::new());
     }
 
-    let mut matches: Vec<&FileEntry> = entries
-        .iter()
-        .filter(|e| {
-            e.name != "."
-                && e.name != ".."
-                && e.name != partial
-                && path_entry_suffix(&e.name, &partial, windows).is_some()
-        })
+    let recent = RecentEntryContext::new(params.recent_commands);
+    let matches = select_path_entries(
+        &entries,
+        &partial,
+        windows,
+        is_directory_only,
+        params.limit,
+        |entry| rank_path_entry(entry, &partial, &recent),
+    );
+    let out = matches
+        .into_iter()
+        .map(|entry| path_suggestion_suffix(entry, &partial, windows, sep, new_path_arg))
         .collect();
 
-    if matches.is_empty() {
-        return Some(Vec::new());
-    }
-
-    if is_directory_only {
-        matches.retain(|e| {
-            let t = normalize_entry_type(&e.r#type);
-            t == "directory" || t == "symlink"
-        });
-        if matches.is_empty() {
-            return Some(Vec::new());
-        }
-    }
-
-    matches.retain(|e| !e.name.ends_with('~'));
-    matches.sort_by(|a, b| {
-        let a_recent = recent_entry_name_bonus(&a.name, params.recent_commands);
-        let b_recent = recent_entry_name_bonus(&b.name, params.recent_commands);
-        if a_recent != b_recent {
-            return a_recent.cmp(&b_recent).reverse();
-        }
-        let a_exact = !partial.is_empty() && a.name.starts_with(&partial);
-        let b_exact = !partial.is_empty() && b.name.starts_with(&partial);
-        if a_exact != b_exact {
-            return a_exact.cmp(&b_exact).reverse();
-        }
-        let a_dir = normalize_entry_type(&a.r#type) == "directory";
-        let b_dir = normalize_entry_type(&b.r#type) == "directory";
-        if a_dir != b_dir {
-            return a_dir.cmp(&b_dir).reverse();
-        }
-        a.name.cmp(&b.name)
-    });
-
-    let limit = params.limit.max(1);
-    let mut out = Vec::new();
-    for entry in matches.into_iter().take(limit) {
-        let name_suffix = path_entry_suffix(&entry.name, &partial, windows).unwrap_or_default();
-        let trailing_sep = {
-            let t = normalize_entry_type(&entry.r#type);
-            if t == "directory" || t == "symlink" {
-                sep.to_string()
-            } else {
-                String::new()
-            }
-        };
-        let piece = format!("{name_suffix}{trailing_sep}");
-        if new_path_arg && !piece.is_empty() && !piece.starts_with([' ', '\t']) {
-            out.push(format!(" {piece}"));
-        } else {
-            out.push(piece);
-        }
-    }
     Some(out)
 }
+
+#[cfg(test)]
+#[path = "path_suggest/ranking_tests.rs"]
+mod ranking_tests;
 
 #[cfg(test)]
 mod tests {
@@ -641,6 +669,47 @@ mod tests {
             "/home/me/proj"
         );
         assert_eq!(expand_tilde_path_for_remote("~", "/home/me"), "/home/me");
+    }
+
+    #[test]
+    fn remote_home_cache_requires_owner_and_generation_without_accumulating_generations() {
+        let owner = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let replacement = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let original = GhostConnectionIdentity::from_owner(&owner, 0);
+        let cache = Mutex::new(HashMap::new());
+        for generation in 0..100 {
+            let identity = GhostConnectionIdentity::from_owner(&owner, generation);
+            cache.lock().unwrap().insert(
+                "same-id".into(),
+                CachedRemoteHome {
+                    identity: identity.clone(),
+                    home: CachedHome {
+                        at: Instant::now(),
+                        path: format!("/home/{generation}"),
+                    },
+                },
+            );
+            assert_eq!(
+                fresh_remote_home(&cache, "same-id", &identity),
+                Some(format!("/home/{generation}"))
+            );
+            if generation != 0 {
+                assert_eq!(fresh_remote_home(&cache, "same-id", &original), None);
+            }
+            assert_eq!(cache.lock().unwrap().len(), 1);
+        }
+        let new_owner = GhostConnectionIdentity::from_owner(&replacement, 99);
+        assert_eq!(fresh_remote_home(&cache, "same-id", &new_owner), None);
+        cache.lock().unwrap().get_mut("same-id").unwrap().home.at =
+            Instant::now() - Duration::from_millis(REMOTE_HOME_CACHE_TTL_MS + 1);
+        assert_eq!(
+            fresh_remote_home(
+                &cache,
+                "same-id",
+                &GhostConnectionIdentity::from_owner(&owner, 99)
+            ),
+            None
+        );
     }
 
     #[test]
@@ -686,78 +755,6 @@ mod tests {
             resolve_listing_dir("C:\\tmp\\", None, '\\'),
             Some("C:\\tmp\\".into())
         );
-    }
-
-    fn cached_entry(name: &str, age: Duration) -> CachedEntries {
-        CachedEntries {
-            at: Instant::now() - age,
-            entries: vec![FileEntry {
-                name: name.into(),
-                path: name.into(),
-                r#type: "file".into(),
-                size: 0,
-                last_modified: 0,
-                permissions: String::new(),
-                owner: String::new(),
-                group: String::new(),
-            }],
-        }
-    }
-
-    #[tokio::test]
-    async fn fresh_listing_avoids_refresh_and_expired_failure_remains_unknown() {
-        let cache = Mutex::new(HashMap::from([(
-            "listing".into(),
-            cached_entry("current", Duration::ZERO),
-        )]));
-        let entries = list_with_cache(&cache, "listing".into(), async {
-            panic!("a fresh cache hit must not issue a listing");
-        })
-        .await
-        .expect("fresh listing");
-        assert_eq!(entries[0].name, "current");
-
-        cache.lock().unwrap().insert(
-            "listing".into(),
-            cached_entry("deleted", Duration::from_millis(FS_LIST_CACHE_TTL_MS + 1)),
-        );
-        let entries = list_with_cache(&cache, "listing".into(), async {
-            Err("session closed".into())
-        })
-        .await;
-        assert_eq!(entries.unwrap_err(), "session closed");
-    }
-
-    #[tokio::test]
-    async fn failed_listing_may_use_only_a_fresh_concurrent_refresh() {
-        let cache = Mutex::new(HashMap::new());
-        let entries = list_with_cache(&cache, "listing".into(), async {
-            cache
-                .lock()
-                .unwrap()
-                .insert("listing".into(), cached_entry("fresh", Duration::ZERO));
-            Err("request failed".into())
-        })
-        .await
-        .expect("fresh concurrent listing");
-        assert_eq!(entries[0].name, "fresh");
-    }
-
-    #[tokio::test]
-    async fn empty_listing_is_confirmed_but_errors_and_timeouts_are_not() {
-        let cache = Mutex::new(HashMap::new());
-        let entries = list_with_cache(&cache, "empty".into(), async { Ok(Vec::new()) })
-            .await
-            .expect("an empty successful listing is available evidence");
-        assert!(entries.is_empty());
-
-        for error in ["session closed", "fs_list timeout"] {
-            let result = list_with_cache(&cache, "unavailable".into(), async {
-                Err(error.to_string())
-            })
-            .await;
-            assert_eq!(result.unwrap_err(), error);
-        }
     }
 
     #[test]

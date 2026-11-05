@@ -12,6 +12,96 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Vault restore performance:** Batch local credential writes while preserving
+  conflict decisions, remote revisions, history, and per-record failure results.
+  Aborted batches retry individually; uncertain commits report failure without
+  replay. Oversized records remain supported. ([10b76fc2])
+
+- **Vault list rendering:** Isolate credential row painting to reduce offscreen
+  rendering work while retaining native scrolling and all row actions. ([718dc895])
+
+- **Vault refresh performance:** Coalesce overlapping status and item refreshes
+  while preserving a fresh follow-up for later requests. Lock, reset and vault
+  changes fence obsolete responses without retaining additional decrypted data.
+  Item reads invalidated by mutations wait for completion and retry before
+  callers settle, preserving fresh read errors when the vault is unavailable. ([abb99367])
+
+- **Ghost performance for large input:** Bound suggestion tracking and Ghost
+  history to 8 KiB per command, skip oversized inference before IPC and parsing,
+  and reuse unchanged line measurements. Complete pasted text still reaches the
+  terminal; ordinary suggestions resume after a line reset. ([4b097fb5])
+
+- **Terminal input flow control:** Send complete pastes in ordered, acknowledged
+  packets and bound native delivery buffers. Queued input cannot reach a
+  replacement shell; interrupted delivery reports uncertainty without replaying
+  commands. No paste-size limit is added. ([93a8245f])
+
+- **Terminal paste and resize correctness:** Preserve leading Unicode BOM
+  characters, coalesce resize requests until acknowledged, and bind them to the
+  current shell. Input synchronizes pending terminal geometry, including during
+  divider dragging; SSH resize stalls no longer block output or discard the
+  final requested size. SSH sender shutdown preserves queued final output and
+  exit status, avoiding false connection-loss events when only one pane closes. ([93a8245f])
+
+- **Ghost cache memory:** Release expired directory listings during idle and bound
+  retained cache payloads. Oversized listings still return complete suggestions
+  and share acquisition between callers already waiting for the same directory. ([4d79ba0f])
+
+- **Development memory:** Update React and React DOM to 19.3.1, which clears
+  retained performance-track property snapshots during repeated UI updates,
+  including folder navigation. No application memory limits were increased. ([15e0fd2b])
+
+- **Files memory use:** Reuse native listing metadata, avoid retaining old
+  application snapshots during navigation, and release closed Properties data
+  when its listing changes. Unchanged Properties summaries avoid repeated scans. ([7efc0536])
+
+- **Ghost request performance:** Keep one active suggestion resolver and the
+  latest debounced request. Share immutable directory listings for matching
+  backend/path/transport identities, with cancellation-safe retry and deadlines.
+  Choose the best inline path match in one pass and prepare recent-command
+  evidence once, preserving existing ranking and suffix behavior. ([fafa1575])
+
+- **Files refresh performance:** Share directory acquisition for identical live
+  paths and coalesce overlapping refreshes into one queued follow-up. Explicit
+  Refresh still reads fresh data, and closed panes cannot start queued work. ([7efc0536])
+
+- **Dashboard sampling performance:** Share active and briefly fresh samples
+  between panes. Windows gathers metrics in one PowerShell process using the
+  system drive; local command waits no longer block an async worker.
+  Automatic icon detection fills missing metadata once and preserves current
+  manual edits instead of repeatedly saving stale connection objects. ([148e52c7], [7efc0536])
+
+- **Files Properties performance:** Resolve selected entries in one listing pass
+  and skip inspector selection work while Properties is closed. ([7efc0536])
+
+- **Terminal typography performance:** Apply settings once per terminal, skip
+  unchanged options and atlas resets, and discard stale delayed redraws. ([1bc5cf06])
+
+- **AI streaming responsiveness:** Batch live text updates and keep transient
+  thinking, output and diffs out of per-chunk storage writes. Completed history
+  still saves immediately with existing sanitization. ([8ed5d09d])
+
+- **Bounded AI tool output:** Limit command/file capture before IPC, retain capped
+  diagnostic artifacts, and show the final preview with tail errors and artifact
+  links. Oversized diff previews and files with invalid text encoding show an
+  omission explanation. ([8ed5d09d])
+
+- **Vault responsiveness:** Run expensive vault operations on a blocking boundary
+  while preserving existing serialization, encryption settings and lock behavior. ([caa4fe00])
+
+- **Local filesystem responsiveness:** Move local listings, editor reads and file
+  operations onto bounded blocking workers. Bulk copies, deletes and upload
+  preparation use a separate queue to preserve admission for interactive reads.
+  Local path completion uses lighter listings. ([fafa1575])
+
+- **Faster archive preparation:** Start remote archive downloads without a
+  duplicate directory-size scan. Show bytes received with indeterminate progress
+  until the archive completes. ([fafa1575])
+
+- **Drive sync token reuse:** Reuse unexpired access tokens in memory and share
+  concurrent refreshes, with disconnect/reconnect fencing and token-specific
+  invalidation. Access tokens remain excluded from disk metadata. ([caa4fe00])
+
 - **Files list layout:** Keep Name, Date modified, Type and Size in fixed columns
   with horizontal scrolling in narrow panes. Left/Right scroll without changing
   selection; Files scrollbars have larger targets. ([7850716a])
@@ -30,6 +120,19 @@ All notable changes to Zync are documented in this file. The format is based on 
   skips checkouts without the project runner; committed checks use a merge base. ([148a5d26])
 
 ### Fixed
+
+- **Ghost reconnect behavior:** Keep captured autocomplete requests on their
+  current SSH transport instead of starting a reconnect they cannot adopt. ([8c71793c])
+- **Dashboard Quick Actions:** Route background commands with the selected
+  connection ID for both local and remote dashboards. ([de076f65])
+
+- **Windows path-completion crash:** Prevent oversized async state from exhausting
+  native debug IPC stack frames. Filesystem and reconnect work remain lazy, with
+  unchanged stack limits, timeouts and cancellation behavior. ([fafa1575])
+
+- **AI command cancellation:** Stop and timeout clean up local commands and the
+  processes they launch. Normal command completion preserves intentionally
+  detached background services. ([8ed5d09d])
 
 - **SOCKS connection lifetime:** Apply the five-second timeout to negotiation and
   SSH channel setup, allowing established connections to continue relaying until
@@ -3254,3 +3357,18 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [6e19291c]: https://github.com/zync-sh/zync/commit/6e19291c1b7c29313bfb40052cd2030bb2ba2be6
 [093f96cc]: https://github.com/zync-sh/zync/commit/093f96cc62b09924e0c86488994152d86c7ae72f
 [984adfe8]: https://github.com/zync-sh/zync/commit/984adfe8d455ca2267dc9309cf679d5339e8312d
+[15e0fd2b]: https://github.com/zync-sh/zync/commit/15e0fd2b3a827600ebe03198c27b914ba927f78e
+[7efc0536]: https://github.com/zync-sh/zync/commit/7efc0536796faf749143be12c0521ca78998fd85
+[fafa1575]: https://github.com/zync-sh/zync/commit/fafa1575cb9d75b09b4c8876e456322eebe3b0a4
+[148e52c7]: https://github.com/zync-sh/zync/commit/148e52c76733d715ebed10e0c529d9a5919d7dcb
+[1bc5cf06]: https://github.com/zync-sh/zync/commit/1bc5cf062c37c449282c25e609c60a767aae4d46
+[8ed5d09d]: https://github.com/zync-sh/zync/commit/8ed5d09dcdc9940bb2020e04693d22eba1da8139
+[caa4fe00]: https://github.com/zync-sh/zync/commit/caa4fe00582b98aa91832f81cf6417cddf5894f6
+[4d79ba0f]: https://github.com/zync-sh/zync/commit/4d79ba0fc3721baeb65737ee54b9f568a84ffb85
+[8c71793c]: https://github.com/zync-sh/zync/commit/8c71793c43b489cc3b4957c8445be917a83fd8fc
+[de076f65]: https://github.com/zync-sh/zync/commit/de076f65a8cb9280b842df6e5ce56abc2ff4e6ff
+[93a8245f]: https://github.com/zync-sh/zync/commit/93a8245fc1a9602be68684b67ed87d279c69f391
+[4b097fb5]: https://github.com/zync-sh/zync/commit/4b097fb56e023e3b8f20d6dcbaaf6fc4bf7d376a
+[abb99367]: https://github.com/zync-sh/zync/commit/abb9936791b40b1bc1f09f2cee8b3cd1d0be8736
+[718dc895]: https://github.com/zync-sh/zync/commit/718dc89582953a47902f44695d78beaa5b39d004
+[10b76fc2]: https://github.com/zync-sh/zync/commit/10b76fc2034a54a3f6fe721442fa554555c83ddd

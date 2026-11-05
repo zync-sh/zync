@@ -143,19 +143,38 @@ pub fn recent_session_bonus(history_cmd: &str, recent_commands: &[String]) -> i3
     bonus
 }
 
-pub fn recent_entry_name_bonus(name: &str, recent_commands: &[String]) -> i32 {
-    if recent_commands.is_empty() {
-        return 0;
-    }
-    let name_lower = name.to_ascii_lowercase();
-    let mut bonus = 0;
-    for line in recent_commands {
-        let line_lower = line.to_ascii_lowercase();
-        if line_lower.contains(&name_lower) {
-            bonus = bonus.max(2);
+/// Prepared recent-command evidence shared by every candidate in one path request.
+pub struct RecentEntryContext {
+    commands_lowercase: Vec<String>,
+}
+
+impl RecentEntryContext {
+    /// Applies the existing ASCII normalization once per recent command, outside sorting.
+    pub fn new(recent_commands: &[String]) -> Self {
+        Self {
+            commands_lowercase: recent_commands
+                .iter()
+                .map(|line| line.to_ascii_lowercase())
+                .collect(),
         }
     }
-    bonus
+
+    /// Preserves the existing name-substring bonus while normalizing each candidate once.
+    pub fn name_bonus(&self, name: &str) -> i32 {
+        if self.commands_lowercase.is_empty() {
+            return 0;
+        }
+        let name_lower = name.to_ascii_lowercase();
+        if self
+            .commands_lowercase
+            .iter()
+            .any(|line| line.contains(&name_lower))
+        {
+            2
+        } else {
+            0
+        }
+    }
 }
 
 #[cfg(test)]

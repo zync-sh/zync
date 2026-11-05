@@ -7,6 +7,9 @@ the behavior, and reuse an existing suite before creating another file.
 
 ```text
 tests/
+  ai/                          # Agent state, output and streaming regressions
+  dashboard/                   # Metrics sampling and connection browser checks
+  ghost/                       # CWD ownership and request-admission regressions
   files/                       # Files feature
     *.test.ts                  # Unit and regression suites
     *.browser.test.ts          # Browser test runners
@@ -15,6 +18,7 @@ tests/
     fixtures/                  # Files-only sample data and boundary substitutes
     native-permissions/        # Native permission test harness
   tooling/                     # Git hook and test-policy suites
+  terminal/                    # Terminal renderer and typography regressions
   workspace/                   # Migrated workspace behavior suites
   helpers/                     # Helpers shared across features
   fixtures/                    # Fixtures shared across features
@@ -49,10 +53,14 @@ npm run compile:agent-tests
 npm run test:git-hooks
 npm run test:files
 npm run test:files:browser
+npm run test:files:browser -- --navigation-memory-only
+npm run test:ghost-runtime
 npm run test:all-agent
 ```
 
 Files browser checks use installed Microsoft Edge by default. Focus a browser
 mode with, for example, `npm run test:files:browser -- --folder-sizes-only`.
+Use `npm run test:files:browser -- --large-list-only` for the optional 50,000/
+100,000-entry List/Grid, selection and Properties retention regressions.
 See [contributing](../CONTRIBUTING.md#test-language) for formatting, test-language
 checks and browser configuration.
