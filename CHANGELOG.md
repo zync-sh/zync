@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.38.1] - 2026-11-05
+
 ### Added
 
 - **Files column controls:** Resize list columns by dragging or keyboard, and
@@ -3027,7 +3029,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.1...HEAD
+[2.38.1]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.1
 [2.38.0]: https://github.com/zync-sh/zync/compare/v2.37.0...v2.38.0
 [2.37.0]: https://github.com/zync-sh/zync/compare/v2.36.0...v2.37.0
 [2.36.0]: https://github.com/zync-sh/zync/compare/v2.35.1...v2.36.0
