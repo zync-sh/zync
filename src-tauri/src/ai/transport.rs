@@ -1,19 +1,39 @@
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 use crate::ai::AiStreamChunk;
 
-pub async fn make_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())
+static REQUEST_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+static STREAM_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+
+/// Initialize a pool once after success; a failed initialization remains retryable.
+fn pooled_client(
+    cache: &Mutex<Option<reqwest::Client>>,
+    builder: impl FnOnce() -> reqwest::ClientBuilder,
+) -> Result<reqwest::Client, String> {
+    let mut cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(client) = cached.as_ref() {
+        return Ok(client.clone());
+    }
+    let client = builder().build().map_err(|error| error.to_string())?;
+    *cached = Some(client.clone());
+    Ok(client)
 }
 
+/// Reuse connection pools while retaining the existing finite non-streaming request timeout.
+pub async fn make_client() -> Result<reqwest::Client, String> {
+    pooled_client(&REQUEST_CLIENT, || {
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(30))
+    })
+}
+
+/// Share streaming connections without adding a total timeout to long model responses.
 pub async fn make_stream_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())
+    pooled_client(&STREAM_CLIENT, || {
+        reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(15))
+    })
 }
 
 fn emit_stream_chunk(app: &AppHandle, request_id: &str, token: String) {

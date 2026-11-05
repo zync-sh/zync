@@ -344,7 +344,7 @@ assert.doesNotMatch(
 );
 assert.match(
     mainLayoutSource,
-    /usePluginPaneNavigation\(\{ connectionId: tab\.connectionId, view: tab\.view, pinnedFeatures, isActive,[\s\S]*?groups: paneGroups, getState: useAppStore\.getState/,
+    /usePluginPaneNavigation\(\{\s*connectionId: tab\.connectionId,\s*view: tab\.view,\s*pinnedFeatures,\s*isActive,\s*groups: paneGroups,\s*getState: useAppStore\.getState/,
     'plugin navigation must reconcile the canonical canvas inventory through the shared hook',
 );
 const pluginNavigationSource = fs.readFileSync(
@@ -373,7 +373,7 @@ assert.match(
 );
 assert.match(
     mainLayoutSource,
-    /if \(!store\.closePaneGroup\(tab\.connectionId, owner\)\) return;[\s\S]*?const groupsAfterClose = useAppStore\.getState\(\)\.paneLayouts\[tab\.connectionId\]/,
+    /if \(!store\.closePaneGroup\(tab\.connectionId, owner\)\)\s*(?:\{\s*return;\s*\}|return;)[\s\S]*?const groupsAfterClose = useAppStore\.getState\(\)\.paneLayouts\[tab\.connectionId\]/,
     'split-close fallback lookup must use pane layouts after the close mutation',
 );
 

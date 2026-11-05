@@ -1,76 +1,122 @@
-import { useEffect, useState, useRef } from 'react';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { type EventCallback, listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useEffect, useRef, useState } from 'react';
 
+import { disposeTauriListener } from '../lib/tauriListeners.js';
+
+/** Own native registrations, releasing late listeners and partially installed groups. */
+export function registerFileDropListeners(
+    onDrop: (paths: string[]) => void,
+    setDragging: (dragging: boolean) => void,
+    register: typeof listen = listen,
+): () => void {
+    let alive = true;
+    let duplicateTimer: ReturnType<typeof setTimeout> | undefined;
+    const unlisteners: UnlistenFn[] = [];
+    /** Deliver a drop once when primary and fallback native notifications overlap. */
+    const drop = (paths: string[]) => {
+        if (!alive || duplicateTimer !== undefined) {
+            return;
+        }
+        duplicateTimer = setTimeout(() => {
+            duplicateTimer = undefined;
+        }, 500);
+        setDragging(false);
+        if (paths?.length) {
+            onDrop(paths);
+        }
+    };
+    /** Keep a registration only while its original effect owner is still mounted. */
+    const add = async <T>(name: string, handler: EventCallback<T>): Promise<boolean> => {
+        if (!alive) {
+            return false;
+        }
+        const unlisten = await register<T>(name, handler);
+        if (!alive) {
+            await unlisten();
+            return false;
+        }
+        unlisteners.push(unlisten);
+        return true;
+    };
+    /** Release every acquired listener and the duplicate timer, including failed setup. */
+    const dispose = () => {
+        alive = false;
+        clearTimeout(duplicateTimer);
+        duplicateTimer = undefined;
+        for (const unlisten of unlisteners.splice(0)) {
+            disposeTauriListener(unlisten, (error) =>
+                console.warn('[DnD] listener cleanup failed', error),
+            );
+        }
+    };
+    /** Stop after disposal and unwind already acquired listeners on any setup failure. */
+    const setup = async () => {
+        if (!(await add<string[]>('zync://file-drop', (event) => drop(event.payload)))) {
+            return;
+        }
+        if (
+            !(await add('zync://drag-enter', () => {
+                if (alive) {
+                    setDragging(true);
+                }
+            }))
+        ) {
+            return;
+        }
+        if (
+            !(await add('zync://drag-leave', () => {
+                if (alive) {
+                    setDragging(false);
+                }
+            }))
+        ) {
+            return;
+        }
+        if (
+            !(await add<{ paths: string[] }>('tauri://drop', (event) => drop(event.payload.paths)))
+        ) {
+            return;
+        }
+        if (
+            !(await add<{ paths: string[] }>('tauri://drag-drop', (event) =>
+                drop(event.payload.paths),
+            ))
+        ) {
+            return;
+        }
+        if (
+            !(await add('tauri://drag-enter', () => {
+                if (alive) {
+                    setDragging(true);
+                }
+            }))
+        ) {
+            return;
+        }
+        await add('tauri://drag-leave', () => {
+            if (alive) {
+                setDragging(false);
+            }
+        });
+    };
+    void setup().catch((error) => {
+        if (alive) {
+            setDragging(false);
+        }
+        dispose();
+        console.warn('[DnD] listener setup failed', error);
+    });
+    return dispose;
+}
+
+/** Retain the current drop callback without rebuilding native listeners on each render. */
 export function useTauriFileDrop(onDrop: (paths: string[]) => void) {
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const onDropRef = useRef(onDrop);
     onDropRef.current = onDrop;
-
-    useEffect(() => {
-        let alive = true;
-        let dropHandled = false; // Prevent duplicate uploads when both zync:// and tauri:// fire
-        const unlisteners: UnlistenFn[] = [];
-
-        const setup = async () => {
-            // Primary: custom events emitted from Rust's on_window_event (reliable across platforms)
-            const u1 = await listen<string[]>('zync://file-drop', (event) => {
-                if (!alive || dropHandled) return;
-                dropHandled = true;
-                setTimeout(() => { dropHandled = false; }, 500);
-                console.log('[DnD] zync://file-drop', event.payload);
-                setIsDraggingOver(false);
-                const paths = event.payload;
-                if (paths && paths.length > 0) {
-                    onDropRef.current(paths);
-                }
-            });
-            if (alive) unlisteners.push(u1);
-
-            const u2 = await listen<string[]>('zync://drag-enter', () => {
-                if (!alive) return;
-                setIsDraggingOver(true);
-            });
-            if (alive) unlisteners.push(u2);
-
-            const u3 = await listen('zync://drag-leave', () => {
-                if (!alive) return;
-                setIsDraggingOver(false);
-            });
-            if (alive) unlisteners.push(u3);
-
-            // Fallback: tauri:// built-in events (may not fire on all platforms)
-            const u4 = await listen<{ paths: string[] }>('tauri://drop', (event) => {
-                if (!alive || dropHandled) return;
-                dropHandled = true;
-                setTimeout(() => { dropHandled = false; }, 500);
-                console.log('[DnD] tauri://drop (fallback)', event.payload);
-                setIsDraggingOver(false);
-                if (event.payload.paths && event.payload.paths.length > 0) {
-                    onDropRef.current(event.payload.paths);
-                }
-            });
-            if (alive) unlisteners.push(u4);
-
-            const u5 = await listen('tauri://drag-enter', () => {
-                if (!alive) return;
-                setIsDraggingOver(true);
-            });
-            if (alive) unlisteners.push(u5);
-
-            const u6 = await listen('tauri://drag-leave', () => {
-                if (!alive) return;
-                setIsDraggingOver(false);
-            });
-            if (alive) unlisteners.push(u6);
-        };
-
-        setup();
-
-        return () => {
-            alive = false;
-            unlisteners.forEach(fn => fn());
-        };
-    }, []);
-
+    useEffect(
+        () => registerFileDropListeners((paths) => onDropRef.current(paths), setIsDraggingOver),
+        [],
+    );
     return { isDraggingOver };
 }

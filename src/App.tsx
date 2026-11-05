@@ -1,22 +1,23 @@
-import { MainLayout } from './components/layout/MainLayout';
-import { ToastContainer } from './components/ui/Toast';
-import { NotificationCenter } from './components/notifications/NotificationCenter';
+import * as RadixTooltip from '@radix-ui/react-tooltip';
 import { useEffect } from 'react';
-import { useAppStore } from './store/useAppStore';
-import { useVaultStore } from './vault/useVaultStore';
-import { WelcomeScreen } from './components/dashboard/WelcomeScreen';
-import { useTransferEvents } from './hooks/useTransferEvents';
-import { useAutoUpdater } from './features/updater';
-import { setUsageEnabled, startUsageLifecycle } from './features/usage';
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { PluginProvider } from './context/PluginContext';
-import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
-import { GlobalVaultUnlockModal } from './components/vault/GlobalVaultUnlockModal';
+
+import { GlobalAgentSignatureDialog } from './components/connections/GlobalAgentSignatureDialog';
 import { GlobalKeyPassphraseModal } from './components/connections/GlobalKeyPassphraseModal';
 import { GlobalNetworkInterfaceModal } from './components/connections/GlobalNetworkInterfaceModal';
-import { GlobalAgentSignatureDialog } from './components/connections/GlobalAgentSignatureDialog';
+import { WelcomeScreen } from './components/dashboard/WelcomeScreen';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { MainLayout } from './components/layout/MainLayout';
+import { NotificationCenter } from './components/notifications/NotificationCenter';
+import { GlobalConfirmDialog } from './components/ui/GlobalConfirmDialog';
+import { ToastContainer } from './components/ui/Toast';
 import { GlobalConnectionsRestorePreviewModal } from './components/vault/GlobalConnectionsRestorePreviewModal';
-import * as RadixTooltip from '@radix-ui/react-tooltip';
+import { GlobalVaultUnlockModal } from './components/vault/GlobalVaultUnlockModal';
+import { PluginProvider } from './context/PluginContext';
+import { AutoUpdaterController } from './features/updater';
+import { setUsageEnabled, startUsageLifecycle } from './features/usage';
+import { useTransferEvents } from './hooks/useTransferEvents';
+import { useAppStore } from './store/useAppStore';
+import { useVaultStore } from './vault/useVaultStore';
 
 type ConnectionMetadataPayload = {
     connectionId?: string;
@@ -24,6 +25,7 @@ type ConnectionMetadataPayload = {
     detectedShell?: string | null;
 };
 
+/** Initialize desktop state and compose persistent application surfaces. */
 function AppContent() {
     const loadConnections = useAppStore((state) => state.loadConnections);
     const loadSettings = useAppStore((state) => state.loadSettings);
@@ -33,19 +35,27 @@ function AppContent() {
     const refreshVault = useVaultStore((state) => state.refresh);
 
     useTransferEvents();
-    useAutoUpdater();
 
-    useEffect(() => window.ipcRenderer.on(
-        'connection:metadata',
-        (_event, payload: ConnectionMetadataPayload) => {
-            if (!payload?.connectionId) return;
-            useAppStore.getState().applyConnectionMetadata(payload.connectionId, payload.detectedOs);
-        },
-    ), []);
+    useEffect(
+        () =>
+            window.ipcRenderer.on(
+                'connection:metadata',
+                (_event, payload: ConnectionMetadataPayload) => {
+                    if (!payload?.connectionId) {
+                        return;
+                    }
+                    useAppStore
+                        .getState()
+                        .applyConnectionMetadata(payload.connectionId, payload.detectedOs);
+                },
+            ),
+        [],
+    );
 
     useEffect(() => {
         // Initialize State — order matters: connections must load before session
         // so that restored terminal tabs can reference valid connection IDs.
+        /** Load connection/settings prerequisites before restoring the workspace and opt-in services. */
         const init = async () => {
             try {
                 await Promise.all([loadConnections(), loadSettings()]);
@@ -59,17 +69,21 @@ function AppContent() {
             } catch (e) {
                 console.warn('[App] fetchSystemInfo failed:', e);
             }
-            refreshVault().catch(e => console.warn('[App] refreshVault failed:', e));
-            const shareUsage = useAppStore.getState().settings.privacy.shareAnonymousUsage !== false;
+            refreshVault().catch((e) => console.warn('[App] refreshVault failed:', e));
+            const shareUsage =
+                useAppStore.getState().settings.privacy.shareAnonymousUsage !== false;
             setUsageEnabled(shareUsage);
-            if (shareUsage) startUsageLifecycle();
+            if (shareUsage) {
+                startUsageLifecycle();
+            }
         };
-        init().catch(e => console.warn('[App] Initialisation error:', e));
+        init().catch((e) => console.warn('[App] Initialisation error:', e));
         // eslint-disable-next-line react-hooks/exhaustive-deps -- store actions are stable
     }, []);
 
     return (
         <>
+            <AutoUpdaterController />
             <MainLayout>
                 <WelcomeScreen />
             </MainLayout>
@@ -79,8 +93,6 @@ function AppContent() {
         </>
     );
 }
-
-
 
 function App() {
     return (

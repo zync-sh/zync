@@ -48,13 +48,17 @@ function normalizeEmittedImports(directory) {
 }
 
 const [feature, ...testArguments] = process.argv.slice(2);
-const browserRun = feature === 'files' && testArguments[0] === '--browser';
+const browserSuites = {
+    ai: '.tmp-agent-tests/tests/ai/conversationPerformance.browser.test.js',
+    files: '.tmp-agent-tests/tests/files/filesProduction.browser.test.js',
+};
+const browserRun = Object.hasOwn(browserSuites, feature) && testArguments[0] === '--browser';
 if (
-    (feature && feature !== 'files' && feature !== 'ghost' && feature !== 'terminal') ||
+    (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature)) ||
     (testArguments.length > 0 && !browserRun)
 ) {
     console.error(
-        'Usage: node tests/runAllAgentTests.mjs [files [--browser [browser flags]] | ghost | terminal]',
+        'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal]',
     );
     process.exit(1);
 }
@@ -62,6 +66,9 @@ if (
 normalizeEmittedImports(path.resolve('.tmp-agent-tests'));
 
 const tests = [
+    '.tmp-agent-tests/tests/editor/performance.test.js',
+    '.tmp-agent-tests/tests/ai/conversationPage.test.js',
+    '.tmp-agent-tests/tests/files/fileDropLifecycle.test.js',
     '.tmp-agent-tests/tests/vault/refresh.test.js',
     '.tmp-agent-tests/tests/dashboard/dashboardMetrics.test.js',
     '.tmp-agent-tests/tests/dashboard/dashboardMetadata.test.js',
@@ -173,7 +180,7 @@ const tests = [
     'tests/editorStatusReport.test.mjs',
     'tests/plainDocumentState.test.mjs',
     'tests/paneCloseBlockers.test.mjs',
-    'tests/paneCloseEditorGuard.test.mjs',
+    '.tmp-agent-tests/tests/workspace/paneCloseEditorGuard.test.js',
     '.tmp-agent-tests/tests/files/editorReadPolicy.test.js',
     '.tmp-agent-tests/tests/files/fileManagerDisconnectedSave.test.js',
     '.tmp-agent-tests/tests/files/fileManagerEditorIdentity.test.js',
@@ -182,7 +189,7 @@ const tests = [
     'tests/pluginShortcuts.test.mjs',
     'tests/pluginManifestTypes.test.mjs',
     'tests/pluginIconPath.test.mjs',
-    'tests/pluginPaneRetention.test.mjs',
+    '.tmp-agent-tests/tests/plugins/pluginPaneRetention.test.js',
     'tests/pluginDeveloperMode.test.mjs',
     'tests/pluginManagementController.test.mjs',
     'tests/pluginBrokerBoundary.test.mjs',
@@ -296,24 +303,26 @@ const tests = [
 ];
 
 const selectedTests = browserRun
-    ? ['.tmp-agent-tests/tests/files/filesProduction.browser.test.js']
-    : feature === 'files'
-      ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/files/'))
-      : feature === 'ghost'
-        ? tests.filter(
-              (file) =>
-                  file.startsWith('.tmp-agent-tests/tests/ghost/') ||
-                  file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
-                  file === 'tests/ghostPromptSafety.test.mjs' ||
-                  file === 'tests/terminalShellContext.test.mjs',
-          )
-        : feature === 'terminal'
+    ? [browserSuites[feature]]
+    : feature === 'ai'
+      ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/ai/'))
+      : feature === 'files'
+        ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/files/'))
+        : feature === 'ghost'
           ? tests.filter(
                 (file) =>
-                    file.startsWith('tests/terminal') ||
-                    file.startsWith('.tmp-agent-tests/tests/terminal/'),
+                    file.startsWith('.tmp-agent-tests/tests/ghost/') ||
+                    file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
+                    file === 'tests/ghostPromptSafety.test.mjs' ||
+                    file === 'tests/terminalShellContext.test.mjs',
             )
-          : tests;
+          : feature === 'terminal'
+            ? tests.filter(
+                  (file) =>
+                      file.startsWith('tests/terminal') ||
+                      file.startsWith('.tmp-agent-tests/tests/terminal/'),
+              )
+            : tests;
 
 for (const file of selectedTests) {
     const args = file.startsWith('tests/terminal')

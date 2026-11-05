@@ -44,11 +44,25 @@ export default defineConfig({
     build: {
         rollupOptions: {
             output: {
+                // Leave shared build helpers out of deferred manual chunks.
+                onlyExplicitManualChunks: true,
                 // Keep large editor/runtime dependencies in dedicated chunks.
                 // This reduces hot chunk warnings and improves incremental cache reuse.
+                /** Keep deferred syntax highlighting separate from shared and terminal/editor runtime chunks. */
                 manualChunks(id) {
                     if (!normalizePath(id).includes('/node_modules/')) {
                         return;
+                    }
+                    if (
+                        [
+                            'react-syntax-highlighter',
+                            'refractor',
+                            'prismjs',
+                            'highlight.js',
+                            'lowlight',
+                        ].some((name) => hasNodeModulePackage(id, name))
+                    ) {
+                        return 'syntax-highlighter';
                     }
                     if (
                         hasNodeModulePackage(id, '@codemirror') ||

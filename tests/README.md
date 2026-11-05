@@ -8,8 +8,10 @@ the behavior, and reuse an existing suite before creating another file.
 ```text
 tests/
   ai/                          # Agent state, output and streaming regressions
+  editor/                      # Editor search, cursor and session-cache regressions
   dashboard/                   # Metrics sampling and connection browser checks
   ghost/                       # CWD ownership and request-admission regressions
+  plugins/                     # Worker RPC and plugin lifecycle regressions
   files/                       # Files feature
     *.test.ts                  # Unit and regression suites
     *.browser.test.ts          # Browser test runners
@@ -50,6 +52,7 @@ Run from the app repository root (`zync/`):
 
 ```sh
 npm run compile:agent-tests
+node tests/runAllAgentTests.mjs ai --browser
 npm run test:git-hooks
 npm run test:files
 npm run test:files:browser

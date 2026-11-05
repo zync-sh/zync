@@ -135,3 +135,58 @@ await runTest('spawn → ready → resize → suspend → respawn generation cha
 });
 
 console.log('Terminal lifecycle integration tests passed.');
+
+const { attachTerminalLifecycleListeners } = await import(
+    '../../src/lib/terminal/terminalLifecycleListeners.js'
+);
+await runTest(
+    'late listener registration cannot attach to a replacement terminal owner',
+    async () => {
+        seedCache();
+        const original = terminalCache.get(SESSION)!;
+        const pending: Array<(cleanup: () => void) => void> = [];
+        const handlers: Array<(event: { payload: { generation: number } }) => void> = [];
+        let released = 0;
+        const register = ((_name: string, callback: (typeof handlers)[number]) => {
+            handlers.push(callback);
+            return new Promise<() => void>((resolve) => pending.push(resolve));
+        }) as typeof import('@tauri-apps/api/event').listen;
+        attachTerminalLifecycleListeners(SESSION, original.term, register);
+        seedCache({ generation: original.generation, spawned: true });
+        const replacement = terminalCache.get(SESSION)!;
+        for (const resolve of pending) {
+            resolve(() => {
+                released++;
+            });
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        for (const handler of handlers) {
+            handler({ payload: { generation: replacement.generation } });
+        }
+        assert.equal(released, 2);
+        assert.equal(replacement.unlisten?.length ?? 0, 0);
+        assert.equal(replacement.spawned, true);
+        terminalCache.delete(SESSION);
+    },
+);
+await runTest(
+    'closing a terminal before native registration resolves releases both listeners',
+    async () => {
+        seedCache();
+        const pending: Array<(cleanup: () => void) => void> = [];
+        let released = 0;
+        const register = (() =>
+            new Promise<() => void>((resolve) =>
+                pending.push(resolve),
+            )) as typeof import('@tauri-apps/api/event').listen;
+        attachTerminalLifecycleListeners(SESSION, terminalCache.get(SESSION)!.term, register);
+        terminalCache.delete(SESSION);
+        for (const resolve of pending) {
+            resolve(() => {
+                released++;
+            });
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(released, 2);
+    },
+);
