@@ -32,6 +32,7 @@ pub(crate) fn builtin_theme_manager() -> Plugin {
                         { kind: 'separator', label: 'separator' },
                         { label: 'Dark (Default)', id: 'dark', mode: 'dark' },
                         { label: 'Dracula', id: 'dracula', mode: 'dark' },
+                        { label: 'Oxide', id: 'oxide', mode: 'dark' },
                         { label: 'Monokai', id: 'monokai', mode: 'dark' },
                         { label: 'Midnight', id: 'midnight', mode: 'dark' },
                         { label: 'Monokai Pro', id: 'monokai-pro', mode: 'dark' },

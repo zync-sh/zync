@@ -113,6 +113,7 @@ impl PluginScanner {
         inject(builtins::builtin_plain_editor_provider());
         inject(builtins::builtin_dark());
         inject(builtins::builtin_dracula());
+        inject(builtins::builtin_oxide());
         inject(builtins::builtin_monokai());
         inject(builtins::builtin_midnight());
         inject(builtins::builtin_monokai_pro());
