@@ -93,7 +93,7 @@ impl server::Handler for Server {
 }
 
 struct Fixture {
-    session: Arc<Mutex<Handle<Client>>>,
+    session: Arc<Mutex<Arc<Handle<Client>>>>,
     observed: Arc<Observed>,
     stop: broadcast::Sender<()>,
     failure: SessionFailureSender,
@@ -137,7 +137,7 @@ impl Fixture {
         let (stop, _) = broadcast::channel(4);
         let (failure, failures) = mpsc::unbounded_channel();
         Self {
-            session: Arc::new(Mutex::new(session)),
+            session: Arc::new(Mutex::new(Arc::new(session))),
             observed,
             stop,
             failure,

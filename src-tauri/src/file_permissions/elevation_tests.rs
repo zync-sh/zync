@@ -271,7 +271,7 @@ impl russh::server::Handler for Server {
     }
 }
 struct TransportFixture {
-    session: Arc<AsyncMutex<Handle<Client>>>,
+    session: Arc<AsyncMutex<Arc<Handle<Client>>>>,
     opened: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
     closed: Arc<tokio::sync::Notify>,
@@ -311,7 +311,7 @@ async fn transport() -> TransportFixture {
         .await
         .unwrap();
     assert!(handle.authenticate_none("fixture").await.unwrap().success());
-    let session = Arc::new(AsyncMutex::new(handle));
+    let session = Arc::new(AsyncMutex::new(Arc::new(handle)));
     TransportFixture {
         session,
         opened,

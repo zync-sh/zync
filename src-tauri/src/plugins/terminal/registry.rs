@@ -10,7 +10,7 @@ use std::sync::{
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 
-pub type SshHandle = tokio::sync::Mutex<russh::client::Handle<crate::ssh::Client>>;
+pub type SshHandle = tokio::sync::Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>;
 
 pub struct Owner {
     pub runtime: String,

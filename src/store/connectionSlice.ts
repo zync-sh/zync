@@ -82,6 +82,8 @@ import {
     loadConnectionsIpc,
     saveConnectionsIpc,
 } from '../features/connections/infrastructure/connectionPersistence';
+import { SshVerificationCancelledError } from '../features/connections/infrastructure/sshVerificationIpc';
+import { type SerialProfile, sameSerialConnectionInputs } from '../features/serial/domain/profile';
 import {
     restartTunnelsAfterConnect,
     snapshotActiveTunnelsForReconnect,
@@ -92,6 +94,7 @@ import {
     trackConnectSuccess,
     usageFeatureForTabView,
 } from '../features/usage';
+import type { VncProfile } from '../features/vnc/domain/profile';
 import { terminalForConnectionStartup } from '../features/workspace/application/reconnectTerminal';
 import {
     assertSupportedMainTabPresentations,
@@ -102,10 +105,14 @@ import {
     stablePinnedMainTabs,
 } from '../features/workspace/domain/mainTabPresentation';
 import { normalizeDisplayAlias } from '../features/workspace/domain/presentation';
-import { builtinWorkspaceViewLabel } from '../features/workspace/domain/registrations';
+import {
+    builtinWorkspaceViewLabel,
+    canOpenFeatureInWorkspace,
+} from '../features/workspace/domain/registrations';
 import { seedRemoteGhostHistory } from '../lib/ghostSuggestions/client';
 import { ghostDebug } from '../lib/ghostSuggestions/ghostDebug';
 import { isPaneLayoutCloseBlocked } from '../lib/paneCloseBlockers';
+import { isSplitFeatureId } from '../lib/paneLayout/types';
 import { clearRemoteShellCache } from '../lib/shells/cache';
 import { dispatchTerminalConnectionWakeup, resetTerminalPtyForReconnect } from '../lib/terminal';
 import {
@@ -190,6 +197,10 @@ export interface ConnectionSlice {
     applyConnectionMetadata: (id: string, detectedOs?: string | null) => void;
     // Tab Actions
     openTab: (connectionId: string, startView?: CoreTabView) => void;
+    openVncTab: (profileId: string, options?: { connect?: boolean }) => void;
+    takeVncConnectRequest: (tabId: string, target: VncProfile) => boolean;
+    openSerialTab: (profileId: string, options?: { connect?: boolean }) => void;
+    takeSerialConnectRequest: (tabId: string, target: SerialProfile) => boolean;
     openPortForwardingTab: () => void;
     openSecurityAuditsTab: () => void;
     openPublicUrlsTab: () => void;
@@ -243,14 +254,6 @@ export interface ConnectionSlice {
     loadConnections: () => Promise<void>;
 }
 
-const VALID_RESTORABLE_VIEWS = new Set<CoreTabView>([
-    'terminal',
-    'files',
-    'port-forwarding',
-    'snippets',
-    'dashboard',
-    'security',
-]);
 const RESTORABLE_TAB_TYPES = new Set([
     'connection',
     'port-forwarding',
@@ -261,6 +264,8 @@ const RESTORABLE_TAB_TYPES = new Set([
     'vault',
     'sync',
     'public-urls',
+    'vnc',
+    'serial',
 ]);
 
 type PersistedConnection = Omit<Connection, 'status'> & Partial<Pick<Connection, 'status'>>;
@@ -644,6 +649,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         });
     },
 
+    /** Own a foreground connection attempt through trust, verification, and workspace startup. */
     connect: async (id, options) => {
         return runSerializedConnectOp(id, async () => {
             const attemptId = createConnectAttemptId(id);
@@ -1022,7 +1028,8 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 }
                 if (
                     error instanceof KeyPassphrasePromptCancelledError ||
-                    error instanceof NetworkSelectionCancelledError
+                    error instanceof NetworkSelectionCancelledError ||
+                    error instanceof SshVerificationCancelledError
                 ) {
                     set((state) => ({
                         connections: markConnectionStatus(state.connections, id, 'disconnected'),
@@ -1341,6 +1348,142 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
         // Dirty-checked in sessionSlice — redundant calls are harmless.
         get().saveSession();
+    },
+
+    /** Open one viewer per saved VNC profile and optionally request one explicit connection. */
+    openVncTab: (profileId, options) => {
+        const state = get();
+        const profile = state.settings.vncProfiles?.find((item) => item.id === profileId);
+        if (!profile) {
+            return;
+        }
+        const { host, port, credentialId } = profile;
+        const request = options?.connect ? { host, port, credentialId } : undefined;
+        const existing = state.tabs.find(
+            (tab) => tab.type === 'vnc' && tab.vncProfileId === profileId,
+        );
+        if (existing) {
+            if (request) {
+                set({
+                    tabs: state.tabs.map((tab) =>
+                        tab === existing ? { ...tab, vncConnectRequest: request } : tab,
+                    ),
+                });
+            }
+            state.activateTab(existing.id);
+            return;
+        }
+        const tab: Tab = {
+            id: crypto.randomUUID(),
+            type: 'vnc',
+            title: profile.name,
+            vncProfileId: profileId,
+            ...(request && { vncConnectRequest: request }),
+            view: 'vnc',
+        };
+        set({
+            tabs: [...state.tabs, tab],
+            activeTabId: tab.id,
+            activeConnectionId: null,
+            showWelcomeScreen: false,
+        });
+        void get().saveSession();
+    },
+
+    /** Consume the active tab's request once, after verifying its saved connection inputs. */
+    takeVncConnectRequest: (tabId, target) => {
+        const state = get();
+        const tab = state.tabs.find((item) => item.id === tabId && item.type === 'vnc');
+        if (
+            state.activeTabId !== tabId ||
+            tab?.vncProfileId !== target.id ||
+            !tab.vncConnectRequest
+        ) {
+            return false;
+        }
+        const { vncConnectRequest: request, ...updatedTab } = tab;
+        const profile = state.settings.vncProfiles?.find((item) => item.id === target.id);
+        /** Match the captured endpoint and credential without tying display settings to a connection request. */
+        const matchesRequest = (candidate: VncProfile | undefined) =>
+            candidate?.host === request.host &&
+            candidate.port === request.port &&
+            candidate.credentialId === request.credentialId;
+        const stillSaved = matchesRequest(profile);
+        if (stillSaved && !matchesRequest(target)) {
+            // A save can publish before the viewer commits the new profile props.
+            return false;
+        }
+        set({
+            tabs: state.tabs.map((item) => (item === tab ? updatedTab : item)),
+        });
+        return stillSaved;
+    },
+
+    /** Open one independently owned console per saved profile, without creating a local shell. */
+    openSerialTab: (profileId, options) => {
+        const state = get();
+        const profile = state.settings.serialProfiles?.find((item) => item.id === profileId);
+        if (!profile) {
+            return;
+        }
+        const request = options?.connect
+            ? {
+                  portId: profile.portId,
+                  settings: { ...profile.settings },
+                  lineEnding: profile.lineEnding,
+              }
+            : undefined;
+        const existing = state.tabs.find(
+            (tab) => tab.type === 'serial' && tab.serialProfileId === profileId,
+        );
+        if (existing) {
+            if (request) {
+                set({
+                    tabs: state.tabs.map((tab) =>
+                        tab === existing ? { ...tab, serialConnectRequest: request } : tab,
+                    ),
+                });
+            }
+            state.activateTab(existing.id);
+            return;
+        }
+        const tab: Tab = {
+            id: crypto.randomUUID(),
+            type: 'serial',
+            title: profile.name,
+            serialProfileId: profileId,
+            ...(request && { serialConnectRequest: request }),
+            view: 'serial',
+        };
+        set({
+            tabs: [...state.tabs, tab],
+            activeTabId: tab.id,
+            activeConnectionId: null,
+            showWelcomeScreen: false,
+        });
+        void get().saveSession();
+    },
+
+    /** Consume an active explicit open once; changed hardware inputs invalidate stale requests. */
+    takeSerialConnectRequest: (tabId, target) => {
+        const state = get();
+        const tab = state.tabs.find((item) => item.id === tabId && item.type === 'serial');
+        if (
+            state.activeTabId !== tabId ||
+            tab?.serialProfileId !== target.id ||
+            !tab.serialConnectRequest
+        ) {
+            return false;
+        }
+        const { serialConnectRequest: request, ...updatedTab } = tab;
+        const profile = state.settings.serialProfiles?.find((item) => item.id === target.id);
+        const stillSaved = sameSerialConnectionInputs(profile, request);
+        if (stillSaved && !sameSerialConnectionInputs(target, request)) {
+            // Wait for the component to commit the newly saved inputs before starting hardware.
+            return false;
+        }
+        set({ tabs: state.tabs.map((item) => (item === tab ? updatedTab : item)) });
+        return stillSaved;
     },
 
     openPortForwardingTab: () => {
@@ -1674,10 +1817,19 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         return true;
     },
 
+    /** Restore pane inventory and view selection before any transport can open. */
     restoreTabState: (snapshots, activeTabId, activeConnectionId, showWelcomeScreen = false) => {
         assertSupportedMainTabPresentations(snapshots);
         set((state) => {
             const seen = new Set<string>();
+            const seenVncProfiles = new Set<string>();
+            const seenSerialProfiles = new Set<string>();
+            const vncProfiles = new Map(
+                state.settings?.vncProfiles?.map((profile) => [profile.id, profile]),
+            );
+            const serialProfiles = new Map(
+                state.settings?.serialProfiles?.map((profile) => [profile.id, profile]),
+            );
             const tabs: Tab[] = stablePinnedMainTabs(
                 snapshots
                     .filter((s) => s && typeof s.id === 'string' && s.id.trim())
@@ -1691,11 +1843,35 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                                 state.connections.some((c) => c.id === s.connectionId)
                             );
                         }
+                        if (s.tabType === 'vnc') {
+                            return (
+                                typeof s.vncProfileId === 'string' &&
+                                vncProfiles.has(s.vncProfileId)
+                            );
+                        }
+                        if (s.tabType === 'serial') {
+                            return (
+                                typeof s.serialProfileId === 'string' &&
+                                serialProfiles.has(s.serialProfileId)
+                            );
+                        }
                         return true;
                     })
                     .filter((s) => {
                         if (seen.has(s.id)) {
                             return false;
+                        }
+                        if (s.tabType === 'vnc' && s.vncProfileId) {
+                            if (seenVncProfiles.has(s.vncProfileId)) {
+                                return false;
+                            }
+                            seenVncProfiles.add(s.vncProfileId);
+                        }
+                        if (s.tabType === 'serial' && s.serialProfileId) {
+                            if (seenSerialProfiles.has(s.serialProfileId)) {
+                                return false;
+                            }
+                            seenSerialProfiles.add(s.serialProfileId);
                         }
                         seen.add(s.id);
                         return true;
@@ -1706,22 +1882,39 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         const isLegacySnippetsTab = s.tabType === 'snippets';
                         const isPluginView =
                             typeof s.view === 'string' && s.view.startsWith('plugin:');
-                        const view: Tab['view'] = isLegacySnippetsTab
-                            ? 'snippets'
-                            : VALID_RESTORABLE_VIEWS.has(s.view as CoreTabView) || isPluginView
-                              ? (s.view as Tab['view'])
-                              : 'terminal';
+                        const scope =
+                            s.connectionId === LOCAL_TERMINAL_CONNECTION_ID ? 'local' : 'remote';
+                        const isBuiltinFeature =
+                            isSplitFeatureId(s.view) && canOpenFeatureInWorkspace(s.view, scope);
+                        const view: Tab['view'] =
+                            s.tabType === 'serial'
+                                ? 'serial'
+                                : isLegacySnippetsTab
+                                  ? 'snippets'
+                                  : isBuiltinFeature || isPluginView
+                                    ? (s.view as Tab['view'])
+                                    : 'terminal';
                         return {
                             id: s.id,
                             type: isLegacySnippetsTab ? 'connection' : (s.tabType as Tab['type']),
-                            title: s.title,
+                            title:
+                                s.tabType === 'vnc'
+                                    ? (vncProfiles.get(s.vncProfileId ?? '')?.name ?? s.title)
+                                    : s.tabType === 'serial'
+                                      ? (serialProfiles.get(s.serialProfileId ?? '')?.name ??
+                                        s.title)
+                                      : s.title,
                             displayAlias: normalizeDisplayAlias(s.displayAlias),
                             ...(presentation && { presentation }),
                             connectionId: isLegacySnippetsTab
                                 ? GLOBAL_SNIPPETS_CONNECTION_ID
-                                : s.tabType === 'security-audits'
+                                : s.tabType === 'security-audits' ||
+                                    s.tabType === 'vnc' ||
+                                    s.tabType === 'serial'
                                   ? undefined
                                   : s.connectionId,
+                            ...(s.tabType === 'vnc' && { vncProfileId: s.vncProfileId }),
+                            ...(s.tabType === 'serial' && { serialProfileId: s.serialProfileId }),
                             vaultProfileId:
                                 s.tabType === 'vault'
                                     ? isVaultProfileId(s.vaultProfileId)
@@ -1750,7 +1943,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 activeConnectionId === 'local' ||
                 state.connections.some((c) => c.id === activeConnectionId);
             const resolvedConnId =
-                resolvedTab?.type === 'security-audits'
+                resolvedTab?.type === 'security-audits' ||
+                resolvedTab?.type === 'vnc' ||
+                resolvedTab?.type === 'serial'
                     ? null
                     : (resolvedTab?.connectionId ??
                       (activeConnectionIdValid ? activeConnectionId : null));

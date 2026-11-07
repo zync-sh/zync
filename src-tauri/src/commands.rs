@@ -1,6 +1,7 @@
 use crate::fs::{FileEntry, FileSystem, SftpIdentityMaps};
 use crate::fs_volumes::{list_local_volumes, FileVolume};
 use crate::pty::PtyManager;
+use crate::ssh::keyboard_interactive;
 use crate::ssh::{Client, SshManager};
 use crate::types::*;
 use anyhow::Result;
@@ -670,7 +671,9 @@ impl AppState {
 #[allow(dead_code)]
 pub struct ConnectionHandle {
     pub config: ConnectionConfig,
-    pub session: Option<Arc<Mutex<Handle<Client>>>>,
+    /// The inner Arc lets an owned channel open retain the authenticated transport
+    /// without holding the shared operation lock while awaiting confirmation.
+    pub session: Option<Arc<Mutex<Arc<Handle<Client>>>>>,
     pub sftp_session: Option<Arc<russh_sftp::client::SftpSession>>,
     /// Opaque runtime binding, renewed whenever an SFTP channel is installed.
     pub file_permission_session: String,
@@ -712,15 +715,16 @@ async fn reconnect_connection(
     config: &ConnectionConfig,
     ssh_manager: &crate::ssh::SshManager,
     tunnel_manager: &crate::tunnels::TunnelManager,
+    verification: Option<&keyboard_interactive::Attempt>,
 ) -> Result<ConnectionHandle, String> {
     let (session, auth_banner, host_key_fingerprint) = ssh_manager
-        .connect_with_identity(config.clone(), Arc::new(tunnel_manager.clone()))
+        .connect_with_identity(config.clone(), Arc::new(tunnel_manager.clone()), verification)
         .await
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
     Ok(ConnectionHandle {
         config: config.clone(),
-        session: Some(Arc::new(Mutex::new(session))),
+        session: Some(Arc::new(Mutex::new(Arc::new(session)))),
         sftp_session: None,
         file_permission_session: uuid::Uuid::new_v4().to_string(),
         sftp_identity_maps: Arc::new(tokio::sync::OnceCell::new()),
@@ -916,10 +920,13 @@ async fn inject_remembered_key_passphrases_blocking(
     Ok(())
 }
 
+/// Connect an explicit foreground attempt and route any verification challenge to its caller.
 #[tauri::command]
 pub async fn ssh_connect(
     app: AppHandle,
+    webview: tauri::Webview,
     mut config: ConnectionConfig,
+    verification_channel: Option<tauri::ipc::JavaScriptChannelId>,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<ConnectionResponse, String> {
@@ -933,6 +940,8 @@ pub async fn ssh_connect(
                 .fetch_add(1, Ordering::Relaxed)
                 .to_string()
         });
+    let verification = verification_channel
+        .map(|channel| keyboard_interactive::Attempt::new(attempt_id.clone(), webview, channel));
     let mut prepare_cancel_rx = {
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let mut connect_tasks = state.connect_tasks.lock().await;
@@ -1024,7 +1033,8 @@ pub async fn ssh_connect(
     let ssh_manager = state.ssh_manager.clone();
     let tunnel_manager = state.tunnel_manager.clone();
     let connect_task = tokio::spawn(async move {
-        reconnect_connection(&task_config, &ssh_manager, &tunnel_manager).await
+        reconnect_connection(&task_config, &ssh_manager, &tunnel_manager, verification.as_ref())
+            .await
     });
     let spawn_outcome = {
         let mut connect_tasks = state.connect_tasks.lock().await;
@@ -1195,6 +1205,8 @@ async fn resolve_auth_method(
     vault: &tokio::sync::Mutex<crate::vault::store::VaultService>,
     require_private_key: bool,
 ) -> Result<Vec<RelinkedVaultRefUpdate>, String> {
+    use crate::vault::credential::PASSWORD_STORAGE_KIND;
+
     let crate::types::AuthMethod::VaultRef {
         item_id,
         credential_id,
@@ -1230,7 +1242,7 @@ async fn resolve_auth_method(
     };
     drop(svc);
     *auth_method = match record.kind.as_str() {
-        "ssh-password" if !require_private_key => crate::types::AuthMethod::Password {
+        PASSWORD_STORAGE_KIND if !require_private_key => crate::types::AuthMethod::Password {
             password: crate::vault::credential::primary_secret_value(&record)
                 .ok_or_else(|| "Vault password credential has no password value".to_string())?
                 .to_string(),
@@ -1263,6 +1275,46 @@ async fn resolve_auth_method(
     Ok(relinked)
 }
 
+#[cfg(test)]
+mod vault_password_auth_tests {
+    use super::*;
+    use crate::types::{AuthMethod, CredentialItemKind};
+
+    #[tokio::test]
+    async fn ssh_password_resolution_accepts_existing_vnc_links_and_rejects_agent_use() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = crate::vault::store::VaultService::new(directory.path().into());
+        service
+            .initialize("isolated fixture passphrase", false)
+            .unwrap();
+        let vault = tokio::sync::Mutex::new(service);
+
+        for kind in ["ssh-password", "vnc-password", "password"] {
+            let item_kind: CredentialItemKind =
+                serde_json::from_value(serde_json::json!(kind)).unwrap();
+            assert_eq!(serde_json::to_value(item_kind).unwrap(), "ssh-password");
+
+            let record = vault
+                .lock()
+                .await
+                .item_create("Fixture", kind, "shared-secret", None)
+                .unwrap();
+            let mut auth = AuthMethod::VaultRef {
+                item_id: record.id.clone(),
+                credential_id: record.logical_id.clone(),
+            };
+            assert!(resolve_auth_method("host", &mut auth, &vault, true)
+                .await
+                .is_err());
+            assert!(resolve_auth_method("host", &mut auth, &vault, false)
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(matches!(auth, AuthMethod::Password { password } if password == "shared-secret"));
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn ssh_agent_signature_respond(
     window: tauri::WebviewWindow,
@@ -1280,20 +1332,46 @@ pub async fn ssh_agent_signature_respond(
         .map_err(|error| error.to_string())
 }
 
+/// Send the renderer's response to its pending SSH authentication round.
+#[tauri::command]
+pub fn ssh_verification_reply(
+    webview: tauri::Webview,
+    attempt_id: String,
+    request_id: String,
+    responses: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .ssh_manager
+        .verification
+        .reply(webview.label(), &attempt_id, &request_id, responses)
+        .map_err(|error| error.to_string())
+}
+
+/// Verify the configured host and optional challenge without installing a saved session.
 #[tauri::command]
 pub async fn ssh_test_connection(
+    webview: tauri::Webview,
     mut config: ConnectionConfig,
+    verification_channel: Option<tauri::ipc::JavaScriptChannelId>,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<String, String> {
+    let verification = verification_channel.map(|channel| {
+        keyboard_interactive::Attempt::new(uuid::Uuid::new_v4().to_string(), webview, channel)
+    });
     let _relinked = resolve_vault_refs(&mut config, &vault).await?;
     inject_remembered_key_passphrases_blocking(&mut config).await?;
     match state
         .ssh_manager
-        .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
+        .connect_with_identity(
+            config,
+            state.tunnel_manager.clone(),
+            verification.as_ref(),
+        )
         .await
     {
-        Ok(session) => {
+        Ok((session, _, _)) => {
             // Try a simple command to verify session
             let result = match session.channel_open_session().await {
                 Ok(mut channel) => {
@@ -3195,7 +3273,7 @@ async fn reconnect_stored_connection(
     inject_remembered_key_passphrases_blocking(&mut connect_config).await?;
 
     let mut new_handle =
-        reconnect_connection(&connect_config, &state.ssh_manager, &state.tunnel_manager).await?;
+        reconnect_connection(&connect_config, &state.ssh_manager, &state.tunnel_manager, None).await?;
     new_handle.config = original_config;
     new_handle.uses_vault_auth = uses_vault_auth;
     new_handle.detected_os = previous_detected_os;
@@ -3228,7 +3306,7 @@ fn connection_not_ready_error(connection_id: &str) -> String {
 async fn get_live_ssh_session(
     connection_id: &str,
     state: &State<'_, AppState>,
-) -> Result<Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>, String> {
+) -> Result<Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>, String> {
     let (existing, reconnect_lock, generation) = {
         let connections = state.connections.lock().await;
         let conn = connections.get(connection_id)
@@ -3280,7 +3358,7 @@ async fn open_ssh_channel_with_single_reconnect(
 }
 
 async fn run_connection_probe(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
     command: &str,
 ) -> Option<String> {
     const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -3668,7 +3746,7 @@ mod sftp_open_error_tests {
 }
 
 async fn open_sftp_stream(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
 ) -> Result<russh::ChannelStream<russh::client::Msg>, OpenSftpError> {
     let channel = {
         let guard = session.lock().await;
@@ -3688,7 +3766,7 @@ async fn open_sftp_stream(
 
 /// Initialize the cached SFTP session with shared packet and per-file queue bounds.
 async fn open_sftp_session(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
 ) -> Result<Arc<russh_sftp::client::SftpSession>, OpenSftpError> {
     let sftp = russh_sftp::client::SftpSession::new_with_config(
         open_sftp_stream(session).await?,
@@ -4976,7 +5054,7 @@ pub async fn fs_rename(
 
 /// Returns false only when the server-side mutation definitely did not start.
 async fn try_remote_files_mutation(
-    session: &Arc<Mutex<Handle<Client>>>,
+    session: &Arc<Mutex<Arc<Handle<Client>>>>,
     command: String,
     label: &str,
 ) -> Result<bool, String> {
@@ -6181,6 +6259,29 @@ pub async fn settings_theme_set(
     persist_settings_patch(&app, settings, Some(&expected)).await
 }
 
+/// Preserve ordinary nested settings merges while replacing the trusted element
+/// envelope of an explicit theme selection. Caller validation and derivation run
+/// under SETTINGS_MUTATION_LOCK before this merge policy is used for persistence.
+fn merge_settings_patch(
+    current: Value,
+    settings: Value,
+    theme_edit: bool,
+) -> Result<Value, String> {
+    let selected_colors = if theme_edit && settings.get("theme").is_some() {
+        settings.get("elementColors").cloned()
+    } else {
+        None
+    };
+    let mut merged = ensure_object_settings(merge_json_values(current, settings))?;
+    // Deep merge would retain old override keys even when the new map is empty.
+    if let Some(colors) = selected_colors {
+        merged["elementColors"] = colors;
+    }
+    Ok(merged)
+}
+
+/// Serialize preference writes and snapshot-guarded theme changes in one transaction.
+/// Validate caller fields before inserting derived colors into an explicit selection.
 async fn persist_settings_patch(
     app: &AppHandle,
     settings: Value,
@@ -6197,14 +6298,119 @@ async fn persist_settings_patch(
     crate::element_color_settings::validate_managed_patch(&current, &settings)?;
     crate::theme_settings::validate_managed_patch(&current, &settings)?;
     crate::chrome_action_settings::validate_managed_patch(&current, &settings)?;
+    let settings = if expected_theme.is_some() {
+        crate::theme_settings::prepare_theme_selection_patch(&current, settings)?
+    } else {
+        settings
+    };
     let current_data_path = data_path_from_settings(&current);
-    let merged = ensure_object_settings(merge_json_values(current, settings))?;
+    let merged = merge_settings_patch(current, settings, expected_theme.is_some())?;
     let next_data_path = data_path_from_settings(&merged);
     persist_settings_json(app, &merged)?;
     if current_data_path != next_data_path {
         clear_data_dir_cache();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod theme_selection_merge_tests {
+    use super::merge_settings_patch;
+    use serde_json::{json, Value};
+
+    fn custom_theme() -> Value {
+        serde_json::from_str::<Value>(include_str!("../../tests/fixtures/themeDocument.json"))
+            .unwrap()["theme"]
+            .clone()
+    }
+
+    #[test]
+    fn preset_selection_removes_old_tab_overrides_and_keeps_unrelated_preferences() {
+        let current = json!({
+            "theme": "custom", "accentColor": "#ffcc00", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {
+                "mainTabs.activeBackground": "#ffc0cb", "contentTabs.activeBackground": "#abcdef"
+            }},
+            "terminal": {"fontSize": 17}, "workspaceNavigation": {"version": 99}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"theme": "oxide"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(merged["theme"], "oxide");
+        assert_eq!(merged["accentColor"], Value::Null);
+        assert_eq!(
+            merged["elementColors"],
+            json!({"version": 1, "overrides": {}})
+        );
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+        assert_eq!(merged["terminal"], current["terminal"]);
+        assert_eq!(
+            merged["workspaceNavigation"],
+            current["workspaceNavigation"]
+        );
+    }
+
+    #[test]
+    fn custom_selection_restores_only_saved_elements_without_merging_old_keys() {
+        let current = json!({
+            "theme": "dark", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {
+                "mainTabs.activeBackground": "#ffc0cb", "terminal.cursor": "#123456"
+            }}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"theme": "custom"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(
+            merged["elementColors"],
+            json!({"version": 1, "overrides": {"terminal.cursor": "#abcdef"}})
+        );
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+    }
+
+    #[test]
+    fn accent_only_theme_edit_preserves_element_overrides() {
+        let current = json!({
+            "theme": "dark", "elementColors": {"version": 1, "overrides": {"terminal.cursor": "#123456"}}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"accentColor": "#abcdef"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(merged["elementColors"], current["elementColors"]);
+        assert_eq!(merged["accentColor"], "#abcdef");
+        assert_eq!(merged["theme"], "dark");
+    }
+
+    #[test]
+    fn ordinary_settings_merge_keeps_its_existing_nested_restore_behavior() {
+        let current = json!({
+            "theme": "custom", "accentColor": "#ffcc00", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {"mainTabs.activeBackground": "#ffc0cb"}},
+            "terminal": {"fontSize": 17, "lineHeight": 1.4}
+        });
+        let merged = merge_settings_patch(
+            current.clone(),
+            json!({"theme": "dark", "terminal": {"fontSize": 18}}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(merged["elementColors"], current["elementColors"]);
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+        assert_eq!(merged["accentColor"], current["accentColor"]);
+        assert_eq!(
+            merged["terminal"],
+            json!({"fontSize": 18, "lineHeight": 1.4})
+        );
+    }
 }
 
 /// Replace only global navigation chrome and host tab placement; never session geometry or resources.
@@ -6713,7 +6919,7 @@ pub async fn fs_transfer_file(
     }).await
 }
 
-struct SshStageCopy { session: Arc<Mutex<Handle<Client>>> }
+struct SshStageCopy { session: Arc<Mutex<Arc<Handle<Client>>>> }
 
 /// Service admission errors precede filesystem writes; preserve queued cancellation.
 fn transfer_not_started_error(error: String) -> String {

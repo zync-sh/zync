@@ -423,7 +423,7 @@ const ipcRenderer = {
 
             // Manual argument mapping for mismatched commands
             if (tauriCommand === 'ssh_connect' || tauriCommand === 'ssh_test_connection') {
-                payload = { config: args[0] };
+                payload = { config: args[0], verificationChannel: args[1] ?? null };
             } else if (
                 tauriCommand === 'ssh_disconnect' ||
                 tauriCommand === 'ssh_transport_lost' ||

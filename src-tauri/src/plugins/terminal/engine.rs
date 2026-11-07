@@ -68,7 +68,7 @@ impl Drop for OwnedChannel {
 /// Retain it independently of UI cancellation and close any late-created channel.
 /// Its reservation is retained until that cleanup, never freed by a UI timeout.
 fn open_channel<H: russh::client::Handler + 'static>(
-    session: Arc<tokio::sync::Mutex<russh::client::Handle<H>>>,
+    session: Arc<tokio::sync::Mutex<Arc<russh::client::Handle<H>>>>,
     reservation: Arc<Reservation>,
 ) -> oneshot::Receiver<Result<OwnedChannel, String>> {
     let (sender, receiver) = oneshot::channel();

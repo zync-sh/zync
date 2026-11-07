@@ -1,0 +1,51 @@
+diff --git a/node_modules/@novnc/novnc/core/display.js b/node_modules/@novnc/novnc/core/display.js
+--- a/node_modules/@novnc/novnc/core/display.js
++++ b/node_modules/@novnc/novnc/core/display.js
+@@ -187,5 +187,5 @@
+     }
+
+-    resize(width, height) {
++    resize(width, height, preserveContents = true) {
+         this._prevDrawStyle = "";
+
+@@ -196,6 +196,6 @@
+         if (canvas.width !== width || canvas.height !== height) {
+
+-            // We have to save the canvas data since changing the size will clear it
++            // Legacy DesktopSize updates may still depend on the old framebuffer.
+             let saveImg = null;
+-            if (canvas.width > 0 && canvas.height > 0) {
++            if (preserveContents && canvas.width > 0 && canvas.height > 0) {
+                 saveImg = this._drawCtx.getImageData(0, 0, canvas.width, canvas.height);
+@@ -210,6 +210,9 @@
+
+             if (saveImg) {
+                 this._drawCtx.putImageData(saveImg, 0, 0);
++            } else if (!preserveContents) {
++                // A clipped viewport can keep the same canvas size after a resize.
++                this._targetCtx.clearRect(0, 0, this._target.width, this._target.height);
+             }
+         }
+
+diff --git a/node_modules/@novnc/novnc/core/rfb.js b/node_modules/@novnc/novnc/core/rfb.js
+--- a/node_modules/@novnc/novnc/core/rfb.js
++++ b/node_modules/@novnc/novnc/core/rfb.js
+@@ -2988,5 +2988,6 @@
+                      + msg);
+         } else {
+-            this._resize(this._FBU.width, this._FBU.height);
++            // ExtendedDesktopSize invalidates the old pixels when dimensions change.
++            this._resize(this._FBU.width, this._FBU.height, false);
+         }
+
+@@ -3036,8 +3037,8 @@
+     // Handle resize-messages from the server
+-    _resize(width, height) {
++    _resize(width, height, preserveContents = true) {
+         this._fbWidth = width;
+         this._fbHeight = height;
+
+-        this._display.resize(this._fbWidth, this._fbHeight);
++        this._display.resize(this._fbWidth, this._fbHeight, preserveContents);
+
+         // Adjust the visible viewport based on the new dimensions

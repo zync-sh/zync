@@ -1150,7 +1150,7 @@ impl VaultService {
             credential: match credential.cloned() {
                 Some(value) => Some(value),
                 None => existing.credential.clone().filter(|existing_credential| {
-                    existing_credential.kind.canonical_storage_kind() == kind
+                    existing_credential.kind.matches_storage_kind(kind)
                 }),
             },
             revision,
@@ -2059,7 +2059,7 @@ impl VaultRestoreBatch<'_> {
             credential: match credential.cloned() {
                 Some(value) => Some(value),
                 None => existing.credential.clone().filter(|existing_credential| {
-                    existing_credential.kind.canonical_storage_kind() == kind
+                    existing_credential.kind.matches_storage_kind(kind)
                 }),
             },
             revision,
@@ -2606,6 +2606,111 @@ mod tests {
             .initialize("correct horse battery staple", false)
             .expect("initialize vault");
         vault
+    }
+
+    #[test]
+    fn legacy_vnc_password_can_be_read_rotated_and_restored_under_the_same_id() {
+        use crate::vault::credential::{PASSWORD_FIELD, PASSWORD_STORAGE_KIND};
+
+        let vault = initialized_test_vault();
+        let service = &vault.service;
+        let original = service
+            .item_create_with_logical_id(
+                "Saved desktop",
+                PASSWORD_STORAGE_KIND,
+                "original-secret",
+                Some("fixture notes"),
+                Some("legacy-vnc-link"),
+            )
+            .unwrap();
+        let db = service.db.as_ref().unwrap();
+        let vault_id = &service.meta.as_ref().unwrap().vault_id;
+
+        // Recreate the exact kind tags in a pre-unification encrypted record.
+        let mut legacy = serde_json::to_value(&original).unwrap();
+        legacy["kind"] = serde_json::json!("vnc-password");
+        legacy["credential"]["kind"] = serde_json::json!("vnc-password");
+        legacy["credential"]["metadata"]["legacyKind"] = serde_json::json!("vnc-password");
+        let key = derive_record_key(
+            service.vek.as_ref().unwrap(),
+            record_info_bytes(&original.id, original.revision).as_bytes(),
+        )
+        .unwrap();
+        let aad = record_aad_string(vault_id, &original.id, original.revision);
+        let envelope =
+            encrypt_record(&key, &serde_json::to_vec(&legacy).unwrap(), aad.as_bytes()).unwrap();
+        let legacy_bytes = serde_json::to_vec(&StoredEnvelope {
+            id: original.id.clone(),
+            kind: "vnc-password".into(),
+            revision: original.revision,
+            deleted: false,
+            crypto_suite: CRYPTO_SUITE.into(),
+            aad_version: AAD_VERSION,
+            nonce: STANDARD.encode(envelope.nonce),
+            ciphertext: STANDARD.encode(envelope.ciphertext),
+        })
+        .unwrap();
+        let write_txn = db.begin_write().unwrap();
+        {
+            let mut records = write_txn.open_table(RECORDS).unwrap();
+            records
+                .insert(original.id.as_str(), legacy_bytes.as_slice())
+                .unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        let loaded = service.item_get_by_logical_id("legacy-vnc-link").unwrap();
+        assert_eq!(loaded.id, original.id);
+        assert_eq!(loaded.kind, PASSWORD_STORAGE_KIND);
+        assert_eq!(loaded.secret_values, original.secret_values);
+        let listed = service.item_list_metadata().unwrap().pop().unwrap();
+        assert_eq!(listed.logical_id, "legacy-vnc-link");
+        assert_eq!(listed.kind, PASSWORD_STORAGE_KIND);
+        assert_eq!(
+            listed.secret_fingerprint,
+            service.record_secret_fingerprint(&original).unwrap()
+        );
+        {
+            let read_txn = db.begin_read().unwrap();
+            let records = read_txn.open_table(RECORDS).unwrap();
+            let stored = records.get(original.id.as_str()).unwrap().unwrap();
+            assert_eq!(stored.value(), legacy_bytes.as_slice());
+        }
+
+        let rotated = service
+            .item_update(
+                &original.id,
+                "Saved desktop",
+                "password",
+                "next-secret",
+                None,
+            )
+            .unwrap();
+        assert_eq!(rotated.id, original.id);
+        assert_eq!(rotated.logical_id, original.logical_id);
+        assert_eq!(rotated.kind, PASSWORD_STORAGE_KIND);
+        assert_eq!(rotated.secret_values[PASSWORD_FIELD], "next-secret");
+        assert_eq!(
+            rotated
+                .credential
+                .as_ref()
+                .unwrap()
+                .metadata
+                .legacy_kind
+                .as_deref(),
+            Some("vnc-password"),
+        );
+        let history = service.item_revision_history(&original.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].kind, PASSWORD_STORAGE_KIND);
+        assert_eq!(history[0].secret_fingerprint, listed.secret_fingerprint);
+        let restored = service
+            .item_restore_revision(&original.id, original.revision)
+            .unwrap();
+        assert_eq!(restored.id, original.id);
+        assert_eq!(restored.logical_id, original.logical_id);
+        assert_eq!(restored.secret_values, original.secret_values);
+        assert_eq!(restored.notes, original.notes);
     }
 
     #[test]

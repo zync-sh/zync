@@ -70,7 +70,12 @@ export async function runFeatureConnectionWorkspaceChecks(
             '../features/workspace/domain/mainTabPresentation': pure(
                 'features/workspace/domain/mainTabPresentation.ts',
             ),
+            '../features/serial/domain/profile': pure('features/serial/domain/profile.ts'),
             '../lib/paneCloseBlockers': {},
+            '../lib/paneLayout/types': layout,
+            '../features/connections/infrastructure/sshVerificationIpc': {
+                SshVerificationCancelledError: class extends Error {},
+            },
             '../features/connections/application/connectionService': {},
             '../features/connections/application/tabService': pure(
                 'features/connections/application/tabService.ts',

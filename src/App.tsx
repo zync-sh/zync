@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { GlobalAgentSignatureDialog } from './components/connections/GlobalAgentSignatureDialog';
 import { GlobalKeyPassphraseModal } from './components/connections/GlobalKeyPassphraseModal';
 import { GlobalNetworkInterfaceModal } from './components/connections/GlobalNetworkInterfaceModal';
+import { GlobalSshVerificationDialog } from './components/connections/GlobalSshVerificationDialog';
 import { WelcomeScreen } from './components/dashboard/WelcomeScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainLayout } from './components/layout/MainLayout';
@@ -94,6 +95,7 @@ function AppContent() {
     );
 }
 
+/** Mount global dialogs alongside the workspace so they survive tab changes. */
 function App() {
     return (
         <ErrorBoundary>
@@ -104,6 +106,7 @@ function App() {
                     <GlobalVaultUnlockModal />
                     <GlobalKeyPassphraseModal />
                     <GlobalNetworkInterfaceModal />
+                    <GlobalSshVerificationDialog />
                     <GlobalAgentSignatureDialog />
                     <GlobalConnectionsRestorePreviewModal />
                 </RadixTooltip.Provider>

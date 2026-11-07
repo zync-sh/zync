@@ -1,10 +1,26 @@
 import type { Tab } from '../features/connections/domain/types.js';
-import type { VaultProfileId } from '../vault/profileTypes.js';
+import {
+    type ContentPresentationMap,
+    parseContentPresentation,
+} from '../features/workspace/domain/contentPresentation';
+import {
+    parseWorkspaceDocking,
+    type WorkspaceDockingMap,
+} from '../features/workspace/domain/docking';
+import {
+    assertSupportedMainTabPresentations,
+    type MainTabPresentation,
+    parseMainTabPresentation,
+    stablePinnedMainTabs,
+} from '../features/workspace/domain/mainTabPresentation';
 import { normalizeDisplayAlias } from '../features/workspace/domain/presentation';
-import { assertSupportedMainTabPresentations, parseMainTabPresentation, stablePinnedMainTabs, type MainTabPresentation } from '../features/workspace/domain/mainTabPresentation';
-import { parseContentPresentation, type ContentPresentationMap } from '../features/workspace/domain/contentPresentation';
-import { parseWorkspaceDocking, type WorkspaceDockingMap } from '../features/workspace/domain/docking';
-import { findLayoutOwner, snapshotPaneLayoutGroups, visibleTermIds, type PaneLayoutGroups } from '../lib/paneLayout';
+import {
+    findLayoutOwner,
+    type PaneLayoutGroups,
+    snapshotPaneLayoutGroups,
+    visibleTermIds,
+} from '../lib/paneLayout';
+import type { VaultProfileId } from '../vault/profileTypes.js';
 
 export interface TerminalTabSnapshot {
     id: string;
@@ -24,6 +40,8 @@ export interface TabSnapshot {
     presentation?: MainTabPresentation;
     connectionId?: string;
     vaultProfileId?: VaultProfileId;
+    vncProfileId?: string;
+    serialProfileId?: string;
     view: string;
 }
 
@@ -71,8 +89,8 @@ function keepTerminalsForSession(
     groups: PaneLayoutGroups | undefined,
     cap = MAX_TABS_PER_SCOPE,
 ): SessionTerminalTabState[] {
-    const visibleAll = tabs.filter(t => t.tabVisible !== false);
-    const byId = new Map(tabs.map(t => [t.id, t]));
+    const visibleAll = tabs.filter((t) => t.tabVisible !== false);
+    const byId = new Map(tabs.map((t) => [t.id, t]));
     const keptVisible: SessionTerminalTabState[] = [];
     const keptHidden: SessionTerminalTabState[] = [];
     const keptHiddenIds = new Set<string>();
@@ -84,58 +102,76 @@ function keepTerminalsForSession(
         const layout = owner ? groups?.[owner] : undefined;
         if (layout) {
             for (const id of visibleTermIds(layout)) {
-                if (id === tab.id || keptHiddenIds.has(id)) continue;
+                if (id === tab.id || keptHiddenIds.has(id)) {
+                    continue;
+                }
                 const extra = byId.get(id);
-                if (extra && extra.tabVisible === false) extraHidden.push(extra);
+                if (extra && extra.tabVisible === false) {
+                    extraHidden.push(extra);
+                }
             }
         }
         const needed = 1 + extraHidden.length;
         if (needed > remaining) {
-            if (remaining < 1) continue;
+            if (remaining < 1) {
+                continue;
+            }
             keptVisible.push(tab);
             remaining -= 1;
             continue;
         }
         keptVisible.push(tab);
         keptHidden.push(...extraHidden);
-        for (const extra of extraHidden) keptHiddenIds.add(extra.id);
+        for (const extra of extraHidden) {
+            keptHiddenIds.add(extra.id);
+        }
         remaining -= needed;
     }
 
     return [...keptVisible, ...keptHidden];
 }
 
+/** Snapshot supported tab metadata and bounded terminal inventory while excluding transport open requests. */
 export function buildSessionData(state: SessionStoreSnapshot): SessionData {
     assertSupportedMainTabPresentations(state.tabs);
     const presentation = parseContentPresentation(state.contentPresentation);
-    if (!presentation.ok) throw new Error('SESSION_UNSUPPORTED_VERSION: unsupported content presentation metadata');
+    if (!presentation.ok) {
+        throw new Error('SESSION_UNSUPPORTED_VERSION: unsupported content presentation metadata');
+    }
     const docking = parseWorkspaceDocking(state.workspaceDocking);
-    if (!docking.ok) throw new Error('SESSION_UNSUPPORTED_VERSION: unsupported workspace docking metadata');
-    const filteredTabs = stablePinnedMainTabs((state.tabs ?? []).filter(t => t.type !== 'settings'));
+    if (!docking.ok) {
+        throw new Error('SESSION_UNSUPPORTED_VERSION: unsupported workspace docking metadata');
+    }
+    const filteredTabs = stablePinnedMainTabs(
+        (state.tabs ?? []).filter((t) => t.type !== 'settings'),
+    );
     const terminals = Object.fromEntries(
         Object.entries(state.terminals ?? {}).map(([connId, tabs]) => {
             const kept = keepTerminalsForSession(tabs, state.paneLayouts?.[connId]);
-            return [connId, kept.map(t => ({
-                id: t.id,
-                title: t.title,
-                cwd: t.lastKnownCwd,
-                initialPath: t.initialPath,
-                isSynced: t.isSynced,
-                ...(t.shellOverride !== undefined && { shellOverride: t.shellOverride }),
-                ...(t.tabVisible === false && { tabVisible: false as const }),
-            }))];
+            return [
+                connId,
+                kept.map((t) => ({
+                    id: t.id,
+                    title: t.title,
+                    cwd: t.lastKnownCwd,
+                    initialPath: t.initialPath,
+                    isSynced: t.isSynced,
+                    ...(t.shellOverride !== undefined && { shellOverride: t.shellOverride }),
+                    ...(t.tabVisible === false && { tabVisible: false as const }),
+                })),
+            ];
         }),
     ) as Record<string, TerminalTabSnapshot[]>;
 
     return {
         version: SESSION_VERSION,
         showWelcomeScreen: Boolean(state.showWelcomeScreen),
-        activeTabId: filteredTabs.some(t => t.id === state.activeTabId)
+        activeTabId: filteredTabs.some((t) => t.id === state.activeTabId)
             ? (state.activeTabId ?? undefined)
             : undefined,
         activeConnectionId: state.activeConnectionId ?? undefined,
         // Exclude transient UI-only tabs (settings) from persistence.
-        tabs: filteredTabs.map(t => {
+        tabs: filteredTabs.map((t) => {
             const parsed = parseMainTabPresentation(t.presentation);
             // The complete inventory was validated before filtering transient tabs.
             const presentation = parsed.ok ? parsed.value : undefined;
@@ -143,21 +179,26 @@ export function buildSessionData(state: SessionStoreSnapshot): SessionData {
                 id: t.id,
                 tabType: t.type,
                 title: t.title,
-                ...(normalizeDisplayAlias(t.displayAlias) && { displayAlias: normalizeDisplayAlias(t.displayAlias) }),
+                ...(normalizeDisplayAlias(t.displayAlias) && {
+                    displayAlias: normalizeDisplayAlias(t.displayAlias),
+                }),
                 ...(presentation && { presentation }),
                 connectionId: t.connectionId,
                 ...(t.vaultProfileId !== undefined && { vaultProfileId: t.vaultProfileId }),
+                ...(t.type === 'vnc' &&
+                    t.vncProfileId !== undefined && { vncProfileId: t.vncProfileId }),
+                ...(t.type === 'serial' &&
+                    t.serialProfileId !== undefined && { serialProfileId: t.serialProfileId }),
                 view: t.view,
             };
         }),
         terminals,
         activeTerminalIds: Object.fromEntries(
-            (Object.entries(state.activeTerminalIds ?? {}) as [string, string | null][])
-                .filter(
-                    (entry): entry is [string, string] =>
-                        entry[1] != null &&
-                        (terminals[entry[0]] ?? []).some(tab => tab.id === entry[1]),
-                ),
+            (Object.entries(state.activeTerminalIds ?? {}) as [string, string | null][]).filter(
+                (entry): entry is [string, string] =>
+                    entry[1] != null &&
+                    (terminals[entry[0]] ?? []).some((tab) => tab.id === entry[1]),
+            ),
         ),
         paneLayouts: snapshotPaneLayoutGroups(state.paneLayouts ?? {}, terminals),
         ...(Object.keys(presentation.value).length && { contentPresentation: presentation.value }),

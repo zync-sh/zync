@@ -1,7 +1,10 @@
+import type { SplitFeatureId } from '../../../lib/paneLayout/types';
 import type { VaultProfileId } from '../../../vault/profileTypes';
+import type { SerialProfile } from '../../serial/domain/profile';
+import type { VncProfile } from '../../vnc/domain/profile';
 import type { MainTabPresentation } from '../../workspace/domain/mainTabPresentation';
 
-export type CoreTabView = 'dashboard' | 'files' | 'port-forwarding' | 'snippets' | 'terminal' | 'security';
+export type CoreTabView = 'terminal' | SplitFeatureId;
 export type PluginTabView = `plugin:${string}`;
 export type TabView = CoreTabView | PluginTabView;
 
@@ -9,7 +12,10 @@ export type CredentialItemKind = 'ssh-password' | 'ssh-private-key' | 'ssh-agent
 export type CredentialPurpose = 'ssh-auth';
 
 /** Device-only egress policy, intentionally absent from synced/exported Connection records. */
-export type NetworkPreference = { mode: 'default' } | { mode: 'ask' } | { mode: 'interface'; id: string };
+export type NetworkPreference =
+    | { mode: 'default' }
+    | { mode: 'ask' }
+    | { mode: 'interface'; id: string };
 
 export interface NetworkInterface {
     id: string;
@@ -67,7 +73,17 @@ export interface Folder {
 
 export interface Tab {
     id: string;
-    type: 'connection' | 'settings' | 'port-forwarding' | 'security-audits' | 'release-notes' | 'vault' | 'sync' | 'public-urls';
+    type:
+        | 'connection'
+        | 'settings'
+        | 'port-forwarding'
+        | 'security-audits'
+        | 'release-notes'
+        | 'vault'
+        | 'sync'
+        | 'public-urls'
+        | 'vnc'
+        | 'serial';
     title: string;
     /** Presentation only; never changes host names, resource IDs or ownership. */
     displayAlias?: string;
@@ -75,5 +91,11 @@ export interface Tab {
     presentation?: MainTabPresentation;
     connectionId?: string;
     vaultProfileId?: VaultProfileId;
+    vncProfileId?: string;
+    /** One-shot viewer start for the saved endpoint and Vault link. Excluded from session snapshots. */
+    vncConnectRequest?: Pick<VncProfile, 'host' | 'port' | 'credentialId'>;
+    serialProfileId?: string;
+    /** Explicit one-shot hardware open; never restored from session snapshots. */
+    serialConnectRequest?: Omit<SerialProfile, 'id' | 'name'>;
     view: TabView;
 }

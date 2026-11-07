@@ -1,49 +1,76 @@
-import { useState, useCallback, useEffect, useMemo, lazy, Suspense } from 'react';
-import { useAppStore, Connection, Folder } from '../../store/useAppStore';
-import { Files, FolderPlus, Info, Link2, Monitor, Network, Pencil, Plus, Power, RefreshCw, Search, Server, Trash2 } from 'lucide-react';
-import { BetaBadge } from '../share/PublicUrlsLabel';
-import { cn } from '../../lib/utils';
-import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
-import { ConfirmModal } from '../ui/ConfirmModal';
-import { Tooltip } from '../ui/Tooltip';
-import { CONTROL_INSET_FOCUS_CLASSES } from '../ui/controlStyles';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { buildTree } from './sidebar/buildTree';
-import { SidebarSection } from './sidebar/SidebarSection';
-import { SidebarChrome, SidebarContent } from './sidebar/SidebarChrome';
-import { ConnectionItem } from './sidebar/ConnectionItem';
-import { ConnectedHostsGroup } from './sidebar/ConnectedHostsGroup';
-import { FolderItem } from './sidebar/FolderItem';
-import { FolderFormModal } from './sidebar/FolderFormModal';
-import { SidebarActionButton } from './sidebar/SidebarActionButton';
-import { VaultNavSection } from './sidebar/VaultNavSection';
-import { PluginsSidebar } from './sidebar/PluginsSidebar';
-import { RemoteHostItem } from './sidebar/RemoteHostItem';
-import { AddConnectionModal } from '../modals/AddConnectionModal';
-import { AddTunnelModal } from '../modals/AddTunnelModal';
+import {
+    Files,
+    FolderPlus,
+    Info,
+    Link2,
+    Monitor,
+    Network,
+    Pencil,
+    Plus,
+    Power,
+    RefreshCw,
+    Search,
+    Server,
+    Trash2,
+} from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+
 import {
     connectionLogicalId,
-    normalizeFolderPath,
     type HostCatalogEntry,
     type HostCatalogFilter,
+    normalizeFolderPath,
 } from '../../features/connections/domain';
 import { materializeHostsOnDevice } from '../../features/connections/domain/hostMaterialize';
-import { useHostCatalog } from '../../features/connections/presentation/useHostCatalog';
 import {
-    exportConnectionsToFileIpc,
     type ConnectionExchangeExportFormat,
+    exportConnectionsToFileIpc,
 } from '../../features/connections/infrastructure/connectionTransfer';
-import { FEATURE_META, type FeatureId } from './featureMeta';
-import { resolveWorkspaceNavigation } from '../../features/workspace/domain/navigation';
-import { GoogleMarkIcon } from '../icons/providerIcons';
-import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
-import { useWorkspaceSidebar } from './navigation/WorkspaceSidebarContext';
+import { useHostCatalog } from '../../features/connections/presentation/useHostCatalog';
+import { SerialProfileSection } from '../../features/serial/ui/SerialProfileSection';
+import { VncProfileSection } from '../../features/vnc/ui/VncProfileSection';
 import { sidebarPresentation } from '../../features/workspace/application/sidebarPresentation';
+import { resolveWorkspaceNavigation } from '../../features/workspace/domain/navigation';
+import { cn } from '../../lib/utils';
+import { Connection, Folder, useAppStore } from '../../store/useAppStore';
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
+import { GoogleMarkIcon } from '../icons/providerIcons';
+import { AddConnectionModal } from '../modals/AddConnectionModal';
+import { AddTunnelModal } from '../modals/AddTunnelModal';
+import { BetaBadge } from '../share/PublicUrlsLabel';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu';
+import { CONTROL_INSET_FOCUS_CLASSES } from '../ui/controlStyles';
+import { Tooltip } from '../ui/Tooltip';
+import { FEATURE_META, type FeatureId } from './featureMeta';
+import { useWorkspaceSidebar } from './navigation/WorkspaceSidebarContext';
+import { buildTree } from './sidebar/buildTree';
+import { ConnectedHostsGroup } from './sidebar/ConnectedHostsGroup';
+import { ConnectionItem } from './sidebar/ConnectionItem';
+import { FolderFormModal } from './sidebar/FolderFormModal';
+import { FolderItem } from './sidebar/FolderItem';
+import { PluginsSidebar } from './sidebar/PluginsSidebar';
+import { RemoteHostItem } from './sidebar/RemoteHostItem';
+import { SidebarActionButton } from './sidebar/SidebarActionButton';
+import { SidebarChrome, SidebarContent } from './sidebar/SidebarChrome';
+import { SidebarSection } from './sidebar/SidebarSection';
+import { VaultNavSection } from './sidebar/VaultNavSection';
 
 // Lazy Load Modals
-const SettingsModal = lazy(() => import('../settings/SettingsModal').then(mod => ({ default: mod.SettingsModal })));
-const ConnectionDetailsModal = lazy(() => import('../modals/ConnectionDetailsModal').then(mod => ({ default: mod.ConnectionDetailsModal })));
-const ExportConnectionsModal = lazy(() => import('../modals/ExportConnectionsModal').then(mod => ({ default: mod.ExportConnectionsModal })));
+const SettingsModal = lazy(() =>
+    import('../settings/SettingsModal').then((mod) => ({ default: mod.SettingsModal })),
+);
+const ConnectionDetailsModal = lazy(() =>
+    import('../modals/ConnectionDetailsModal').then((mod) => ({
+        default: mod.ConnectionDetailsModal,
+    })),
+);
+const ExportConnectionsModal = lazy(() =>
+    import('../modals/ExportConnectionsModal').then((mod) => ({
+        default: mod.ExportConnectionsModal,
+    })),
+);
 
 const FEATURE_ITEMS: Array<{ id: FeatureId; label: string }> = [
     { id: 'files', label: 'File Manager' },
@@ -53,46 +80,46 @@ const FEATURE_ITEMS: Array<{ id: FeatureId; label: string }> = [
     { id: 'security', label: FEATURE_META.security.label },
 ];
 
-
 const HOST_FILTERS: Array<{ id: HostCatalogFilter; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'local', label: 'Local' },
     { id: 'remote', label: 'Remote' },
 ];
 
+/** Render the active sidebar section and its device-level connection controls. */
 export function Sidebar({ className }: { className?: string }) {
     const [viewingDetailsId, setViewingDetailsId] = useState<string | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
     // Connection Store Hooks
-    const connections = useAppStore(state => state.connections);
-    const activeConnectionId = useAppStore(state => state.activeConnectionId);
-    const openTab = useAppStore(state => state.openTab);
-    const openPortForwardingTab = useAppStore(state => state.openPortForwardingTab);
-    const openSecurityAuditsTab = useAppStore(state => state.openSecurityAuditsTab);
-    const openPublicUrlsTab = useAppStore(state => state.openPublicUrlsTab);
-    const folders = useAppStore(state => state.folders);
-    const addFolder = useAppStore(state => state.addFolder);
-    const updateConnectionFolder = useAppStore(state => state.updateConnectionFolder);
-    const deleteFolder = useAppStore(state => state.deleteFolder);
-    const deleteConnection = useAppStore(state => state.deleteConnection);
-    const renameFolder = useAppStore(state => state.renameFolder);
-    const connect = useAppStore(state => state.connect);
-    const disconnect = useAppStore(state => state.disconnect);
-    const loadConnections = useAppStore(state => state.loadConnections);
-    
+    const connections = useAppStore((state) => state.connections);
+    const activeConnectionId = useAppStore((state) => state.activeConnectionId);
+    const openTab = useAppStore((state) => state.openTab);
+    const openPortForwardingTab = useAppStore((state) => state.openPortForwardingTab);
+    const openSecurityAuditsTab = useAppStore((state) => state.openSecurityAuditsTab);
+    const openPublicUrlsTab = useAppStore((state) => state.openPublicUrlsTab);
+    const folders = useAppStore((state) => state.folders);
+    const addFolder = useAppStore((state) => state.addFolder);
+    const updateConnectionFolder = useAppStore((state) => state.updateConnectionFolder);
+    const deleteFolder = useAppStore((state) => state.deleteFolder);
+    const deleteConnection = useAppStore((state) => state.deleteConnection);
+    const renameFolder = useAppStore((state) => state.renameFolder);
+    const connect = useAppStore((state) => state.connect);
+    const disconnect = useAppStore((state) => state.disconnect);
+    const loadConnections = useAppStore((state) => state.loadConnections);
+
     // Settings Store Hooks
-    const settings = useAppStore(state => state.settings);
-    const updateSettings = useAppStore(state => state.updateSettings);
-    const showToast = useAppStore(state => state.showToast);
-    
+    const settings = useAppStore((state) => state.settings);
+    const updateSettings = useAppStore((state) => state.updateSettings);
+    const showToast = useAppStore((state) => state.showToast);
+
     // Modal open/close actions extracted from store
-    const isSettingsOpen = useAppStore(state => state.isSettingsOpen);
-    const closeSettings = useAppStore(state => state.closeSettings);
-    const isAddConnectionModalOpen = useAppStore(state => state.isAddConnectionModalOpen);
-    const editingConnectionId      = useAppStore(state => state.editingConnectionId);
-    const openConnectionModal      = useAppStore(state => state.openConnectionModal);
-    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
+    const closeSettings = useAppStore((state) => state.closeSettings);
+    const isAddConnectionModalOpen = useAppStore((state) => state.isAddConnectionModalOpen);
+    const editingConnectionId = useAppStore((state) => state.editingConnectionId);
+    const openConnectionModal = useAppStore((state) => state.openConnectionModal);
+    const setAddConnectionModalOpen = useAppStore((state) => state.setAddConnectionModalOpen);
     const closeAddConnectionModal = useCallback(() => {
         setAddConnectionModalOpen(false);
     }, [setAddConnectionModalOpen]);
@@ -102,19 +129,33 @@ export function Sidebar({ className }: { className?: string }) {
 
     const [isRenameFolderModalOpen, setIsRenameFolderModalOpen] = useState(false);
     const [folderToRename, setFolderToRename] = useState<string | null>(null);
-    const globalSection = useAppStore(state => state.globalSidebarSection);
+    const globalSection = useAppStore((state) => state.globalSidebarSection);
     const navigation = resolveWorkspaceNavigation(settings.workspaceNavigation);
     const navigationEnabled = navigation.visible;
-    const { section, position: sidebarPosition, collapsed: isCollapsed } = sidebarPresentation(settings.workspaceNavigation, globalSection, settings.sidebarCollapsed);
+    const {
+        section,
+        position: sidebarPosition,
+        collapsed: isCollapsed,
+    } = sidebarPresentation(settings.workspaceNavigation, globalSection, settings.sidebarCollapsed);
     const workspaceSidebar = useWorkspaceSidebar();
-    const openSyncBackupTab = useAppStore(state => state.openSyncBackupTab);
+    const openSyncBackupTab = useAppStore((state) => state.openSyncBackupTab);
 
     const [isAddTunnelModalOpen, setIsAddTunnelModalOpen] = useState(false);
     const [deletingConnection, setDeletingConnection] = useState<Connection | null>(null);
     const [deletingFolder, setDeletingFolder] = useState<string | null>(null);
-    const [connectionContextMenu, setConnectionContextMenu] = useState<{ x: number; y: number; connectionId: string } | null>(null);
-    const [allHostsContextMenu, setAllHostsContextMenu] = useState<{ x: number; y: number } | null>(null);
-    const [folderContextMenu, setFolderContextMenu] = useState<{ x: number; y: number; folderPath: string } | null>(null);
+    const [connectionContextMenu, setConnectionContextMenu] = useState<{
+        x: number;
+        y: number;
+        connectionId: string;
+    } | null>(null);
+    const [allHostsContextMenu, setAllHostsContextMenu] = useState<{ x: number; y: number } | null>(
+        null,
+    );
+    const [folderContextMenu, setFolderContextMenu] = useState<{
+        x: number;
+        y: number;
+        folderPath: string;
+    } | null>(null);
     const [exportModalState, setExportModalState] = useState<{
         title: string;
         scopeKey: string;
@@ -122,7 +163,6 @@ export function Sidebar({ className }: { className?: string }) {
         defaultFileBaseName: string;
         connections: Connection[];
     } | null>(null);
-
 
     const hostCatalog = useHostCatalog(connections, searchTerm);
     const {
@@ -153,45 +193,57 @@ export function Sidebar({ className }: { className?: string }) {
     const totalHostCount = catalogEntries.length;
     const hasAnyHosts = totalHostCount > 0;
 
-    const materializeHost = useCallback(async (
-        entry: HostCatalogEntry,
-        options: { silentSuccess?: boolean; openAfter?: boolean },
-    ) => {
-        setMaterializing(entry.logicalId, true);
-        try {
-            const result = await materializeHostsOnDevice({
-                logicalIds: [entry.logicalId],
-                includeBundle: false,
-                silentSuccess: options.silentSuccess,
-                showToast,
-                loadConnections,
-            });
-            if (options.openAfter && result.ok) {
-                // Unblock UI and open before any inventory re-list.
-                setMaterializing(entry.logicalId, false);
-                openTab(entry.logicalId);
+    const materializeHost = useCallback(
+        async (
+            entry: HostCatalogEntry,
+            options: { silentSuccess?: boolean; openAfter?: boolean },
+        ) => {
+            setMaterializing(entry.logicalId, true);
+            try {
+                const result = await materializeHostsOnDevice({
+                    logicalIds: [entry.logicalId],
+                    includeBundle: false,
+                    silentSuccess: options.silentSuccess,
+                    showToast,
+                    loadConnections,
+                });
+                if (options.openAfter && result.ok) {
+                    // Unblock UI and open before any inventory re-list.
+                    setMaterializing(entry.logicalId, false);
+                    openTab(entry.logicalId);
+                    void refreshInventory();
+                    return;
+                }
+                // Keep-only: inventory refresh is non-blocking (Drive re-list felt slow).
                 void refreshInventory();
-                return;
+            } finally {
+                setMaterializing(entry.logicalId, false);
             }
-            // Keep-only: inventory refresh is non-blocking (Drive re-list felt slow).
-            void refreshInventory();
-        } finally {
-            setMaterializing(entry.logicalId, false);
-        }
-    }, [loadConnections, openTab, refreshInventory, setMaterializing, showToast]);
+        },
+        [loadConnections, openTab, refreshInventory, setMaterializing, showToast],
+    );
 
-    const handleKeepOnDevice = useCallback(async (entry: HostCatalogEntry) => {
-        await materializeHost(entry, { silentSuccess: false, openAfter: false });
-    }, [materializeHost]);
+    const handleKeepOnDevice = useCallback(
+        async (entry: HostCatalogEntry) => {
+            await materializeHost(entry, { silentSuccess: false, openAfter: false });
+        },
+        [materializeHost],
+    );
 
-    const handleKeepAndConnect = useCallback(async (entry: HostCatalogEntry) => {
-        // Fast path: host + credentials only (no tunnels/snippets). Open tab ASAP.
-        await materializeHost(entry, { silentSuccess: true, openAfter: true });
-    }, [materializeHost]);
+    const handleKeepAndConnect = useCallback(
+        async (entry: HostCatalogEntry) => {
+            // Fast path: host + credentials only (no tunnels/snippets). Open tab ASAP.
+            await materializeHost(entry, { silentSuccess: true, openAfter: true });
+        },
+        [materializeHost],
+    );
 
-    const openEditConnection = useCallback((conn: Connection) => {
-        openConnectionModal(conn.id);
-    }, [openConnectionModal]);
+    const openEditConnection = useCallback(
+        (conn: Connection) => {
+            openConnectionModal(conn.id);
+        },
+        [openConnectionModal],
+    );
 
     // Listen for global events (Command Palette)
     useEffect(() => {
@@ -213,19 +265,20 @@ export function Sidebar({ className }: { className?: string }) {
     // Only `connected` moves here — not `connecting`. Moving on the optimistic
     // connecting update reorders the list under a still-in-progress click/dblclick,
     // so the next click lands on the neighbor and opens/connects that host too.
-    const isLiveConnection = useCallback(
-        (c: Connection) => c.status === 'connected',
-        [],
-    );
+    const isLiveConnection = useCallback((c: Connection) => c.status === 'connected', []);
 
     const connectedListHosts = useMemo(() => {
         const normalizedSearch = searchTerm.toLowerCase();
         const live = catalogLocalConnections.filter((c: Connection) => {
-            if (!isLiveConnection(c)) return false;
-            if (!searchTerm) return true;
+            if (!isLiveConnection(c)) {
+                return false;
+            }
+            if (!searchTerm) {
+                return true;
+            }
             return (
-                (c.name ?? c.host ?? '').toLowerCase().includes(normalizedSearch)
-                || Boolean(c.tags?.some((t) => t.toLowerCase().includes(normalizedSearch)))
+                (c.name ?? c.host ?? '').toLowerCase().includes(normalizedSearch) ||
+                Boolean(c.tags?.some((t) => t.toLowerCase().includes(normalizedSearch)))
             );
         });
         return [...live].sort((a, b) =>
@@ -245,30 +298,39 @@ export function Sidebar({ className }: { className?: string }) {
         [treeConnections, folders, searchTerm],
     );
 
-    const toggleExpandedFolder = useAppStore(state => state.toggleExpandedFolder);
+    const toggleExpandedFolder = useAppStore((state) => state.toggleExpandedFolder);
 
-    const expandedFolders = useMemo(() => new Set(settings.expandedFolders), [settings.expandedFolders]);
+    const expandedFolders = useMemo(
+        () => new Set(settings.expandedFolders),
+        [settings.expandedFolders],
+    );
 
-    const toggleFolder = useCallback((folderPath: string) => {
-        toggleExpandedFolder(folderPath);
-    }, [toggleExpandedFolder]);
+    const toggleFolder = useCallback(
+        (folderPath: string) => {
+            toggleExpandedFolder(folderPath);
+        },
+        [toggleExpandedFolder],
+    );
 
-    const handleAllHostsDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const connId = e.dataTransfer.getData('connection-id');
-        const folderPath = e.dataTransfer.getData('folder-path');
+    const handleAllHostsDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const connId = e.dataTransfer.getData('connection-id');
+            const folderPath = e.dataTransfer.getData('folder-path');
 
-        if (connId) {
-            updateConnectionFolder(connId, '');
-        } else if (folderPath) {
-            // Move folder to root -> Rename to just its basename
-            const baseName = folderPath.split('/').pop();
-            if (baseName && baseName !== folderPath) {
-                renameFolder(folderPath, baseName);
+            if (connId) {
+                updateConnectionFolder(connId, '');
+            } else if (folderPath) {
+                // Move folder to root -> Rename to just its basename
+                const baseName = folderPath.split('/').pop();
+                if (baseName && baseName !== folderPath) {
+                    renameFolder(folderPath, baseName);
+                }
             }
-        }
-    }, [renameFolder, updateConnectionFolder]);
+        },
+        [renameFolder, updateConnectionFolder],
+    );
 
     const handleAllHostsDragOver = useCallback((e: React.DragEvent) => {
         const types = Array.from(e.dataTransfer.types || []);
@@ -287,40 +349,50 @@ export function Sidebar({ className }: { className?: string }) {
     }, []);
 
     const contextMenuConnection = useMemo(() => {
-        if (!connectionContextMenu) return null;
-        return connections.find((c: Connection) => c.id === connectionContextMenu.connectionId) || null;
+        if (!connectionContextMenu) {
+            return null;
+        }
+        return (
+            connections.find((c: Connection) => c.id === connectionContextMenu.connectionId) || null
+        );
     }, [connectionContextMenu, connections]);
 
-    const exportConnections = useCallback(async (
-        format: ConnectionExchangeExportFormat,
-        options?: { connectionIds?: string[]; baseName?: string; includeSecrets?: boolean },
-    ) => {
-        const baseName = options?.baseName?.trim() || 'connections';
-        const extension = format === 'csv'
-            ? 'csv'
-            : format === 'json'
-                ? 'json'
-                : format === 'zync'
-                    ? 'zync.json'
-                    : 'config';
-        const filePath = await saveDialog({
-            defaultPath: `${baseName}.${extension}`,
-        });
-        if (!filePath) return;
-
-        try {
-            await exportConnectionsToFileIpc({
-                path: filePath,
-                format,
-                connectionIds: options?.connectionIds,
-                includeSecrets: options?.includeSecrets,
+    const exportConnections = useCallback(
+        async (
+            format: ConnectionExchangeExportFormat,
+            options?: { connectionIds?: string[]; baseName?: string; includeSecrets?: boolean },
+        ) => {
+            const baseName = options?.baseName?.trim() || 'connections';
+            const extension =
+                format === 'csv'
+                    ? 'csv'
+                    : format === 'json'
+                      ? 'json'
+                      : format === 'zync'
+                        ? 'zync.json'
+                        : 'config';
+            const filePath = await saveDialog({
+                defaultPath: `${baseName}.${extension}`,
             });
-            showToast('success', 'Connections exported to file.');
-        } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            showToast('error', `Failed to export connections: ${message}`);
-        }
-    }, [showToast]);
+            if (!filePath) {
+                return;
+            }
+
+            try {
+                await exportConnectionsToFileIpc({
+                    path: filePath,
+                    format,
+                    connectionIds: options?.connectionIds,
+                    includeSecrets: options?.includeSecrets,
+                });
+                showToast('success', 'Connections exported to file.');
+            } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : String(error);
+                showToast('error', `Failed to export connections: ${message}`);
+            }
+        },
+        [showToast],
+    );
 
     const toFileBaseName = useCallback((value: string, fallback: string) => {
         const normalized = value
@@ -332,24 +404,40 @@ export function Sidebar({ className }: { className?: string }) {
         return normalized || fallback;
     }, []);
 
-    const getExportableConnectionsForFolder = useCallback((folderPath: string) => {
-        const normalizedFolder = normalizeFolderPath(folderPath);
-        if (!normalizedFolder) return [] as Connection[];
-        return connections.filter((connection) => {
-            if (connection.id === 'local') return false;
-            const connectionFolder = normalizeFolderPath(connection.folder || '');
-            return connectionFolder === normalizedFolder || connectionFolder.startsWith(`${normalizedFolder}/`);
-        });
-    }, [connections]);
+    const getExportableConnectionsForFolder = useCallback(
+        (folderPath: string) => {
+            const normalizedFolder = normalizeFolderPath(folderPath);
+            if (!normalizedFolder) {
+                return [] as Connection[];
+            }
+            return connections.filter((connection) => {
+                if (connection.id === 'local') {
+                    return false;
+                }
+                const connectionFolder = normalizeFolderPath(connection.folder || '');
+                return (
+                    connectionFolder === normalizedFolder ||
+                    connectionFolder.startsWith(`${normalizedFolder}/`)
+                );
+            });
+        },
+        [connections],
+    );
 
     useEffect(() => {
-        if (!connectionContextMenu) return;
-        if (contextMenuConnection) return;
+        if (!connectionContextMenu) {
+            return;
+        }
+        if (contextMenuConnection) {
+            return;
+        }
         setConnectionContextMenu(null);
     }, [connectionContextMenu, contextMenuConnection]);
 
     const connectionContextMenuItems = useMemo<ContextMenuItem[]>(() => {
-        if (!contextMenuConnection) return [];
+        if (!contextMenuConnection) {
+            return [];
+        }
 
         return [
             {
@@ -357,7 +445,11 @@ export function Sidebar({ className }: { className?: string }) {
                 icon: (
                     <Power
                         size={14}
-                        className={contextMenuConnection.status === 'connected' ? 'text-red-400' : 'text-emerald-400'}
+                        className={
+                            contextMenuConnection.status === 'connected'
+                                ? 'text-red-400'
+                                : 'text-emerald-400'
+                        }
                     />
                 ),
                 action: () => {
@@ -367,12 +459,12 @@ export function Sidebar({ className }: { className?: string }) {
                     }
                     connect(contextMenuConnection.id);
                     openTab(contextMenuConnection.id);
-                }
+                },
             },
             {
                 label: 'Details',
                 icon: <Info size={14} />,
-                action: () => setViewingDetailsId(contextMenuConnection.id)
+                action: () => setViewingDetailsId(contextMenuConnection.id),
             },
             { separator: true },
             ...FEATURE_ITEMS.map(({ id, label }) => {
@@ -387,7 +479,7 @@ export function Sidebar({ className }: { className?: string }) {
             {
                 label: 'Edit',
                 icon: <Pencil size={14} />,
-                action: () => openEditConnection(contextMenuConnection)
+                action: () => openEditConnection(contextMenuConnection),
             },
             {
                 label: 'Export...',
@@ -398,7 +490,9 @@ export function Sidebar({ className }: { className?: string }) {
                         scopeKey: `connection:${contextMenuConnection.id}`,
                         scopeLabel: `Connection: ${contextMenuConnection.name || contextMenuConnection.host}`,
                         defaultFileBaseName: toFileBaseName(
-                            contextMenuConnection.name || contextMenuConnection.host || 'connection',
+                            contextMenuConnection.name ||
+                                contextMenuConnection.host ||
+                                'connection',
                             'connection',
                         ),
                         connections: [contextMenuConnection],
@@ -409,13 +503,15 @@ export function Sidebar({ className }: { className?: string }) {
                 label: 'Delete',
                 icon: <Trash2 size={14} />,
                 variant: 'danger',
-                action: () => setDeletingConnection(contextMenuConnection)
-            }
+                action: () => setDeletingConnection(contextMenuConnection),
+            },
         ];
     }, [connect, contextMenuConnection, disconnect, openEditConnection, openTab, toFileBaseName]);
 
     const folderContextMenuItems = useMemo<ContextMenuItem[]>(() => {
-        if (!folderContextMenu) return [];
+        if (!folderContextMenu) {
+            return [];
+        }
         const folderConnections = getExportableConnectionsForFolder(folderContextMenu.folderPath);
         return [
             {
@@ -427,7 +523,10 @@ export function Sidebar({ className }: { className?: string }) {
                         title: 'Export Connections',
                         scopeKey: `folder:${folderContextMenu.folderPath}`,
                         scopeLabel: `Folder: ${folderContextMenu.folderPath}`,
-                        defaultFileBaseName: toFileBaseName(folderContextMenu.folderPath, 'folder-connections'),
+                        defaultFileBaseName: toFileBaseName(
+                            folderContextMenu.folderPath,
+                            'folder-connections',
+                        ),
                         connections: folderConnections,
                     });
                 },
@@ -447,29 +546,34 @@ export function Sidebar({ className }: { className?: string }) {
         ];
     }, [folderContextMenu, getExportableConnectionsForFolder, toFileBaseName]);
 
-    const hostsCreateMenu = useMemo(() => [
-        {
-            id: 'new-host',
-            label: 'New host',
-            icon: <Server size={14} />,
-            onSelect: () => openConnectionModal(),
-        },
-        {
-            id: 'new-folder',
-            label: 'New folder',
-            icon: <FolderPlus size={14} />,
-            onSelect: () => setIsFolderModalOpen(true),
-        },
-        {
-            id: 'new-tunnel',
-            label: 'New tunnel',
-            icon: <Network size={14} />,
-            onSelect: () => setIsAddTunnelModalOpen(true),
-        },
-    ], [openConnectionModal]);
+    const hostsCreateMenu = useMemo(
+        () => [
+            {
+                id: 'new-host',
+                label: 'New host',
+                icon: <Server size={14} />,
+                onSelect: () => openConnectionModal(),
+            },
+            {
+                id: 'new-folder',
+                label: 'New folder',
+                icon: <FolderPlus size={14} />,
+                onSelect: () => setIsFolderModalOpen(true),
+            },
+            {
+                id: 'new-tunnel',
+                label: 'New tunnel',
+                icon: <Network size={14} />,
+                onSelect: () => setIsAddTunnelModalOpen(true),
+            },
+        ],
+        [openConnectionModal],
+    );
 
     const allHostsContextMenuItems = useMemo<ContextMenuItem[]>(() => {
-        if (!allHostsContextMenu) return [];
+        if (!allHostsContextMenu) {
+            return [];
+        }
         const allHostConnections = connections.filter((connection) => connection.id !== 'local');
         return [
             {
@@ -505,14 +609,19 @@ export function Sidebar({ className }: { className?: string }) {
         ];
     }, [allHostsContextMenu, connections, openConnectionModal]);
 
-    const connectionItemProps = useMemo(() => ({
-        onEdit: openEditConnection,
-        onOpenContextMenu: openConnectionContextMenu,
-        getLocations: (conn: Connection) => locationsByLogicalId.get(connectionLogicalId(conn)),
-    }), [locationsByLogicalId, openEditConnection, openConnectionContextMenu]);
+    const connectionItemProps = useMemo(
+        () => ({
+            onEdit: openEditConnection,
+            onOpenContextMenu: openConnectionContextMenu,
+            getLocations: (conn: Connection) => locationsByLogicalId.get(connectionLogicalId(conn)),
+        }),
+        [locationsByLogicalId, openEditConnection, openConnectionContextMenu],
+    );
 
     const inventoryHint = useMemo(() => {
-        if (inventoryStatus === 'loading' && !inventoryFromCache) return 'Loading remote hosts…';
+        if (inventoryStatus === 'loading' && !inventoryFromCache) {
+            return 'Loading remote hosts…';
+        }
         if (inventoryStatus === 'not_configured') {
             return 'Set up Google encryption in Sync & Backup to list remote hosts.';
         }
@@ -525,17 +634,23 @@ export function Sidebar({ className }: { className?: string }) {
             return 'Showing last-known remote hosts.';
         }
         if (inventoryStatus === 'unavailable') {
-            return inventoryFromCache ? 'Showing last-known remote hosts · provider offline.' : null;
+            return inventoryFromCache
+                ? 'Showing last-known remote hosts · provider offline.'
+                : null;
         }
         if (inventoryStatus === 'error') {
-            if (inventoryFromCache) return 'Showing last-known remote hosts · refresh failed.';
+            if (inventoryFromCache) {
+                return 'Showing last-known remote hosts · refresh failed.';
+            }
             return inventoryError ?? 'Could not load remote hosts.';
         }
         return null;
     }, [inventoryError, inventoryFromCache, inventoryStatus]);
 
     const searchPlaceholder = useMemo(() => {
-        if (filteredHostCount <= 0) return 'Search hosts';
+        if (filteredHostCount <= 0) {
+            return 'Search hosts';
+        }
         const n = filteredHostCount > 99 ? '99+' : String(filteredHostCount);
         return `Search ${n} host${filteredHostCount === 1 ? '' : 's'}`;
     }, [filteredHostCount]);
@@ -569,8 +684,9 @@ export function Sidebar({ className }: { className?: string }) {
             if (inventoryStatus === 'error') {
                 return {
                     title: 'Could not load remote hosts',
-                    detail: inventoryError
-                        ?? 'Refresh failed. Check encryption passphrase and try again.',
+                    detail:
+                        inventoryError ??
+                        'Refresh failed. Check encryption passphrase and try again.',
                 };
             }
             if (inventoryStatus === 'loading') {
@@ -598,106 +714,117 @@ export function Sidebar({ className }: { className?: string }) {
         };
     }, [hasAnyHosts, hostFilter, inventoryError, inventoryStatus, providerConnected, searchTerm]);
 
-    const allHostsToolbar = useMemo(() => (
-        <div className="space-y-2">
-            {/* Empty catalog only — hide once at least one host exists */}
-            {!hasAnyHosts && (
-                <button
-                    type="button"
-                    onClick={() => openConnectionModal()}
-                    className={cn(
-                        'flex w-full items-center justify-center gap-1.5 rounded-md px-2.5 py-2',
-                        'text-[12px] font-medium text-app-text',
-                        'bg-app-surface/55 hover:bg-app-surface/75 transition-colors',
-                    )}
-                >
-                    <Plus size={14} aria-hidden />
-                    New host
-                </button>
-            )}
-            {/* Search only when there is something to search, or user is mid-query */}
-            {(hasAnyHosts || searchTerm.trim()) && (
-                <div className="relative">
-                    <Search
-                        size={13}
-                        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-app-muted/50"
-                        aria-hidden="true"
-                    />
-                    <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        aria-label="Search hosts"
-                        placeholder={searchPlaceholder}
+    const allHostsToolbar = useMemo(
+        () => (
+            <div className="space-y-2">
+                {/* Empty catalog only — hide once at least one host exists */}
+                {!hasAnyHosts && (
+                    <button
+                        type="button"
+                        onClick={() => openConnectionModal()}
                         className={cn(
-                            'w-full rounded-md border border-transparent bg-app-bg/55',
-                            'py-2 pl-8 pr-3 text-[12px] text-app-text',
-                            'placeholder:text-app-muted/45',
-                            'focus:border-app-border/40 focus:bg-app-bg/70 focus:outline-none',
+                            'flex w-full items-center justify-center gap-1.5 rounded-md px-2.5 py-2',
+                            'text-[12px] font-medium text-app-text',
+                            'bg-app-surface/55 hover:bg-app-surface/75 transition-colors',
                         )}
-                    />
-                </div>
-            )}
-            {/* All / Local / Remote only when a sync provider is connected */}
-            {providerConnected && (
-                <div className="flex items-center gap-1">
-                    <div
-                        className="inline-flex min-w-0 flex-1 rounded-md bg-app-bg/45 p-0.5"
-                        role="tablist"
-                        aria-label="Host location filter"
                     >
-                        {HOST_FILTERS.map(item => (
-                            <button
-                                key={item.id}
-                                type="button"
-                                role="tab"
-                                aria-selected={hostFilter === item.id}
-                                onClick={() => setHostFilter(item.id)}
-                                className={cn(
-                                    'min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors',
-                                    hostFilter === item.id
-                                        ? 'bg-app-surface text-app-text shadow-sm'
-                                        : 'text-app-muted hover:text-app-text',
-                                )}
-                            >
-                                {item.label}
-                            </button>
-                        ))}
-                    </div>
-                    <Tooltip content="Refresh provider host list">
-                        <button
-                            type="button"
-                            onClick={() => { void refreshInventory(); }}
+                        <Plus
+                            size={14}
+                            aria-hidden
+                        />
+                        New host
+                    </button>
+                )}
+                {/* Search only when there is something to search, or user is mid-query */}
+                {(hasAnyHosts || searchTerm.trim()) && (
+                    <div className="relative">
+                        <Search
+                            size={13}
+                            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-app-muted/50"
+                            aria-hidden="true"
+                        />
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            aria-label="Search hosts"
+                            placeholder={searchPlaceholder}
                             className={cn(
-                                'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
-                                CONTROL_INSET_FOCUS_CLASSES,
-                                'text-app-muted hover:bg-app-surface/60 hover:text-app-text',
+                                'w-full rounded-md border border-transparent bg-app-bg/55',
+                                'py-2 pl-8 pr-3 text-[12px] text-app-text',
+                                'placeholder:text-app-muted/45',
+                                'focus:border-app-border/40 focus:bg-app-bg/70 focus:outline-none',
                             )}
-                            aria-label="Refresh provider host list"
+                        />
+                    </div>
+                )}
+                {/* All / Local / Remote only when a sync provider is connected */}
+                {providerConnected && (
+                    <div className="flex items-center gap-1">
+                        <div
+                            className="inline-flex min-w-0 flex-1 rounded-md bg-app-bg/45 p-0.5"
+                            role="tablist"
+                            aria-label="Host location filter"
                         >
-                            <RefreshCw size={13} className={cn(inventoryStatus === 'loading' && 'animate-spin')} />
-                        </button>
-                    </Tooltip>
-                </div>
-            )}
-        </div>
-    ), [
-        hasAnyHosts,
-        hostFilter,
-        inventoryStatus,
-        openConnectionModal,
-        providerConnected,
-        refreshInventory,
-        searchPlaceholder,
-        searchTerm,
-        setHostFilter,
-    ]);
+                            {HOST_FILTERS.map((item) => (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={hostFilter === item.id}
+                                    onClick={() => setHostFilter(item.id)}
+                                    className={cn(
+                                        'min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors',
+                                        hostFilter === item.id
+                                            ? 'bg-app-surface text-app-text shadow-sm'
+                                            : 'text-app-muted hover:text-app-text',
+                                    )}
+                                >
+                                    {item.label}
+                                </button>
+                            ))}
+                        </div>
+                        <Tooltip content="Refresh provider host list">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void refreshInventory();
+                                }}
+                                className={cn(
+                                    'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+                                    CONTROL_INSET_FOCUS_CLASSES,
+                                    'text-app-muted hover:bg-app-surface/60 hover:text-app-text',
+                                )}
+                                aria-label="Refresh provider host list"
+                            >
+                                <RefreshCw
+                                    size={13}
+                                    className={cn(inventoryStatus === 'loading' && 'animate-spin')}
+                                />
+                            </button>
+                        </Tooltip>
+                    </div>
+                )}
+            </div>
+        ),
+        [
+            hasAnyHosts,
+            hostFilter,
+            inventoryStatus,
+            openConnectionModal,
+            providerConnected,
+            refreshInventory,
+            searchPlaceholder,
+            searchTerm,
+            setHostFilter,
+        ],
+    );
 
     const allHostsContent = useMemo(() => {
         const showEmpty =
-            remoteOnlyEntries.length === 0
-            && treeRoot.connections.length === 0
-            && Object.keys(treeRoot.children).length === 0;
+            remoteOnlyEntries.length === 0 &&
+            treeRoot.connections.length === 0 &&
+            Object.keys(treeRoot.children).length === 0;
 
         return (
             <div
@@ -724,8 +851,9 @@ export function Sidebar({ className }: { className?: string }) {
                     )}
                 </div>
 
+                {/* Size containment keeps the section's minimum independent of its host count. */}
                 <div
-                    className="flex-1 min-h-0 overflow-y-auto scrollbar-hide space-y-0.5 p-2 pt-2"
+                    className="flex-1 min-h-20 [contain:size] overflow-y-auto scrollbar-hide space-y-0.5 p-2 pt-2"
                     onDragOver={handleAllHostsDragOver}
                     onDrop={handleAllHostsDrop}
                 >
@@ -736,23 +864,27 @@ export function Sidebar({ className }: { className?: string }) {
                         connectionItemProps={connectionItemProps}
                     />
 
-                    {Object.keys(treeRoot.children).sort().map(key => (
-                        <FolderItem
-                            key={key}
-                            node={treeRoot.children[key]}
-                            isCollapsed={false}
-                            compactMode={compactMode}
-                            expandedFolders={expandedFolders}
-                            toggleFolder={toggleFolder}
-                            updateConnectionFolder={updateConnectionFolder}
-                            onDeleteFolder={(f) => setDeletingFolder(f)}
-                            onRenameFolder={handleRenameFolder}
-                            onMoveFolder={renameFolder}
-                            onOpenContextMenu={(folderPath, x, y) => setFolderContextMenu({ folderPath, x, y })}
-                            connectionItemProps={connectionItemProps}
-                        />
-                    ))}
-                    {treeRoot.connections.map(conn => (
+                    {Object.keys(treeRoot.children)
+                        .sort()
+                        .map((key) => (
+                            <FolderItem
+                                key={key}
+                                node={treeRoot.children[key]}
+                                isCollapsed={false}
+                                compactMode={compactMode}
+                                expandedFolders={expandedFolders}
+                                toggleFolder={toggleFolder}
+                                updateConnectionFolder={updateConnectionFolder}
+                                onDeleteFolder={(f) => setDeletingFolder(f)}
+                                onRenameFolder={handleRenameFolder}
+                                onMoveFolder={renameFolder}
+                                onOpenContextMenu={(folderPath, x, y) =>
+                                    setFolderContextMenu({ folderPath, x, y })
+                                }
+                                connectionItemProps={connectionItemProps}
+                            />
+                        ))}
+                    {treeRoot.connections.map((conn) => (
                         <ConnectionItem
                             key={conn.id}
                             conn={conn}
@@ -764,7 +896,7 @@ export function Sidebar({ className }: { className?: string }) {
                     ))}
 
                     {/* Provider-only hosts in the same list (chips show provider). */}
-                    {remoteOnlyEntries.map(entry => (
+                    {remoteOnlyEntries.map((entry) => (
                         <RemoteHostItem
                             key={`remote-${entry.logicalId}`}
                             entry={entry}
@@ -793,7 +925,10 @@ export function Sidebar({ className }: { className?: string }) {
                                         'bg-app-surface/60 hover:bg-app-surface/80 transition-colors',
                                     )}
                                 >
-                                    <Plus size={13} aria-hidden />
+                                    <Plus
+                                        size={13}
+                                        aria-hidden
+                                    />
                                     New host
                                 </button>
                             )}
@@ -827,79 +962,122 @@ export function Sidebar({ className }: { className?: string }) {
         updateConnectionFolder,
     ]);
 
-    const initialConnectionId = activeConnectionId && activeConnectionId !== 'local' && activeConnectionId !== 'port-forwarding'
-        ? activeConnectionId
-        : undefined;
+    const initialConnectionId =
+        activeConnectionId &&
+        activeConnectionId !== 'local' &&
+        activeConnectionId !== 'port-forwarding'
+            ? activeConnectionId
+            : undefined;
 
     return (
-        <SidebarChrome position={sidebarPosition} collapsed={isCollapsed} savedWidth={settings.sidebarWidth || 288}
-            className={className} onResize={nextWidth => { void updateSettings({ sidebarWidth: nextWidth })
-                .catch(() => showToast('error', 'Could not save sidebar width.')); }}>
+        <SidebarChrome
+            position={sidebarPosition}
+            collapsed={isCollapsed}
+            savedWidth={settings.sidebarWidth || 288}
+            className={className}
+            onResize={(nextWidth) => {
+                void updateSettings({ sidebarWidth: nextWidth }).catch(() =>
+                    showToast('error', 'Could not save sidebar width.'),
+                );
+            }}
+        >
             {/* Content Wrapper */}
             <SidebarContent
                 inert={isCollapsed}
                 className="flex flex-col flex-1 min-h-0 pt-1.5"
             >
                 {/* System Actions Column — top nav matches Terminal / Port Forwarding / Vault */}
-                {section !== 'plugins' && section !== 'workspace' && <div className={cn(compactMode ? "px-3 pt-2 mb-2" : "px-4 pt-3 mb-2")}>
-                    <div className="flex flex-col gap-1.5 w-full">
-                        {section === 'hosts' && <SidebarActionButton
-                            icon={<Monitor size={13} />}
-                            label="New Terminal"
-                            onClick={() => openTab('local')}
-                        />}
+                {section !== 'plugins' && section !== 'workspace' && (
+                    <div className={cn(compactMode ? 'px-3 pt-2 mb-2' : 'px-4 pt-3 mb-2')}>
+                        <div className="flex flex-col gap-1.5 w-full">
+                            {section === 'hosts' && (
+                                <SidebarActionButton
+                                    icon={<Monitor size={13} />}
+                                    label="New Terminal"
+                                    onClick={() => openTab('local')}
+                                />
+                            )}
 
-                        {!navigationEnabled && <SidebarActionButton
-                            icon={<Network size={13} />}
-                            label="Port Forwarding"
-                            onClick={() => openPortForwardingTab()}
-                        />}
+                            {!navigationEnabled && (
+                                <SidebarActionButton
+                                    icon={<Network size={13} />}
+                                    label="Port Forwarding"
+                                    onClick={() => openPortForwardingTab()}
+                                />
+                            )}
 
-                        {!navigationEnabled && <SidebarActionButton
-                            icon={<Link2 size={13} />}
-                            label="Public URLs"
-                            trailing={<BetaBadge className="text-[8px]" />}
-                            onClick={() => openPublicUrlsTab()}
-                        />}
+                            {!navigationEnabled && (
+                                <SidebarActionButton
+                                    icon={<Link2 size={13} />}
+                                    label="Public URLs"
+                                    trailing={<BetaBadge className="text-[8px]" />}
+                                    onClick={() => openPublicUrlsTab()}
+                                />
+                            )}
 
-                        {!navigationEnabled && <SidebarActionButton
-                            icon={<HardeningAuditIcon size={13} />}
-                            label={FEATURE_META.security.label}
-                            onClick={() => openSecurityAuditsTab()}
-                        />}
+                            {!navigationEnabled && (
+                                <SidebarActionButton
+                                    icon={<HardeningAuditIcon size={13} />}
+                                    label={FEATURE_META.security.label}
+                                    onClick={() => openSecurityAuditsTab()}
+                                />
+                            )}
 
-                        {(!navigationEnabled || section === 'vaults') && <VaultNavSection />}
-                        {section === 'vaults' && <SidebarActionButton icon={<GoogleMarkIcon size={13} variant="mono" />}
-                            label="Google Drive collections" onClick={openSyncBackupTab} />}
+                            {(!navigationEnabled || section === 'vaults') && <VaultNavSection />}
+                            {section === 'vaults' && (
+                                <SidebarActionButton
+                                    icon={
+                                        <GoogleMarkIcon
+                                            size={13}
+                                            variant="mono"
+                                        />
+                                    }
+                                    label="Google Drive collections"
+                                    onClick={openSyncBackupTab}
+                                />
+                            )}
+                        </div>
                     </div>
-                </div>}
+                )}
 
-                {section !== 'plugins' && section !== 'workspace' && <div className="h-px bg-app-border/20 mb-2 mx-4" />}
+                {section !== 'plugins' && section !== 'workspace' && (
+                    <div className="h-px bg-app-border/20 mb-2 mx-4" />
+                )}
                 {section === 'plugins' && <PluginsSidebar />}
-                <div ref={workspaceSidebar?.setTarget} data-workspace-sidebar-slot hidden={section !== 'workspace'}
-                    className={cn('flex-1 min-h-0', section === 'workspace' && 'flex flex-col')} />
+                <div
+                    ref={workspaceSidebar?.setTarget}
+                    data-workspace-sidebar-slot
+                    hidden={section !== 'workspace'}
+                    className={cn('flex-1 min-h-0', section === 'workspace' && 'flex flex-col')}
+                />
 
                 {/* Hosts list (Connected virtual folder sits at top of the list) */}
-                {section === 'hosts' && <div className={cn(
-                    "flex-1 min-h-0 flex flex-col overflow-hidden pb-3",
-                    compactMode ? "px-2 gap-1.5" : "px-3 gap-1.5"
-                )}>
-                    <SidebarSection
-                        title="All Hosts"
-                        compactMode={compactMode}
-                        variant="action"
-                        fill
-                        icon={<Server size={13} />}
-                        count={filteredEntries.length > 0 ? filteredEntries.length : undefined}
-                        createMenu={hostsCreateMenu}
-                        onContextMenu={(event) => {
-                            event.preventDefault();
-                            setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
-                        }}
+                {section === 'hosts' && (
+                    <div
+                        className={cn(
+                            'flex-1 min-h-0 flex flex-col overflow-x-hidden overflow-y-auto scrollbar-hide pb-3',
+                            compactMode ? 'px-2 gap-1.5' : 'px-3 gap-1.5',
+                        )}
                     >
-                        {allHostsContent}
-                    </SidebarSection>
-                </div>}
+                        <SidebarSection
+                            title="All Hosts"
+                            compactMode={compactMode}
+                            variant="action"
+                            fill
+                            icon={<Server size={13} />}
+                            count={filteredEntries.length > 0 ? filteredEntries.length : undefined}
+                            createMenu={hostsCreateMenu}
+                            onContextMenu={(event) => {
+                                event.preventDefault();
+                                setAllHostsContextMenu({ x: event.clientX, y: event.clientY });
+                            }}
+                        >
+                            {allHostsContent}
+                        </SidebarSection>
+                        <VncProfileSection compactMode={compactMode} />
+                        <SerialProfileSection compactMode={compactMode} />
+                    </div>
+                )}
             </SidebarContent>
 
             {/* Modals */}
@@ -937,11 +1115,18 @@ export function Sidebar({ className }: { className?: string }) {
                     <ConnectionDetailsModal
                         isOpen={!!viewingDetailsId}
                         onClose={() => setViewingDetailsId(null)}
-                        connection={connections.find((c: Connection) => c.id === viewingDetailsId) || null}
+                        connection={
+                            connections.find((c: Connection) => c.id === viewingDetailsId) || null
+                        }
                     />
                 )}
 
-                {isSettingsOpen && <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />}
+                {isSettingsOpen && (
+                    <SettingsModal
+                        isOpen={isSettingsOpen}
+                        onClose={closeSettings}
+                    />
+                )}
                 {exportModalState && (
                     <ExportConnectionsModal
                         isOpen={!!exportModalState}
@@ -952,7 +1137,11 @@ export function Sidebar({ className }: { className?: string }) {
                         connections={exportModalState.connections}
                         onClose={() => setExportModalState(null)}
                         onExport={async (format, connectionIds, fileBaseName, includeSecrets) => {
-                            await exportConnections(format, { connectionIds, baseName: fileBaseName, includeSecrets });
+                            await exportConnections(format, {
+                                connectionIds,
+                                baseName: fileBaseName,
+                                includeSecrets,
+                            });
                         }}
                     />
                 )}
@@ -1009,7 +1198,11 @@ export function Sidebar({ className }: { className?: string }) {
                 title="Delete Connection"
                 message={
                     <span className="text-app-text/90">
-                        Are you sure you want to delete connection <span className="text-app-accent font-bold">"{deletingConnection?.name || deletingConnection?.host}"</span>? This action cannot be undone.
+                        Are you sure you want to delete connection{' '}
+                        <span className="text-app-accent font-bold">
+                            "{deletingConnection?.name || deletingConnection?.host}"
+                        </span>
+                        ? This action cannot be undone.
                     </span>
                 }
                 confirmLabel="Delete"
@@ -1029,7 +1222,9 @@ export function Sidebar({ className }: { className?: string }) {
                 title="Delete Folder"
                 message={
                     <span className="text-app-text/90">
-                        Delete folder <span className="text-app-accent font-bold">"{deletingFolder}"</span>? Connections within this folder will be ungrouped.
+                        Delete folder{' '}
+                        <span className="text-app-accent font-bold">"{deletingFolder}"</span>?
+                        Connections within this folder will be ungrouped.
                     </span>
                 }
                 confirmLabel="Delete"

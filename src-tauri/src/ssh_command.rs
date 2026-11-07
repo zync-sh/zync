@@ -11,7 +11,7 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Default caller deadline for noninteractive commands; callers may override it.
 pub(crate) const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(crate) type SshSession = Arc<Mutex<client::Handle<crate::ssh::Client>>>;
+pub(crate) type SshSession = Arc<Mutex<Arc<client::Handle<crate::ssh::Client>>>>;
 
 struct OwnedChannel(Option<Channel<client::Msg>>);
 
@@ -37,7 +37,7 @@ impl Drop for OwnedChannel {
 /// Channel confirmation may arrive after the caller times out or is cancelled.
 /// Keep ownership until then so a late channel is closed instead of abandoned.
 fn open_channel<H: client::Handler + 'static>(
-    session: Arc<Mutex<client::Handle<H>>>,
+    session: Arc<Mutex<Arc<client::Handle<H>>>>,
 ) -> oneshot::Receiver<Result<OwnedChannel, String>> {
     let (mut sender, receiver) = oneshot::channel();
     tokio::spawn(async move {
@@ -66,7 +66,7 @@ fn open_channel<H: client::Handler + 'static>(
 /// status is returned as None so callers can apply their own success policy.
 /// Stdin and output progress together so early remote failures remain observable.
 pub(crate) async fn run<H: client::Handler + 'static>(
-    session: Arc<Mutex<client::Handle<H>>>,
+    session: Arc<Mutex<Arc<client::Handle<H>>>>,
     command: &str,
     input: Option<&[u8]>,
     timeout: Duration,

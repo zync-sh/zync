@@ -1,0 +1,226 @@
+diff --git a/node_modules/@novnc/novnc/core/rfb.js b/node_modules/@novnc/novnc/core/rfb.js
+index 243585b1..0602bddc 100644
+--- a/node_modules/@novnc/novnc/core/rfb.js
++++ b/node_modules/@novnc/novnc/core/rfb.js
+@@ -41,6 +41,7 @@ import H264Decoder from "./decoders/h264.js";
+ // How many seconds to wait for a disconnect to finish
+ const DISCONNECT_TIMEOUT = 3;
+ const DEFAULT_BACKGROUND = 'rgb(40, 40, 40)';
++const DESKTOP_SIZE_REQUEST_TIMEOUT = 5000;
+ 
+ // Minimum wait (ms) between two mouse moves
+ const MOUSE_MOVE_DELAY = 17;
+@@ -149,9 +150,11 @@ export default class RFB extends EventTargetMixin {
+         this._updatesPaused = false;
+ 
+         this._supportsSetDesktopSize = false;
++        this._remoteScreenCount = 0;
+         this._screenID = 0;
+         this._screenFlags = 0;
+-        this._pendingRemoteResize = false;
++        this._pendingRemoteResize = null;
++        this._desktopSizeRequest = null;
+         this._lastResize = 0;
+ 
+         this._qemuExtKeyEventSupported = false;
+@@ -299,6 +302,7 @@ export default class RFB extends EventTargetMixin {
+         this._clipViewport = false;
+         this._clippingViewport = false;
+         this._scaleViewport = false;
++        this._viewportScale = null;
+         this._resizeSession = false;
+ 
+         this._showDotCursor = false;
+@@ -319,6 +323,7 @@ export default class RFB extends EventTargetMixin {
+                 this._keyboard.ungrab();
+             } else {
+                 this._keyboard.grab();
++                this._tryDesktopSizeRequest();
+             }
+         }
+     }
+@@ -390,6 +395,18 @@ export default class RFB extends EventTargetMixin {
+         }
+     }
+ 
++    // A fixed local zoom uses the renderer's pointer-coordinate transform.
++    get viewportScale() { return this._viewportScale; }
++    set viewportScale(scale) {
++        if (scale === this._viewportScale ||
++            (scale !== null && (!Number.isFinite(scale) || scale <= 0))) { return; }
++
++        this._viewportScale = scale;
++        this._canvas.style.flexShrink = scale === null ? '' : '0';
++        this._updateClip();
++        this._updateScale();
++    }
++
+     get showDotCursor() { return this._showDotCursor; }
+     set showDotCursor(show) {
+         this._showDotCursor = show;
+@@ -462,6 +479,27 @@ export default class RFB extends EventTargetMixin {
+         this._resumeAuthentication();
+     }
+ 
++    // Wait for resize capability or an earlier resize before sending once.
++    requestDesktopSize(width, height) {
++        if (this._rfbConnectionState !== 'connected' || this._viewOnly ||
++            this._desktopSizeRequest || !Number.isInteger(width) ||
++            !Number.isInteger(height) || width < 1 || height < 1 ||
++            width > 65535 || height > 65535) {
++            return Promise.resolve('unavailable');
++        }
++
++        return new Promise(resolve => {
++            this._desktopSizeRequest = {
++                width, height, resolve,
++                timer: setTimeout(() => {
++                    this._finishDesktopSizeRequest('unavailable');
++                    this._requestRemoteResize();
++                }, DESKTOP_SIZE_REQUEST_TIMEOUT),
++            };
++            this._tryDesktopSizeRequest();
++        });
++    }
++
+     sendCtrlAltDel() {
+         if (this._rfbConnectionState !== 'connected' || this._viewOnly) { return; }
+         Log.Info("Sending Ctrl-Alt-Del");
+@@ -633,6 +671,8 @@ export default class RFB extends EventTargetMixin {
+ 
+     _disconnect() {
+         Log.Debug(">> RFB.disconnect");
++        this._finishDesktopSizeRequest('unavailable');
++        this._pendingRemoteResize = null;
+         this._cursor.detach();
+         this._canvas.removeEventListener("gesturestart", this._eventHandlers.handleGesture);
+         this._canvas.removeEventListener("gesturemove", this._eventHandlers.handleGesture);
+@@ -771,7 +811,7 @@ export default class RFB extends EventTargetMixin {
+         const curClip = this._display.clipViewport;
+         let newClip = this._clipViewport;
+ 
+-        if (this._scaleViewport) {
++        if (this._scaleViewport || this._viewportScale !== null) {
+             // Disable viewport clipping if we are scaling
+             newClip = false;
+         }
+@@ -800,7 +840,9 @@ export default class RFB extends EventTargetMixin {
+     }
+ 
+     _updateScale() {
+-        if (!this._scaleViewport) {
++        if (this._viewportScale !== null) {
++            this._display.scale = this._viewportScale;
++        } else if (!this._scaleViewport) {
+             this._display.scale = 1.0;
+         } else {
+             const size = this._screenSize();
+@@ -809,10 +851,35 @@ export default class RFB extends EventTargetMixin {
+         this._fixScrollbars();
+     }
+ 
++    _tryDesktopSizeRequest() {
++        const request = this._desktopSizeRequest;
++        if (!request || this._viewOnly || !this._supportsSetDesktopSize ||
++            this._pendingRemoteResize) { return; }
++
++        // noVNC's SetDesktopSize writer supplies a single-screen layout.
++        if (this._remoteScreenCount !== 1) {
++            this._finishDesktopSizeRequest('unavailable');
++            return;
++        }
++        if (request.width === this._fbWidth && request.height === this._fbHeight) {
++            this._finishDesktopSizeRequest('applied');
++            return;
++        }
++        this._sendDesktopSize(request.width, request.height, request);
++    }
++
++    _finishDesktopSizeRequest(result) {
++        const request = this._desktopSizeRequest;
++        if (!request) { return; }
++        this._desktopSizeRequest = null;
++        clearTimeout(request.timer);
++        request.resolve(result);
++    }
++
+     // Requests a change of remote desktop size. This message is an extension
+     // and may only be sent if we have received an ExtendedDesktopSize message
+     _requestRemoteResize() {
+-        if (!this._resizeSession) {
++        if (!this._resizeSession || this._desktopSizeRequest) {
+             return;
+         }
+         if (this._viewOnly) {
+@@ -843,14 +910,20 @@ export default class RFB extends EventTargetMixin {
+             return;
+         }
+ 
+-        this._pendingRemoteResize = true;
++        this._sendDesktopSize(Math.floor(size.w), Math.floor(size.h), 'automatic');
++    }
++
++    _sendDesktopSize(width, height, request) {
++        // RFB replies have no request ID. Keep this token until the reply,
++        // even if a custom request's caller has already timed out.
++        this._pendingRemoteResize = request;
+         this._lastResize = Date.now();
+         RFB.messages.setDesktopSize(this._sock,
+-                                    Math.floor(size.w), Math.floor(size.h),
++                                    width, height,
+                                     this._screenID, this._screenFlags);
+ 
+         Log.Debug('Requested new desktop size: ' +
+-                   size.w + 'x' + size.h);
++                   width + 'x' + height);
+     }
+ 
+     // Gets the the size of the available screen
+@@ -2962,12 +3035,18 @@ export default class RFB extends EventTargetMixin {
+          *  2 - another client requested the resize
+          */
+ 
+-        if (this._FBU.x === 1) {
+-            this._pendingRemoteResize = false;
++        const clientRequested = this._FBU.x === 1;
++        const request = clientRequested ? this._pendingRemoteResize : null;
++        if (clientRequested) {
++            this._pendingRemoteResize = null;
+         }
+ 
+         // We need to handle errors when we requested the resize.
+-        if (this._FBU.x === 1 && this._FBU.y !== 0) {
++        const rejected = clientRequested && this._FBU.y !== 0;
++        if (!rejected) {
++            this._remoteScreenCount = numberOfScreens;
++        }
++        if (rejected) {
+             let msg = "";
+             // The y-position indicates the status code from the server
+             switch (this._FBU.y) {
+@@ -2991,15 +3070,20 @@ export default class RFB extends EventTargetMixin {
+             this._resize(this._FBU.width, this._FBU.height, false);
+         }
+ 
++        if (request && request === this._desktopSizeRequest) {
++            const applied = !rejected && this._fbWidth === request.width &&
++                            this._fbHeight === request.height;
++            this._finishDesktopSizeRequest(applied ? 'applied' : 'rejected');
++        } else if (request === 'automatic' && rejected) {
++            this.dispatchEvent(new Event('desktopresizefailure'));
++        }
++        this._tryDesktopSizeRequest();
++
+         // Normally we only apply the current resize mode after a
+         // window resize event. However there is no such trigger on the
+         // initial connect. And we don't know if the server supports
+         // resizing until we've gotten here.
+-        if (firstUpdate) {
+-            this._requestRemoteResize();
+-        }
+-
+-        if (this._FBU.x === 1 && this._FBU.y === 0) {
++        if (firstUpdate || (clientRequested && !rejected)) {
+             // We might have resized again whilst waiting for the
+             // previous request, so check if we are in sync
+             this._requestRemoteResize();

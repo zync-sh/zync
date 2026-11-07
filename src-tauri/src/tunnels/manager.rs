@@ -16,7 +16,7 @@ const SESSION_PROBE_INTERVAL_SECS: u64 = 15;
 pub(crate) const SSH_SESSION_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Bounded liveness probe — opens and closes a session channel without wedging on stalled transports.
-pub(crate) async fn probe_ssh_session(session: &Arc<Mutex<Handle<Client>>>) -> bool {
+pub(crate) async fn probe_ssh_session(session: &Arc<Mutex<Arc<Handle<Client>>>>) -> bool {
     let probe = async {
         let channel_result = {
             let guard = session.lock().await;
@@ -144,7 +144,7 @@ impl TunnelManager {
     }
 
     /// Run liveness checks outside accept loops, shared by all listeners on this transport.
-    fn shared_session_probe(&self, session: Arc<Mutex<Handle<Client>>>) -> Arc<SharedSessionProbe> {
+    fn shared_session_probe(&self, session: Arc<Mutex<Arc<Handle<Client>>>>) -> Arc<SharedSessionProbe> {
         let identity = Arc::as_ptr(&session) as usize;
         self.session_probes.get_or_insert(identity, || {
             let (state_tx, state) = tokio::sync::watch::channel(true);
@@ -171,7 +171,7 @@ impl TunnelManager {
     /// Bind a local listener whose clients and monitor share the captured SSH transport.
     pub async fn start_local_forwarding(
         &self,
-        session: Arc<Mutex<Handle<Client>>>,
+        session: Arc<Mutex<Arc<Handle<Client>>>>,
         connection_id: String,
         runtime_id: String,
         bind_address: String,
@@ -305,7 +305,7 @@ impl TunnelManager {
     /// SOCKS5 dynamic forward (`ssh -D`) — one local port, per-connection remote targets.
     pub async fn start_dynamic_forwarding(
         &self,
-        session: Arc<Mutex<Handle<Client>>>,
+        session: Arc<Mutex<Arc<Handle<Client>>>>,
         connection_id: String,
         runtime_id: String,
         bind_address: String,
@@ -411,7 +411,7 @@ impl TunnelManager {
     /// Register and request a connection-scoped remote listener, rolling back rejection.
     pub async fn start_remote_forwarding(
         &self,
-        session: Arc<Mutex<Handle<Client>>>,
+        session: Arc<Mutex<Arc<Handle<Client>>>>,
         connection_id: String,
         runtime_id: String,
         bind_address: String,
@@ -499,7 +499,7 @@ impl TunnelManager {
 
     pub async fn stop_tunnel(
         &self,
-        session: Option<Arc<Mutex<Handle<Client>>>>,
+        session: Option<Arc<Mutex<Arc<Handle<Client>>>>>,
         tunnel: &SavedTunnel,
     ) -> Result<()> {
         let runtime_id = tunnel_runtime_id(tunnel);
@@ -571,7 +571,7 @@ impl TunnelManager {
     /// Cancel leftover remote binds for a connection (probe ports whose cancel failed).
     pub async fn cancel_orphan_remote_forwards(
         &self,
-        session: Option<Arc<Mutex<Handle<Client>>>>,
+        session: Option<Arc<Mutex<Arc<Handle<Client>>>>>,
         connection_id: &str,
     ) {
         let leftovers: Vec<(String, String, u16)> = {
@@ -709,7 +709,7 @@ struct RemotePortProbe {
 /// Probe the next remote listen ports via `tcpip-forward`, then cancel the probe bind.
 /// Ports that bind but fail to cancel stay in `unreleased` so the caller can keep ownership.
 async fn find_next_available_remote_port(
-    session: &Arc<Mutex<Handle<Client>>>,
+    session: &Arc<Mutex<Arc<Handle<Client>>>>,
     bind_address: &str,
     start_port: u16,
     max_attempts: u8,

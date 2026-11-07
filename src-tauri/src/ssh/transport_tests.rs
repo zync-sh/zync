@@ -1,8 +1,9 @@
 //! Encrypted in-memory upgrade checks: authentication, SFTP and forwarding.
 //! Fixtures never read credentials, connect sockets or mutate real files.
 
-use super::{keys, SshManager};
-use russh::{client, server, Channel, ChannelId, ChannelOpenFailure};
+use super::{keyboard_interactive, keys, SshManager};
+use crate::types::{AuthMethod, ConnectionConfig};
+use russh::{client, server, Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -87,6 +88,7 @@ impl russh_sftp::server::Handler for MemoryFile {
 struct Server {
     key: keys::PublicKey,
     certificate: Option<keys::Certificate>,
+    verification_round: Option<usize>,
     sessions: HashMap<ChannelId, Channel<server::Msg>>,
     output_tasks: tokio::task::JoinSet<anyhow::Result<()>>,
 }
@@ -107,11 +109,58 @@ impl server::Handler for Server {
     ) -> anyhow::Result<server::Auth> {
         Ok(
             if self.certificate.is_none() && user == "fixture" && *key == self.key {
+                if self.verification_round.is_some() {
+                    return Ok(server::Auth::Reject {
+                        proceed_with_methods: Some(MethodSet::from(
+                            &[MethodKind::KeyboardInteractive][..],
+                        )),
+                        partial_success: true,
+                    });
+                }
                 server::Auth::Accept
             } else {
                 server::Auth::reject()
             },
         )
+    }
+    /// Exercise an empty round, a mixed-echo round, and a second masked round.
+    async fn auth_keyboard_interactive(
+        &mut self,
+        user: &str,
+        _: &str,
+        mut response: Option<server::Response<'_>>,
+    ) -> anyhow::Result<server::Auth> {
+        let Some(round) = self
+            .verification_round
+            .as_mut()
+            .filter(|_| user == "fixture")
+        else {
+            return Ok(server::Auth::reject());
+        };
+        let answers: Vec<_> = response.iter_mut().flatten().collect();
+        let prompts = match (*round, answers.as_slice()) {
+            (0, []) if response.is_none() => vec![],
+            (1, []) if response.is_some() => {
+                vec![("Account".into(), true), ("OTP".into(), false)]
+            }
+            (2, [name, code]) if name.as_ref() == b"fixture" && code.as_ref() == b"012345" => {
+                vec![("Backup verification".into(), false)]
+            }
+            (3, [code]) if code.as_ref() == b"final" => return Ok(server::Auth::Accept),
+            (3, [code]) if code.as_ref() == b"more" => {
+                return Ok(server::Auth::Reject {
+                    proceed_with_methods: Some(MethodSet::from(&[MethodKind::Password][..])),
+                    partial_success: true,
+                });
+            }
+            _ => return Ok(server::Auth::reject()),
+        };
+        *round += 1;
+        Ok(server::Auth::Partial {
+            name: "".into(),
+            instructions: "".into(),
+            prompts: prompts.into(),
+        })
     }
     async fn auth_openssh_certificate(
         &mut self,
@@ -225,6 +274,15 @@ async fn transport_with_certificate(
     user_key: &keys::PublicKey,
     certificate: Option<keys::Certificate>,
 ) -> Transport {
+    transport_with_auth(user_key, certificate, false).await
+}
+
+/// Build an encrypted fixture with optional certificate or challenge authentication.
+async fn transport_with_auth(
+    user_key: &keys::PublicKey,
+    certificate: Option<keys::Certificate>,
+    require_verification: bool,
+) -> Transport {
     let host_key =
         keys::PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519).unwrap();
     let expected_host_key = host_key.public_key().clone();
@@ -237,6 +295,7 @@ async fn transport_with_certificate(
     let server = Server {
         key: user_key.clone(),
         certificate,
+        verification_round: require_verification.then_some(0),
         sessions: HashMap::new(),
         output_tasks: tokio::task::JoinSet::new(),
     };
@@ -253,6 +312,161 @@ async fn transport_with_certificate(
     .await
     .unwrap();
     Transport { client, task }
+}
+
+/// Produce a real primary-factor partial success using a generated fixture key.
+async fn begin_verification() -> (Transport, client::AuthResult, ConnectionConfig) {
+    let key =
+        keys::PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519).unwrap();
+    let mut encoded = Vec::new();
+    keys::encode_pkcs8_pem(&key, &mut encoded).unwrap();
+    let mut fixture = transport_with_auth(key.public_key(), None, true).await;
+    let result = SshManager::auth_with_key_data(
+        &mut fixture.client,
+        "fixture",
+        std::str::from_utf8(&encoded).unwrap(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let config = ConnectionConfig {
+        id: "fixture-hop".into(),
+        name: "Fixture hop".into(),
+        host: "jump.fixture.invalid".into(),
+        port: 2222,
+        username: "fixture".into(),
+        auth_method: AuthMethod::Password {
+            password: String::new(),
+        },
+        certificate_path: None,
+        network_interface_id: None,
+        agent_forwarding: None,
+        jump_host: None,
+        host_key_approval: None,
+        connect_attempt_id: None,
+    };
+    (fixture, result, config)
+}
+
+/// Use the same serialized challenge that the desktop renderer receives.
+fn verification_channel() -> (
+    keyboard_interactive::Attempt,
+    tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let channel = tauri::ipc::Channel::new(move |payload| {
+        let tauri::ipc::InvokeResponseBody::Json(value) = payload else {
+            panic!("expected a JSON challenge")
+        };
+        tx.send(serde_json::from_str(&value).unwrap()).unwrap();
+        Ok(())
+    });
+    (
+        keyboard_interactive::Attempt::for_test("attempt", "main", channel),
+        rx,
+    )
+}
+
+/// Keep challenge replies isolated while exercising accept, reject and cancel.
+#[tokio::test]
+async fn keyboard_interactive_keeps_rounds_scoped_after_public_key_success() {
+    tokio::time::timeout(DEADLINE, async {
+        for (last_answer, expected_failure) in [
+            (Some("final"), None),
+            (Some("expired"), Some("SSH verification was rejected")),
+            (
+                Some("more"),
+                Some("The SSH server requires an additional authentication method that Zync does not support"),
+            ),
+            (None, Some("SSH verification cancelled")),
+        ] {
+            let (mut fixture, primary, config) = begin_verification().await;
+            let broker = keyboard_interactive::PromptBroker::default();
+            let (attempt, mut messages) = verification_channel();
+            let exchange = broker.complete(&mut fixture.client, &config, primary, Some(&attempt));
+            let renderer = async {
+                let first = messages.recv().await.unwrap();
+                let first_id = first["requestId"].as_str().unwrap();
+                assert_eq!(first["attemptId"], "attempt");
+                assert_eq!(first["host"], "jump.fixture.invalid");
+                assert_eq!(first["port"], 2222);
+                assert_eq!(first["prompts"][0]["echo"], true);
+                assert_eq!(first["prompts"][1]["echo"], false);
+                assert!(broker
+                    .reply("other-window", "attempt", first_id, None)
+                    .is_err());
+                assert!(broker
+                    .reply("main", "wrong-attempt", first_id, None)
+                    .is_err());
+                assert!(broker
+                    .reply("main", "attempt", first_id, Some(vec![]))
+                    .is_err());
+                broker
+                    .reply(
+                        "main",
+                        "attempt",
+                        first_id,
+                        Some(vec!["fixture".into(), "012345".into()]),
+                    )
+                    .unwrap();
+                let next = messages.recv().await.unwrap();
+                let next_id = next["requestId"].as_str().unwrap();
+                assert_ne!(next_id, first_id);
+                assert!(broker.reply("main", "attempt", first_id, None).is_err());
+                broker
+                    .reply(
+                        "main",
+                        "attempt",
+                        next_id,
+                        last_answer.map(|code| vec![code.into()]),
+                    )
+                    .unwrap();
+            };
+            let (result, ()) = tokio::join!(exchange, renderer);
+            match expected_failure {
+                Some(message) => assert_eq!(result.unwrap_err().to_string(), message),
+                None => assert!(result.is_ok()),
+            }
+        }
+    })
+    .await
+    .expect("keyboard-interactive transport timed out");
+}
+
+/// Headless calls skip prompts and cancelled foreground futures release their round.
+#[tokio::test]
+async fn keyboard_interactive_background_and_aborted_attempts_leave_no_reply_owner() {
+    tokio::time::timeout(DEADLINE, async {
+        let (mut fixture, primary, config) = begin_verification().await;
+        let broker = keyboard_interactive::PromptBroker::default();
+        let background = broker
+            .complete(&mut fixture.client, &config, primary.clone(), None)
+            .await;
+        assert!(background
+            .unwrap_err()
+            .to_string()
+            .starts_with("SSH verification required"));
+        let (attempt, mut messages) = verification_channel();
+        let mut exchange =
+            Box::pin(broker.complete(&mut fixture.client, &config, primary, Some(&attempt)));
+        let first = tokio::select! {
+            result = &mut exchange => panic!("exchange ended before prompting: {result:?}"),
+            first = messages.recv() => first.unwrap(),
+        };
+        drop(exchange);
+        assert!(broker
+            .reply(
+                "main",
+                "attempt",
+                first["requestId"].as_str().unwrap(),
+                None
+            )
+            .is_err());
+    })
+    .await
+    .expect("keyboard-interactive cancellation timed out");
 }
 
 #[tokio::test]
@@ -297,7 +511,8 @@ async fn user_certificate_authentication_uses_certificate_without_bare_key_fallb
                 None
             )
             .await
-            .unwrap());
+            .unwrap()
+            .success());
             assert!(SshManager::auth_with_key_data(
                 &mut fixture.client,
                 "fixture",
@@ -307,7 +522,8 @@ async fn user_certificate_authentication_uses_certificate_without_bare_key_fallb
                 None,
             )
             .await
-            .unwrap());
+            .unwrap()
+            .success());
             // The backend-only vault attachment uses the identical SSH certificate exchange.
             let mut fixture = transport_with_certificate(key.public_key(), Some(cert)).await;
             assert!(SshManager::auth_with_key_data(
@@ -319,7 +535,8 @@ async fn user_certificate_authentication_uses_certificate_without_bare_key_fallb
                 Some(&certificate_text),
             )
             .await
-            .unwrap());
+            .unwrap()
+            .success());
             // A bad configured certificate must fail even when the server accepts the bare key.
             let mut fixture = transport(key.public_key()).await;
             std::fs::write(&path, "invalid certificate").unwrap();
@@ -526,6 +743,7 @@ async fn encrypted_private_key_authentication_uses_the_production_decoder_and_ha
         )
         .await
         .expect("accepted private-key authentication timed out")
-        .unwrap());
+        .unwrap()
+        .success());
     }
 }

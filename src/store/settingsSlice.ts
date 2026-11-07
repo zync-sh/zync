@@ -1,57 +1,88 @@
-import { StateCreator } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStore } from './useAppStore';
-import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
-import {
-    DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
-    DEFAULT_SUSPEND_IDLE_HOST_PTYS,
-    normalizeIdleHostPtySuspendMinutes,
-} from '../lib/terminal/terminalIdlePtyPolicy.js';
 import type { FontWeight } from '@xterm/xterm';
+import { StateCreator } from 'zustand';
+
+import { CODEMIRROR_EDITOR_ID } from '../components/editor/providers';
 import {
     resolveDefaultTerminalTypography,
     TERMINAL_FONT_SIZE_MAX,
     TERMINAL_FONT_SIZE_MIN,
     type TerminalFontWeightSetting,
 } from '../components/settings/constants/defaults';
-import { resolveTerminalFontWeightBold } from '../lib/terminal/terminalTypography.js';
-import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
+import { createThemeImportUpdater } from '../features/appearance/application/importTheme';
+import { createElementColorUpdater } from '../features/appearance/application/updateElementColors';
+import type { ElementColorChange } from '../features/appearance/domain/elementColors';
+import {
+    sameThemeSettings,
+    type ThemeDocument,
+    type ThemeSettingsSnapshot,
+    themeSettingsSnapshot,
+} from '../features/appearance/domain/themeDocument';
+import { themeSelectionPatch } from '../features/appearance/domain/themeSelection';
 import { refreshConnectionTabTitles } from '../features/connections/application/tabService.js';
+import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import {
     DEFAULT_NOTIFICATION_SETTINGS,
-    normalizeNotificationSettings,
     type NotificationSettings,
+    normalizeNotificationSettings,
 } from '../features/notifications';
+import {
+    isSerialProfileId,
+    normalizeSerialProfiles,
+    type SerialProfile,
+    type SerialProfileDraft,
+    validateSerialProfileDraft,
+} from '../features/serial/domain/profile';
+import { createPreferencesQueue } from '../features/settings/application/acknowledgedPreferences';
 import {
     DEFAULT_STATUS_BAR_SETTINGS,
     normalizeStatusBarSettings,
 } from '../features/statusBar/settings.js';
 import type { StatusBarSettings } from '../features/statusBar/types.js';
-import {
-    DEFAULT_SURVEY_SETTINGS,
-    normalizeSurveySettings,
-} from '../features/survey/settings.js';
+import { DEFAULT_SURVEY_SETTINGS, normalizeSurveySettings } from '../features/survey/settings.js';
 import { setUsageEnabled, startUsageLifecycle, stopUsageLifecycle } from '../features/usage';
-import { resolveWorkspaceNavigation, type NavigationChange } from '../features/workspace/domain/navigation';
-import { createNavigationUpdater } from '../features/workspace/application/updateNavigation';
-import { createElementColorUpdater } from '../features/appearance/application/updateElementColors';
-import type { ElementColorChange } from '../features/appearance/domain/elementColors';
-import { createThemeImportUpdater } from '../features/appearance/application/importTheme';
-import { createPreferencesQueue } from '../features/settings/application/acknowledgedPreferences';
-import { sameThemeSettings, themeSettingsSnapshot, type ThemeDocument, type ThemeSettingsSnapshot } from '../features/appearance/domain/themeDocument';
+import {
+    isVncProfileId,
+    normalizeVncProfiles,
+    type VncProfile,
+    type VncProfileDraft,
+    validateVncProfileDraft,
+} from '../features/vnc/domain/profile';
 import { createChromeActionUpdater } from '../features/workspace/application/updateChromeActions';
-import type { ChromeActionArea, ChromeActionChange } from '../features/workspace/domain/chromeActions';
+import { createNavigationUpdater } from '../features/workspace/application/updateNavigation';
+import type {
+    ChromeActionArea,
+    ChromeActionChange,
+} from '../features/workspace/domain/chromeActions';
 import type { MainTabCloseButtonMode } from '../features/workspace/domain/mainTabPresentation';
-import { normalizeTerminalRightClickAction, type TerminalRightClickAction } from '../lib/terminal/terminalMousePolicy';
+import {
+    type NavigationChange,
+    resolveWorkspaceNavigation,
+} from '../features/workspace/domain/navigation';
+import {
+    DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
+    DEFAULT_SUSPEND_IDLE_HOST_PTYS,
+    normalizeIdleHostPtySuspendMinutes,
+} from '../lib/terminal/terminalIdlePtyPolicy.js';
+import {
+    normalizeTerminalRightClickAction,
+    type TerminalRightClickAction,
+} from '../lib/terminal/terminalMousePolicy';
+import { resolveTerminalFontWeightBold } from '../lib/terminal/terminalTypography.js';
+import type { AppStore } from './useAppStore';
 
 let usageConsentWrites: Promise<void> = Promise.resolve();
 
 function applyUsageConsent(enabled: boolean): void {
     setUsageEnabled(enabled);
-    if (enabled) startUsageLifecycle();
-    else stopUsageLifecycle();
+    if (enabled) {
+        startUsageLifecycle();
+    } else {
+        stopUsageLifecycle();
+    }
 }
 
+/** Persist ordinary settings fields without bypassing specialized editors. */
 async function persistSettingsUpdate(
     get: () => AppStore,
     set: (partial: Partial<AppStore>) => void,
@@ -82,20 +113,53 @@ async function persistSettingsUpdate(
     if ('workspaceNavigation' in actualSettings) {
         throw new Error('Use the navigation editor to change these preferences.');
     }
+    if ('vncProfiles' in actualSettings) {
+        throw new Error('Use the VNC profile editor to change these preferences.');
+    }
+    if ('serialProfiles' in actualSettings) {
+        throw new Error('Use the Serial profile editor to change these preferences.');
+    }
     if ('theme' in actualSettings || 'accentColor' in actualSettings) {
         // All appearance writers share a queue. Keep the acknowledged theme visible
         // until native accepts this snapshot; never roll back to an unsaved draft.
-        if (get().isLoadingSettings || get().isReloadingSettings) throw new Error('Wait for settings to finish loading.');
+        if (get().isLoadingSettings || get().isReloadingSettings) {
+            throw new Error('Wait for settings to finish loading.');
+        }
+        const selection =
+            'theme' in actualSettings
+                ? themeSelectionPatch(themeSettingsSnapshot(previous), actualSettings.theme)
+                : undefined;
         await persistSettings(actualSettings, themeSettingsSnapshot(previous));
         const current = get();
-        if (current.isLoadingSettings || current.isReloadingSettings || current.settingsLoadGeneration !== settingsLoadGeneration
-            || !sameThemeSettings(themeSettingsSnapshot(current.settings), themeSettingsSnapshot(previous))) {
-            throw new Error('Theme was saved, but settings changed before confirmation. Reload settings before changing the theme again.');
+        if (
+            current.isLoadingSettings ||
+            current.isReloadingSettings ||
+            current.settingsLoadGeneration !== settingsLoadGeneration ||
+            !sameThemeSettings(
+                themeSettingsSnapshot(current.settings),
+                themeSettingsSnapshot(previous),
+            )
+        ) {
+            throw new Error(
+                'Theme was saved, but settings changed before confirmation. Reload settings before changing the theme again.',
+            );
         }
-        const settings = { ...current.settings, ...actualSettings };
-        set({ settings, ...(actualSettings.privacy && 'showHostAddressesInLists' in actualSettings.privacy
-            ? { tabs: refreshConnectionTabTitles(current.tabs, current.connections, settings.privacy.showHostAddressesInLists) } : {}) });
-        if (actualSettings.privacy && 'shareAnonymousUsage' in actualSettings.privacy) applyUsageConsent(settings.privacy.shareAnonymousUsage === true);
+        const settings = { ...current.settings, ...actualSettings, ...selection };
+        set({
+            settings,
+            ...(actualSettings.privacy && 'showHostAddressesInLists' in actualSettings.privacy
+                ? {
+                      tabs: refreshConnectionTabTitles(
+                          current.tabs,
+                          current.connections,
+                          settings.privacy.showHostAddressesInLists,
+                      ),
+                  }
+                : {}),
+        });
+        if (actualSettings.privacy && 'shareAnonymousUsage' in actualSettings.privacy) {
+            applyUsageConsent(settings.privacy.shareAnonymousUsage === true);
+        }
         return;
     }
     const previousTabs = get().tabs;
@@ -121,18 +185,24 @@ async function persistSettingsUpdate(
         console.error('Failed to save settings:', error);
         const current = get().settings;
         const currentUsage = current.privacy.shareAnonymousUsage === true;
-        const rollbackThisRequest = !privacyPatch || !('shareAnonymousUsage' in privacyPatch)
-            || currentUsage === optimisticUsage;
+        const rollbackThisRequest =
+            !privacyPatch ||
+            !('shareAnonymousUsage' in privacyPatch) ||
+            currentUsage === optimisticUsage;
         if (rollbackThisRequest) {
             const rollbackPatch = Object.fromEntries(
                 changedKeys
                     // A late visibility failure must not undo a newer navigation action.
-                    .filter(key => key !== 'sidebarCollapsed' || (current[key] === updated[key]
-                        && get().globalSidebarSelectionRevision === sidebarSelectionRevision
-                        && get().settingsLoadGeneration === settingsLoadGeneration))
+                    .filter(
+                        (key) =>
+                            key !== 'sidebarCollapsed' ||
+                            (current[key] === updated[key] &&
+                                get().globalSidebarSelectionRevision === sidebarSelectionRevision &&
+                                get().settingsLoadGeneration === settingsLoadGeneration),
+                    )
                     // A reload may have installed newer/future navigation data while native save was pending.
-                    .filter(key => key !== 'workspaceNavigation' || current[key] === updated[key])
-                    .map((key) => [key, previous[key]])
+                    .filter((key) => key !== 'workspaceNavigation' || current[key] === updated[key])
+                    .map((key) => [key, previous[key]]),
             ) as Partial<AppSettings>;
             const rollbackState: Partial<AppStore> = {
                 settings: { ...current, ...rollbackPatch },
@@ -151,14 +221,19 @@ async function persistSettingsUpdate(
         applyUsageConsent(get().settings.privacy.shareAnonymousUsage === true);
     }
 }
-import type { SurveySettings } from '../features/survey/types.js';
+
 import {
     DEFAULT_KEYBOARD_SETTINGS,
-    normalizeKeyboardSettings,
     type KeyboardSettings,
+    normalizeKeyboardSettings,
 } from '../features/shortcuts/policy';
+import type { SurveySettings } from '../features/survey/types.js';
 
 export interface AppSettings {
+    /** Standalone viewer endpoints stored on this device without credentials. */
+    vncProfiles: VncProfile[];
+    /** Named hardware connections on this device, without native session grants. */
+    serialProfiles: SerialProfile[];
     theme: string;
     globalFontFamily: string;
     globalFontSize: number;
@@ -344,13 +419,16 @@ export interface AppSettings {
 }
 
 export const defaultSettings: AppSettings = {
+    vncProfiles: [],
+    serialProfiles: [],
     theme: 'dark',
-    globalFontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, Arial, sans-serif",
+    globalFontFamily:
+        "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, Arial, sans-serif",
     globalFontSize: 14,
     iconTheme: 'vscode-icons',
     accentColor: null,
     editor: {
-        defaultProvider: CODEMIRROR_EDITOR_ID
+        defaultProvider: CODEMIRROR_EDITOR_ID,
     },
     windowOpacity: 1.0,
     enableVibrancy: false,
@@ -393,7 +471,7 @@ export const defaultSettings: AppSettings = {
         idleHostPtySuspendMinutes: DEFAULT_IDLE_HOST_PTY_SUSPEND_MINUTES,
         cursorStyle: 'block',
         lineHeight: 1.2,
-        padding: 12
+        padding: 12,
     },
     fileManager: {
         showHiddenFiles: true,
@@ -411,7 +489,7 @@ export const defaultSettings: AppSettings = {
         placesRecentLimit: 5,
     },
     localTerm: {
-        windowsShell: 'default'
+        windowsShell: 'default',
     },
     ghostSuggestions: {
         inlineEnabled: true,
@@ -536,21 +614,22 @@ function normalizeTerminalFontWeight(fontWeight: unknown): TerminalFontWeightSet
     if (fontWeight === 'bold' || fontWeight === 700 || fontWeight === '700') {
         return 700;
     }
-    const numeric = typeof fontWeight === 'number'
-        ? fontWeight
-        : typeof fontWeight === 'string' && /^[1-9]00$/.test(fontWeight)
-            ? Number(fontWeight)
-            : undefined;
+    const numeric =
+        typeof fontWeight === 'number'
+            ? fontWeight
+            : typeof fontWeight === 'string' && /^[1-9]00$/.test(fontWeight)
+              ? Number(fontWeight)
+              : undefined;
     // Full CSS weight ladder (100–900). 400 maps to `'normal'` above.
     if (
-        numeric === 100
-        || numeric === 200
-        || numeric === 300
-        || numeric === 500
-        || numeric === 600
-        || numeric === 700
-        || numeric === 800
-        || numeric === 900
+        numeric === 100 ||
+        numeric === 200 ||
+        numeric === 300 ||
+        numeric === 500 ||
+        numeric === 600 ||
+        numeric === 700 ||
+        numeric === 800 ||
+        numeric === 900
     ) {
         return numeric;
     }
@@ -566,9 +645,9 @@ function migrateSplitPaneKeybinding(
     keybindings: AppSettings['keybindings'],
 ): AppSettings['keybindings'] {
     if (
-        keybindings.splitPanes === 'Mod+Shift+\\'
-        || keybindings.splitPanes === 'Mod+Shift+|'
-        || keybindings.splitPanes === 'Ctrl+ArrowRight'
+        keybindings.splitPanes === 'Mod+Shift+\\' ||
+        keybindings.splitPanes === 'Mod+Shift+|' ||
+        keybindings.splitPanes === 'Ctrl+ArrowRight'
     ) {
         return { ...keybindings, splitPanes: defaultSettings.keybindings.splitPanes };
     }
@@ -590,7 +669,9 @@ function migrateFileViewKeybindings(
 }
 
 function normalizeTerminalFontFamily(fontFamily: string | undefined): string | undefined {
-    if (typeof fontFamily !== 'string' || !fontFamily.trim()) return undefined;
+    if (typeof fontFamily !== 'string' || !fontFamily.trim()) {
+        return undefined;
+    }
     const trimmed = fontFamily.trim();
     const families = trimmed
         .split(',')
@@ -618,9 +699,15 @@ function normalizeTerminalFontFamily(fontFamily: string | undefined): string | u
     return trimmed;
 }
 
-async function persistSettings(settings: Record<string, unknown>, expectedTheme?: ThemeSettingsSnapshot): Promise<void> {
-    if (expectedTheme) await invoke('settings_theme_set', { settings, expected: expectedTheme });
-    else await invoke('settings_set', { settings });
+async function persistSettings(
+    settings: Record<string, unknown>,
+    expectedTheme?: ThemeSettingsSnapshot,
+): Promise<void> {
+    if (expectedTheme) {
+        await invoke('settings_theme_set', { settings, expected: expectedTheme });
+    } else {
+        await invoke('settings_set', { settings });
+    }
 }
 
 /** Built-in settings sidebar tabs (matches SettingsModal). */
@@ -652,19 +739,37 @@ export interface SettingsSlice {
 
     // Actions
     updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
+    /** Retain creationId across Add retries. Existing profile edits require a live profileId. */
+    saveVncProfile: (
+        draft: VncProfileDraft,
+        profileId?: string,
+        options?: { creationId: string },
+    ) => Promise<VncProfile>;
+    deleteVncProfile: (profileId: string) => Promise<void>;
+    /** Retain creationId across Add retries. Existing profile edits require a live profileId. */
+    saveSerialProfile: (
+        draft: SerialProfileDraft,
+        profileId?: string,
+        options?: { creationId: string },
+    ) => Promise<SerialProfile>;
+    deleteSerialProfile: (profileId: string) => Promise<void>;
     updateWorkspaceNavigation: (action: NavigationChange) => Promise<void>;
     updateElementColors: (action: ElementColorChange) => Promise<void>;
     importTheme: (theme: ThemeDocument) => Promise<void>;
     updateChromeActions: (action: ChromeActionChange) => Promise<void>;
     updateAiSettings: (updates: Partial<AppSettings['ai']>) => Promise<void>;
     updateEditorSettings: (updates: Partial<AppSettings['editor']>) => Promise<void>;
-    updateSidebarSectionsSettings: (updates: Partial<AppSettings['sidebarSections']>) => Promise<void>;
+    updateSidebarSectionsSettings: (
+        updates: Partial<AppSettings['sidebarSections']>,
+    ) => Promise<void>;
     updateTerminalSettings: (updates: Partial<AppSettings['terminal']>) => Promise<void>;
     updateLocalTermSettings: (updates: Partial<AppSettings['localTerm']>) => Promise<void>;
     updateFileManagerSettings: (updates: Partial<AppSettings['fileManager']>) => Promise<void>;
     updateStatusBarSettings: (updates: Partial<AppSettings['statusBar']>) => Promise<void>;
     updateSurveySettings: (updates: Partial<AppSettings['survey']>) => Promise<void>;
-    updateGhostSuggestionsSettings: (updates: Partial<AppSettings['ghostSuggestions']>) => Promise<void>;
+    updateGhostSuggestionsSettings: (
+        updates: Partial<AppSettings['ghostSuggestions']>,
+    ) => Promise<void>;
     updateKeybindings: (updates: Partial<AppSettings['keybindings']>) => Promise<void>;
     /** In-memory save count shared by every shortcut editor, including reopened modals. */
     pendingKeybindingWrites: number;
@@ -684,551 +789,855 @@ export interface SettingsSlice {
 export const createSettingsSlice: StateCreator<AppStore, [], [], SettingsSlice> = (set, get) => {
     const themeWrites = createPreferencesQueue();
     const keybindingWrites = createPreferencesQueue();
-    return ({
-    pendingKeybindingWrites: 0,
-    settings: defaultSettings,
-    isSettingsOpen: false,
-    settingsFocusTab: null,
-    settingsFocusChromeArea: null,
-    isLoadingSettings: true,
-    isReloadingSettings: false,
-    settingsLoadGeneration: 0,
-    appRoot: null,
+    const vncProfileWrites = createPreferencesQueue();
+    const serialProfileWrites = createPreferencesQueue();
 
-    updateWorkspaceNavigation: createNavigationUpdater({
-        read: () => ({ loading: get().isLoadingSettings || get().isReloadingSettings,
-            generation: get().settingsLoadGeneration, value: get().settings.workspaceNavigation }),
-        save: (expected, value) => invoke('settings_navigation_save', { expected, value }),
-        publish: (before, value) => {
-            const current = get();
-            if (current.isLoadingSettings || current.isReloadingSettings || current.settingsLoadGeneration !== before.generation
-                || current.settings.workspaceNavigation !== before.value) return false;
-            const moved = resolveWorkspaceNavigation(before.value).workspaceTabsPosition !== value.workspaceTabsPosition;
-            set({ settings: { ...current.settings, workspaceNavigation: value },
-                ...(moved ? { globalSidebarSection: value.workspaceTabsPosition === 'default'
-                    ? current.globalSidebarSection === 'workspace' ? 'hosts' : current.globalSidebarSection
-                    : 'workspace', globalSidebarSelectionRevision: current.globalSidebarSelectionRevision + 1 } : {}) });
-            return true;
-        },
-    }),
-
-    updateElementColors: createElementColorUpdater({
-        read: () => ({ loading: get().isLoadingSettings || get().isReloadingSettings, generation: get().settingsLoadGeneration,
-            value: get().settings.elementColors }),
-        save: (expected, value) => invoke('settings_element_colors_save', { expected, value }),
-        publish: (before, value) => {
-            const current = get();
-            if (current.isLoadingSettings || current.isReloadingSettings || current.settingsLoadGeneration !== before.generation
-                || current.settings.elementColors !== before.value) return false;
-            set({ settings: { ...current.settings, elementColors: value } });
-            return true;
-        },
-    }, themeWrites),
-
-    updateChromeActions: createChromeActionUpdater({
-        read: () => ({ loading: get().isLoadingSettings || get().isReloadingSettings, generation: get().settingsLoadGeneration,
-            value: get().settings.chromeActions }),
-        save: (expected, value) => invoke('settings_chrome_actions_save', { expected, value }),
-        publish: (before, value) => {
-            const current = get();
-            if (current.isLoadingSettings || current.isReloadingSettings || current.settingsLoadGeneration !== before.generation
-                || current.settings.chromeActions !== before.value) return false;
-            set({ settings: { ...current.settings, chromeActions: value } });
-            return true;
-        },
-    }),
-
-    importTheme: createThemeImportUpdater({
-        read: () => ({ loading: get().isLoadingSettings || get().isReloadingSettings,
-            generation: get().settingsLoadGeneration, value: themeSettingsSnapshot(get().settings) }),
-        save: (expected, value) => invoke('settings_theme_import', {
-            expected: expected.exists ? expected.value : null, value: value.customTheme,
-        }),
-        publish: (before, value) => {
-            const current = get();
-            if (current.isLoadingSettings || current.isReloadingSettings || current.settingsLoadGeneration !== before.generation
-                || !sameThemeSettings(themeSettingsSnapshot(current.settings), before.value as ThemeSettingsSnapshot)) return false;
-            set({ settings: { ...current.settings, ...value } });
-            return true;
-        },
-    }, themeWrites),
-
-    /** Merge legacy settings with safe defaults without rewriting a non-empty profile on load. */
-    loadSettings: async () => {
-        const generation = get().settingsLoadGeneration + 1;
-        set({ settingsLoadGeneration: generation, isReloadingSettings: true });
-        try {
-            const loaded = await invoke<AppSettings>('settings_get');
-            if (get().settingsLoadGeneration !== generation) return;
-            // A genuinely empty settings file is a new installation. Persist its
-            // preset once so later partial saves/restarts retain the same policy.
-            if (get().isLoadingSettings && loaded && Object.keys(loaded).length === 0) {
-                await persistSettings({ keyboard: DEFAULT_KEYBOARD_SETTINGS });
-                loaded.keyboard = normalizeKeyboardSettings(DEFAULT_KEYBOARD_SETTINGS);
-                if (get().settingsLoadGeneration !== generation) return;
-            }
-            const merged = {
-                ...defaultSettings,
-                ...loaded,
-                editor: { ...defaultSettings.editor, ...(loaded?.editor || {}) },
-                terminal: {
-                    ...defaultSettings.terminal,
-                    ...(loaded?.terminal || {}),
-                    rightClickAction: normalizeTerminalRightClickAction(loaded?.terminal?.rightClickAction),
-                    copyOnSelect: loaded?.terminal?.copyOnSelect === true,
-                    fontFamily: normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ?? defaultSettings.terminal.fontFamily,
-                    fontSize: normalizeTerminalFontSize(loaded?.terminal?.fontSize) ?? defaultSettings.terminal.fontSize,
-                    fontWeight: (() => {
-                        const resolved = normalizeTerminalFontWeight(loaded?.terminal?.fontWeight)
-                            ?? defaultSettings.terminal.fontWeight;
-                        return resolved;
-                    })(),
-                    fontWeightBold: (() => {
-                        const resolvedFontWeight = normalizeTerminalFontWeight(loaded?.terminal?.fontWeight)
-                            ?? defaultSettings.terminal.fontWeight;
-                        return normalizeTerminalFontWeightBold(loaded?.terminal?.fontWeightBold)
-                            ?? resolveTerminalFontWeightBold(resolvedFontWeight);
-                    })(),
-                    idleHostPtySuspendMinutes: normalizeIdleHostPtySuspendMinutes(
-                        loaded?.terminal?.idleHostPtySuspendMinutes ?? defaultSettings.terminal.idleHostPtySuspendMinutes,
-                    ),
-                },
-                fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
-                sidebarSections: {
-                    ...defaultSettings.sidebarSections,
-                    ...(loaded?.sidebarSections || {}),
-                },
-                localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
-                ghostSuggestions: {
-                    ...defaultSettings.ghostSuggestions,
-                    ...(loaded?.ghostSuggestions || {}),
-                    providers: {
-                        ...defaultSettings.ghostSuggestions.providers,
-                        ...(loaded?.ghostSuggestions?.providers || {}),
-                    },
-                },
-                keybindings: migrateFileViewKeybindings(migrateSplitPaneKeybinding({
-                    ...defaultSettings.keybindings,
-                    ...(loaded?.keybindings || {}),
-                })),
-                keyboard: normalizeKeyboardSettings(loaded?.keyboard),
-                ai: { ...defaultSettings.ai, ...(loaded?.ai || {}) },
-                privacy: {
-                    ...defaultSettings.privacy,
-                    ...(loaded?.privacy || {}),
-                    shareAnonymousUsage: loaded?.privacy?.shareAnonymousUsage !== false,
-                },
-                notifications: normalizeNotificationSettings(loaded?.notifications),
-                statusBar: normalizeStatusBarSettings(loaded?.statusBar),
-                survey: normalizeSurveySettings(loaded?.survey),
-                expandedFolders: loaded?.expandedFolders || []
-            };
-            set({ settings: merged, isLoadingSettings: false, isReloadingSettings: false });
-        } catch (error) {
-            console.error('Failed to load settings:', error);
-            if (get().settingsLoadGeneration === generation) set({ isLoadingSettings: false, isReloadingSettings: false });
+    /** Persist the profile list before publishing against the latest settings state. */
+    async function persistVncProfiles(
+        before: AppStore,
+        vncProfiles: VncProfile[],
+        publish: (current: AppStore) => void,
+    ): Promise<void> {
+        if (before.isLoadingSettings || before.isReloadingSettings) {
+            throw new Error('Wait for settings to finish loading.');
         }
-    },
-
-    updateSettings: (newSettings) => {
-        const touchesUsageConsent = Boolean(
-            newSettings.privacy && 'shareAnonymousUsage' in newSettings.privacy,
-        );
-        // Copy the theme intent before queueing; never capture an optimistic snapshot.
-        const patch = { ...newSettings };
-        const run = () => ('theme' in patch || 'accentColor' in patch)
-            ? themeWrites(() => persistSettingsUpdate(get, set, patch))
-            : persistSettingsUpdate(get, set, patch);
-        if (!touchesUsageConsent) return run();
-        const chained = usageConsentWrites.then(run, run);
-        usageConsentWrites = chained.then(() => undefined, () => undefined);
-        return chained;
-    },
-
-    updateAiSettings: async (updates) => {
-        const previous = get().settings;
-        // Always persist the full ai object so required fields (enabled, ollamaUrl)
-        // are not dropped when the picker only patches provider/model.
-        const nextAi = { ...previous.ai, ...updates };
-        const updated = {
-            ...previous,
-            ai: nextAi,
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['ai']>;
-        const optimisticAi = nextAi;
-        try {
-            await persistSettings({ ai: nextAi });
-        } catch (error) {
-            console.error('Failed to save AI settings:', error);
-            const current = get().settings;
-            // Revert only keys this call still owns (value unchanged since optimistic set).
-            const rollbackPatch = Object.fromEntries(
-                changedKeys
-                    .filter((key) => current.ai[key] === optimisticAi[key])
-                    .map((key) => [key, previous.ai[key]]),
-            ) as Partial<AppSettings['ai']>;
-            if (Object.keys(rollbackPatch).length === 0) {
-                throw error;
-            }
-            set({ settings: { ...current, ai: { ...current.ai, ...rollbackPatch } } });
-            throw error;
-        }
-    },
-
-    updateEditorSettings: async (updates) => {
-        const previous = get().settings;
-        const updated = {
-            ...previous,
-            editor: { ...previous.editor, ...updates }
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['editor']>;
-        try {
-            await persistSettings({ editor: updates });
-        } catch (error) {
-            console.error('Failed to save editor settings:', error);
-            const current = get().settings;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.map((key) => [key, previous.editor[key]])
-            ) as Partial<AppSettings['editor']>;
-            set({ settings: { ...current, editor: { ...current.editor, ...rollbackPatch } } });
-            throw error;
-        }
-    },
-
-    updateSidebarSectionsSettings: async (updates) => {
-        const previous = get().settings;
-        const updated = {
-            ...previous,
-            sidebarSections: { ...previous.sidebarSections, ...updates }
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['sidebarSections']>;
-        const optimisticSidebarSections = updated.sidebarSections;
-        try {
-            await persistSettings({ sidebarSections: updates });
-        } catch (error) {
-            console.error('Failed to save sidebar section settings:', error);
-            const current = get().settings;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys
-                    .filter((key) => current.sidebarSections[key] === optimisticSidebarSections[key])
-                    .map((key) => [key, previous.sidebarSections[key]])
-            ) as Partial<AppSettings['sidebarSections']>;
-            if (Object.keys(rollbackPatch).length === 0) {
-                throw error;
-            }
-            set({
-                settings: {
-                    ...current,
-                    sidebarSections: { ...current.sidebarSections, ...rollbackPatch }
-                }
-            });
-            throw error;
-        }
-    },
-
-    setSidebarCollapsedLocal: (collapsed) => {
-        const previous = get().settings;
-        if (previous.sidebarCollapsed === collapsed) return;
-        set({ settings: { ...previous, sidebarCollapsed: collapsed } });
-    },
-
-    /** Normalize and persist only the requested terminal fields, rolling back failed writes. */
-    updateTerminalSettings: async (updates) => {
-        const previous = get().settings;
-        const normalizedUpdates = { ...updates };
-        if ('rightClickAction' in normalizedUpdates) {
-            normalizedUpdates.rightClickAction = normalizeTerminalRightClickAction(normalizedUpdates.rightClickAction);
-        }
-        if ('copyOnSelect' in normalizedUpdates) normalizedUpdates.copyOnSelect = normalizedUpdates.copyOnSelect === true;
-        if ('idleHostPtySuspendMinutes' in normalizedUpdates) {
-            normalizedUpdates.idleHostPtySuspendMinutes = normalizeIdleHostPtySuspendMinutes(
-                normalizedUpdates.idleHostPtySuspendMinutes,
+        await persistSettings({ vncProfiles });
+        const current = get();
+        if (
+            current.settingsLoadGeneration !== before.settingsLoadGeneration ||
+            current.settings.vncProfiles !== before.settings.vncProfiles
+        ) {
+            throw new Error(
+                'VNC profiles changed during the save. Reload settings before trying again.',
             );
         }
-        if ('fontSize' in normalizedUpdates) {
-            normalizedUpdates.fontSize = normalizeTerminalFontSize(normalizedUpdates.fontSize)
-                ?? previous.terminal.fontSize;
-        }
-        if ('fontWeight' in normalizedUpdates) {
-            const nextWeight = normalizeTerminalFontWeight(normalizedUpdates.fontWeight)
-                ?? previous.terminal.fontWeight;
-            normalizedUpdates.fontWeight = nextWeight;
-            normalizedUpdates.fontWeightBold = resolveTerminalFontWeightBold(nextWeight);
-        }
-        const updated = {
-            ...previous,
-            terminal: { ...previous.terminal, ...normalizedUpdates }
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(normalizedUpdates) as Array<keyof AppSettings['terminal']>;
-        try {
-            await persistSettings({ terminal: normalizedUpdates });
-        } catch (error) {
-            console.error('Failed to save terminal settings:', error);
-            const current = get().settings;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.map((key) => [key, previous.terminal[key]])
-            ) as Partial<AppSettings['terminal']>;
-            set({ settings: { ...current, terminal: { ...current.terminal, ...rollbackPatch } } });
-            throw error;
-        }
-    },
+        publish(current);
+    }
 
-    updateLocalTermSettings: async (updates) => {
-        const previous = get().settings;
-        const updated = {
-            ...previous,
-            localTerm: { ...previous.localTerm, ...updates }
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['localTerm']>;
-        try {
-            await persistSettings({ localTerm: updates });
-        } catch (error) {
-            console.error('Failed to save local terminal settings:', error);
-            const current = get().settings;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.map((key) => [key, previous.localTerm[key]])
-            ) as Partial<AppSettings['localTerm']>;
-            set({ settings: { ...current, localTerm: { ...current.localTerm, ...rollbackPatch } } });
-            throw error;
+    /** Publish device metadata only after the write is acknowledged against its current settings generation. */
+    async function persistSerialProfiles(
+        before: AppStore,
+        serialProfiles: SerialProfile[],
+        publish: (current: AppStore) => void,
+    ): Promise<void> {
+        if (before.isLoadingSettings || before.isReloadingSettings) {
+            throw new Error('Wait for settings to finish loading.');
         }
-    },
+        await persistSettings({ serialProfiles });
+        const current = get();
+        if (
+            current.settingsLoadGeneration !== before.settingsLoadGeneration ||
+            current.settings.serialProfiles !== before.settings.serialProfiles
+        ) {
+            throw new Error(
+                'Serial profiles changed during the save. Reload settings before trying again.',
+            );
+        }
+        publish(current);
+    }
 
-    updateStatusBarSettings: async (updates) => {
-        const previous = get().settings;
-        const previousBar = normalizeStatusBarSettings(previous.statusBar);
-        const updatedBar = { ...previousBar, ...updates };
-        const updated = {
-            ...previous,
-            statusBar: updatedBar,
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['statusBar']>;
-        try {
-            await persistSettings({ statusBar: updates });
-        } catch (error) {
-            console.error('Failed to save status bar settings:', error);
-            const current = get().settings;
-            if (current.statusBar !== updatedBar) {
-                throw error;
+    return {
+        pendingKeybindingWrites: 0,
+        settings: defaultSettings,
+        isSettingsOpen: false,
+        settingsFocusTab: null,
+        settingsFocusChromeArea: null,
+        isLoadingSettings: true,
+        isReloadingSettings: false,
+        settingsLoadGeneration: 0,
+        appRoot: null,
+
+        /** Serialize writes and reuse an Add operation's identity after an uncertain acknowledgement. */
+        saveVncProfile: async (draft, profileId, options) => {
+            const { value } = validateVncProfileDraft(draft);
+            if (!value) {
+                throw new Error('Enter a valid VNC name, host, and port.');
             }
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.map((key) => [key, previousBar[key]]),
-            ) as Partial<AppSettings['statusBar']>;
-            set({
-                settings: {
-                    ...current,
-                    statusBar: {
-                        ...normalizeStatusBarSettings(current.statusBar),
-                        ...rollbackPatch,
-                    },
-                },
-            });
-            throw error;
-        }
-    },
-
-    updateSurveySettings: async (updates) => {
-        const previous = get().settings;
-        const previousSurvey = normalizeSurveySettings(previous.survey);
-        const updatedSurvey = { ...previousSurvey, ...updates };
-        const updated = {
-            ...previous,
-            survey: updatedSurvey,
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['survey']>;
-        try {
-            await persistSettings({ survey: updates });
-        } catch (error) {
-            console.error('Failed to save survey settings:', error);
-            const current = get().settings;
-            const currentSurvey = normalizeSurveySettings(current.survey);
-            const rollbackPatch = Object.fromEntries(
-                changedKeys
-                    .filter((key) => currentSurvey[key] === updatedSurvey[key])
-                    .map((key) => [key, previousSurvey[key]]),
-            ) as Partial<AppSettings['survey']>;
-            if (Object.keys(rollbackPatch).length === 0) {
-                throw error;
+            const profile = {
+                id: profileId ?? options?.creationId ?? crypto.randomUUID(),
+                ...value,
+            };
+            if (!isVncProfileId(profile.id)) {
+                throw new Error('Invalid VNC profile identity.');
             }
-            set({
-                settings: {
-                    ...current,
-                    survey: {
-                        ...currentSurvey,
-                        ...rollbackPatch,
-                    },
-                },
+            return vncProfileWrites(async () => {
+                const before = get();
+                const profiles = before.settings.vncProfiles;
+                const exists = profiles.some((item) => item.id === profile.id);
+                if (profileId && !exists) {
+                    throw new Error('This VNC profile no longer exists.');
+                }
+                const vncProfiles = exists
+                    ? profiles.map((item) => (item.id === profile.id ? profile : item))
+                    : [...profiles, profile];
+                await persistVncProfiles(before, vncProfiles, (current) => {
+                    const renamedTab = current.tabs.find(
+                        (tab) =>
+                            tab.type === 'vnc' &&
+                            tab.vncProfileId === profile.id &&
+                            tab.title !== profile.name,
+                    );
+                    set({
+                        settings: { ...current.settings, vncProfiles },
+                        ...(renamedTab && {
+                            tabs: current.tabs.map((tab) =>
+                                tab === renamedTab ? { ...tab, title: profile.name } : tab,
+                            ),
+                        }),
+                    });
+                });
+                return profile;
             });
-            throw error;
-        }
-    },
+        },
 
-    updateFileManagerSettings: async (updates) => {
-        const previous = get().settings;
-        const updated = {
-            ...previous,
-            fileManager: { ...previous.fileManager, ...updates }
-        };
-        set({ settings: updated });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['fileManager']>;
-        try {
-            await persistSettings({ fileManager: updates });
-        } catch (error) {
-            console.error('Failed to save file manager settings:', error);
-            const current = get().settings;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.map((key) => [key, previous.fileManager[key]])
-            ) as Partial<AppSettings['fileManager']>;
-            set({ settings: { ...current, fileManager: { ...current.fileManager, ...rollbackPatch } } });
-            throw error;
-        }
-    },
+        /** Remove the saved endpoint and close its viewer only after the write succeeds. */
+        deleteVncProfile: (profileId) =>
+            vncProfileWrites(async () => {
+                const before = get();
+                const profiles = before.settings.vncProfiles;
+                const next = profiles.filter((profile) => profile.id !== profileId);
+                if (next.length === profiles.length) {
+                    return;
+                }
+                await persistVncProfiles(before, next, (current) => {
+                    set({ settings: { ...current.settings, vncProfiles: next } });
+                    const tab = current.tabs.find(
+                        (item) => item.type === 'vnc' && item.vncProfileId === profileId,
+                    );
+                    if (tab) {
+                        current.closeTab(tab.id);
+                    }
+                });
+            }),
 
-    updateGhostSuggestionsSettings: async (updates) => {
-        const prevSettings = get().settings;
-        const currentGhost = prevSettings.ghostSuggestions;
-        const updated = {
-            ...prevSettings,
-            ghostSuggestions: {
-                ...currentGhost,
-                ...updates,
-                providers: {
-                    ...currentGhost.providers,
-                    ...(updates.providers || {}),
+        /** Serialize acknowledged saves and reuse an Add attempt's identity after a reload conflict. */
+        saveSerialProfile: async (draft, profileId, options) => {
+            const { value } = validateSerialProfileDraft(draft);
+            if (!value) {
+                throw new Error('Enter a valid Serial name, port, and connection settings.');
+            }
+            const profile = {
+                id: profileId ?? options?.creationId ?? crypto.randomUUID(),
+                ...value,
+            };
+            if (!isSerialProfileId(profile.id)) {
+                throw new Error('Invalid Serial profile identity.');
+            }
+            return serialProfileWrites(async () => {
+                const before = get();
+                const profiles = before.settings.serialProfiles;
+                const exists = profiles.some((item) => item.id === profile.id);
+                if (profileId && !exists) {
+                    throw new Error('This Serial profile no longer exists.');
+                }
+                const serialProfiles = exists
+                    ? profiles.map((item) => (item.id === profile.id ? profile : item))
+                    : [...profiles, profile];
+                await persistSerialProfiles(before, serialProfiles, (current) => {
+                    const renamedTab = current.tabs.find(
+                        (tab) =>
+                            tab.type === 'serial' &&
+                            tab.serialProfileId === profile.id &&
+                            tab.title !== profile.name,
+                    );
+                    set({
+                        settings: { ...current.settings, serialProfiles },
+                        ...(renamedTab && {
+                            tabs: current.tabs.map((tab) =>
+                                tab === renamedTab ? { ...tab, title: profile.name } : tab,
+                            ),
+                        }),
+                    });
+                });
+                return profile;
+            });
+        },
+
+        /** Release the profile's open console only after deleting its saved metadata succeeds. */
+        deleteSerialProfile: (profileId) =>
+            serialProfileWrites(async () => {
+                const before = get();
+                const profiles = before.settings.serialProfiles;
+                const next = profiles.filter((profile) => profile.id !== profileId);
+                if (next.length === profiles.length) {
+                    return;
+                }
+                await persistSerialProfiles(before, next, (current) => {
+                    set({ settings: { ...current.settings, serialProfiles: next } });
+                    const tab = current.tabs.find(
+                        (item) => item.type === 'serial' && item.serialProfileId === profileId,
+                    );
+                    if (tab) {
+                        current.closeTab(tab.id);
+                    }
+                });
+            }),
+
+        updateWorkspaceNavigation: createNavigationUpdater({
+            read: () => ({
+                loading: get().isLoadingSettings || get().isReloadingSettings,
+                generation: get().settingsLoadGeneration,
+                value: get().settings.workspaceNavigation,
+            }),
+            save: (expected, value) => invoke('settings_navigation_save', { expected, value }),
+            publish: (before, value) => {
+                const current = get();
+                if (
+                    current.isLoadingSettings ||
+                    current.isReloadingSettings ||
+                    current.settingsLoadGeneration !== before.generation ||
+                    current.settings.workspaceNavigation !== before.value
+                ) {
+                    return false;
+                }
+                const moved =
+                    resolveWorkspaceNavigation(before.value).workspaceTabsPosition !==
+                    value.workspaceTabsPosition;
+                set({
+                    settings: { ...current.settings, workspaceNavigation: value },
+                    ...(moved
+                        ? {
+                              globalSidebarSection:
+                                  value.workspaceTabsPosition === 'default'
+                                      ? current.globalSidebarSection === 'workspace'
+                                          ? 'hosts'
+                                          : current.globalSidebarSection
+                                      : 'workspace',
+                              globalSidebarSelectionRevision:
+                                  current.globalSidebarSelectionRevision + 1,
+                          }
+                        : {}),
+                });
+                return true;
+            },
+        }),
+
+        updateElementColors: createElementColorUpdater(
+            {
+                read: () => ({
+                    loading: get().isLoadingSettings || get().isReloadingSettings,
+                    generation: get().settingsLoadGeneration,
+                    value: get().settings.elementColors,
+                }),
+                save: (expected, value) =>
+                    invoke('settings_element_colors_save', { expected, value }),
+                publish: (before, value) => {
+                    const current = get();
+                    if (
+                        current.isLoadingSettings ||
+                        current.isReloadingSettings ||
+                        current.settingsLoadGeneration !== before.generation ||
+                        current.settings.elementColors !== before.value
+                    ) {
+                        return false;
+                    }
+                    set({ settings: { ...current.settings, elementColors: value } });
+                    return true;
                 },
             },
-        };
-        set({ settings: updated });
-        const changedGhostKeys = Object.keys(updates).filter((key) => key !== 'providers') as Array<Exclude<keyof AppSettings['ghostSuggestions'], 'providers'>>;
-        const changedProviderKeys = Object.keys(updates.providers || {}) as Array<keyof AppSettings['ghostSuggestions']['providers']>;
-        try {
-            await persistSettings({ ghostSuggestions: updates });
-        } catch (error) {
-            console.error('Failed to save ghost suggestion settings:', error);
-            const latestSettings = get().settings;
-            const rollbackGhostPatch = Object.fromEntries(
-                changedGhostKeys.map((key) => [key, currentGhost[key]])
-            ) as Partial<Omit<AppSettings['ghostSuggestions'], 'providers'>>;
-            const rollbackProviderPatch = Object.fromEntries(
-                changedProviderKeys.map((key) => [key, currentGhost.providers[key]])
-            ) as Partial<AppSettings['ghostSuggestions']['providers']>;
-            set({
-                settings: {
-                    ...latestSettings,
+            themeWrites,
+        ),
+
+        updateChromeActions: createChromeActionUpdater({
+            read: () => ({
+                loading: get().isLoadingSettings || get().isReloadingSettings,
+                generation: get().settingsLoadGeneration,
+                value: get().settings.chromeActions,
+            }),
+            save: (expected, value) => invoke('settings_chrome_actions_save', { expected, value }),
+            publish: (before, value) => {
+                const current = get();
+                if (
+                    current.isLoadingSettings ||
+                    current.isReloadingSettings ||
+                    current.settingsLoadGeneration !== before.generation ||
+                    current.settings.chromeActions !== before.value
+                ) {
+                    return false;
+                }
+                set({ settings: { ...current.settings, chromeActions: value } });
+                return true;
+            },
+        }),
+
+        importTheme: createThemeImportUpdater(
+            {
+                read: () => ({
+                    loading: get().isLoadingSettings || get().isReloadingSettings,
+                    generation: get().settingsLoadGeneration,
+                    value: themeSettingsSnapshot(get().settings),
+                }),
+                save: (expected, value) =>
+                    invoke('settings_theme_import', {
+                        expected: expected.exists ? expected.value : null,
+                        value: value.customTheme,
+                    }),
+                publish: (before, value) => {
+                    const current = get();
+                    if (
+                        current.isLoadingSettings ||
+                        current.isReloadingSettings ||
+                        current.settingsLoadGeneration !== before.generation ||
+                        !sameThemeSettings(
+                            themeSettingsSnapshot(current.settings),
+                            before.value as ThemeSettingsSnapshot,
+                        )
+                    ) {
+                        return false;
+                    }
+                    set({ settings: { ...current.settings, ...value } });
+                    return true;
+                },
+            },
+            themeWrites,
+        ),
+
+        /** Merge legacy settings with safe defaults without rewriting a non-empty profile on load. */
+        loadSettings: async () => {
+            const generation = get().settingsLoadGeneration + 1;
+            set({ settingsLoadGeneration: generation, isReloadingSettings: true });
+            try {
+                const loaded = await invoke<AppSettings>('settings_get');
+                if (get().settingsLoadGeneration !== generation) {
+                    return;
+                }
+                // A genuinely empty settings file is a new installation. Persist its
+                // preset once so later partial saves/restarts retain the same policy.
+                if (get().isLoadingSettings && loaded && Object.keys(loaded).length === 0) {
+                    await persistSettings({ keyboard: DEFAULT_KEYBOARD_SETTINGS });
+                    loaded.keyboard = normalizeKeyboardSettings(DEFAULT_KEYBOARD_SETTINGS);
+                    if (get().settingsLoadGeneration !== generation) {
+                        return;
+                    }
+                }
+                const merged = {
+                    ...defaultSettings,
+                    ...loaded,
+                    vncProfiles: normalizeVncProfiles(loaded?.vncProfiles),
+                    serialProfiles: normalizeSerialProfiles(loaded?.serialProfiles),
+                    editor: { ...defaultSettings.editor, ...(loaded?.editor || {}) },
+                    terminal: {
+                        ...defaultSettings.terminal,
+                        ...(loaded?.terminal || {}),
+                        rightClickAction: normalizeTerminalRightClickAction(
+                            loaded?.terminal?.rightClickAction,
+                        ),
+                        copyOnSelect: loaded?.terminal?.copyOnSelect === true,
+                        fontFamily:
+                            normalizeTerminalFontFamily(loaded?.terminal?.fontFamily) ??
+                            defaultSettings.terminal.fontFamily,
+                        fontSize:
+                            normalizeTerminalFontSize(loaded?.terminal?.fontSize) ??
+                            defaultSettings.terminal.fontSize,
+                        fontWeight: (() => {
+                            const resolved =
+                                normalizeTerminalFontWeight(loaded?.terminal?.fontWeight) ??
+                                defaultSettings.terminal.fontWeight;
+                            return resolved;
+                        })(),
+                        fontWeightBold: (() => {
+                            const resolvedFontWeight =
+                                normalizeTerminalFontWeight(loaded?.terminal?.fontWeight) ??
+                                defaultSettings.terminal.fontWeight;
+                            return (
+                                normalizeTerminalFontWeightBold(loaded?.terminal?.fontWeightBold) ??
+                                resolveTerminalFontWeightBold(resolvedFontWeight)
+                            );
+                        })(),
+                        idleHostPtySuspendMinutes: normalizeIdleHostPtySuspendMinutes(
+                            loaded?.terminal?.idleHostPtySuspendMinutes ??
+                                defaultSettings.terminal.idleHostPtySuspendMinutes,
+                        ),
+                    },
+                    fileManager: { ...defaultSettings.fileManager, ...(loaded?.fileManager || {}) },
+                    sidebarSections: {
+                        ...defaultSettings.sidebarSections,
+                        ...(loaded?.sidebarSections || {}),
+                    },
+                    localTerm: { ...defaultSettings.localTerm, ...(loaded?.localTerm || {}) },
                     ghostSuggestions: {
-                        ...latestSettings.ghostSuggestions,
-                        ...rollbackGhostPatch,
+                        ...defaultSettings.ghostSuggestions,
+                        ...(loaded?.ghostSuggestions || {}),
                         providers: {
-                            ...latestSettings.ghostSuggestions.providers,
-                            ...rollbackProviderPatch,
+                            ...defaultSettings.ghostSuggestions.providers,
+                            ...(loaded?.ghostSuggestions?.providers || {}),
                         },
                     },
-                },
-            });
-            throw error;
-        }
-    },
+                    keybindings: migrateFileViewKeybindings(
+                        migrateSplitPaneKeybinding({
+                            ...defaultSettings.keybindings,
+                            ...(loaded?.keybindings || {}),
+                        }),
+                    ),
+                    keyboard: normalizeKeyboardSettings(loaded?.keyboard),
+                    ai: { ...defaultSettings.ai, ...(loaded?.ai || {}) },
+                    privacy: {
+                        ...defaultSettings.privacy,
+                        ...(loaded?.privacy || {}),
+                        shareAnonymousUsage: loaded?.privacy?.shareAnonymousUsage !== false,
+                    },
+                    notifications: normalizeNotificationSettings(loaded?.notifications),
+                    statusBar: normalizeStatusBarSettings(loaded?.statusBar),
+                    survey: normalizeSurveySettings(loaded?.survey),
+                    expandedFolders: loaded?.expandedFolders || [],
+                };
+                set({ settings: merged, isLoadingSettings: false, isReloadingSettings: false });
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+                if (get().settingsLoadGeneration === generation) {
+                    set({ isLoadingSettings: false, isReloadingSettings: false });
+                }
+            }
+        },
 
-    updateKeyboardSettings: async (updates) => {
-        const previous = get().settings;
-        const currentKeyboard = normalizeKeyboardSettings(previous.keyboard);
-        const nextKeyboard = normalizeKeyboardSettings({ ...currentKeyboard, ...updates });
-        set({ settings: { ...previous, keyboard: nextKeyboard } });
-        const changedKeys = Object.keys(updates) as Array<keyof AppSettings['keyboard']>;
-        try {
-            await persistSettings({ keyboard: nextKeyboard });
-        } catch (error) {
-            console.error('Failed to save keyboard settings:', error);
-            const current = get().settings;
-            // Compare the stored optimistic value: normalization copies exception
-            // arrays and would otherwise prevent rollback after a failed save.
-            const latest = current.keyboard;
-            const rollbackPatch = Object.fromEntries(
-                changedKeys.filter((key) => latest[key] === nextKeyboard[key]).map((key) => [key, currentKeyboard[key]]),
-            ) as Partial<AppSettings['keyboard']>;
-            if (Object.keys(rollbackPatch).length > 0) {
+        updateSettings: (newSettings) => {
+            const touchesUsageConsent = Boolean(
+                newSettings.privacy && 'shareAnonymousUsage' in newSettings.privacy,
+            );
+            // Copy the theme intent before queueing; never capture an optimistic snapshot.
+            const patch = { ...newSettings };
+            const run = () =>
+                'theme' in patch || 'accentColor' in patch
+                    ? themeWrites(() => persistSettingsUpdate(get, set, patch))
+                    : persistSettingsUpdate(get, set, patch);
+            if (!touchesUsageConsent) {
+                return run();
+            }
+            const chained = usageConsentWrites.then(run, run);
+            usageConsentWrites = chained.then(
+                () => undefined,
+                () => undefined,
+            );
+            return chained;
+        },
+
+        updateAiSettings: async (updates) => {
+            const previous = get().settings;
+            // Always persist the full ai object so required fields (enabled, ollamaUrl)
+            // are not dropped when the picker only patches provider/model.
+            const nextAi = { ...previous.ai, ...updates };
+            const updated = {
+                ...previous,
+                ai: nextAi,
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['ai']>;
+            const optimisticAi = nextAi;
+            try {
+                await persistSettings({ ai: nextAi });
+            } catch (error) {
+                console.error('Failed to save AI settings:', error);
+                const current = get().settings;
+                // Revert only keys this call still owns (value unchanged since optimistic set).
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys
+                        .filter((key) => current.ai[key] === optimisticAi[key])
+                        .map((key) => [key, previous.ai[key]]),
+                ) as Partial<AppSettings['ai']>;
+                if (Object.keys(rollbackPatch).length === 0) {
+                    throw error;
+                }
+                set({ settings: { ...current, ai: { ...current.ai, ...rollbackPatch } } });
+                throw error;
+            }
+        },
+
+        updateEditorSettings: async (updates) => {
+            const previous = get().settings;
+            const updated = {
+                ...previous,
+                editor: { ...previous.editor, ...updates },
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['editor']>;
+            try {
+                await persistSettings({ editor: updates });
+            } catch (error) {
+                console.error('Failed to save editor settings:', error);
+                const current = get().settings;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys.map((key) => [key, previous.editor[key]]),
+                ) as Partial<AppSettings['editor']>;
+                set({ settings: { ...current, editor: { ...current.editor, ...rollbackPatch } } });
+                throw error;
+            }
+        },
+
+        updateSidebarSectionsSettings: async (updates) => {
+            const previous = get().settings;
+            const updated = {
+                ...previous,
+                sidebarSections: { ...previous.sidebarSections, ...updates },
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['sidebarSections']>;
+            const optimisticSidebarSections = updated.sidebarSections;
+            try {
+                await persistSettings({ sidebarSections: updates });
+            } catch (error) {
+                console.error('Failed to save sidebar section settings:', error);
+                const current = get().settings;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys
+                        .filter(
+                            (key) =>
+                                current.sidebarSections[key] === optimisticSidebarSections[key],
+                        )
+                        .map((key) => [key, previous.sidebarSections[key]]),
+                ) as Partial<AppSettings['sidebarSections']>;
+                if (Object.keys(rollbackPatch).length === 0) {
+                    throw error;
+                }
                 set({
                     settings: {
                         ...current,
-                        keyboard: normalizeKeyboardSettings({ ...current.keyboard, ...rollbackPatch }),
+                        sidebarSections: { ...current.sidebarSections, ...rollbackPatch },
                     },
                 });
+                throw error;
             }
-            throw error;
-        }
-    },
+        },
 
-    updateKeybindings: async (updates) => {
-        // Snapshot intent before waiting; read the rollback baseline only after
-        // prior writes have settled so it can never contain their failed edits.
-        const patch = { ...updates };
-        set(state => ({ pendingKeybindingWrites: state.pendingKeybindingWrites + 1 }));
-        try {
-            await keybindingWrites(async () => {
-                const previous = get().settings;
-                const updated = {
-                    ...previous,
-                    keybindings: { ...previous.keybindings, ...patch }
-                };
-                set({ settings: updated });
-                const changedKeys = Object.keys(patch) as Array<keyof AppSettings['keybindings']>;
-                try {
-                    await persistSettings({ keybindings: patch });
-                } catch (error) {
-                    console.error('Failed to save keybindings:', error);
-                    const current = get().settings;
-                    const rollbackPatch = Object.fromEntries(
-                        changedKeys.filter((key) => current.keybindings[key] === updated.keybindings[key])
-                            .map((key) => [key, previous.keybindings[key]])
-                    ) as Partial<AppSettings['keybindings']>;
-                    set({ settings: { ...current, keybindings: { ...current.keybindings, ...rollbackPatch } } });
+        setSidebarCollapsedLocal: (collapsed) => {
+            const previous = get().settings;
+            if (previous.sidebarCollapsed === collapsed) {
+                return;
+            }
+            set({ settings: { ...previous, sidebarCollapsed: collapsed } });
+        },
+
+        /** Normalize and persist only the requested terminal fields, rolling back failed writes. */
+        updateTerminalSettings: async (updates) => {
+            const previous = get().settings;
+            const normalizedUpdates = { ...updates };
+            if ('rightClickAction' in normalizedUpdates) {
+                normalizedUpdates.rightClickAction = normalizeTerminalRightClickAction(
+                    normalizedUpdates.rightClickAction,
+                );
+            }
+            if ('copyOnSelect' in normalizedUpdates) {
+                normalizedUpdates.copyOnSelect = normalizedUpdates.copyOnSelect === true;
+            }
+            if ('idleHostPtySuspendMinutes' in normalizedUpdates) {
+                normalizedUpdates.idleHostPtySuspendMinutes = normalizeIdleHostPtySuspendMinutes(
+                    normalizedUpdates.idleHostPtySuspendMinutes,
+                );
+            }
+            if ('fontSize' in normalizedUpdates) {
+                normalizedUpdates.fontSize =
+                    normalizeTerminalFontSize(normalizedUpdates.fontSize) ??
+                    previous.terminal.fontSize;
+            }
+            if ('fontWeight' in normalizedUpdates) {
+                const nextWeight =
+                    normalizeTerminalFontWeight(normalizedUpdates.fontWeight) ??
+                    previous.terminal.fontWeight;
+                normalizedUpdates.fontWeight = nextWeight;
+                normalizedUpdates.fontWeightBold = resolveTerminalFontWeightBold(nextWeight);
+            }
+            const updated = {
+                ...previous,
+                terminal: { ...previous.terminal, ...normalizedUpdates },
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(normalizedUpdates) as Array<
+                keyof AppSettings['terminal']
+            >;
+            try {
+                await persistSettings({ terminal: normalizedUpdates });
+            } catch (error) {
+                console.error('Failed to save terminal settings:', error);
+                const current = get().settings;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys.map((key) => [key, previous.terminal[key]]),
+                ) as Partial<AppSettings['terminal']>;
+                set({
+                    settings: { ...current, terminal: { ...current.terminal, ...rollbackPatch } },
+                });
+                throw error;
+            }
+        },
+
+        updateLocalTermSettings: async (updates) => {
+            const previous = get().settings;
+            const updated = {
+                ...previous,
+                localTerm: { ...previous.localTerm, ...updates },
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['localTerm']>;
+            try {
+                await persistSettings({ localTerm: updates });
+            } catch (error) {
+                console.error('Failed to save local terminal settings:', error);
+                const current = get().settings;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys.map((key) => [key, previous.localTerm[key]]),
+                ) as Partial<AppSettings['localTerm']>;
+                set({
+                    settings: { ...current, localTerm: { ...current.localTerm, ...rollbackPatch } },
+                });
+                throw error;
+            }
+        },
+
+        updateStatusBarSettings: async (updates) => {
+            const previous = get().settings;
+            const previousBar = normalizeStatusBarSettings(previous.statusBar);
+            const updatedBar = { ...previousBar, ...updates };
+            const updated = {
+                ...previous,
+                statusBar: updatedBar,
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['statusBar']>;
+            try {
+                await persistSettings({ statusBar: updates });
+            } catch (error) {
+                console.error('Failed to save status bar settings:', error);
+                const current = get().settings;
+                if (current.statusBar !== updatedBar) {
                     throw error;
                 }
-            });
-        } finally {
-            set(state => ({ pendingKeybindingWrites: state.pendingKeybindingWrites - 1 }));
-        }
-    },
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys.map((key) => [key, previousBar[key]]),
+                ) as Partial<AppSettings['statusBar']>;
+                set({
+                    settings: {
+                        ...current,
+                        statusBar: {
+                            ...normalizeStatusBarSettings(current.statusBar),
+                            ...rollbackPatch,
+                        },
+                    },
+                });
+                throw error;
+            }
+        },
 
-    toggleExpandedFolder: async (folderPath) => {
-        const current = get().settings.expandedFolders || [];
-        const newFolders = current.includes(folderPath)
-            ? current.filter(f => f !== folderPath)
-            : [...current, folderPath];
+        updateSurveySettings: async (updates) => {
+            const previous = get().settings;
+            const previousSurvey = normalizeSurveySettings(previous.survey);
+            const updatedSurvey = { ...previousSurvey, ...updates };
+            const updated = {
+                ...previous,
+                survey: updatedSurvey,
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['survey']>;
+            try {
+                await persistSettings({ survey: updates });
+            } catch (error) {
+                console.error('Failed to save survey settings:', error);
+                const current = get().settings;
+                const currentSurvey = normalizeSurveySettings(current.survey);
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys
+                        .filter((key) => currentSurvey[key] === updatedSurvey[key])
+                        .map((key) => [key, previousSurvey[key]]),
+                ) as Partial<AppSettings['survey']>;
+                if (Object.keys(rollbackPatch).length === 0) {
+                    throw error;
+                }
+                set({
+                    settings: {
+                        ...current,
+                        survey: {
+                            ...currentSurvey,
+                            ...rollbackPatch,
+                        },
+                    },
+                });
+                throw error;
+            }
+        },
 
-        const previous = get().settings;
-        const updated = { ...previous, expandedFolders: newFolders };
-        set({ settings: updated });
-        try {
-            await persistSettings({ expandedFolders: newFolders });
-        } catch (error) {
-            console.error('Failed to save expanded folders:', error);
-            const current = get().settings;
-            set({ settings: { ...current, expandedFolders: previous.expandedFolders } });
-            throw error;
-        }
-    },
+        updateFileManagerSettings: async (updates) => {
+            const previous = get().settings;
+            const updated = {
+                ...previous,
+                fileManager: { ...previous.fileManager, ...updates },
+            };
+            set({ settings: updated });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['fileManager']>;
+            try {
+                await persistSettings({ fileManager: updates });
+            } catch (error) {
+                console.error('Failed to save file manager settings:', error);
+                const current = get().settings;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys.map((key) => [key, previous.fileManager[key]]),
+                ) as Partial<AppSettings['fileManager']>;
+                set({
+                    settings: {
+                        ...current,
+                        fileManager: { ...current.fileManager, ...rollbackPatch },
+                    },
+                });
+                throw error;
+            }
+        },
 
-    openSettings: (tab, chromeArea) => set({
-        isSettingsOpen: true,
-        settingsFocusTab: tab ?? null,
-        settingsFocusChromeArea: chromeArea ?? null,
-    }),
-    clearSettingsFocusTab: () => set({ settingsFocusTab: null, settingsFocusChromeArea: null }),
-    closeSettings: () => set({ isSettingsOpen: false, settingsFocusTab: null, settingsFocusChromeArea: null }),
-    fetchSystemInfo: async () => {
-        try {
-            const info = await invoke<{ app_root: string }>('get_system_info');
-            set({ appRoot: info.app_root });
-        } catch (e) {
-            console.error('Failed to fetch system info:', e);
-        }
-    }
-    });
+        updateGhostSuggestionsSettings: async (updates) => {
+            const prevSettings = get().settings;
+            const currentGhost = prevSettings.ghostSuggestions;
+            const updated = {
+                ...prevSettings,
+                ghostSuggestions: {
+                    ...currentGhost,
+                    ...updates,
+                    providers: {
+                        ...currentGhost.providers,
+                        ...(updates.providers || {}),
+                    },
+                },
+            };
+            set({ settings: updated });
+            const changedGhostKeys = Object.keys(updates).filter(
+                (key) => key !== 'providers',
+            ) as Array<Exclude<keyof AppSettings['ghostSuggestions'], 'providers'>>;
+            const changedProviderKeys = Object.keys(updates.providers || {}) as Array<
+                keyof AppSettings['ghostSuggestions']['providers']
+            >;
+            try {
+                await persistSettings({ ghostSuggestions: updates });
+            } catch (error) {
+                console.error('Failed to save ghost suggestion settings:', error);
+                const latestSettings = get().settings;
+                const rollbackGhostPatch = Object.fromEntries(
+                    changedGhostKeys.map((key) => [key, currentGhost[key]]),
+                ) as Partial<Omit<AppSettings['ghostSuggestions'], 'providers'>>;
+                const rollbackProviderPatch = Object.fromEntries(
+                    changedProviderKeys.map((key) => [key, currentGhost.providers[key]]),
+                ) as Partial<AppSettings['ghostSuggestions']['providers']>;
+                set({
+                    settings: {
+                        ...latestSettings,
+                        ghostSuggestions: {
+                            ...latestSettings.ghostSuggestions,
+                            ...rollbackGhostPatch,
+                            providers: {
+                                ...latestSettings.ghostSuggestions.providers,
+                                ...rollbackProviderPatch,
+                            },
+                        },
+                    },
+                });
+                throw error;
+            }
+        },
+
+        updateKeyboardSettings: async (updates) => {
+            const previous = get().settings;
+            const currentKeyboard = normalizeKeyboardSettings(previous.keyboard);
+            const nextKeyboard = normalizeKeyboardSettings({ ...currentKeyboard, ...updates });
+            set({ settings: { ...previous, keyboard: nextKeyboard } });
+            const changedKeys = Object.keys(updates) as Array<keyof AppSettings['keyboard']>;
+            try {
+                await persistSettings({ keyboard: nextKeyboard });
+            } catch (error) {
+                console.error('Failed to save keyboard settings:', error);
+                const current = get().settings;
+                // Compare the stored optimistic value: normalization copies exception
+                // arrays and would otherwise prevent rollback after a failed save.
+                const latest = current.keyboard;
+                const rollbackPatch = Object.fromEntries(
+                    changedKeys
+                        .filter((key) => latest[key] === nextKeyboard[key])
+                        .map((key) => [key, currentKeyboard[key]]),
+                ) as Partial<AppSettings['keyboard']>;
+                if (Object.keys(rollbackPatch).length > 0) {
+                    set({
+                        settings: {
+                            ...current,
+                            keyboard: normalizeKeyboardSettings({
+                                ...current.keyboard,
+                                ...rollbackPatch,
+                            }),
+                        },
+                    });
+                }
+                throw error;
+            }
+        },
+
+        updateKeybindings: async (updates) => {
+            // Snapshot intent before waiting; read the rollback baseline only after
+            // prior writes have settled so it can never contain their failed edits.
+            const patch = { ...updates };
+            set((state) => ({ pendingKeybindingWrites: state.pendingKeybindingWrites + 1 }));
+            try {
+                await keybindingWrites(async () => {
+                    const previous = get().settings;
+                    const updated = {
+                        ...previous,
+                        keybindings: { ...previous.keybindings, ...patch },
+                    };
+                    set({ settings: updated });
+                    const changedKeys = Object.keys(patch) as Array<
+                        keyof AppSettings['keybindings']
+                    >;
+                    try {
+                        await persistSettings({ keybindings: patch });
+                    } catch (error) {
+                        console.error('Failed to save keybindings:', error);
+                        const current = get().settings;
+                        const rollbackPatch = Object.fromEntries(
+                            changedKeys
+                                .filter(
+                                    (key) => current.keybindings[key] === updated.keybindings[key],
+                                )
+                                .map((key) => [key, previous.keybindings[key]]),
+                        ) as Partial<AppSettings['keybindings']>;
+                        set({
+                            settings: {
+                                ...current,
+                                keybindings: { ...current.keybindings, ...rollbackPatch },
+                            },
+                        });
+                        throw error;
+                    }
+                });
+            } finally {
+                set((state) => ({ pendingKeybindingWrites: state.pendingKeybindingWrites - 1 }));
+            }
+        },
+
+        toggleExpandedFolder: async (folderPath) => {
+            const current = get().settings.expandedFolders || [];
+            const newFolders = current.includes(folderPath)
+                ? current.filter((f) => f !== folderPath)
+                : [...current, folderPath];
+
+            const previous = get().settings;
+            const updated = { ...previous, expandedFolders: newFolders };
+            set({ settings: updated });
+            try {
+                await persistSettings({ expandedFolders: newFolders });
+            } catch (error) {
+                console.error('Failed to save expanded folders:', error);
+                const current = get().settings;
+                set({ settings: { ...current, expandedFolders: previous.expandedFolders } });
+                throw error;
+            }
+        },
+
+        openSettings: (tab, chromeArea) =>
+            set({
+                isSettingsOpen: true,
+                settingsFocusTab: tab ?? null,
+                settingsFocusChromeArea: chromeArea ?? null,
+            }),
+        clearSettingsFocusTab: () => set({ settingsFocusTab: null, settingsFocusChromeArea: null }),
+        closeSettings: () =>
+            set({ isSettingsOpen: false, settingsFocusTab: null, settingsFocusChromeArea: null }),
+        fetchSystemInfo: async () => {
+            try {
+                const info = await invoke<{ app_root: string }>('get_system_info');
+                set({ appRoot: info.app_root });
+            } catch (e) {
+                console.error('Failed to fetch system info:', e);
+            }
+        },
+    };
 };

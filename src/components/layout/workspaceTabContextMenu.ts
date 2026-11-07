@@ -1,5 +1,8 @@
 import type { Tab } from '../../features/connections/domain/types';
-import { isMainTabPinned, parseMainTabPresentation } from '../../features/workspace/domain/mainTabPresentation';
+import {
+    isMainTabPinned,
+    parseMainTabPresentation,
+} from '../../features/workspace/domain/mainTabPresentation';
 import type { ContextMenuItem } from '../ui/ContextMenu';
 
 interface TabMenuActions {
@@ -8,6 +11,7 @@ interface TabMenuActions {
     pin?: (pinned: boolean) => boolean;
     close: () => void;
     disconnect?: () => void;
+    contentItems?: readonly ContextMenuItem[];
     onError?: () => void;
 }
 
@@ -16,15 +20,29 @@ export function workspaceTabContextMenu(tab: Tab, actions: TabMenuActions): Cont
     const editable = parseMainTabPresentation(tab.presentation).ok;
     const pinned = isMainTabPinned(tab);
     const apply = (action: () => boolean | void) => {
-        try { if (action() !== false) return; } catch { /* Feature owner reports storage details. */ }
+        try {
+            if (action() !== false) {
+                return;
+            }
+        } catch {
+            /* Feature owner reports storage details. */
+        }
         actions.onError?.();
     };
     return [
         { label: 'Rename…', shortcut: 'F2', action: actions.rename },
-        { label: pinned ? 'Unpin tab' : 'Pin tab', disabled: !editable || !actions.pin,
-            action: () => apply(() => actions.pin?.(!pinned)) },
-        { label: 'Appearance…', disabled: !editable || !actions.appearance, action: () => actions.appearance?.() },
+        {
+            label: pinned ? 'Unpin tab' : 'Pin tab',
+            disabled: !editable || !actions.pin,
+            action: () => apply(() => actions.pin?.(!pinned)),
+        },
+        {
+            label: 'Appearance…',
+            disabled: !editable || !actions.appearance,
+            action: () => actions.appearance?.(),
+        },
         { separator: true },
+        ...(actions.contentItems ?? []),
         ...(actions.disconnect ? [{ label: 'Disconnect', action: actions.disconnect }] : []),
         { label: 'Close tab', action: actions.close },
     ];

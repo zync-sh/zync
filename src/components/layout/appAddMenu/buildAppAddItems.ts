@@ -1,12 +1,12 @@
-import { LOCAL_TERMINAL_CONNECTION_ID } from '../../../lib/terminal/connectionIds';
 import {
     DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS,
     formatConnectionListEndpoint,
     getConnectionPrimaryLabel,
 } from '../../../features/connections/domain/connectionDisplay';
 import type { Connection } from '../../../features/connections/domain/types';
-import type { AppAddHost, AppAddItem, AppAddOpenState } from './types';
 import { builtinWorkspaceViewLabel } from '../../../features/workspace/domain/registrations';
+import { LOCAL_TERMINAL_CONNECTION_ID } from '../../../lib/terminal/connectionIds';
+import type { AppAddHost, AppAddItem, AppAddOpenState } from './types';
 
 export const APP_ADD_GROUP_ORDER: AppAddItem['group'][] = ['create', 'go'];
 
@@ -20,7 +20,9 @@ function uniqueKeywords(...parts: Array<string | undefined>): string[] {
     const out: string[] = [];
     for (const part of parts) {
         const token = part?.trim().toLowerCase();
-        if (!token || seen.has(token)) continue;
+        if (!token || seen.has(token)) {
+            continue;
+        }
         seen.add(token);
         out.push(token);
     }
@@ -30,7 +32,9 @@ function uniqueKeywords(...parts: Array<string | undefined>): string[] {
 function sortHosts(hosts: readonly AppAddHost[]): AppAddHost[] {
     return [...hosts].sort((a, b) => {
         const fav = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
-        if (fav !== 0) return fav;
+        if (fav !== 0) {
+            return fav;
+        }
         return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
     });
 }
@@ -46,6 +50,7 @@ function hostAsConnection(host: AppAddHost): Connection {
     };
 }
 
+/** Project global create and navigation actions without opening a connection. */
 export function buildAppAddItems(input: {
     hosts: readonly AppAddHost[];
     open?: AppAddOpenState;
@@ -53,15 +58,16 @@ export function buildAppAddItems(input: {
 }): AppAddItem[] {
     const open = input.open ?? {};
     const openHostIds = open.openHostIds ?? new Set<string>();
-    const showHostAddresses = input.showHostAddressesInLists ?? DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
+    const showHostAddresses =
+        input.showHostAddressesInLists ?? DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS;
 
     const items: AppAddItem[] = [
         {
             id: 'create:host',
             group: 'create',
             kind: 'new-host',
-            label: 'New Host',
-            keywords: uniqueKeywords('new host', 'connection', 'ssh', 'add'),
+            label: 'New Connection',
+            keywords: uniqueKeywords('new host', 'connection', 'ssh', 'vnc', 'serial', 'add'),
         },
         {
             id: 'create:folder',
@@ -122,9 +128,10 @@ export function buildAppAddItems(input: {
             keywords: uniqueKeywords(host.name, host.host, host.username, host.folder, 'host'),
             hostId: host.id,
             hint: openHostIds.has(host.id) ? 'Open' : undefined,
-            detail: showHostAddresses && formatConnectionListEndpoint(conn) !== label
-                ? formatConnectionListEndpoint(conn)
-                : undefined,
+            detail:
+                showHostAddresses && formatConnectionListEndpoint(conn) !== label
+                    ? formatConnectionListEndpoint(conn)
+                    : undefined,
         });
     }
 

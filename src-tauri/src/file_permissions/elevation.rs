@@ -29,7 +29,7 @@ const STARTING: u8 = 0;
 const PASSWORD: u8 = 1;
 const PREPARED: u8 = 2;
 const BUSY: u8 = 3;
-type LiveSession = Arc<AsyncMutex<Handle<crate::ssh::Client>>>;
+type LiveSession = Arc<AsyncMutex<Arc<Handle<crate::ssh::Client>>>>;
 pub type Guard = Arc<dyn Fn() -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 type Answer = oneshot::Sender<Result<Reply, String>>;
 
@@ -639,7 +639,7 @@ async fn run(
 /// transport closes; never strand a root process, replay or disconnect a healthy
 /// shared transport to hide that underlying library limitation.
 async fn open_channel<H: russh::client::Handler + 'static>(
-    session: Arc<AsyncMutex<Handle<H>>>,
+    session: Arc<AsyncMutex<Arc<Handle<H>>>>,
     opening: Opening<H>,
     deadline: Instant,
 ) -> Result<Channel<Msg>, String> {
@@ -715,7 +715,7 @@ impl<H: russh::client::Handler + 'static> Drop for Opened<H> {
 
 struct Opens<H: russh::client::Handler> {
     capacity: Arc<Semaphore>,
-    blocked: Mutex<Vec<Weak<AsyncMutex<Handle<H>>>>>,
+    blocked: Mutex<Vec<Weak<AsyncMutex<Arc<Handle<H>>>>>>,
 }
 
 impl<H: russh::client::Handler> Default for Opens<H> {
@@ -735,7 +735,7 @@ struct Opening<H: russh::client::Handler> {
 impl<H: russh::client::Handler> Opens<H> {
     fn acquire(
         self: &Arc<Self>,
-        session: &Arc<AsyncMutex<Handle<H>>>,
+        session: &Arc<AsyncMutex<Arc<Handle<H>>>>,
     ) -> Result<Opening<H>, String> {
         self.allowed(session)?;
         let permit = self.capacity.clone().try_acquire_owned().map_err(|_| {
@@ -747,7 +747,7 @@ impl<H: russh::client::Handler> Opens<H> {
         })
     }
 
-    fn allowed(&self, session: &Arc<AsyncMutex<Handle<H>>>) -> Result<(), String> {
+    fn allowed(&self, session: &Arc<AsyncMutex<Arc<Handle<H>>>>) -> Result<(), String> {
         let mut blocked = self
             .blocked
             .lock()
@@ -762,7 +762,7 @@ impl<H: russh::client::Handler> Opens<H> {
         Ok(())
     }
 
-    fn block(&self, session: &Arc<AsyncMutex<Handle<H>>>) {
+    fn block(&self, session: &Arc<AsyncMutex<Arc<Handle<H>>>>) {
         if let Ok(mut blocked) = self.blocked.lock() {
             blocked.push(Arc::downgrade(session));
         }

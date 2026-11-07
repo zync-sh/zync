@@ -2,6 +2,7 @@
 src-tauri/src/security/collect.sh text eol=lf
 src-tauri/src/security/collectors/*.sh text eol=lf
 src-tauri/src/security/collectors/applications/*.sh text eol=lf
+src-tauri/licenses/novnc/*.patch text eol=lf
 tests/docker/hardening/*.sh text eol=lf
 tests/docker/hardening-runtime/*.sh text eol=lf
 *.js text eol=lf

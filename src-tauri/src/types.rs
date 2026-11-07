@@ -89,6 +89,7 @@ pub struct CredentialRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialItemKind {
+    #[serde(alias = "vnc-password", alias = "password")]
     SshPassword,
     SshPrivateKey,
     SshAgentKey,
