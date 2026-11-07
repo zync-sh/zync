@@ -45,6 +45,7 @@ mod transfers;
 mod file_transfers;
 pub use tunnels::{remote_forward_map_key, tunnel_runtime_id, TunnelManager};
 mod share;
+mod vnc;
 mod types;
 mod utils;
 mod vault;
@@ -102,6 +103,7 @@ pub fn run() {
             let app_state = AppState::new(data_dir.clone(), app_handle.clone());
             app.manage(app_state);
             app.manage(serial::SerialSessions::default());
+            app.manage(vnc::VncSessions::default());
             app.manage(security::SecurityJobs::default());
             app.manage(std::sync::Arc::new(security::snapshots::library::ReportLibrary::new(data_dir.join("security-reports.redb"))));
             app.manage(feedback_inbox::TransportState::default());
@@ -128,6 +130,7 @@ pub fn run() {
                     tauri::webview::PageLoadEvent::Started => {
                         if let Some(jobs) = webview.try_state::<security::SecurityJobs>() { jobs.cancel_all(); }
                         if let Some(sessions) = webview.try_state::<serial::SerialSessions>() { sessions.clear(); }
+                        if let Some(sessions) = webview.try_state::<vnc::VncSessions>() { sessions.cancel_all(); }
                         plugins::pane_document::clear_all(webview.app_handle());
                         plugins::terminal::clear_all(webview.app_handle());
                     }
@@ -165,6 +168,7 @@ pub fn run() {
                     if window.label() == "main" {
                         if let Some(jobs) = window.try_state::<security::SecurityJobs>() { jobs.cancel_all(); }
                         if let Some(sessions) = window.try_state::<serial::SerialSessions>() { sessions.clear(); }
+                        if let Some(sessions) = window.try_state::<vnc::VncSessions>() { sessions.cancel_all(); }
                         plugins::pane_document::clear_all(window.app_handle());
                         plugins::terminal::clear_all(window.app_handle());
                     }
@@ -249,6 +253,9 @@ pub fn run() {
             serial::serial_write,
             serial::serial_ack_output,
             serial::serial_close,
+            vnc::vnc_start,
+            vnc::vnc_start_direct,
+            vnc::vnc_stop,
             commands::connections_get,
             commands::connections_save,
             commands::connections_export_to_file,
@@ -498,6 +505,9 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 if let Some(sessions) = app.try_state::<serial::SerialSessions>() {
                     sessions.clear();
+                }
+                if let Some(sessions) = app.try_state::<vnc::VncSessions>() {
+                    sessions.cancel_all();
                 }
                 if let Some(recovery) = app.try_state::<plugins::recovery::PluginRecoveryState>() {
                     if let Err(error) = recovery.mark_clean_exit() {
