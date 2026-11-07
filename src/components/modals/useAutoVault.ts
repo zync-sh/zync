@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAppStore, Connection } from '../../store/useAppStore';
-import { useVaultStore } from '../../vault/useVaultStore';
-import { vaultIpc } from '../../vault/ipc';
+
 import {
     buildConnectionSavePayload,
     buildDefaultKeyVaultLabel,
@@ -12,6 +10,10 @@ import {
     writeManagedKeyIpc,
 } from '../../features/connections/infrastructure/connectionIpc';
 import { ToastType } from '../../store/toastSlice';
+import { Connection, useAppStore } from '../../store/useAppStore';
+import { isPasswordCredentialKind, PASSWORD_CREDENTIAL_KIND } from '../../vault/credentialTypes';
+import { vaultIpc } from '../../vault/ipc';
+import { useVaultStore } from '../../vault/useVaultStore';
 
 interface UseAutoVaultOptions {
     isOpen: boolean;
@@ -64,7 +66,9 @@ export function useAutoVault({
     const [keyVaultLabel, setKeyVaultLabel] = useState('');
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) {
+            return;
+        }
         setPastedKeyText('');
         setPastedPassphrase('');
         setPastedKeyError('');
@@ -82,20 +86,21 @@ export function useAutoVault({
         host: formData.host,
         username: formData.username,
     });
-    const effectiveKeyVaultLabel = keyVaultLabel.trim()
-        || (materializePasswordToVault ? defaultPasswordVaultLabel : defaultKeyVaultLabel);
-    const keyVaultLabelConflict = vaultStatus?.status === 'unlocked'
-        && (
-            (authMethod === 'vault'
-                && (vaultInputMode === 'paste' || vaultInputMode === 'import')
-                && !!pastedKeyText.trim())
-            || materializeLocalKeyToVault
-            || materializePasswordToVault
-        )
-        && vaultItems.some(i => i.label === effectiveKeyVaultLabel);
+    const effectiveKeyVaultLabel =
+        keyVaultLabel.trim() ||
+        (materializePasswordToVault ? defaultPasswordVaultLabel : defaultKeyVaultLabel);
+    const keyVaultLabelConflict =
+        vaultStatus?.status === 'unlocked' &&
+        ((authMethod === 'vault' &&
+            (vaultInputMode === 'paste' || vaultInputMode === 'import') &&
+            !!pastedKeyText.trim()) ||
+            materializeLocalKeyToVault ||
+            materializePasswordToVault) &&
+        vaultItems.some((i) => i.label === effectiveKeyVaultLabel);
 
-    const replacedAuthItemId = activeEditingConnectionId
-        ? useAppStore.getState().connections.find(c => c.id === activeEditingConnectionId)?.authRef?.itemId
+    const replacedAuthRef = activeEditingConnectionId
+        ? useAppStore.getState().connections.find((c) => c.id === activeEditingConnectionId)
+              ?.authRef
         : undefined;
 
     const resolveVaultId = async (): Promise<string> => {
@@ -116,17 +121,28 @@ export function useAutoVault({
         );
     };
 
+    /** Keep replaced passwords reusable by saved profiles, including profiles on other devices. */
     const finalizeVaultReplacement = async () => {
         setPastedKeyText('');
         setPastedPassphrase('');
-        if (!replacedAuthItemId) return;
+        if (!replacedAuthRef) {
+            return;
+        }
 
-        const { connections } = useAppStore.getState();
-        const sharedReferenceCount = connections.filter(connection =>
-            connection.id !== activeEditingConnectionId
-            && connection.authRef?.itemId === replacedAuthItemId,
-        ).length;
-        if (sharedReferenceCount > 0) {
+        const { itemId, credentialId, itemKind } = replacedAuthRef;
+        if (isPasswordCredentialKind(itemKind)) {
+            return;
+        }
+
+        const shared = useAppStore
+            .getState()
+            .connections.some(
+                (connection) =>
+                    connection.id !== activeEditingConnectionId &&
+                    (connection.authRef?.itemId === itemId ||
+                        (credentialId && connection.authRef?.credentialId === credentialId)),
+            );
+        if (shared) {
             showToast(
                 'info',
                 'Previous vault credential was left in place because other hosts still use it.',
@@ -135,9 +151,12 @@ export function useAutoVault({
         }
 
         try {
-            await vaultIpc.itemDelete(replacedAuthItemId);
+            await vaultIpc.itemDelete(itemId);
         } catch {
-            showToast('error', 'Old vault credential could not be deleted — remove it manually in Vault tab.');
+            showToast(
+                'error',
+                'Old vault credential could not be deleted — remove it manually in Vault tab.',
+            );
         }
     };
 
@@ -158,16 +177,16 @@ export function useAutoVault({
     ): string | null => {
         const keyText = candidate;
         if (!keyText.trim()) {
-            const message = source === 'file'
-                ? 'Selected key file is empty.'
-                : 'Please paste a private key.';
+            const message =
+                source === 'file' ? 'Selected key file is empty.' : 'Please paste a private key.';
             setKeyValidationError(source, message);
             return null;
         }
         if (!isValidPrivateKeyFormat(keyText)) {
-            const message = source === 'file'
-                ? 'Selected key file must include valid BEGIN/END private key markers.'
-                : 'Pasted key must include valid BEGIN/END private key markers.';
+            const message =
+                source === 'file'
+                    ? 'Selected key file must include valid BEGIN/END private key markers.'
+                    : 'Pasted key must include valid BEGIN/END private key markers.';
             setKeyValidationError(source, message);
             return null;
         }
@@ -180,7 +199,10 @@ export function useAutoVault({
         try {
             await vaultIpc.itemDelete(itemId);
         } catch (cleanupError: unknown) {
-            console.warn('[Vault] Failed to delete orphaned vault item after save failure:', cleanupError);
+            console.warn(
+                '[Vault] Failed to delete orphaned vault item after save failure:',
+                cleanupError,
+            );
             showToast(
                 'error',
                 'Host save failed and the new vault credential could not be removed automatically — delete it in the Vault tab.',
@@ -192,11 +214,13 @@ export function useAutoVault({
         material?: VaultKeyMaterialOverride,
     ): Promise<{ formPatch: Partial<Connection>; createdItemId: string } | null> => {
         const keyText = validateKeyText(material?.keyText, material?.source ?? 'paste');
-        if (!keyText) return null;
+        if (!keyText) {
+            return null;
+        }
 
         const vaultId = await resolveVaultId();
         const currentItems = await vaultIpc.itemList();
-        if (currentItems.some(item => item.label === effectiveKeyVaultLabel)) {
+        if (currentItems.some((item) => item.label === effectiveKeyVaultLabel)) {
             throw new Error(`A Vault item named "${effectiveKeyVaultLabel}" already exists.`);
         }
         const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-private-key', {
@@ -225,11 +249,15 @@ export function useAutoVault({
     const buildVaultKeyConnection = async (
         material?: VaultKeyMaterialOverride,
     ): Promise<VaultKeyConnectionResult | null> => {
-        if (!validationOk) return null;
+        if (!validationOk) {
+            return null;
+        }
         let createdItemId: string | null = null;
         try {
             const saved = await savePastedKeyToVault(material);
-            if (!saved) return null;
+            if (!saved) {
+                return null;
+            }
             createdItemId = saved.createdItemId;
             const { connections } = useAppStore.getState();
             const connection = buildConnectionSavePayload({
@@ -243,12 +271,18 @@ export function useAutoVault({
             if (createdItemId) {
                 await deleteCreatedVaultItemBestEffort(createdItemId, e);
             }
-            showToast('error', `Failed to store key: ${e instanceof Error ? e.message : String(e)}`);
+            showToast(
+                'error',
+                `Failed to store key: ${e instanceof Error ? e.message : String(e)}`,
+            );
             return null;
         }
     };
 
-    const savePasswordToVault = async (): Promise<{ formPatch: Partial<Connection>; createdItemId: string } | null> => {
+    const savePasswordToVault = async (): Promise<{
+        formPatch: Partial<Connection>;
+        createdItemId: string;
+    } | null> => {
         const password = formData.password ?? '';
         if (!password) {
             showToast('error', 'Password is required to store in Vault.');
@@ -257,10 +291,10 @@ export function useAutoVault({
 
         const vaultId = await resolveVaultId();
         const currentItems = await vaultIpc.itemList();
-        if (currentItems.some(item => item.label === effectiveKeyVaultLabel)) {
+        if (currentItems.some((item) => item.label === effectiveKeyVaultLabel)) {
             throw new Error(`A Vault item named "${effectiveKeyVaultLabel}" already exists.`);
         }
-        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, 'ssh-password', {
+        const item = await vaultIpc.itemCreate(effectiveKeyVaultLabel, PASSWORD_CREDENTIAL_KIND, {
             password,
         });
         return {
@@ -273,7 +307,7 @@ export function useAutoVault({
                     vaultId,
                     credentialId: item.logicalId,
                     itemId: item.id,
-                    itemKind: 'ssh-password',
+                    itemKind: PASSWORD_CREDENTIAL_KIND,
                     purpose: 'ssh-auth',
                 },
             },
@@ -281,11 +315,15 @@ export function useAutoVault({
     };
 
     const buildVaultPasswordConnection = async (): Promise<VaultKeyConnectionResult | null> => {
-        if (!validationOk) return null;
+        if (!validationOk) {
+            return null;
+        }
         let createdItemId: string | null = null;
         try {
             const saved = await savePasswordToVault();
-            if (!saved) return null;
+            if (!saved) {
+                return null;
+            }
             createdItemId = saved.createdItemId;
             const { connections } = useAppStore.getState();
             const connection = buildConnectionSavePayload({
@@ -299,7 +337,10 @@ export function useAutoVault({
             if (createdItemId) {
                 await deleteCreatedVaultItemBestEffort(createdItemId, e);
             }
-            showToast('error', `Failed to store password: ${e instanceof Error ? e.message : String(e)}`);
+            showToast(
+                'error',
+                `Failed to store password: ${e instanceof Error ? e.message : String(e)}`,
+            );
             return null;
         }
     };
@@ -307,7 +348,9 @@ export function useAutoVault({
     /** Non-vault paste: write PEM to managed keys dir and return path. */
     const writePastedKeyAsManagedFile = async (): Promise<string | null> => {
         const keyText = validateKeyText();
-        if (!keyText) return null;
+        if (!keyText) {
+            return null;
+        }
         try {
             const suggestedName = (formData.name || formData.host || 'pasted_key').trim();
             return await writeManagedKeyIpc({
@@ -344,12 +387,18 @@ export function useAutoVault({
     };
 
     return {
-        vaultStatus, vaultItems, refreshItems,
-        pastedKeyText, setPastedKeyText,
-        pastedPassphrase, setPastedPassphrase,
-        pastedKeyError, setPastedKeyError,
+        vaultStatus,
+        vaultItems,
+        refreshItems,
+        pastedKeyText,
+        setPastedKeyText,
+        pastedPassphrase,
+        setPastedPassphrase,
+        pastedKeyError,
+        setPastedKeyError,
         localKeyVaultError,
-        keyVaultLabel, setKeyVaultLabel,
+        keyVaultLabel,
+        setKeyVaultLabel,
         defaultKeyVaultLabel,
         defaultPasswordVaultLabel,
         keyVaultLabelConflict,

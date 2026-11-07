@@ -1,134 +1,142 @@
 import { useRef, useState } from 'react';
-import { useCredentialFileImports } from './useCredentialFileImports';
-import { vaultIpc } from '../../../../../vault/ipc';
+
 import type { ToastType } from '../../../../../store/toastSlice';
 import {
-  isSupportedCreateCredentialKind,
-  sshPrivateKeySecretValues,
-  type SupportedCreateCredentialKind,
+    isSupportedCreateCredentialKind,
+    type SupportedCreateCredentialKind,
+    sshPrivateKeySecretValues,
 } from '../../../../../vault/credentialTypes';
+import { vaultIpc } from '../../../../../vault/ipc';
+import { useCredentialFileImports } from './useCredentialFileImports';
 
 interface UseAddCredentialModalOptions {
-  isUnlocked: boolean;
-  showToast: (type: ToastType, message: string) => void;
-  onCreated: () => Promise<void>;
+    isUnlocked: boolean;
+    showToast: (type: ToastType, message: string) => void;
+    onCreated: () => Promise<void>;
 }
 
 /** Create typed vault credentials; optional certificates remain encrypted with their SSH key. */
 export function useAddCredentialModal({
-  isUnlocked,
-  showToast,
-  onCreated,
+    isUnlocked,
+    showToast,
+    onCreated,
 }: UseAddCredentialModalOptions) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [kind, setKind] = useState<SupportedCreateCredentialKind>('ssh-private-key');
-  const [label, setLabel] = useState('');
-  const [secret, setSecret] = useState('');
-  const [passphrase, setPassphrase] = useState('');
-  const [certificate, setCertificate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const creatingRef = useRef(false);
-  const fileImports = useCredentialFileImports();
+    const [isOpen, setIsOpen] = useState(false);
+    const [kind, setKind] = useState<SupportedCreateCredentialKind>('ssh-private-key');
+    const [label, setLabel] = useState('');
+    const [secret, setSecret] = useState('');
+    const [passphrase, setPassphrase] = useState('');
+    const [certificate, setCertificate] = useState('');
+    const [notes, setNotes] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
+    const creatingRef = useRef(false);
+    const fileImports = useCredentialFileImports();
 
-  /** Clear editor-held key, passphrase and certificate text when closing or after saving. */
-  const reset = () => {
-    setKind('ssh-private-key');
-    setLabel('');
-    setSecret('');
-    setPassphrase('');
-    setCertificate('');
-    setNotes('');
-  };
+    /** Clear editor-held key, passphrase and certificate text when closing or after saving. */
+    const reset = () => {
+        setKind('ssh-private-key');
+        setLabel('');
+        setSecret('');
+        setPassphrase('');
+        setCertificate('');
+        setNotes('');
+    };
 
-  const open = () => setIsOpen(true);
+    const open = () => setIsOpen(true);
 
-  const close = () => {
-    if (creatingRef.current || isCreating) return;
-    setIsOpen(false);
-    reset();
-  };
+    const close = () => {
+        if (creatingRef.current || isCreating) {
+            return;
+        }
+        setIsOpen(false);
+        reset();
+    };
 
-  /** Send named fields to native validation/storage, never copying them onto a host record. */
-  const submit = async () => {
-    if (creatingRef.current || fileImports.hasPendingImports()) return;
+    /** Send named fields to native validation/storage, never copying them onto a host record. */
+    const submit = async () => {
+        if (creatingRef.current || fileImports.hasPendingImports()) {
+            return;
+        }
 
-    if (!isUnlocked) {
-      showToast('error', 'Unlock the vault before adding credentials.');
-      return;
-    }
+        if (!isUnlocked) {
+            showToast('error', 'Unlock the vault before adding credentials.');
+            return;
+        }
 
-    const trimmedLabel = label.trim();
-    const rawSecret = secret;
-    const rawPassphrase = passphrase;
+        const trimmedLabel = label.trim();
+        const rawSecret = secret;
+        const rawPassphrase = passphrase;
 
-    if (!isSupportedCreateCredentialKind(kind)) {
-      showToast('error', 'This credential type is not ready yet.');
-      return;
-    }
+        if (!isSupportedCreateCredentialKind(kind)) {
+            showToast('error', 'This credential type is not ready yet.');
+            return;
+        }
 
-    if (!trimmedLabel) {
-      showToast('error', 'Credential label is required.');
-      return;
-    }
-    if (!rawSecret.trim()) {
-      showToast('error', 'Credential secret is required.');
-      return;
-    }
+        if (!trimmedLabel) {
+            showToast('error', 'Credential label is required.');
+            return;
+        }
+        if (!rawSecret.trim()) {
+            showToast('error', 'Credential secret is required.');
+            return;
+        }
 
-    const secretValues: Record<string, string> =
-      kind === 'ssh-private-key'
-        ? sshPrivateKeySecretValues(rawSecret, rawPassphrase, certificate)
-        : { password: rawSecret };
+        const secretValues: Record<string, string> =
+            kind === 'ssh-private-key'
+                ? sshPrivateKeySecretValues(rawSecret, rawPassphrase, certificate)
+                : { password: rawSecret };
 
-    creatingRef.current = true;
-    setIsCreating(true);
-    try {
-      const item = await vaultIpc.itemCreate(
-        trimmedLabel,
+        creatingRef.current = true;
+        setIsCreating(true);
+        try {
+            const item = await vaultIpc.itemCreate(
+                trimmedLabel,
+                kind,
+                secretValues,
+                notes.trim() || undefined,
+            );
+            setIsOpen(false);
+            reset();
+            showToast('success', `Added "${item.label}" to Vault.`);
+            try {
+                await onCreated();
+            } catch (refreshError) {
+                console.warn('[Vault] Post-create refresh failed:', refreshError);
+                const refreshMessage =
+                    refreshError instanceof Error ? refreshError.message : String(refreshError);
+                showToast(
+                    'info',
+                    `Credential added, but refresh did not complete: ${refreshMessage}`,
+                );
+            }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            showToast('error', `Failed to add credential: ${msg}`);
+        } finally {
+            creatingRef.current = false;
+            setIsCreating(false);
+        }
+    };
+
+    return {
+        isOpen,
         kind,
-        secretValues,
-        notes.trim() || undefined,
-      );
-      setIsOpen(false);
-      reset();
-      showToast('success', `Added "${item.label}" to Vault. You can now assign it to hosts.`);
-      try {
-        await onCreated();
-      } catch (refreshError) {
-        console.warn('[Vault] Post-create refresh failed:', refreshError);
-        const refreshMessage =
-          refreshError instanceof Error ? refreshError.message : String(refreshError);
-        showToast('info', `Credential added, but refresh did not complete: ${refreshMessage}`);
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      showToast('error', `Failed to add credential: ${msg}`);
-    } finally {
-      creatingRef.current = false;
-      setIsCreating(false);
-    }
-  };
-
-  return {
-    isOpen,
-    kind,
-    label,
-    secret,
-    passphrase,
-    certificate,
-    notes,
-    isCreating,
-    isImporting: fileImports.isImporting,
-    beginImport: fileImports.beginImport,
-    open,
-    close,
-    setKind,
-    setLabel,
-    setSecret,
-    setPassphrase,
-    setCertificate,
-    setNotes,
-    submit,
-  };
+        label,
+        secret,
+        passphrase,
+        certificate,
+        notes,
+        isCreating,
+        isImporting: fileImports.isImporting,
+        beginImport: fileImports.beginImport,
+        open,
+        close,
+        setKind,
+        setLabel,
+        setSecret,
+        setPassphrase,
+        setCertificate,
+        setNotes,
+        submit,
+    };
 }

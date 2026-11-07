@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Connection, Tab } from '../../../../../features/connections/domain/types';
 import { disconnectVaultBackedIpc } from '../../../../../features/connections/infrastructure/connectionIpc';
 import type { ToastType } from '../../../../../store/toastSlice';
+import { useAppStore } from '../../../../../store/useAppStore';
 import {
     formatDeferredVaultKeysMessage,
     hasDeferredVaultKeys,
     localVaultRestoreState,
 } from '../../../../../vault/connectionsRestore';
-import type { VaultItem } from '../../../../../vault/ipc';
+import { unreferencedVaultDuplicates } from '../../../../../vault/credentialReferences';
 import { type SecureToVaultPreview, vaultIpc } from '../../../../../vault/ipc';
 import { parseSyncInvokeError } from '../../../../../vault/syncError';
 import {
@@ -36,7 +37,6 @@ import { useConnectionsRestore } from './useConnectionsRestore';
 interface UseVaultPanelActionsOptions {
     connections: Connection[];
     tabs: Tab[];
-    items: VaultItem[];
     showToast: (type: ToastType, message: string) => void;
     showConfirmDialog: (opts: {
         title: string;
@@ -110,7 +110,6 @@ function connectionUsesVaultCredential(
 export function useVaultPanelActions({
     connections,
     tabs,
-    items,
     showToast,
     showConfirmDialog,
     onLocked,
@@ -1010,7 +1009,7 @@ export function useVaultPanelActions({
         const displayLabel = privacyLabel(label);
         const confirmed = await showConfirmDialog({
             title: 'Delete Vault Item',
-            message: `Delete "${displayLabel}"? Connections referencing this item will fail to connect.`,
+            message: `Delete "${displayLabel}"? Update any SSH hosts or VNC profiles using this credential before reconnecting.`,
             confirmText: 'Delete',
             variant: 'danger',
         });
@@ -1031,63 +1030,67 @@ export function useVaultPanelActions({
     // ── Deduplicate ───────────────────────────────────────────────────────────
     const [isDeduplicating, setIsDeduplicating] = useState(false);
 
-    /** Clean up duplicate items while preserving records referenced by connections. */
+    /** Recheck the confirmed records against the latest saved links before deleting duplicates. */
     const handleDeduplicateItems = async () => {
-        const referencedIds = new Set(connections.map((c) => c.authRef?.itemId).filter(Boolean));
-        const referencedCredentialIds = new Set(
-            connections.map((c) => c.authRef?.credentialId).filter(Boolean),
+        const app = useAppStore.getState();
+        const vault = useVaultStore.getState();
+        if (
+            vault.status?.status !== 'unlocked' ||
+            app.isLoadingSettings ||
+            app.isReloadingSettings
+        ) {
+            showToast(
+                'info',
+                'Wait for settings to load and unlock Vault before removing duplicates.',
+            );
+            return;
+        }
+        const candidates = unreferencedVaultDuplicates(
+            vault.items,
+            app.connections,
+            app.settings.vncProfiles,
         );
-        // connections may reference credentials by logical ID (credentialId),
-        // so when referencedCredentialIds includes item.logicalId we also keep
-        // item.id in referencedIds before deduplicating items.
-        for (const item of items) {
-            if (referencedCredentialIds.has(item.logicalId)) {
-                referencedIds.add(item.id);
-            }
+        if (candidates.length === 0) {
+            return;
         }
-
-        const toDelete: string[] = [];
-        const groups = new Map<string, typeof items>();
-        for (const item of items) {
-            const fingerprint = `${item.kind}:${item.secretFingerprint}`;
-            const group = groups.get(fingerprint);
-            if (group) {
-                group.push(item);
-            } else {
-                groups.set(fingerprint, [item]);
-            }
-        }
-        for (const group of groups.values()) {
-            if (group.length <= 1) {
-                continue;
-            }
-            const sorted = [...group].sort((a, b) => {
-                const aRef = referencedIds.has(a.id) ? 1 : 0;
-                const bRef = referencedIds.has(b.id) ? 1 : 0;
-                if (aRef !== bRef) {
-                    return bRef - aRef;
-                }
-                return b.createdAt - a.createdAt;
-            });
-            const [, ...duplicates] = sorted;
-            toDelete.push(...duplicates.map((i) => i.id));
-        }
-
-        const duplicateCount = toDelete.length;
         const confirmed = await showConfirmDialog({
             title: 'Remove Duplicate Items',
-            message: `Found ${duplicateCount} duplicate vault item(s). Items referenced by a connection are kept; unreferenced duplicates are deleted. This cannot be undone.`,
+            message: `Remove ${candidates.length} unreferenced duplicate Vault item(s)? Links to SSH hosts and VNC profiles on this device are protected. This cannot be undone.`,
             confirmText: 'Remove Duplicates',
             variant: 'danger',
         });
         if (!confirmed) {
             return;
         }
+        const latestApp = useAppStore.getState();
+        const latestVault = useVaultStore.getState();
+        if (
+            latestVault.status?.status !== 'unlocked' ||
+            latestVault.status.vaultId !== vault.status.vaultId ||
+            latestApp.isLoadingSettings ||
+            latestApp.isReloadingSettings
+        ) {
+            showToast('info', 'Vault or settings changed. Review duplicates again.');
+            return;
+        }
+        const confirmedItems = new Map(candidates.map((item) => [item.id, item]));
+        const toDelete = unreferencedVaultDuplicates(
+            latestVault.items,
+            latestApp.connections,
+            latestApp.settings.vncProfiles,
+        ).filter(({ id, revision, secretFingerprint }) => {
+            const item = confirmedItems.get(id);
+            return item?.revision === revision && item.secretFingerprint === secretFingerprint;
+        });
+        if (toDelete.length === 0) {
+            showToast('info', 'The confirmed items are no longer unreferenced duplicates.');
+            return;
+        }
 
         setIsDeduplicating(true);
         try {
             const deleteResults = await Promise.allSettled(
-                toDelete.map((id) => vaultIpc.itemDelete(id)),
+                toDelete.map(({ id }) => vaultIpc.itemDelete(id)),
             );
             const succeededCount = deleteResults.filter((r) => r.status === 'fulfilled').length;
             const failedCount = deleteResults.filter((r) => r.status === 'rejected').length;
