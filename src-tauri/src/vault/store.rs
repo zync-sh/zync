@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -43,9 +45,80 @@ fn validate_certificate_attachment(
         .map_err(VaultError::InvalidData)
 }
 
+// Cache admission is a memory budget, never a listing-size limit.
+const VAULT_METADATA_CACHE_BYTES: usize = 4 * 1024 * 1024;
+
+struct VaultMetadataEntry {
+    digest: [u8; 32],
+    metadata: VaultItemMeta,
+    bytes: usize,
+    seen: bool,
+}
+
+#[derive(Default)]
+struct VaultMetadataCache {
+    entries: HashMap<String, VaultMetadataEntry>,
+    bytes: usize,
+}
+
+impl VaultMetadataCache {
+    /// Release all session-owned DTOs, including labels and keyed fingerprints.
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+    /// Bound retained DTO bytes while always returning the complete native listing.
+    fn remember(
+        &mut self,
+        id: &str,
+        digest: [u8; 32],
+        metadata: &VaultItemMeta,
+    ) -> Result<(), VaultError> {
+        let bytes = serde_json::to_vec(metadata)?
+            .len()
+            .saturating_mul(2)
+            .saturating_add(id.len() + 128);
+        if let Some(previous) = self.entries.remove(id) {
+            self.bytes = self.bytes.saturating_sub(previous.bytes);
+        }
+        if bytes > VAULT_METADATA_CACHE_BYTES {
+            return Ok(());
+        }
+        if self.bytes.saturating_add(bytes) > VAULT_METADATA_CACHE_BYTES {
+            return Ok(());
+        }
+        self.entries.insert(
+            id.into(),
+            VaultMetadataEntry {
+                digest,
+                metadata: metadata.clone(),
+                bytes,
+                seen: true,
+            },
+        );
+        self.bytes += bytes;
+        Ok(())
+    }
+    /// Deleted entries cannot remain resident after the next successful listing.
+    fn prune(&mut self) {
+        self.entries.retain(|_, entry| {
+            if !entry.seen {
+                self.bytes = self.bytes.saturating_sub(entry.bytes);
+            }
+            entry.seen
+        });
+    }
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 pub struct VaultService {
+    /// Validated from this open database; never trusts optional legacy metadata counts.
+    live_count_cache: Cell<Option<u64>>,
+    /// Renderer DTOs only: no plaintext secret fields are retained here.
+    metadata_cache: RefCell<VaultMetadataCache>,
+    #[cfg(test)]
+    metadata_decryptions: Cell<usize>,
     #[cfg(test)]
     pub(crate) restore_commits: std::cell::Cell<usize>,
     #[cfg(test)]
@@ -71,6 +144,10 @@ impl VaultService {
     /// Construct a locked service for the selected data directory without opening its database.
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
+            live_count_cache: Cell::new(None),
+            metadata_cache: RefCell::new(VaultMetadataCache::default()),
+            #[cfg(test)]
+            metadata_decryptions: Cell::new(0),
             #[cfg(test)]
             restore_commits: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -131,6 +208,7 @@ impl VaultService {
                 write_txn.open_table(LOGICAL_IDS)?;
                 write_txn.open_multimap_table(REVISION_HISTORY)?;
             }
+            self.live_count_cache.set(None);
             write_txn.commit()?;
             self.db = Some(db);
         }
@@ -154,6 +232,7 @@ impl VaultService {
         self.status_after_session_attempt()
     }
 
+    /// Report current lock state and reuse only a count validated for this database incarnation.
     fn status_after_session_attempt(&mut self) -> Result<VaultStatus, VaultError> {
         self.try_open()?;
 
@@ -177,7 +256,7 @@ impl VaultService {
             return Ok(VaultStatus::Uninitialized);
         }
 
-        let item_count = live_record_count(&read_txn)?;
+        let item_count = self.cached_live_record_count(&read_txn)?;
 
         if self.vek.is_none() {
             let remembered_on_device = meta_table.get(SESSION_CACHE_VERIFIER_META_KEY)?.is_some();
@@ -188,6 +267,63 @@ impl VaultService {
             vault_id,
             item_count,
         })
+    }
+
+    /// Reuse a validated count until a service-owned database transaction can change it.
+    fn cached_live_record_count(&self, transaction: &ReadTransaction) -> Result<u64, VaultError> {
+        if let Some(count) = self.live_count_cache.get() {
+            return Ok(count);
+        }
+        let count = live_record_count(transaction)?;
+        self.live_count_cache.set(Some(count));
+        Ok(count)
+    }
+
+    /// Reuse metadata only for exactly matching encrypted records during this unlocked session.
+    pub fn item_list_metadata(&self) -> Result<Vec<VaultItemMeta>, VaultError> {
+        let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
+        let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
+        let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
+        let transaction = db.begin_read()?;
+        let records = match transaction.open_table(RECORDS) {
+            Ok(records) => records,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                self.metadata_cache.borrow_mut().clear();
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let mut cache = self.metadata_cache.borrow_mut();
+        for entry in cache.entries.values_mut() {
+            entry.seen = false;
+        }
+        let mut result = Vec::new();
+        for row in records.iter()? {
+            let (id, bytes) = row?;
+            let digest: [u8; 32] = Sha256::digest(bytes.value()).into();
+            if let Some(cached) = cache
+                .entries
+                .get_mut(id.value())
+                .filter(|entry| entry.digest == digest)
+            {
+                cached.seen = true;
+                result.push(cached.metadata.clone());
+                continue;
+            }
+            let stored: StoredEnvelope = serde_json::from_slice(bytes.value())?;
+            if stored.deleted {
+                continue;
+            }
+            let record = decrypt_stored(vek, &meta.vault_id, &stored)?;
+            #[cfg(test)]
+            self.metadata_decryptions
+                .set(self.metadata_decryptions.get() + 1);
+            let metadata = self.item_meta(&record)?;
+            cache.remember(id.value(), digest, &metadata)?;
+            result.push(metadata);
+        }
+        cache.prune();
+        Ok(result)
     }
 
     fn locked_status(
@@ -254,6 +390,8 @@ impl VaultService {
         self.recovery_passphrase_change_authorized = false;
 
         if self.migrate_live_records_to_current_schema().is_err() {
+            self.metadata_cache.borrow_mut().clear();
+            self.live_count_cache.set(None);
             self.vek = None;
             self.meta = None;
             self.recovery_passphrase_change_authorized = false;
@@ -315,6 +453,7 @@ impl VaultService {
         }
     }
 
+    /// Persist an authenticated remembered-session verifier before reporting it available.
     fn write_session_cache_verifier(&self) -> Result<(), VaultError> {
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
@@ -328,10 +467,12 @@ impl VaultService {
                 serde_json::to_vec(&stored)?.as_slice(),
             )?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
         Ok(())
     }
 
+    /// Remove remembered-session metadata while invalidating the derived status count.
     fn clear_session_cache_verifier(&self) -> Result<(), VaultError> {
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let write_txn = db.begin_write()?;
@@ -341,15 +482,17 @@ impl VaultService {
                 meta_table.remove(SESSION_CACHE_VERIFIER_META_KEY)?;
             }
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
         Ok(())
     }
 
+    /// Build the unlocked DTO using the same validated count as passive status.
     fn build_unlocked_status(&self) -> Result<VaultStatus, VaultError> {
         let meta = self.meta.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
         let read_txn = db.begin_read()?;
-        let item_count = live_record_count(&read_txn)?;
+        let item_count = self.cached_live_record_count(&read_txn)?;
         Ok(VaultStatus::Unlocked {
             vault_id: meta.vault_id.clone(),
             item_count,
@@ -358,6 +501,7 @@ impl VaultService {
 
     // ── Initialize ────────────────────────────────────────────────────────────
 
+    /// Create the encrypted vault and initial key slot without retaining prior derived state.
     pub fn initialize(
         &mut self,
         passphrase: &str,
@@ -426,6 +570,7 @@ impl VaultService {
             write_txn.open_table(LOGICAL_IDS)?;
             write_txn.open_multimap_table(REVISION_HISTORY)?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
 
         self.db = Some(db);
@@ -441,6 +586,7 @@ impl VaultService {
 
     // ── Unlock ────────────────────────────────────────────────────────────────
 
+    /// Verify the passphrase, migrate compatible records, and publish the unlocked status.
     pub fn unlock(
         &mut self,
         passphrase: &str,
@@ -496,6 +642,8 @@ impl VaultService {
         // Idempotent compatibility migration: persist typed envelopes, named
         // secret values, canonical kinds, and the current credential schema.
         if let Err(error) = self.migrate_live_records_to_current_schema() {
+            self.metadata_cache.borrow_mut().clear();
+            self.live_count_cache.set(None);
             self.vek = None;
             self.meta = None;
             self.recovery_passphrase_change_authorized = false;
@@ -541,6 +689,7 @@ impl VaultService {
         Ok(())
     }
 
+    /// Normalize legacy encrypted records and identity mappings atomically, invalidating derived counts.
     fn migrate_live_records_to_current_schema(&self) -> Result<u64, VaultError> {
         let vek = self.vek.as_ref().ok_or(VaultError::Locked)?;
         let db = self.db.as_ref().ok_or(VaultError::NotInitialized)?;
@@ -632,14 +781,18 @@ impl VaultService {
                 logical_ids.insert(logical_id.as_str(), item_id.as_str())?;
             }
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
         Ok(rewrites.len() as u64)
     }
 
     // ── Lock ──────────────────────────────────────────────────────────────────
 
+    /// Drop the unlock key and release every session-derived metadata/count cache.
     pub fn lock(&mut self) {
         // SecretKey implements ZeroizeOnDrop — drops immediately here.
+        self.metadata_cache.borrow_mut().clear();
+        self.live_count_cache.set(None);
         self.vek = None;
         self.meta = None;
         self.suppress_session_cache_unlock = true;
@@ -729,6 +882,7 @@ impl VaultService {
         self.item_create_with_secret_values(label, kind, &secret_values, notes, logical_id)
     }
 
+    /// Validate and encrypt named fields, then commit a unique logical identity and updated count.
     pub fn item_create_with_secret_values(
         &self,
         label: &str,
@@ -815,6 +969,7 @@ impl VaultService {
             drop(meta_bytes);
             meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
 
         Ok(record)
@@ -856,6 +1011,7 @@ impl VaultService {
                     anyhow::anyhow!("injected restore commit failure"),
                 )));
             }
+            self.live_count_cache.set(None);
             batch
                 .transaction
                 .commit()
@@ -1056,6 +1212,7 @@ impl VaultService {
             drop(meta_bytes);
             meta_table.insert("meta", serde_json::to_vec(&db_meta)?.as_slice())?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
 
         Ok(record)
@@ -1330,6 +1487,7 @@ impl VaultService {
             let mut vm = write_txn.open_table(VAULT_META)?;
             vm.insert("meta", serde_json::to_vec(&updated_meta)?.as_slice())?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
 
         self.meta = Some(updated_meta);
@@ -1372,6 +1530,7 @@ impl VaultService {
             let mut ks = write_txn.open_table(KEY_SLOTS)?;
             ks.insert(SLOT_RECOVERY, serde_json::to_vec(&stored_slot)?.as_slice())?;
         }
+        self.live_count_cache.set(None);
         write_txn.commit()?;
 
         Ok(recovery_key)
@@ -1439,6 +1598,8 @@ impl VaultService {
         drop(read_txn);
 
         if let Err(error) = self.migrate_live_records_to_current_schema() {
+            self.metadata_cache.borrow_mut().clear();
+            self.live_count_cache.set(None);
             self.vek = None;
             self.meta = None;
             self.recovery_passphrase_change_authorized = false;
@@ -1520,6 +1681,7 @@ impl VaultService {
                     drop(meta_bytes);
                     meta_table.insert("meta", serde_json::to_vec(&meta)?.as_slice())?;
                 }
+                self.live_count_cache.set(None);
                 write_txn.commit()?;
                 while exported.compact().map_err(|error| {
                     VaultError::InvalidData(format!("export compaction failed: {error}"))
@@ -1554,6 +1716,8 @@ impl VaultService {
         self.forget_device_session()?;
 
         self.db = None;
+        self.metadata_cache.borrow_mut().clear();
+        self.live_count_cache.set(None);
         self.vek = None;
         self.meta = None;
         self.suppress_session_cache_unlock = false;
@@ -1634,6 +1798,8 @@ impl VaultService {
 
         // Close and clear current state.
         self.db = None;
+        self.metadata_cache.borrow_mut().clear();
+        self.live_count_cache.set(None);
         self.vek = None;
         self.meta = None;
 
@@ -2440,6 +2606,85 @@ mod tests {
             .initialize("correct horse battery staple", false)
             .expect("initialize vault");
         vault
+    }
+
+    #[test]
+    fn list_metadata_cache_tracks_exact_envelopes_and_releases_on_lock() {
+        let mut vault = initialized_test_vault();
+        let values = secret_values_from_legacy("ssh-password", "fixture-password");
+        let item = vault
+            .service
+            .item_create_from_sync(
+                "First",
+                "ssh-password",
+                &values,
+                None,
+                None,
+                "cache-id",
+                1,
+                100,
+            )
+            .unwrap();
+        let first = vault.service.item_list_metadata().unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(vault.service.metadata_cache.borrow().entries.len(), 1);
+        let again = vault.service.item_list_metadata().unwrap();
+        assert_eq!(vault.service.metadata_decryptions.get(), 1);
+        assert_eq!(again[0].secret_fingerprint, first[0].secret_fingerprint);
+        let other = secret_values_from_legacy("ssh-password", "different-password");
+        vault
+            .service
+            .item_apply_sync_restore(
+                &item.id,
+                "cache-id",
+                "Second",
+                "ssh-password",
+                &other,
+                None,
+                None,
+                1,
+                200,
+            )
+            .unwrap();
+        let changed = vault.service.item_list_metadata().unwrap();
+        assert_eq!(vault.service.metadata_decryptions.get(), 2);
+        assert_eq!(changed[0].label, "Second");
+        assert_ne!(changed[0].secret_fingerprint, first[0].secret_fingerprint);
+        vault.service.item_delete(&item.id).unwrap();
+        assert!(vault.service.item_list_metadata().unwrap().is_empty());
+        assert!(vault.service.metadata_cache.borrow().entries.is_empty());
+        vault.service.lock();
+        assert!(vault.service.metadata_cache.borrow().entries.is_empty());
+        assert!(vault.service.item_list_metadata().is_err());
+    }
+
+    #[test]
+    fn status_count_cache_is_invalidated_by_committed_and_uncertain_writes() {
+        let mut vault = initialized_test_vault();
+        let _ = vault.service.status().unwrap();
+        assert_eq!(vault.service.live_count_cache.get(), Some(0));
+        let values = secret_values_from_legacy("ssh-password", "fixture-password");
+        let item = vault
+            .service
+            .item_create_from_sync(
+                "First",
+                "ssh-password",
+                &values,
+                None,
+                None,
+                "count-id",
+                1,
+                100,
+            )
+            .unwrap();
+        assert_eq!(vault.service.live_count_cache.get(), None);
+        let _ = vault.service.status().unwrap();
+        assert_eq!(vault.service.live_count_cache.get(), Some(1));
+        vault.service.fail_after_restore_commit.set(true);
+        assert!(vault.service.item_delete(&item.id).is_err());
+        assert_eq!(vault.service.live_count_cache.get(), None);
+        let _ = vault.service.status().unwrap();
+        assert_eq!(vault.service.live_count_cache.get(), Some(0));
     }
 
     #[test]

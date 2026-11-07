@@ -565,6 +565,33 @@ body {
     animation: progress-indeterminate 1.5s infinite linear;
 }
 
+.tunnel-connecting-border {
+    position: relative;
+}
+
+.tunnel-connecting-border::after {
+    position: absolute;
+    z-index: 30;
+    inset: 0;
+    border: 1px solid var(--color-app-accent);
+    border-radius: inherit;
+    content: "";
+    opacity: 0.85;
+    pointer-events: none;
+}
+
+@keyframes tunnel-connecting-border-pulse {
+    50% {
+        opacity: 0.3;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tunnel-connecting-border::after {
+        animation: tunnel-connecting-border-pulse 1.4s ease-in-out infinite;
+    }
+}
+
 .origin-left-right {
     transform-origin: 0% 50%;
 }

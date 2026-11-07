@@ -17,7 +17,7 @@ use super::domain_snippets::{
 use super::domain_tunnels::{
     apply_tunnel_restore_records, load_tunnel_sync_records, TunnelSyncRecord,
 };
-use super::profiles::{get_profile, now_secs, upsert_profile};
+use super::profiles::{get_profile_async, now_secs, run_profile_io, upsert_profile_async};
 use super::provider::{validate_provider_contract, ProviderUploadRecord, VaultProviderV1};
 use super::providers::google::{legacy_google_token_snapshot, GoogleVaultProvider};
 use super::types::{
@@ -29,17 +29,21 @@ use super::types::{
     SyncRestoreCredentialsResult, SyncRestorePreviewResult, SyncResult, SyncUploadCredentialArgs,
     SyncUploadCredentialResult, SyncUploadCredentialsResult,
 };
+use super::upload_state::{self, UploadState, UploadedCredential};
 use crate::vault::credential::{normalize_record_credential, CredentialEnvelope};
-use crate::vault::crypto::{decrypt_record, encrypt_record, EncryptedEnvelope, SecretKey};
+use crate::vault::crypto::{
+    decrypt_record, derive_secret_fingerprint, encrypt_record, EncryptedEnvelope, SecretKey,
+};
 use crate::vault::store::{VaultRestoreBatch, VaultRestoreBatchError, VaultService};
 use crate::vault::types::PlaintextRecord;
 use crate::vault::types::VaultStatus;
 use base64::Engine;
+use futures_util::{stream::BoxStream, FutureExt, Stream, StreamExt, TryFutureExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use tauri::State;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Mutex;
 
 fn sync_error_to_string(error: &SyncError) -> String {
     if error.code.eq_ignore_ascii_case("LOCAL_DISCONNECT_ONLY") {
@@ -233,12 +237,14 @@ fn domain_last_sync(profile: &SyncProfile, domain: SyncDomain) -> Option<u64> {
         .and_then(|status| status.last_sync)
 }
 
-fn ensure_domain_enabled_for_provider(
+/// Read current domain policy through the blocking owner before admitting provider work.
+async fn ensure_domain_enabled_for_provider(
     data_dir: &Path,
     provider: SyncProviderKind,
     domain: SyncDomain,
 ) -> Result<(), String> {
-    let mut profile = get_profile(data_dir, provider)
+    let mut profile = get_profile_async(data_dir, provider)
+        .await
         .map_err(|e| sync_error_to_string(&e))?
         .unwrap_or_else(|| default_profile(provider));
     ensure_domain_collections(&mut profile);
@@ -296,23 +302,26 @@ fn snapshot_from_legacy(
     }
 }
 
-fn record_sync_error(
+/// Await persisted provider failure metadata without blocking an async runtime worker.
+async fn record_sync_error(
     data_dir: &Path,
     provider: SyncProviderKind,
     code: &'static str,
     message: impl Into<String>,
 ) {
     let message = message.into();
-    let _ = upsert_profile(data_dir, provider, |existing| {
+    let _ = upsert_profile_async(data_dir, provider, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
         ensure_domain_collections(&mut profile);
         profile.last_error_code = Some(code.to_string());
         profile.last_error = Some(message.clone());
         profile
-    });
+    })
+    .await;
 }
 
-fn record_domain_sync_error(
+/// Persist the domain and provider error together through the serialized profile owner.
+async fn record_domain_sync_error(
     data_dir: &Path,
     provider: SyncProviderKind,
     domain: SyncDomain,
@@ -320,7 +329,7 @@ fn record_domain_sync_error(
     message: impl Into<String>,
 ) {
     let message = message.into();
-    let _ = upsert_profile(data_dir, provider, |existing| {
+    let _ = upsert_profile_async(data_dir, provider, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
         ensure_domain_collections(&mut profile);
         profile.last_error_code = Some(code.to_string());
@@ -334,16 +343,18 @@ fn record_domain_sync_error(
             status.last_error = Some(message.clone());
         }
         profile
-    });
+    })
+    .await;
 }
 
-fn record_domain_sync_success(
+/// Publish successful domain metadata only after provider work has completed.
+async fn record_domain_sync_success(
     data_dir: &Path,
     provider: SyncProviderKind,
     domain: SyncDomain,
     synced_at: u64,
 ) -> Result<(), SyncError> {
-    upsert_profile(data_dir, provider, |existing| {
+    upsert_profile_async(data_dir, provider, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
         ensure_domain_collections(&mut profile);
         profile.connected = true;
@@ -362,18 +373,21 @@ fn record_domain_sync_success(
             status.last_error_code = None;
         }
         profile
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
-fn clear_sync_error(data_dir: &Path, provider: SyncProviderKind) {
-    let _ = upsert_profile(data_dir, provider, |existing| {
+/// Await removal of persisted provider error metadata through the profile owner.
+async fn clear_sync_error(data_dir: &Path, provider: SyncProviderKind) {
+    let _ = upsert_profile_async(data_dir, provider, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(provider));
         ensure_domain_collections(&mut profile);
         profile.last_error = None;
         profile.last_error_code = None;
         profile
-    });
+    })
+    .await;
 }
 
 const SYNC_COLLECTION_PASSPHRASE_MIN_LENGTH: usize = 12;
@@ -769,6 +783,7 @@ struct DomainUploadMeta<'a> {
     extension: &'a str,
 }
 
+/// Encrypt one domain record and await both its upload and any failure metadata write.
 async fn upload_domain_record<T: serde::Serialize>(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -823,8 +838,7 @@ async fn upload_domain_record<T: serde::Serialize>(
     );
     provider_impl
         .upload_credential_record(app, &object_name, payload_bytes)
-        .await
-        .map_err(|error| {
+        .or_else(async |error| {
             if let Some(domain) = SyncDomain::parse(meta.domain) {
                 record_domain_sync_error(
                     data_dir,
@@ -832,12 +846,14 @@ async fn upload_domain_record<T: serde::Serialize>(
                     domain,
                     error.code,
                     error.message.clone(),
-                );
+                )
+                .await;
             } else {
-                record_sync_error(data_dir, provider, error.code, error.message.clone());
+                record_sync_error(data_dir, provider, error.code, error.message.clone()).await;
             }
-            sync_error_to_string(&error)
+            Err(sync_error_to_string(&error))
         })
+        .await
 }
 
 #[derive(Clone)]
@@ -848,6 +864,7 @@ struct DomainCollectResult<T> {
     records: Vec<T>,
 }
 
+/// Download matching domain objects in ordered bounded windows and account for every outcome.
 async fn collect_domain_records<T>(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -874,12 +891,14 @@ where
     let mut failed = 0u64;
     let mut records = Vec::<T>::new();
 
-    for object in remote_objects {
-        if !is_domain_object_name(&object.object_name, domain, extension) {
-            continue;
-        }
+    let objects = remote_objects
+        .into_iter()
+        .filter(|object| is_domain_object_name(&object.object_name, domain, extension))
+        .collect();
+    let mut downloaded = read_provider_objects_parallel(provider_impl, app, objects);
+    while let Some((_object, result)) = downloaded.next().await {
         scanned = scanned.saturating_add(1);
-        let payload = match provider_impl.read_credential_record(app, &object).await {
+        let payload = match result {
             Ok(v) => v,
             Err(_) => {
                 failed += 1;
@@ -981,6 +1000,7 @@ fn host_objects_for_collect(
                 .map(|logical_id| ProviderCredentialObject {
                     object_name: hosts_object_name(collection_id, logical_id),
                     object_id: None,
+                    content_checksum: None,
                 })
                 .collect();
         }
@@ -991,6 +1011,7 @@ fn host_objects_for_collect(
         .collect()
 }
 
+/// Resolve selected credential object names without downloading unrelated credentials.
 fn credential_objects_for_restore(
     collection_id: &str,
     requested_logical_ids: Option<&HashSet<String>>,
@@ -1012,6 +1033,7 @@ fn credential_objects_for_restore(
                         .unwrap_or(ProviderCredentialObject {
                             object_name,
                             object_id: None,
+                            content_checksum: None,
                         })
                 })
                 .collect();
@@ -1059,51 +1081,27 @@ async fn read_provider_object_with_retry(
     }
 }
 
-async fn read_provider_objects_parallel(
-    kind: SyncProviderKind,
-    app: &tauri::AppHandle,
+/// Keep only the active request window and deliver each payload directly to its consumer.
+fn read_provider_objects_parallel<'a>(
+    provider: &'a dyn VaultProviderV1,
+    app: &'a tauri::AppHandle,
     objects: Vec<ProviderCredentialObject>,
-) -> Vec<(ProviderCredentialObject, Result<Vec<u8>, String>)> {
-    let provider: std::sync::Arc<dyn VaultProviderV1> = match provider_for(kind) {
-        Ok(provider) => std::sync::Arc::from(provider),
-        Err(error) => {
-            let message = sync_error_to_string(&error);
-            return objects
-                .into_iter()
-                .map(|object| (object, Err(message.clone())))
-                .collect();
-        }
-    };
-    let semaphore = std::sync::Arc::new(Semaphore::new(DRIVE_READ_CONCURRENCY));
-    let mut join_set = tokio::task::JoinSet::new();
-    for object in objects {
-        let app = app.clone();
-        let provider = provider.clone();
-        let semaphore = semaphore.clone();
-        join_set.spawn(async move {
-            let _permit = semaphore.acquire_owned().await;
-            let result = read_provider_object_with_retry(provider.as_ref(), &app, &object)
-                .await
-                .map_err(|error| sync_error_to_string(&error));
-            (object, result)
-        });
-    }
-    let mut results = Vec::new();
-    while let Some(joined) = join_set.join_next().await {
-        match joined {
-            Ok(item) => results.push(item),
-            Err(error) => results.push((
-                ProviderCredentialObject {
-                    object_name: "unknown".to_string(),
-                    object_id: None,
-                },
-                Err(format!("[sync_drive_read_task_failed] {error}")),
-            )),
-        }
-    }
-    results
+) -> BoxStream<'a, (ProviderCredentialObject, Result<Vec<u8>, String>)> {
+    super::work_window::read_window(objects, DRIVE_READ_CONCURRENCY, move |object| async move {
+        let result =
+            std::panic::AssertUnwindSafe(read_provider_object_with_retry(provider, app, &object))
+                .catch_unwind()
+                .await;
+        let result = match result {
+            Ok(result) => result.map_err(|error| sync_error_to_string(&error)),
+            Err(_) => Err("[sync_drive_read_task_failed] Provider read panicked".into()),
+        };
+        (object, result)
+    })
+    .boxed()
 }
 
+/// Consume ordered bounded host downloads while retaining decode and filter accounting.
 async fn collect_remote_host_records(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -1129,9 +1127,10 @@ async fn collect_remote_host_records(
     let mut failed = 0u64;
     let mut records = Vec::<(HostSyncRecord, u64)>::new();
 
-    for object in remote_objects {
+    let mut downloaded = read_provider_objects_parallel(provider_impl, app, remote_objects);
+    while let Some((_object, result)) = downloaded.next().await {
         scanned = scanned.saturating_add(1);
-        let payload = match provider_impl.read_credential_record(app, &object).await {
+        let payload = match result {
             Ok(bytes) => bytes,
             Err(_) => {
                 failed = failed.saturating_add(1);
@@ -1369,6 +1368,36 @@ fn parse_remote_sync_record(
     Ok((logical_id, plaintext))
 }
 
+/// Build the complete sync payload once for encryption and keyed upload equality.
+fn credential_sync_plaintext(record: &PlaintextRecord) -> SyncCredentialPlaintextV1 {
+    SyncCredentialPlaintextV1 {
+        logical_id: VaultService::record_logical_id(record),
+        kind: record.kind.clone(),
+        label: record.label.clone(),
+        secret: String::new(),
+        secret_values: record.secret_values.clone(),
+        notes: record.notes.clone(),
+        credential: record.credential.clone(),
+        revision: record.revision,
+        updated_at: record.updated_at,
+        deleted: false,
+    }
+}
+
+/// Fingerprint every encrypted field without persisting plaintext or an unkeyed secret hash.
+fn credential_upload_fingerprint(
+    record: &PlaintextRecord,
+    key: &SecretKey,
+) -> Result<String, String> {
+    let json = zeroize::Zeroizing::new(
+        serde_json::to_string(&credential_sync_plaintext(record))
+            .map_err(|error| format!("[sync_serialize_failed] {error}"))?,
+    );
+    derive_secret_fingerprint(key, &json)
+        .map_err(|error| format!("[sync_fingerprint_failed] {error}"))
+}
+
+/// Encrypt the canonical credential payload with its collection-bound authenticated metadata.
 fn build_credential_provider_record(
     kind: SyncProviderKind,
     manifest: &SyncCollectionManifest,
@@ -1382,18 +1411,7 @@ fn build_credential_provider_record(
                 .to_string(),
         );
     }
-    let plaintext = SyncCredentialPlaintextV1 {
-        logical_id: logical_id.clone(),
-        kind: record.kind.clone(),
-        label: record.label.clone(),
-        secret: String::new(),
-        secret_values: record.secret_values.clone(),
-        notes: record.notes.clone(),
-        credential: record.credential.clone(),
-        revision: record.revision,
-        updated_at: record.updated_at,
-        deleted: false,
-    };
+    let plaintext = credential_sync_plaintext(record);
 
     let plaintext_bytes = serde_json::to_vec(&plaintext)
         .map_err(|e| format!("[sync_serialize_failed] Failed to serialize credential: {e}"))?;
@@ -1600,6 +1618,7 @@ fn normalize_snippet_records(records: Vec<SnippetSyncRecord>) -> Vec<SnippetSync
         .collect()
 }
 
+/// Restore required credentials before publishing hosts and their repaired references.
 async fn execute_hosts_restore_step(
     app: &tauri::AppHandle,
     vault: &Mutex<VaultService>,
@@ -1665,6 +1684,7 @@ async fn execute_hosts_restore_step(
     let synced_at = now_secs();
     if apply_host_records {
         record_domain_sync_success(provider_data_dir, kind, SyncDomain::Hosts, synced_at)
+            .await
             .map_err(|e| sync_error_to_string(&e))?;
     }
 
@@ -1972,21 +1992,22 @@ async fn restore_credentials_from_provider_records(
 
     let listed =
         list_collection_objects_cached(provider_impl, app, kind, &manifest.sync_collection_id)
-            .await
-            .map_err(|message| {
+            .or_else(async |message| {
                 record_sync_error(
                     provider_data_dir,
                     kind,
                     "sync_credentials_list_failed",
                     message.clone(),
-                );
-                message
-            })?;
+                )
+                .await;
+                Err(message)
+            })
+            .await?;
 
     let remote_objects =
         credential_objects_for_restore(&manifest.sync_collection_id, requested_logical_ids, listed);
 
-    let downloaded = read_provider_objects_parallel(kind, app, remote_objects).await;
+    let downloaded = read_provider_objects_parallel(provider_impl, app, remote_objects);
     Ok(restore_downloaded_credentials(
         vault,
         downloaded,
@@ -1999,22 +2020,26 @@ async fn restore_credentials_from_provider_records(
 }
 
 /// Parse/filter downloaded payloads outside the vault lock and apply bounded local write windows.
-async fn restore_downloaded_credentials(
+async fn restore_downloaded_credentials<S>(
     vault: &Mutex<VaultService>,
-    downloaded: Vec<(ProviderCredentialObject, Result<Vec<u8>, String>)>,
+    mut downloaded: S,
     collection_id: &str,
     secret_key: &SecretKey,
     requested_logical_ids: Option<&HashSet<String>>,
     resolve_conflict_logical_ids: &HashSet<String>,
-) -> CredentialRestoreStats {
+) -> CredentialRestoreStats
+where
+    S: Stream<Item = (ProviderCredentialObject, Result<Vec<u8>, String>)> + Unpin,
+{
     let mut stats = CredentialRestoreStats {
-        scanned: downloaded.len() as u64,
+        scanned: 0,
         ..Default::default()
     };
     let mut pending = Vec::with_capacity(CREDENTIAL_RESTORE_BATCH_RECORDS);
     let mut pending_bytes = 0usize;
 
-    for (object, payload_result) in downloaded {
+    while let Some((object, payload_result)) = downloaded.next().await {
+        stats.scanned = stats.scanned.saturating_add(1);
         let payload = match payload_result {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -2112,6 +2137,7 @@ pub async fn sync_hosts_snapshot(app: tauri::AppHandle) -> Result<SyncHostsSnaps
     })
 }
 
+/// Return host changes using the last successful persisted domain timestamp.
 #[tauri::command]
 pub async fn sync_hosts_changes(
     app: tauri::AppHandle,
@@ -2133,7 +2159,9 @@ pub async fn sync_hosts_changes(
         records.retain(|record| filter.contains(&record.logical_id));
     }
 
-    let profile = get_profile(&data_dir, kind).map_err(|e| sync_error_to_string(&e))?;
+    let profile = get_profile_async(&data_dir, kind)
+        .await
+        .map_err(|e| sync_error_to_string(&e))?;
     let since = profile
         .as_ref()
         .and_then(|profile| domain_last_sync(profile, SyncDomain::Hosts));
@@ -2151,6 +2179,7 @@ pub async fn sync_hosts_changes(
     })
 }
 
+/// Publish credentials before dependent hosts and await the final profile update.
 #[tauri::command]
 pub async fn sync_hosts_upload(
     app: tauri::AppHandle,
@@ -2161,7 +2190,7 @@ pub async fn sync_hosts_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts).await?;
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| {
@@ -2293,11 +2322,12 @@ pub async fn sync_hosts_upload(
     } else {
         provider_impl
             .upload_credential_records(&app, credential_upload_records)
-            .await
-            .map_err(|error| {
-                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-                sync_error_to_string(&error)
-            })?
+            .or_else(async |error| {
+                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone())
+                    .await;
+                Err(sync_error_to_string(&error))
+            })
+            .await?
     };
     let uploaded = upload_records.len() as u64;
     let host_synced_at = if upload_records.is_empty() {
@@ -2305,11 +2335,12 @@ pub async fn sync_hosts_upload(
     } else {
         provider_impl
             .upload_credential_records(&app, upload_records)
-            .await
-            .map_err(|error| {
-                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-                sync_error_to_string(&error)
-            })?
+            .or_else(async |error| {
+                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone())
+                    .await;
+                Err(sync_error_to_string(&error))
+            })
+            .await?
     };
     let latest_synced_at = credential_synced_at.max(host_synced_at);
     let skipped = changes.count.saturating_sub(uploaded);
@@ -2319,6 +2350,7 @@ pub async fn sync_hosts_upload(
         now_secs()
     };
     record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Hosts, profile_sync_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     clear_connections_drive_snapshot();
 
@@ -2331,6 +2363,7 @@ pub async fn sync_hosts_upload(
     })
 }
 
+/// Read remote host inventory with awaited failure reporting and current domain policy.
 #[tauri::command]
 pub async fn sync_hosts_remote_inventory(
     app: tauri::AppHandle,
@@ -2339,7 +2372,7 @@ pub async fn sync_hosts_remote_inventory(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts).await?;
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| {
@@ -2362,16 +2395,17 @@ pub async fn sync_hosts_remote_inventory(
         &secret_key,
         None,
     )
-    .await
-    .map_err(|message| {
+    .or_else(async |message| {
         record_sync_error(
             &provider_data_dir,
             kind,
             "sync_hosts_inventory_failed",
             message.clone(),
-        );
-        message
-    })?;
+        )
+        .await;
+        Err(message)
+    })
+    .await?;
 
     let mut hosts = collected
         .records
@@ -2418,6 +2452,7 @@ pub async fn sync_hosts_remote_inventory(
     })
 }
 
+/// Restore host records under current policy and preserve credential dependency ordering.
 #[tauri::command]
 pub async fn sync_hosts_restore(
     app: tauri::AppHandle,
@@ -2428,7 +2463,7 @@ pub async fn sync_hosts_restore(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts).await?;
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| {
@@ -2452,16 +2487,17 @@ pub async fn sync_hosts_restore(
         &secret_key,
         logical_id_filter.as_ref(),
     )
-    .await
-    .map_err(|message| {
+    .or_else(async |message| {
         record_sync_error(
             &provider_data_dir,
             kind,
             "sync_hosts_restore_failed",
             message.clone(),
-        );
-        message
-    })?;
+        )
+        .await;
+        Err(message)
+    })
+    .await?;
     let scanned = collected.scanned;
     let skipped = collected.skipped;
     let failed = collected.failed;
@@ -2823,6 +2859,7 @@ fn normalize_host_logical_id_filter(ids: Option<Vec<String>>) -> Option<HashSet<
     })
 }
 
+/// Resolve the requested host dependency scope with awaited provider error metadata.
 async fn prepare_connections_restore_scope(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -2840,11 +2877,11 @@ async fn prepare_connections_restore_scope(
     if initial_filter.is_none() {
         let collected =
             collect_remote_host_records(provider_impl, app, kind, manifest, secret_key, None)
-                .await
-                .map_err(|message| {
-                    record_sync_error(provider_data_dir, kind, error_code, message.clone());
-                    message
-                })?;
+                .or_else(async |message| {
+                    record_sync_error(provider_data_dir, kind, error_code, message.clone()).await;
+                    Err(message)
+                })
+                .await?;
         let records = collected
             .records
             .into_iter()
@@ -2899,11 +2936,11 @@ async fn prepare_connections_restore_scope(
             secret_key,
             Some(&to_fetch_names),
         )
-        .await
-        .map_err(|message| {
-            record_sync_error(provider_data_dir, kind, error_code, message.clone());
-            message
-        })?;
+        .or_else(async |message| {
+            record_sync_error(provider_data_dir, kind, error_code, message.clone()).await;
+            Err(message)
+        })
+        .await?;
 
         scanned = scanned.saturating_add(collected.scanned);
         skipped = skipped.saturating_add(collected.skipped);
@@ -2991,6 +3028,7 @@ async fn preview_bundled_host_snippet_counts_for_hosts(
     })
 }
 
+/// Restore the selected connection bundle and persist domain outcomes after application.
 #[tauri::command]
 pub async fn sync_connections_restore(
     app: tauri::AppHandle,
@@ -3001,7 +3039,7 @@ pub async fn sync_connections_restore(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts).await?;
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| {
@@ -3047,7 +3085,7 @@ pub async fn sync_connections_restore(
     let mut latest_synced_at = hosts.synced_at;
 
     let tunnels = if args.include_tunnels {
-        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Tunnels)?;
+        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Tunnels).await?;
         let collected = load_tunnels_for_connections_restore(
             provider_impl.as_ref(),
             &app,
@@ -3063,6 +3101,7 @@ pub async fn sync_connections_restore(
             .map_err(|e| sync_error_to_string(&e))?;
         let synced_at = now_secs();
         record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Tunnels, synced_at)
+            .await
             .map_err(|e| sync_error_to_string(&e))?;
         latest_synced_at = latest_synced_at.max(synced_at);
         Some(SyncConnectionsBundledDomainResult {
@@ -3080,7 +3119,7 @@ pub async fn sync_connections_restore(
     };
 
     let host_snippets = if args.include_host_snippets {
-        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Snippets)?;
+        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Snippets).await?;
         let collected = load_snippets_for_connections_restore(
             provider_impl.as_ref(),
             &app,
@@ -3096,6 +3135,7 @@ pub async fn sync_connections_restore(
             .map_err(|e| sync_error_to_string(&e))?;
         let synced_at = now_secs();
         record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Snippets, synced_at)
+            .await
             .map_err(|e| sync_error_to_string(&e))?;
         latest_synced_at = latest_synced_at.max(synced_at);
         Some(SyncConnectionsBundledDomainResult {
@@ -3120,6 +3160,7 @@ pub async fn sync_connections_restore(
     })
 }
 
+/// Preview the selected connection bundle without applying its records.
 #[tauri::command]
 pub async fn sync_connections_restore_preview(
     app: tauri::AppHandle,
@@ -3129,7 +3170,7 @@ pub async fn sync_connections_restore_preview(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Hosts).await?;
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| {
@@ -3180,7 +3221,7 @@ pub async fn sync_connections_restore_preview(
     };
 
     let (tunnels_scanned, tunnels_restorable, tunnels_orphaned) = if args.include_tunnels {
-        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Tunnels)?;
+        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Tunnels).await?;
         let counts = preview_bundled_tunnel_counts_for_hosts(
             provider_impl.as_ref(),
             &app,
@@ -3199,26 +3240,27 @@ pub async fn sync_connections_restore_preview(
         (None, None, None)
     };
 
-    let (host_snippets_scanned, host_snippets_restorable, host_snippets_orphaned) =
-        if args.include_host_snippets {
-            ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Snippets)?;
-            let counts = preview_bundled_host_snippet_counts_for_hosts(
-                provider_impl.as_ref(),
-                &app,
-                kind,
-                &manifest,
-                &secret_key,
-                &eligible_host_ids,
-            )
-            .await?;
-            (
-                Some(counts.scanned),
-                Some(counts.restorable),
-                Some(counts.orphaned),
-            )
-        } else {
-            (None, None, None)
-        };
+    let (host_snippets_scanned, host_snippets_restorable, host_snippets_orphaned) = if args
+        .include_host_snippets
+    {
+        ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Snippets).await?;
+        let counts = preview_bundled_host_snippet_counts_for_hosts(
+            provider_impl.as_ref(),
+            &app,
+            kind,
+            &manifest,
+            &secret_key,
+            &eligible_host_ids,
+        )
+        .await?;
+        (
+            Some(counts.scanned),
+            Some(counts.restorable),
+            Some(counts.orphaned),
+        )
+    } else {
+        (None, None, None)
+    };
 
     Ok(SyncConnectionsRestorePreviewResult {
         provider: kind.as_str().to_string(),
@@ -3262,6 +3304,7 @@ pub async fn sync_snippets_snapshot(
     })
 }
 
+/// Encrypt and upload tunnel records before persisting successful domain metadata.
 #[tauri::command]
 pub async fn sync_tunnels_upload(
     app: tauri::AppHandle,
@@ -3270,7 +3313,7 @@ pub async fn sync_tunnels_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3307,6 +3350,7 @@ pub async fn sync_tunnels_upload(
         now_secs()
     };
     record_domain_sync_success(&data_dir, kind, SyncDomain::Tunnels, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     clear_connections_drive_snapshot();
     Ok(SyncDomainUploadResult {
@@ -3317,6 +3361,7 @@ pub async fn sync_tunnels_upload(
     })
 }
 
+/// Upload the selected snippet records under current provider policy.
 #[tauri::command]
 pub async fn sync_snippets_upload(
     app: tauri::AppHandle,
@@ -3325,7 +3370,7 @@ pub async fn sync_snippets_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3362,6 +3407,7 @@ pub async fn sync_snippets_upload(
         now_secs()
     };
     record_domain_sync_success(&data_dir, kind, SyncDomain::Snippets, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     clear_connections_drive_snapshot();
     Ok(SyncDomainUploadResult {
@@ -3372,6 +3418,7 @@ pub async fn sync_snippets_upload(
     })
 }
 
+/// Restore validated tunnel records from bounded downloads and persist the result.
 #[tauri::command]
 pub async fn sync_tunnels_restore(
     app: tauri::AppHandle,
@@ -3380,7 +3427,7 @@ pub async fn sync_tunnels_restore(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Tunnels).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3415,6 +3462,7 @@ pub async fn sync_tunnels_restore(
         apply_tunnel_restore_records(&data_dir, &records).map_err(|e| sync_error_to_string(&e))?;
     let synced_at = now_secs();
     record_domain_sync_success(&data_dir, kind, SyncDomain::Tunnels, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     Ok(SyncDomainRestoreResult {
         domain: "tunnels".into(),
@@ -3427,6 +3475,7 @@ pub async fn sync_tunnels_restore(
     })
 }
 
+/// Restore validated snippet records while preserving domain filtering and failure counts.
 #[tauri::command]
 pub async fn sync_snippets_restore(
     app: tauri::AppHandle,
@@ -3436,7 +3485,7 @@ pub async fn sync_snippets_restore(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Snippets).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3472,6 +3521,7 @@ pub async fn sync_snippets_restore(
         apply_snippet_restore_records(&data_dir, &records).map_err(|e| sync_error_to_string(&e))?;
     let synced_at = now_secs();
     record_domain_sync_success(&data_dir, kind, SyncDomain::Snippets, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     Ok(SyncDomainRestoreResult {
         domain: "snippets".into(),
@@ -3484,6 +3534,7 @@ pub async fn sync_snippets_restore(
     })
 }
 
+/// Upload allowlisted settings and await the corresponding profile checkpoint.
 #[tauri::command]
 pub async fn sync_settings_upload(
     app: tauri::AppHandle,
@@ -3492,7 +3543,7 @@ pub async fn sync_settings_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3530,6 +3581,7 @@ pub async fn sync_settings_upload(
     )
     .await?;
     record_domain_sync_success(&data_dir, kind, SyncDomain::Settings, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     Ok(SyncDomainUploadResult {
         domain: "settings".to_string(),
@@ -3539,6 +3591,7 @@ pub async fn sync_settings_upload(
     })
 }
 
+/// Restore only supported settings and persist successful domain metadata.
 #[tauri::command]
 pub async fn sync_settings_restore(
     app: tauri::AppHandle,
@@ -3547,7 +3600,7 @@ pub async fn sync_settings_restore(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings)?;
+    ensure_domain_enabled_for_provider(&data_dir, kind, SyncDomain::Settings).await?;
     let manifest = load_manifest(&data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
         .ok_or_else(|| "[sync_collection_not_configured] Sync collection is not configured. Set up sync key first.".to_string())?;
@@ -3571,6 +3624,7 @@ pub async fn sync_settings_restore(
 
     let synced_at = now_secs();
     record_domain_sync_success(&data_dir, kind, SyncDomain::Settings, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
     Ok(SyncDomainRestoreResult {
         domain: "settings".to_string(),
@@ -3750,6 +3804,7 @@ pub async fn sync_collection_setup(
     })
 }
 
+/// Retrieve the authenticated collection key wrap with bounded retry and error reporting.
 async fn download_remote_collection_key_wrap(
     provider_impl: &dyn VaultProviderV1,
     app: &tauri::AppHandle,
@@ -3759,6 +3814,7 @@ async fn download_remote_collection_key_wrap(
     let object = ProviderCredentialObject {
         object_name: object_name.clone(),
         object_id: None,
+        content_checksum: None,
     };
     let bytes = match read_provider_object_with_retry(provider_impl, app, &object).await {
         Ok(bytes) => bytes,
@@ -3926,6 +3982,7 @@ pub async fn sync_collection_set_cache_ttl(
     Ok(collection_status_from_manifest(kind, Some(manifest)))
 }
 
+/// Refresh provider status while serializing only semantically changed profile metadata.
 #[tauri::command]
 pub async fn sync_status(
     app: tauri::AppHandle,
@@ -3935,13 +3992,16 @@ pub async fn sync_status(
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
 
-    let existing = get_profile(&provider_data_dir, kind).map_err(|e| sync_error_to_string(&e))?;
+    let existing = get_profile_async(&provider_data_dir, kind)
+        .await
+        .map_err(|e| sync_error_to_string(&e))?;
 
     let profile = if existing.is_none() {
         if let Some(snapshot) = snapshot_from_legacy(kind, &provider_data_dir) {
-            upsert_profile(&provider_data_dir, kind, |old| {
+            upsert_profile_async(&provider_data_dir, kind, move |old| {
                 sync_profile_from_snapshot(kind, snapshot.clone(), old)
             })
+            .await
             .map_err(|e| sync_error_to_string(&e))?
         } else {
             default_profile(kind)
@@ -3952,9 +4012,10 @@ pub async fn sync_status(
 
     match provider_impl.status(&app).await {
         Ok(snapshot) => {
-            let profile = upsert_profile(&provider_data_dir, kind, |old| {
+            let profile = upsert_profile_async(&provider_data_dir, kind, move |old| {
                 sync_profile_from_snapshot(kind, snapshot.clone(), old)
             })
+            .await
             .map_err(|e| sync_error_to_string(&e))?;
             Ok(status_from_profile(
                 profile,
@@ -3963,7 +4024,7 @@ pub async fn sync_status(
             ))
         }
         Err(error) => {
-            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
             let mut degraded = profile;
             degraded.last_error_code = Some(error.code.to_string());
             degraded.last_error = Some(error.message);
@@ -3976,6 +4037,7 @@ pub async fn sync_status(
     }
 }
 
+/// Read persisted domain policies without placing filesystem I/O on an async worker.
 #[tauri::command]
 pub async fn sync_domain_policies(
     app: tauri::AppHandle,
@@ -3983,7 +4045,8 @@ pub async fn sync_domain_policies(
 ) -> Result<SyncDomainPoliciesResult, String> {
     let kind = parse_provider(&provider)?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    let mut profile = get_profile(&provider_data_dir, kind)
+    let mut profile = get_profile_async(&provider_data_dir, kind)
+        .await
         .map_err(|e| sync_error_to_string(&e))?
         .unwrap_or_else(|| default_profile(kind));
     ensure_domain_collections(&mut profile);
@@ -3993,6 +4056,7 @@ pub async fn sync_domain_policies(
     })
 }
 
+/// Persist one domain policy change through the bounded blocking owner.
 #[tauri::command]
 pub async fn sync_domain_policy_set(
     app: tauri::AppHandle,
@@ -4004,7 +4068,7 @@ pub async fn sync_domain_policy_set(
         .ok_or_else(|| format!("[invalid_domain] Unknown domain: {}", args.domain))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
     let mode = args.mode.unwrap_or(SyncPolicyMode::Manual);
-    let updated = upsert_profile(&provider_data_dir, kind, |existing| {
+    let updated = upsert_profile_async(&provider_data_dir, kind, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(kind));
         ensure_domain_collections(&mut profile);
         if let Some(policy) = profile
@@ -4024,6 +4088,7 @@ pub async fn sync_domain_policy_set(
         }
         profile
     })
+    .await
     .map_err(|e| sync_error_to_string(&e))?;
     Ok(SyncDomainPoliciesResult {
         provider: kind.as_str().to_string(),
@@ -4031,6 +4096,7 @@ pub async fn sync_domain_policy_set(
     })
 }
 
+/// Connect the provider and await durable local identity and status metadata.
 #[tauri::command]
 pub async fn sync_connect(
     app: tauri::AppHandle,
@@ -4040,10 +4106,13 @@ pub async fn sync_connect(
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
 
-    let identity = provider_impl.connect(&app).await.map_err(|error| {
-        record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-        sync_error_to_string(&error)
-    })?;
+    let identity = provider_impl
+        .connect(&app)
+        .or_else(async |error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
+            Err(sync_error_to_string(&error))
+        })
+        .await?;
 
     let status_snapshot = provider_impl
         .status(&app)
@@ -4055,16 +4124,17 @@ pub async fn sync_connect(
             last_sync: None,
         });
 
-    let profile = upsert_profile(&provider_data_dir, kind, |existing| {
+    let profile = upsert_profile_async(&provider_data_dir, kind, move |existing| {
         let mut profile = sync_profile_from_snapshot(kind, status_snapshot.clone(), existing);
         profile.connected = true;
         profile.email = identity.email.clone().or(profile.email);
         profile.avatar_url = identity.avatar_url.clone().or(profile.avatar_url);
         profile
     })
+    .await
     .map_err(|e| sync_error_to_string(&e))?;
 
-    clear_sync_error(&provider_data_dir, kind);
+    clear_sync_error(&provider_data_dir, kind).await;
     Ok(status_from_profile(
         profile,
         provider_impl.kind(),
@@ -4072,6 +4142,7 @@ pub async fn sync_connect(
     ))
 }
 
+/// Remove local provider access and await the disconnected profile state.
 #[tauri::command]
 pub async fn sync_disconnect(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     let kind = parse_provider(&provider)?;
@@ -4086,32 +4157,36 @@ pub async fn sync_disconnect(app: tauri::AppHandle, provider: String) -> Result<
                 manifest.updated_at = now_secs();
                 let _ = save_manifest(&provider_data_dir, &manifest);
             }
-            let _ = upsert_profile(&provider_data_dir, kind, |existing| {
+            let _ = upsert_profile_async(&provider_data_dir, kind, move |existing| {
                 let mut profile = existing.unwrap_or_else(|| default_profile(kind));
                 profile.connected = false;
                 profile.email = None;
                 profile.avatar_url = None;
                 profile
-            });
-            clear_sync_error(&provider_data_dir, kind);
+            })
+            .await;
+            clear_sync_error(&provider_data_dir, kind).await;
             clear_connections_drive_snapshot();
             Ok(())
         }
         Err(error) => {
-            let _ = upsert_profile(&provider_data_dir, kind, |existing| {
+            let profile_error = error.clone();
+            let _ = upsert_profile_async(&provider_data_dir, kind, move |existing| {
                 let mut profile = existing.unwrap_or_else(|| default_profile(kind));
                 profile.connected = false;
                 profile.email = None;
                 profile.avatar_url = None;
-                profile.last_error = Some(error.message.clone());
-                profile.last_error_code = Some(error.code.to_string());
+                profile.last_error = Some(profile_error.message.clone());
+                profile.last_error_code = Some(profile_error.code.to_string());
                 profile
-            });
+            })
+            .await;
             Err(sync_error_to_string(&error))
         }
     }
 }
 
+/// Retain the explicit legacy full-vault backup path and its success/error reporting.
 #[tauri::command]
 pub async fn sync_upload(
     app: tauri::AppHandle,
@@ -4121,7 +4196,7 @@ pub async fn sync_upload(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
     let tmp_path = provider_data_dir.join("vault.redb.sync-tmp");
 
     {
@@ -4143,18 +4218,20 @@ pub async fn sync_upload(
 
     let ts = provider_impl
         .upload_vault_blob(&app, file_bytes)
-        .await
-        .map_err(|error| {
-            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-            sync_error_to_string(&error)
-        })?;
+        .or_else(async |error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
+            Err(sync_error_to_string(&error))
+        })
+        .await?;
 
     record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Vault, ts)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
 
     Ok(ts)
 }
 
+/// Unconditionally republish one selected credential as an explicit reconciliation action.
 #[tauri::command]
 pub async fn sync_upload_credential(
     app: tauri::AppHandle,
@@ -4165,7 +4242,7 @@ pub async fn sync_upload_credential(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
 
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
@@ -4189,13 +4266,14 @@ pub async fn sync_upload_credential(
 
     let synced_at = provider_impl
         .upload_credential_record(&app, &upload_record.object_name, upload_record.payload)
-        .await
-        .map_err(|error| {
-            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-            sync_error_to_string(&error)
-        })?;
+        .or_else(async |error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
+            Err(sync_error_to_string(&error))
+        })
+        .await?;
 
     record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Vault, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
 
     Ok(SyncUploadCredentialResult {
@@ -4207,16 +4285,76 @@ pub async fn sync_upload_credential(
     })
 }
 
+struct CredentialUploadPlan {
+    uploads: Vec<ProviderUploadRecord>,
+    checkpoint: BTreeMap<String, UploadedCredential>,
+}
+
+/// Encrypt only records that cannot be verified against the last successful upload and fresh inventory.
+fn plan_credential_uploads(
+    provider: SyncProviderKind,
+    manifest: &SyncCollectionManifest,
+    secret_key: &SecretKey,
+    records: &[PlaintextRecord],
+    previous: Option<&BTreeMap<String, UploadedCredential>>,
+    inventory: &[ProviderCredentialObject],
+    force_full: bool,
+) -> Result<CredentialUploadPlan, String> {
+    let mut inventory_by_name: HashMap<&str, Vec<&ProviderCredentialObject>> = HashMap::new();
+    for object in inventory {
+        inventory_by_name
+            .entry(&object.object_name)
+            .or_default()
+            .push(object);
+    }
+    let mut checkpoint = BTreeMap::new();
+    let mut uploads = Vec::new();
+    for record in records {
+        let logical_id = VaultService::record_logical_id(record);
+        let fingerprint = credential_upload_fingerprint(record, secret_key)?;
+        let object_name = credential_object_name(&manifest.sync_collection_id, &logical_id);
+        let remote = inventory_by_name
+            .get(object_name.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if let Some(old) = previous
+            .and_then(|collection| collection.get(&logical_id))
+            .filter(|old| !force_full && upload_state::unchanged(old, &fingerprint, remote))
+        {
+            checkpoint.insert(logical_id, old.clone());
+            continue;
+        }
+        let (_, upload_record) =
+            build_credential_provider_record(provider, manifest, secret_key, record)?;
+        checkpoint.insert(
+            logical_id,
+            UploadedCredential {
+                fingerprint,
+                encrypted_checksum: upload_state::encrypted_checksum(&upload_record.payload),
+            },
+        );
+        uploads.push(upload_record);
+    }
+    Ok(CredentialUploadPlan {
+        uploads,
+        checkpoint,
+    })
+}
+
+/// Upload changed credentials against fresh inventory, or explicitly republish all live credentials.
 #[tauri::command]
 pub async fn sync_upload_credentials(
     app: tauri::AppHandle,
     vault: State<'_, Mutex<VaultService>>,
     provider: String,
+    force_full: Option<bool>,
 ) -> Result<SyncUploadCredentialsResult, String> {
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
+    let gate = upload_state::upload_gate(&provider_data_dir);
+    let _upload_guard = gate.lock().await;
 
     let manifest = load_manifest(&provider_data_dir, kind)
         .map_err(|e| sync_error_to_string(&e))?
@@ -4254,37 +4392,79 @@ pub async fn sync_upload_credentials(
             .collect()
     };
 
-    let mut upload_records = Vec::with_capacity(records.len());
-    for record in &records {
-        let (_, upload_record) =
-            build_credential_provider_record(kind, &manifest, &secret_key, record)?;
-        upload_records.push(upload_record);
-    }
-
-    let uploaded = upload_records.len() as u64;
-    let synced_at = if upload_records.is_empty() {
+    let force_full = force_full.unwrap_or(false);
+    let state_root = provider_data_dir.clone();
+    let mut checkpoint = run_profile_io(move || Ok(UploadState::load(&state_root)))
+        .await
+        .map_err(|error| sync_error_to_string(&error))?;
+    let previous = checkpoint.collections.get(&manifest.sync_collection_id);
+    // Without fresh inventory, send every record rather than risk skipping an unverified backup.
+    let inventory = if !force_full
+        && !records.is_empty()
+        && previous.is_some_and(|records| !records.is_empty())
+    {
+        provider_impl
+            .list_credential_records(&app, &manifest.sync_collection_id)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let total_records = records.len() as u64;
+    let plan = plan_credential_uploads(
+        kind,
+        &manifest,
+        &secret_key,
+        &records,
+        previous,
+        &inventory,
+        force_full,
+    )?;
+    drop(records);
+    let uploaded = plan.uploads.len() as u64;
+    let synced_at = if plan.uploads.is_empty() {
         now_secs()
     } else {
         provider_impl
-            .upload_credential_records(&app, upload_records)
-            .await
-            .map_err(|error| {
-                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-                sync_error_to_string(&error)
-            })?
+            .upload_credential_records(&app, plan.uploads)
+            .or_else(async |error| {
+                record_sync_error(&provider_data_dir, kind, error.code, error.message.clone())
+                    .await;
+                Err(sync_error_to_string(&error))
+            })
+            .await?
     };
 
+    // Publish only after every scheduled upload succeeded; unchanged checkpoints need no fsync.
+    if checkpoint.collections.len() != 1 || previous != Some(&plan.checkpoint) {
+        checkpoint.collections.clear();
+        checkpoint
+            .collections
+            .insert(manifest.sync_collection_id.clone(), plan.checkpoint);
+        let state_root = provider_data_dir.clone();
+        if let Err(error) = run_profile_io(move || {
+            checkpoint
+                .save(&state_root)
+                .map_err(|error| SyncError::new("sync_checkpoint_write_failed", error.to_string()))
+        })
+        .await
+        {
+            eprintln!("[sync] Could not save credential upload optimization state: {error}");
+        }
+    }
     record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Vault, synced_at)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
 
     Ok(SyncUploadCredentialsResult {
         provider: kind.as_str().to_string(),
         uploaded,
-        skipped: 0,
+        skipped: total_records - uploaded,
         synced_at,
     })
 }
 
+/// Preview credential restore decisions from ordered bounded provider downloads.
 #[tauri::command]
 pub async fn sync_restore_preview(
     app: tauri::AppHandle,
@@ -4295,7 +4475,7 @@ pub async fn sync_restore_preview(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
 
     {
         let mut svc = vault.lock().await;
@@ -4331,11 +4511,11 @@ pub async fn sync_restore_preview(
     let requested_logical_ids = normalize_requested_logical_ids(&args);
     let remote_objects = provider_impl
         .list_credential_records(&app, &manifest.sync_collection_id)
-        .await
-        .map_err(|error| {
-            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-            sync_error_to_string(&error)
-        })?;
+        .or_else(async |error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
+            Err(sync_error_to_string(&error))
+        })
+        .await?;
     let mut scanned = 0u64;
     let mut restorable = 0u64;
     let mut updatable = 0u64;
@@ -4345,19 +4525,21 @@ pub async fn sync_restore_preview(
     let mut failed = 0u64;
     let mut conflict_items: Vec<SyncRestoreConflictItem> = Vec::new();
 
-    for object in remote_objects {
-        if !is_credential_object_name(&object.object_name) {
-            continue;
-        }
+    let objects = remote_objects
+        .into_iter()
+        .filter(|object| is_credential_object_name(&object.object_name))
+        .collect();
+    let mut downloaded = read_provider_objects_parallel(provider_impl.as_ref(), &app, objects);
+    while let Some((object, result)) = downloaded.next().await {
         scanned = scanned.saturating_add(1);
 
-        let payload = match provider_impl.read_credential_record(&app, &object).await {
+        let payload = match result {
             Ok(bytes) => bytes,
             Err(error) => {
                 failed = failed.saturating_add(1);
                 eprintln!(
-                    "[sync] Preview failed reading provider object '{}': [{}] {}",
-                    object.object_name, error.code, error.message
+                    "[sync] Preview failed reading provider object '{}': {}",
+                    object.object_name, error
                 );
                 continue;
             }
@@ -4451,6 +4633,7 @@ pub async fn sync_restore_preview(
     })
 }
 
+/// Restore selected credentials before updating the persisted provider success checkpoint.
 #[tauri::command]
 pub async fn sync_restore_credentials(
     app: tauri::AppHandle,
@@ -4461,7 +4644,7 @@ pub async fn sync_restore_credentials(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
 
     {
         let mut svc = vault.lock().await;
@@ -4511,6 +4694,7 @@ pub async fn sync_restore_credentials(
 
     let ts = now_secs();
     record_domain_sync_success(&provider_data_dir, kind, SyncDomain::Vault, ts)
+        .await
         .map_err(|e| sync_error_to_string(&e))?;
 
     Ok(SyncRestoreCredentialsResult {
@@ -4526,6 +4710,7 @@ pub async fn sync_restore_credentials(
     })
 }
 
+/// Import the explicit legacy full-vault backup and await its final profile update.
 #[tauri::command]
 pub async fn sync_download(
     app: tauri::AppHandle,
@@ -4535,15 +4720,15 @@ pub async fn sync_download(
     let kind = parse_provider(&provider)?;
     let provider_impl = provider_for(kind).map_err(|e| sync_error_to_string(&e))?;
     let provider_data_dir = crate::commands::get_data_dir(&app);
-    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault)?;
+    ensure_domain_enabled_for_provider(&provider_data_dir, kind, SyncDomain::Vault).await?;
 
     let (bytes, ts) = provider_impl
         .download_vault_blob(&app)
-        .await
-        .map_err(|error| {
-            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone());
-            sync_error_to_string(&error)
-        })?;
+        .or_else(async |error| {
+            record_sync_error(&provider_data_dir, kind, error.code, error.message.clone()).await;
+            Err(sync_error_to_string(&error))
+        })
+        .await?;
 
     let tmp_path = provider_data_dir.join("vault.redb.download-tmp");
     tokio::fs::write(&tmp_path, &bytes)
@@ -4561,7 +4746,7 @@ pub async fn sync_download(
     };
     let _ = tokio::fs::remove_file(&tmp_path).await;
 
-    upsert_profile(&provider_data_dir, kind, |existing| {
+    upsert_profile_async(&provider_data_dir, kind, move |existing| {
         let mut profile = existing.unwrap_or_else(|| default_profile(kind));
         profile.connected = true;
         profile.last_sync = Some(ts);
@@ -4569,6 +4754,7 @@ pub async fn sync_download(
         profile.last_error_code = None;
         profile
     })
+    .await
     .map_err(|e| sync_error_to_string(&e))?;
 
     let (item_count, vault_id) = match imported_status {
@@ -4688,6 +4874,7 @@ mod tests {
             ProviderCredentialObject {
                 object_name: format!("fixture-{}", record.logical_id),
                 object_id: None,
+                content_checksum: None,
             },
             Ok(serde_json::to_vec(&envelope).unwrap()),
         )
@@ -4902,7 +5089,7 @@ mod tests {
         let fixture = restore_test_vault();
         let key = crate::vault::crypto::generate_vek();
         let count = CREDENTIAL_RESTORE_BATCH_RECORDS * 2 + 3;
-        let downloaded = (0..count)
+        let downloaded: Vec<_> = (0..count)
             .map(|i| {
                 restore_payload(
                     remote_record(&format!("count-{i}"), 1, 100, "fixture", false),
@@ -4914,7 +5101,7 @@ mod tests {
         let vault = Mutex::new(fixture.service);
         let stats = restore_downloaded_credentials(
             &vault,
-            downloaded,
+            futures_util::stream::iter(downloaded),
             "collection",
             &key,
             None,
@@ -4946,7 +5133,7 @@ mod tests {
         ];
         let stats = restore_downloaded_credentials(
             &vault,
-            downloaded,
+            futures_util::stream::iter(downloaded),
             "collection",
             &key,
             None,
@@ -4989,6 +5176,7 @@ mod tests {
             ProviderCredentialObject {
                 object_name: "malformed".into(),
                 object_id: None,
+                content_checksum: None,
             },
             Ok(b"invalid json".to_vec()),
         ));
@@ -4996,6 +5184,7 @@ mod tests {
             ProviderCredentialObject {
                 object_name: "download-error".into(),
                 object_id: None,
+                content_checksum: None,
             },
             Err("fixture download failure".into()),
         ));
@@ -5003,7 +5192,7 @@ mod tests {
         let filter = HashSet::from(["selected".to_string()]);
         let stats = restore_downloaded_credentials(
             &vault,
-            downloaded,
+            futures_util::stream::iter(downloaded),
             "collection",
             &key,
             Some(&filter),
@@ -5439,6 +5628,7 @@ mod tests {
         let listed = vec![ProviderCredentialObject {
             object_name: "zync-sync-col-hosts-other.zhost".into(),
             object_id: Some("id".into()),
+            content_checksum: None,
         }];
         let objects = host_objects_for_collect("col", Some(&filter), listed);
         assert_eq!(objects.len(), 2);
@@ -5528,9 +5718,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn build_credential_provider_record_roundtrips_logical_id_and_payload() {
-        let manifest = SyncCollectionManifest {
+    fn credential_test_manifest() -> SyncCollectionManifest {
+        SyncCollectionManifest {
             version: 1,
             provider: "google".to_string(),
             sync_collection_id: "collection-1".to_string(),
@@ -5546,7 +5735,12 @@ mod tests {
             has_recovery_key: false,
             created_at: 1,
             updated_at: 1,
-        };
+        }
+    }
+
+    #[test]
+    fn build_credential_provider_record_roundtrips_logical_id_and_payload() {
+        let manifest = credential_test_manifest();
         let secret_key = SecretKey::from_bytes([9u8; 32]);
         let record = local_record("cred-roundtrip", 7, 11, "secret-key-data");
 
@@ -5580,23 +5774,7 @@ mod tests {
 
     #[test]
     fn build_credential_provider_record_rejects_local_only_ai_keys() {
-        let manifest = SyncCollectionManifest {
-            version: 1,
-            provider: "google".to_string(),
-            sync_collection_id: "collection-1".to_string(),
-            key_policy_mode: SyncKeyPolicyMode::CustomPassphrase,
-            key_wrap_salt: None,
-            key_wrap_nonce: None,
-            key_wrap_ciphertext: None,
-            recovery_key_wrap_salt: None,
-            recovery_key_wrap_nonce: None,
-            recovery_key_wrap_ciphertext: None,
-            key_cache_unlocked_at: None,
-            key_cache_ttl_secs: None,
-            has_recovery_key: false,
-            created_at: 1,
-            updated_at: 1,
-        };
+        let manifest = credential_test_manifest();
         let secret_key = SecretKey::from_bytes([9u8; 32]);
         let record = local_record("zync.ai.api-key.openai", 1, 1, "sk-local-only");
 
@@ -5609,6 +5787,45 @@ mod tests {
         .expect_err("AI provider keys must remain local-only");
 
         assert!(error.contains("sync_local_only_credential"));
+    }
+
+    #[test]
+    fn upload_all_republishes_verified_records_and_incremental_upload_detects_metadata_edits() {
+        let manifest = credential_test_manifest();
+        let key = SecretKey::from_bytes([9u8; 32]);
+        let mut records = [local_record("fixture", 7, 11, "private-key")];
+        let initial = plan_credential_uploads(
+            SyncProviderKind::Google,
+            &manifest,
+            &key,
+            &records,
+            None,
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(initial.uploads.len(), 1);
+        let inventory = [ProviderCredentialObject {
+            object_name: initial.uploads[0].object_name.clone(),
+            object_id: Some("remote-object".to_string()),
+            content_checksum: Some(initial.checkpoint["fixture"].encrypted_checksum.clone()),
+        }];
+        let plan = |records: &[PlaintextRecord], force_full| {
+            plan_credential_uploads(
+                SyncProviderKind::Google,
+                &manifest,
+                &key,
+                records,
+                Some(&initial.checkpoint),
+                &inventory,
+                force_full,
+            )
+            .unwrap()
+        };
+        assert!(plan(&records, false).uploads.is_empty());
+        assert_eq!(plan(&records, true).uploads.len(), 1);
+        records[0].notes = Some("Edited notes with unchanged revision".into());
+        assert_eq!(plan(&records, false).uploads.len(), 1);
     }
 
     #[test]
