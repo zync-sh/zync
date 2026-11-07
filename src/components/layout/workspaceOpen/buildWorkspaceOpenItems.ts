@@ -1,6 +1,15 @@
-import { FEATURE_META, type FeatureId } from '../featureMeta';
+import {
+    canCreateFeatureInWorkspace,
+    type WorkspaceScope,
+} from '../../../features/workspace/domain/registrations';
+import { SPLIT_FEATURE_IDS } from '../../../lib/paneLayout/types';
 import type { ShellEntry } from '../../../lib/shells/types';
-import type { WorkspaceOpenFeatureState, WorkspaceOpenItem, WorkspaceOpenPluginState } from './types';
+import { FEATURE_META } from '../featureMeta';
+import type {
+    WorkspaceOpenFeatureState,
+    WorkspaceOpenItem,
+    WorkspaceOpenPluginState,
+} from './types';
 
 export const WORKSPACE_OPEN_GROUP_ORDER: WorkspaceOpenItem['group'][] = [
     'create',
@@ -14,29 +23,26 @@ export const WORKSPACE_OPEN_GROUP_LABEL: Record<WorkspaceOpenItem['group'], stri
     open: 'Open',
 };
 
-const FEATURE_ORDER: FeatureId[] = [
-    'files',
-    'port-forwarding',
-    'dashboard',
-    'snippets',
-    'security',
-];
-
+/** Normalize search terms once while preserving the menu's original keyword order. */
 function uniqueKeywords(...parts: Array<string | undefined>): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const part of parts) {
         const token = part?.trim().toLowerCase();
-        if (!token || seen.has(token)) continue;
+        if (!token || seen.has(token)) {
+            continue;
+        }
         seen.add(token);
         out.push(token);
     }
     return out;
 }
 
+/** Project open actions from the workspace's shell, feature, and plugin inventory. */
 export function buildWorkspaceOpenItems(input: {
     shells: readonly ShellEntry[];
     canOpenFeature: boolean;
+    workspaceScope?: WorkspaceScope;
     features?: readonly WorkspaceOpenFeatureState[];
     plugins?: readonly WorkspaceOpenPluginState[];
 }): WorkspaceOpenItem[] {
@@ -72,12 +78,16 @@ export function buildWorkspaceOpenItems(input: {
         });
     }
 
-    if (!input.canOpenFeature) return items;
+    if (!input.canOpenFeature) {
+        return items;
+    }
 
     const stateById = new Map((input.features ?? []).map((feature) => [feature.id, feature]));
-    for (const featureId of FEATURE_ORDER) {
+    for (const featureId of SPLIT_FEATURE_IDS) {
         const meta = FEATURE_META[featureId];
-        if (!meta) continue;
+        if (!canCreateFeatureInWorkspace(featureId, input.workspaceScope)) {
+            continue;
+        }
         const state = stateById.get(featureId);
         items.push({
             id: `feature:${featureId}`,

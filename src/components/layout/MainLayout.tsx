@@ -45,6 +45,7 @@ import {
     paneTabReleaseSource,
     planPaneTabInsertion,
 } from '../../features/workspace/domain/paneTabRelease';
+import { canOpenFeatureInWorkspace } from '../../features/workspace/domain/registrations';
 import {
     hiddenWorkspaceContent,
     selectedWorkspaceContentId,
@@ -76,6 +77,7 @@ import { resolveLocalWindowsShellId } from '../../lib/terminal/spawnContext';
 import { cn } from '../../lib/utils';
 import { Tab, useAppStore } from '../../store/useAppStore';
 import { AiSidebar } from '../ai/AiSidebar';
+import { ErrorBoundary } from '../ErrorBoundary';
 import { ConnectStagePanel, PanelLoader, useConnectionStageOverlay } from '../loaders';
 import { ShortcutManager } from '../managers/ShortcutManager';
 import { SetupWizard } from '../onboarding/SetupWizard';
@@ -87,7 +89,7 @@ import { Button } from '../ui/Button';
 import { LayoutMotionScope } from '../ui/LayoutMotion';
 import { Modal } from '../ui/Modal';
 import { ModalRoot } from '../ui/ModalRoot';
-import { WorkspaceContextActions } from '../workspace/WorkspaceContextActions';
+import { useContentMenuItems, WorkspaceContextActions } from '../workspace/WorkspaceContextActions';
 import { CommandPalette } from './CommandPalette';
 import type { FeatureId, WorkspaceFeatureTab } from './featureMeta';
 import { featureTabsFromPaneGroups, stablePluginPanelInventory } from './featureTabInventory';
@@ -122,6 +124,16 @@ declare global {
 }
 
 // Lazy Load Heavy Components
+const DirectVncTab = lazy(() =>
+    import('../../features/vnc/ui/DirectVncTab').then((module) => ({
+        default: module.DirectVncTab,
+    })),
+);
+const DirectSerialTab = lazy(() =>
+    import('../../features/serial/ui/DirectSerialTab').then((module) => ({
+        default: module.DirectSerialTab,
+    })),
+);
 const TerminalManager = lazy(() =>
     import('../terminal/TerminalManager').then((module) => ({ default: module.TerminalManager })),
 );
@@ -237,17 +249,9 @@ const SplashScreen = () => (
     </div>
 );
 
-const CORE_TAB_VIEWS = [
-    'security',
-    'dashboard',
-    'files',
-    'port-forwarding',
-    'snippets',
-    'terminal',
-] as const satisfies readonly CoreTabView[];
-
+/** Built-in tab IDs come from the same inventory as the workspace open menu. */
 function isCoreTabView(view: string): view is CoreTabView {
-    return (CORE_TAB_VIEWS as readonly string[]).includes(view);
+    return view === 'terminal' || isSplitFeatureId(view);
 }
 
 /**
@@ -546,6 +550,14 @@ const TabContent = memo(function TabContent({ tab, isActive }: { tab: Tab; isAct
     const handleOpenFeature = useCallback(
         (feature: string) => {
             if (isSplitFeatureId(feature)) {
+                if (
+                    !canOpenFeatureInWorkspace(
+                        feature,
+                        tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID ? 'local' : 'remote',
+                    )
+                ) {
+                    return;
+                }
                 const created = newWorkspaceFeatureTab(feature);
                 if (
                     tab.connectionId &&
@@ -1401,6 +1413,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: { tab: Tab; isAct
 /** Coordinate retained workspace surfaces, application chrome and startup prompts. */
 export function MainLayout({ children }: { children: ReactNode }) {
     useFileSystemEvents(); // Enable global FS event listeners
+    const [mainTabMenuItems, registerMainTabMenuItems] = useContentMenuItems();
 
     const tabs = useAppStore((state) => state.tabs);
     const activeTabId = useAppStore((state) => state.activeTabId);
@@ -2023,7 +2036,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
             <ModalRoot />
 
             {/* Top Unified Header (TabBar) */}
-            <TabBar />
+            <TabBar contentMenuItems={mainTabMenuItems} />
 
             <LayoutMotionScope>
                 <WorkspaceNavigationFrame>
@@ -2045,13 +2058,50 @@ export function MainLayout({ children }: { children: ReactNode }) {
                             {tabs.length > 0 && !showWelcomeScreen && activeWorkspaceTab ? (
                                 <>
                                     {retainedItemsInMountOrder(tabs, retainedWorkspaceTabs).map(
-                                        (tab: Tab) => (
-                                            <TabContent
-                                                key={tab.id}
-                                                tab={tab}
-                                                isActive={tab.id === activeWorkspaceTab.id}
-                                            />
-                                        ),
+                                        (tab: Tab) =>
+                                            tab.type === 'vnc' || tab.type === 'serial' ? (
+                                                <div
+                                                    key={tab.id}
+                                                    hidden={tab.id !== activeWorkspaceTab.id}
+                                                    className="absolute inset-0 bg-app-bg"
+                                                >
+                                                    <ErrorBoundary isolate>
+                                                        <Suspense fallback={<TabLoading />}>
+                                                            {tab.type === 'serial' ? (
+                                                                <DirectSerialTab
+                                                                    tabId={tab.id}
+                                                                    profileId={tab.serialProfileId}
+                                                                    active={
+                                                                        tab.id ===
+                                                                        activeWorkspaceTab.id
+                                                                    }
+                                                                    registerMenuItems={
+                                                                        registerMainTabMenuItems
+                                                                    }
+                                                                />
+                                                            ) : (
+                                                                <DirectVncTab
+                                                                    tabId={tab.id}
+                                                                    profileId={tab.vncProfileId}
+                                                                    active={
+                                                                        tab.id ===
+                                                                        activeWorkspaceTab.id
+                                                                    }
+                                                                    registerMenuItems={
+                                                                        registerMainTabMenuItems
+                                                                    }
+                                                                />
+                                                            )}
+                                                        </Suspense>
+                                                    </ErrorBoundary>
+                                                </div>
+                                            ) : (
+                                                <TabContent
+                                                    key={tab.id}
+                                                    tab={tab}
+                                                    isActive={tab.id === activeWorkspaceTab.id}
+                                                />
+                                            ),
                                     )}
                                 </>
                             ) : (

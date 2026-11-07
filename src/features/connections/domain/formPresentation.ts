@@ -19,10 +19,32 @@ const FAILURE_COPY = {
         reason: 'Authentication failed.',
         summary: 'Authentication failed. Check the remote username and selected credential.',
     },
+    verificationRequired: {
+        reason: 'SSH verification required.',
+        summary: 'Connect again to answer the server’s SSH verification prompt.',
+    },
+    verificationRejected: {
+        reason: 'SSH verification was rejected.',
+        summary:
+            'The server rejected the verification response. Try again with a fresh code if one is required.',
+    },
+    verificationTimedOut: {
+        reason: 'SSH verification timed out.',
+        summary: 'Connect again and respond to the SSH verification prompt before it expires.',
+    },
 };
 
 /** Recognize existing connection diagnostics once; raw server messages never become authored UI copy. */
 function recognizedConnectionFailure(message: string): keyof typeof FAILURE_COPY | undefined {
+    if (message.includes('SSH verification required')) {
+        return 'verificationRequired';
+    }
+    if (message.includes('SSH verification was rejected')) {
+        return 'verificationRejected';
+    }
+    if (message.includes('SSH verification timed out')) {
+        return 'verificationTimedOut';
+    }
     if (/SSH user certificate has expired/i.test(message)) {
         return 'certificateExpired';
     }
@@ -44,7 +66,9 @@ function recognizedConnectionFailure(message: string): keyof typeof FAILURE_COPY
 /** Explain only recognizable failures; preserve the original message separately for diagnostics. */
 export function connectionFailureSummary(message: string): string {
     const kind = recognizedConnectionFailure(message);
-    return kind ? FAILURE_COPY[kind].summary : 'Could not verify this connection. Review the details below.';
+    return kind
+        ? FAILURE_COPY[kind].summary
+        : 'Could not verify this connection. Review the details below.';
 }
 
 /** Keep recovery cards concise without echoing an unknown failure or guessing its cause. */
@@ -55,5 +79,7 @@ export function connectionFailureReason(message = ''): string {
 
 /** Prefer a readable IPv4 address without hiding or changing the adapter's other addresses. */
 export function orderedInterfaceAddresses(addresses: readonly string[]): string[] {
-    return [...new Set(addresses)].sort((left, right) => Number(left.includes(':')) - Number(right.includes(':')));
+    return [...new Set(addresses)].sort(
+        (left, right) => Number(left.includes(':')) - Number(right.includes(':')),
+    );
 }

@@ -1,80 +1,152 @@
-import { GlobalUtilityActions } from './GlobalUtilityActions';
-import { GoogleMarkIcon } from '../icons/providerIcons';
-import { Settings as SettingsIcon, Network, Gift, Home, Shield, Monitor, Link2 } from 'lucide-react';
-import { OSIcon } from '../icons/OSIcon';
-import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
-import { ZyncMark } from '../brand/ZyncMark';
+import {
+    Cable,
+    Gift,
+    Home,
+    Link2,
+    Monitor,
+    Network,
+    Settings as SettingsIcon,
+    Shield,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
-import { useAppStore, Tab, Connection } from '../../store/useAppStore'; // Updated Import
-import { cn } from '../../lib/utils';
-import { WindowControls } from './WindowControls';
-import { NotificationBell, useNotificationBellPlacement } from '../notifications/NotificationBell';
-import { useState, useEffect, useRef, useCallback } from 'react';
-
-import { TabAddButton } from './TabAddButton';
-import { WorkspaceTabList } from './WorkspaceTabList';
-import { useWorkspaceTabCloseFocus, type WorkspaceTabCloseFocusIntent } from './useWorkspaceTabCloseFocus';
-import { WorkspaceTabAppearanceDialog } from './WorkspaceTabAppearanceDialog';
-import { DisplayAliasDialog } from '../workspace/DisplayAliasDialog';
-import { isMainTabPinned } from '../../features/workspace/domain/mainTabPresentation';
-import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
-import { Tooltip } from '../ui/Tooltip';
-import { ConfirmModal } from '../ui/ConfirmModal';
-import { AppAddMenu } from './appAddMenu';
 import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
+import { useSerialProfileTabMenuItems } from '../../features/serial/ui/useSerialProfileTabMenuItems';
+import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
+import { useVncProfileTabMenuItems } from '../../features/vnc/ui/useVncProfileTabMenuItems';
+import { isMainTabPinned } from '../../features/workspace/domain/mainTabPresentation';
 import { useWindowDrag } from '../../hooks/useWindowDrag';
+import { cn } from '../../lib/utils';
+import { Connection, Tab, useAppStore } from '../../store/useAppStore'; // Updated Import
+import { ZyncMark } from '../brand/ZyncMark';
 import { isEditorOverlayOpen } from '../editor/overlayState';
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
+import { OSIcon } from '../icons/OSIcon';
+import { GoogleMarkIcon } from '../icons/providerIcons';
+import { NotificationBell, useNotificationBellPlacement } from '../notifications/NotificationBell';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { Tooltip } from '../ui/Tooltip';
+import { DisplayAliasDialog } from '../workspace/DisplayAliasDialog';
+import type { ContentMenuItems } from '../workspace/WorkspaceContextActions';
+import { AppAddMenu } from './appAddMenu';
+import { GlobalUtilityActions } from './GlobalUtilityActions';
+import { TabAddButton } from './TabAddButton';
+import {
+    useWorkspaceTabCloseFocus,
+    type WorkspaceTabCloseFocusIntent,
+} from './useWorkspaceTabCloseFocus';
+import { WindowControls } from './WindowControls';
+import { WorkspaceTabAppearanceDialog } from './WorkspaceTabAppearanceDialog';
+import { WorkspaceTabList } from './WorkspaceTabList';
 
+/** Resolve standalone connection icons before falling back to the SSH host's metadata. */
 function getIconForTab(tab: Tab, connections: Connection[], size: 12 | 13 = 12) {
-    if (tab.type === 'port-forwarding') return <Network size={size} />;
-    if (tab.type === 'security-audits') return <HardeningAuditIcon size={size} />;
-    if (tab.type === 'public-urls') return <Link2 size={size} />;
-    if (tab.type === 'settings') return <SettingsIcon size={size} />;
-    if (tab.type === 'release-notes') return <Gift size={size} className="text-[var(--color-app-accent)]" />;
-    if (tab.type === 'vault') return <Shield size={size} />;
-    if (tab.type === 'sync') return <GoogleMarkIcon size={size} variant="mono" />;
+    if (tab.type === 'port-forwarding') {
+        return <Network size={size} />;
+    }
+    if (tab.type === 'security-audits') {
+        return <HardeningAuditIcon size={size} />;
+    }
+    if (tab.type === 'public-urls') {
+        return <Link2 size={size} />;
+    }
+    if (tab.type === 'settings') {
+        return <SettingsIcon size={size} />;
+    }
+    if (tab.type === 'release-notes') {
+        return (
+            <Gift
+                size={size}
+                className="text-[var(--color-app-accent)]"
+            />
+        );
+    }
+    if (tab.type === 'vault') {
+        return <Shield size={size} />;
+    }
+    if (tab.type === 'sync') {
+        return (
+            <GoogleMarkIcon
+                size={size}
+                variant="mono"
+            />
+        );
+    }
+    if (tab.type === 'vnc') {
+        return <Monitor size={size} />;
+    }
+    if (tab.type === 'serial') {
+        return <Cable size={size} />;
+    }
     // Local workspace — same Monitor mark as status bar + sidebar
     if (tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
-        return <Monitor size={size} className="text-app-muted" />;
+        return (
+            <Monitor
+                size={size}
+                className="text-app-muted"
+            />
+        );
     }
 
     const conn = connections.find((c: Connection) => c.id === tab.connectionId);
-    const iconClassName = size === 13 ? "w-[13px] h-[13px]" : "w-[12px] h-[12px]";
-    return <OSIcon icon={conn?.icon || 'Server'} className={iconClassName} />;
+    const iconClassName = size === 13 ? 'w-[13px] h-[13px]' : 'w-[12px] h-[12px]';
+    return (
+        <OSIcon
+            icon={conn?.icon || 'Server'}
+            className={iconClassName}
+        />
+    );
 }
 
 function isConnectedHostTab(tab: Tab, connections: Connection[]): boolean {
-    if (tab.type !== 'connection' || !tab.connectionId || tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID) {
+    if (
+        tab.type !== 'connection' ||
+        !tab.connectionId ||
+        tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID
+    ) {
         return false;
     }
-    return connections.some((connection) => connection.id === tab.connectionId && connection.status === 'connected');
+    return connections.some(
+        (connection) => connection.id === tab.connectionId && connection.status === 'connected',
+    );
 }
 
-export function TabBar() {
+/** Share main-tab presentation, guarded close and connection-owned context actions. */
+export function TabBar({ contentMenuItems }: { contentMenuItems?: ContentMenuItems }) {
     // Zustand Integrations
-    const tabs = useAppStore(state => state.tabs);
-    const activeTabId = useAppStore(state => state.activeTabId);
-    const activateTab = useAppStore(state => state.activateTab);
-    const handleActivateTab = useCallback((tabId: string) => {
-        activateTab(tabId);
-    }, [activateTab]);
-    const closeTab = useAppStore(state => state.closeTab);
-    const disconnect = useAppStore(state => state.disconnect);
-    const connections = useAppStore(state => state.connections);
-    const reorderWorkspaceTab = useAppStore(state => state.reorderWorkspaceTab);
-    const setTabDisplayAlias = useAppStore(state => state.setTabDisplayAlias);
-    const setTabPinned = useAppStore(state => state.setTabPinned);
-    const updateTabPresentation = useAppStore(state => state.updateTabPresentation);
-    const showToast = useAppStore(state => state.showToast);
-    const closeButtonMode = useAppStore(state => state.settings.mainTabCloseButton);
-    const [editor, setEditor] = useState<{ id: string; kind: 'rename' | 'appearance' } | null>(null);
-    const editingTab = tabs.find(tab => tab.id === editor?.id);
+    const tabs = useAppStore((state) => state.tabs);
+    const vncTabMenuItems = useVncProfileTabMenuItems(tabs, contentMenuItems);
+    const tabMenuItems = useSerialProfileTabMenuItems(tabs, vncTabMenuItems);
+    const activeTabId = useAppStore((state) => state.activeTabId);
+    const activateTab = useAppStore((state) => state.activateTab);
+    const handleActivateTab = useCallback(
+        (tabId: string) => {
+            activateTab(tabId);
+        },
+        [activateTab],
+    );
+    const closeTab = useAppStore((state) => state.closeTab);
+    const disconnect = useAppStore((state) => state.disconnect);
+    const connections = useAppStore((state) => state.connections);
+    const reorderWorkspaceTab = useAppStore((state) => state.reorderWorkspaceTab);
+    const setTabDisplayAlias = useAppStore((state) => state.setTabDisplayAlias);
+    const setTabPinned = useAppStore((state) => state.setTabPinned);
+    const updateTabPresentation = useAppStore((state) => state.updateTabPresentation);
+    const showToast = useAppStore((state) => state.showToast);
+    const closeButtonMode = useAppStore((state) => state.settings.mainTabCloseButton);
+    const [editor, setEditor] = useState<{ id: string; kind: 'rename' | 'appearance' } | null>(
+        null,
+    );
+    const editingTab = tabs.find((tab) => tab.id === editor?.id);
     useEffect(() => {
-        if (editor && !editingTab) setEditor(null);
+        if (editor && !editingTab) {
+            setEditor(null);
+        }
     }, [editor, editingTab]);
     const moveTab = (id: string, direction: -1 | 1) => {
         const state = useAppStore.getState();
-        const index = state.tabs.findIndex(tab => tab.id === id);
+        const index = state.tabs.findIndex((tab) => tab.id === id);
         const current = state.tabs[index];
         const neighbor = index >= 0 ? state.tabs[index + direction] : undefined;
         if (current && neighbor && isMainTabPinned(current) === isMainTabPinned(neighbor)) {
@@ -84,45 +156,69 @@ export function TabBar() {
     };
 
     // Settings Slice
-    const goHome = useAppStore(state => state.goHome);
-    const openPublicUrlsTab = useAppStore(state => state.openPublicUrlsTab);
-    const openPortForwardingTab = useAppStore(state => state.openPortForwardingTab);
-    const openSecurityAuditsTab = useAppStore(state => state.openSecurityAuditsTab);
-    const openTab = useAppStore(state => state.openTab);
-    const setAddConnectionModalOpen = useAppStore(state => state.setAddConnectionModalOpen);
+    const goHome = useAppStore((state) => state.goHome);
+    const openPublicUrlsTab = useAppStore((state) => state.openPublicUrlsTab);
+    const openPortForwardingTab = useAppStore((state) => state.openPortForwardingTab);
+    const openSecurityAuditsTab = useAppStore((state) => state.openSecurityAuditsTab);
+    const openTab = useAppStore((state) => state.openTab);
+    const setAddConnectionModalOpen = useAppStore((state) => state.setAddConnectionModalOpen);
     const { showInTitleLeft, showInTitleRight } = useNotificationBellPlacement();
     const showHostAddressesInLists = useShowHostAddressesInLists();
     const tabsViewportRef = useRef<HTMLDivElement | null>(null);
-    useEffect(() => listenWorkspacePresentationActions(useAppStore.getState,
-        target => target.action === 'customize-tab',
-        target => {
-            if (editor?.id === target.tabId && editor.kind === 'appearance') return;
-            // A palette input may be exiting; give the dialog a persistent exact-tab opener.
-            [...(tabsViewportRef.current?.querySelectorAll<HTMLElement>('[data-workspace-tab]') ?? [])]
-                .find(node => node.dataset.workspaceTab === target.tabId)?.focus();
-            setEditor({ id: target.tabId, kind: 'appearance' });
-        }), [editor]);
+    useEffect(
+        () =>
+            listenWorkspacePresentationActions(
+                useAppStore.getState,
+                (target) => target.action === 'customize-tab',
+                (target) => {
+                    if (editor?.id === target.tabId && editor.kind === 'appearance') {
+                        return;
+                    }
+                    // A palette input may be exiting; give the dialog a persistent exact-tab opener.
+                    [
+                        ...(tabsViewportRef.current?.querySelectorAll<HTMLElement>(
+                            '[data-workspace-tab]',
+                        ) ?? []),
+                    ]
+                        .find((node) => node.dataset.workspaceTab === target.tabId)
+                        ?.focus();
+                    setEditor({ id: target.tabId, kind: 'appearance' });
+                },
+            ),
+        [editor],
+    );
     const [tabOverflow, setTabOverflow] = useState({ left: false, right: false });
     const updateTabOverflow = useCallback(() => {
         const viewport = tabsViewportRef.current;
-        if (!viewport) return;
+        if (!viewport) {
+            return;
+        }
         setTabOverflow({
             left: viewport.scrollLeft > 1,
             right: viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 1,
         });
     }, []);
-    const handleTabsWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-        if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-        const viewport = tabsViewportRef.current;
-        if (!viewport || viewport.scrollWidth <= viewport.clientWidth) return;
-        viewport.scrollLeft += event.deltaY;
-        event.preventDefault();
-        window.requestAnimationFrame(updateTabOverflow);
-    }, [updateTabOverflow]);
+    const handleTabsWheel = useCallback(
+        (event: React.WheelEvent<HTMLDivElement>) => {
+            if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+                return;
+            }
+            const viewport = tabsViewportRef.current;
+            if (!viewport || viewport.scrollWidth <= viewport.clientWidth) {
+                return;
+            }
+            viewport.scrollLeft += event.deltaY;
+            event.preventDefault();
+            window.requestAnimationFrame(updateTabOverflow);
+        },
+        [updateTabOverflow],
+    );
 
     useEffect(() => {
         const viewport = tabsViewportRef.current;
-        if (!viewport) return;
+        if (!viewport) {
+            return;
+        }
         updateTabOverflow();
         const observer = new ResizeObserver(updateTabOverflow);
         observer.observe(viewport);
@@ -136,10 +232,17 @@ export function TabBar() {
     const addMenuRef = useRef<HTMLDivElement>(null);
     const addButtonRef = useRef<HTMLButtonElement>(null);
     const closeFocusIntentRef = useRef<WorkspaceTabCloseFocusIntent | null>(null);
-    const { captureCloseFocus, restoreCloseFocus } = useWorkspaceTabCloseFocus(tabs, tabsViewportRef, addButtonRef, tabToClose !== null);
+    const { captureCloseFocus, restoreCloseFocus } = useWorkspaceTabCloseFocus(
+        tabs,
+        tabsViewportRef,
+        addButtonRef,
+        tabToClose !== null,
+    );
     // Click outside to close the Add menu
     useEffect(() => {
-        if (!isAddMenuOpen) return;
+        if (!isAddMenuOpen) {
+            return;
+        }
 
         const handleClickOutside = (event: MouseEvent) => {
             if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) {
@@ -160,7 +263,9 @@ export function TabBar() {
         // Use fresh state
         const state = useAppStore.getState();
         const tab = state.tabs.find((t: Tab) => t.id === id);
-        if (!tab) return;
+        if (!tab) {
+            return;
+        }
         const focusIntent = captureCloseFocus(id);
 
         // Check if it's an active host connection (not Settings, Port Forwarding, or Local)
@@ -175,7 +280,9 @@ export function TabBar() {
 
         // Otherwise close immediately using store action
         state.closeTab(id);
-        if (!useAppStore.getState().tabs.some(tab => tab.id === id)) restoreCloseFocus(focusIntent);
+        if (!useAppStore.getState().tabs.some((tab) => tab.id === id)) {
+            restoreCloseFocus(focusIntent);
+        }
     };
 
     const handleDisconnectTab = (connectionId: string, e?: React.MouseEvent) => {
@@ -186,7 +293,9 @@ export function TabBar() {
     const confirmClose = () => {
         if (tabToClose) {
             closeTab(tabToClose);
-            if (!useAppStore.getState().tabs.some(tab => tab.id === tabToClose)) restoreCloseFocus(closeFocusIntentRef.current);
+            if (!useAppStore.getState().tabs.some((tab) => tab.id === tabToClose)) {
+                restoreCloseFocus(closeFocusIntentRef.current);
+            }
             closeFocusIntentRef.current = null;
             setTabToClose(null);
         }
@@ -206,17 +315,19 @@ export function TabBar() {
         return () => window.removeEventListener('zync:close-active-tab', onCloseActiveTab);
     }, []);
 
-
-
     const platform = window.electronUtils?.platform || 'linux';
     const isMac = platform === 'darwin';
     return (
         <>
-            <div ref={dragRegionRef} data-zync-color="mainTabs" className={cn(
-                "relative z-[60] flex h-10 bg-app-bg items-center pr-1 gap-1 app-drag-region shrink-0 select-none border-b border-app-border/40",
-                isMac ? "pl-2" : "pl-1"
-            )} data-tauri-drag-region>
-
+            <div
+                ref={dragRegionRef}
+                data-zync-color="mainTabs"
+                className={cn(
+                    'relative z-[60] flex h-10 bg-app-bg items-center pr-1 gap-1 app-drag-region shrink-0 select-none border-b border-app-border/40',
+                    isMac ? 'pl-2' : 'pl-1',
+                )}
+                data-tauri-drag-region
+            >
                 {/* macOS Controls on Left (Always at far edge) */}
                 {isMac && (
                     <div className="shrink-0 flex items-center pr-2 pl-1">
@@ -227,7 +338,10 @@ export function TabBar() {
                 {/* Brand & Add (Now back on left) */}
                 <div className="flex items-center gap-1.5 shrink-0 drag-none px-1">
                     {/* Zync mark → Home on hover (single control) */}
-                    <Tooltip content="Welcome Screen" position="bottom">
+                    <Tooltip
+                        content="Welcome Screen"
+                        position="bottom"
+                    >
                         <button
                             type="button"
                             onClick={goHome}
@@ -235,7 +349,11 @@ export function TabBar() {
                             className="group relative h-7 w-7 shrink-0 rounded-md flex items-center justify-center text-app-muted hover:text-app-text hover:bg-app-surface border border-transparent hover:border-app-border/40 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/60"
                         >
                             <span className="absolute inset-0 flex items-center justify-center opacity-90 transition-opacity duration-150 group-hover:opacity-0 group-focus-visible:opacity-0">
-                                <ZyncMark size={20} variant="theme" frame="bare" />
+                                <ZyncMark
+                                    size={20}
+                                    variant="theme"
+                                    frame="bare"
+                                />
                             </span>
                             <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
                                 <Home size={14} />
@@ -243,10 +361,18 @@ export function TabBar() {
                         </button>
                     </Tooltip>
 
-                    {showInTitleLeft && <NotificationBell tooltipPosition="bottom" size="title" />}
+                    {showInTitleLeft && (
+                        <NotificationBell
+                            tooltipPosition="bottom"
+                            size="title"
+                        />
+                    )}
 
                     {/* Add New Button */}
-                    <div className="relative shrink-0" ref={addMenuRef}>
+                    <div
+                        className="relative shrink-0"
+                        ref={addMenuRef}
+                    >
                         <TabAddButton
                             ref={addButtonRef}
                             label="Create or go"
@@ -268,23 +394,41 @@ export function TabBar() {
                                     icon: connection.icon,
                                 }))}
                                 open={{
-                                    portForwardingOpen: tabs.some((tab) => tab.type === 'port-forwarding'),
+                                    portForwardingOpen: tabs.some(
+                                        (tab) => tab.type === 'port-forwarding',
+                                    ),
                                     publicUrlsOpen: tabs.some((tab) => tab.type === 'public-urls'),
-                                    securityAuditsOpen: tabs.some((tab) => tab.type === 'security-audits'),
-                                    localOpen: tabs.some((tab) => tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID),
+                                    securityAuditsOpen: tabs.some(
+                                        (tab) => tab.type === 'security-audits',
+                                    ),
+                                    localOpen: tabs.some(
+                                        (tab) => tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID,
+                                    ),
                                     openHostIds: new Set(
                                         tabs
-                                            .filter((tab) => tab.type === 'connection' && tab.connectionId && tab.connectionId !== LOCAL_TERMINAL_CONNECTION_ID)
+                                            .filter(
+                                                (tab) =>
+                                                    tab.type === 'connection' &&
+                                                    tab.connectionId &&
+                                                    tab.connectionId !==
+                                                        LOCAL_TERMINAL_CONNECTION_ID,
+                                            )
                                             .map((tab) => tab.connectionId as string),
                                     ),
                                 }}
                                 onClose={(source) => {
                                     setIsAddMenuOpen(false);
-                                    if (source === 'keyboard') addButtonRef.current?.focus();
+                                    if (source === 'keyboard') {
+                                        addButtonRef.current?.focus();
+                                    }
                                 }}
                                 onNewHost={() => setAddConnectionModalOpen(true)}
-                                onNewFolder={() => window.dispatchEvent(new Event('ssh-ui:open-folder-modal'))}
-                                onNewTunnel={() => window.dispatchEvent(new Event('ssh-ui:open-new-tunnel'))}
+                                onNewFolder={() =>
+                                    window.dispatchEvent(new Event('ssh-ui:open-folder-modal'))
+                                }
+                                onNewTunnel={() =>
+                                    window.dispatchEvent(new Event('ssh-ui:open-new-tunnel'))
+                                }
                                 onOpenPortForwarding={() => openPortForwardingTab()}
                                 onOpenPublicUrls={() => openPublicUrlsTab()}
                                 onOpenSecurityAudits={() => openSecurityAuditsTab()}
@@ -299,28 +443,35 @@ export function TabBar() {
                     <WorkspaceTabList
                         ref={tabsViewportRef}
                         tabs={tabs}
+                        contentMenuItems={tabMenuItems}
                         activeTabId={activeTabId}
                         onReorder={reorderWorkspaceTab}
                         canDrag={() => {
                             const state = useAppStore.getState();
-                            return state.sessionLoaded && !state.isRestoring && !state.sessionPersistenceBlocked;
+                            return (
+                                state.sessionLoaded &&
+                                !state.isRestoring &&
+                                !state.sessionPersistenceBlocked
+                            );
                         }}
                         onActivate={handleActivateTab}
                         onClose={handleCloseTab}
                         onDisconnect={handleDisconnectTab}
-                        onRename={id => setEditor({ id, kind: 'rename' })}
-                        onAppearance={id => setEditor({ id, kind: 'appearance' })}
+                        onRename={(id) => setEditor({ id, kind: 'rename' })}
+                        onAppearance={(id) => setEditor({ id, kind: 'appearance' })}
                         onSetPinned={setTabPinned}
                         onMove={moveTab}
-                        onActionError={() => showToast('error', 'This tab could not be updated. Please try again.')}
+                        onActionError={() =>
+                            showToast('error', 'This tab could not be updated. Please try again.')
+                        }
                         closeButtonMode={closeButtonMode}
-                        canDisconnect={tab => isConnectedHostTab(tab, connections)}
-                        renderIcon={tab => getIconForTab(tab, connections, 12)}
+                        canDisconnect={(tab) => isConnectedHostTab(tab, connections)}
+                        renderIcon={(tab) => getIconForTab(tab, connections, 12)}
                         className={cn(
-                            "workspace-tabs-scroll flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1",
-                            tabOverflow.left && tabOverflow.right && "workspace-tabs-fade-both",
-                            tabOverflow.left && !tabOverflow.right && "workspace-tabs-fade-left",
-                            !tabOverflow.left && tabOverflow.right && "workspace-tabs-fade-right",
+                            'workspace-tabs-scroll flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1',
+                            tabOverflow.left && tabOverflow.right && 'workspace-tabs-fade-both',
+                            tabOverflow.left && !tabOverflow.right && 'workspace-tabs-fade-left',
+                            !tabOverflow.left && tabOverflow.right && 'workspace-tabs-fade-right',
                         )}
                         onWheel={handleTabsWheel}
                         onScroll={updateTabOverflow}
@@ -333,7 +484,12 @@ export function TabBar() {
                     <div className="flex items-center gap-1 shrink-0 drag-none px-1">
                         {/* Header Actions (sidebar + AI toggles live in the bottom status bar) */}
                         <div className="flex items-center gap-1">
-                            {showInTitleRight && <NotificationBell tooltipPosition="bottom" size="title" />}
+                            {showInTitleRight && (
+                                <NotificationBell
+                                    tooltipPosition="bottom"
+                                    size="title"
+                                />
+                            )}
                             <GlobalUtilityActions location="topbar" />
 
                             {/* Windows/Linux Controls inline with app actions */}
@@ -345,20 +501,37 @@ export function TabBar() {
                         </div>
                     </div>
                 </>
-
             </div>
 
-            {editingTab && editor?.kind === 'rename' && <DisplayAliasDialog
-                key={editingTab.id} isOpen title="Rename tab" defaultTitle={editingTab.title} displayAlias={editingTab.displayAlias}
-                onSave={alias => {
-                    if (!setTabDisplayAlias(editingTab.id, alias)) throw new Error('This tab could not be updated. Please try again.');
-                }} onClose={() => setEditor(null)} />}
-            {editingTab && editor?.kind === 'appearance' && <WorkspaceTabAppearanceDialog
-                key={editingTab.id} tab={editingTab} onClose={() => setEditor(null)}
-                onChange={action => updateTabPresentation(editingTab.id, action)} />}
+            {editingTab && editor?.kind === 'rename' && (
+                <DisplayAliasDialog
+                    key={editingTab.id}
+                    isOpen
+                    title="Rename tab"
+                    defaultTitle={editingTab.title}
+                    displayAlias={editingTab.displayAlias}
+                    onSave={(alias) => {
+                        if (!setTabDisplayAlias(editingTab.id, alias)) {
+                            throw new Error('This tab could not be updated. Please try again.');
+                        }
+                    }}
+                    onClose={() => setEditor(null)}
+                />
+            )}
+            {editingTab && editor?.kind === 'appearance' && (
+                <WorkspaceTabAppearanceDialog
+                    key={editingTab.id}
+                    tab={editingTab}
+                    onClose={() => setEditor(null)}
+                    onChange={(action) => updateTabPresentation(editingTab.id, action)}
+                />
+            )}
             <ConfirmModal
                 isOpen={!!tabToClose}
-                onClose={() => { closeFocusIntentRef.current = null; setTabToClose(null); }}
+                onClose={() => {
+                    closeFocusIntentRef.current = null;
+                    setTabToClose(null);
+                }}
                 onConfirm={confirmClose}
                 title="Disconnect & Close?"
                 message="This will disconnect the active SSH session."

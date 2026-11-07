@@ -1,15 +1,38 @@
 import { lazy, Suspense } from 'react';
+
+import { usePlugins } from '../../context/PluginContext';
 import type { SplitFeatureId } from '../../lib/paneLayout';
 import { ErrorBoundary } from '../ErrorBoundary';
-import { usePlugins } from '../../context/PluginContext';
 import { PluginUnavailable } from '../plugins/PluginUnavailable';
 
-const FileManager = lazy(() => import('../FileManager').then((module) => ({ default: module.FileManager })));
-const Dashboard = lazy(() => import('../dashboard/Dashboard').then((module) => ({ default: module.Dashboard })));
-const TunnelManager = lazy(() => import('../tunnel/TunnelManager').then((module) => ({ default: module.TunnelManager })));
-const SnippetsManager = lazy(() => import('../snippets/SnippetsManager').then((module) => ({ default: module.SnippetsManager })));
-const PluginPanel = lazy(() => import('../plugins/PluginPanel').then((module) => ({ default: module.PluginPanel })));
-const SecurityPanel = lazy(() => import('../../features/security/ui/SecurityPanel').then((module) => ({ default: module.SecurityPanel })));
+const FileManager = lazy(() =>
+    import('../FileManager').then((module) => ({ default: module.FileManager })),
+);
+const Dashboard = lazy(() =>
+    import('../dashboard/Dashboard').then((module) => ({ default: module.Dashboard })),
+);
+const TunnelManager = lazy(() =>
+    import('../tunnel/TunnelManager').then((module) => ({ default: module.TunnelManager })),
+);
+const SnippetsManager = lazy(() =>
+    import('../snippets/SnippetsManager').then((module) => ({ default: module.SnippetsManager })),
+);
+const PluginPanel = lazy(() =>
+    import('../plugins/PluginPanel').then((module) => ({ default: module.PluginPanel })),
+);
+const SecurityPanel = lazy(() =>
+    import('../../features/security/ui/SecurityPanel').then((module) => ({
+        default: module.SecurityPanel,
+    })),
+);
+const SerialTerminalPane = lazy(() =>
+    import('../../features/serial/ui/SerialTerminalPane').then((module) => ({
+        default: module.SerialTerminalPane,
+    })),
+);
+const VncPane = lazy(() =>
+    import('../../features/vnc/ui/VncPane').then((module) => ({ default: module.VncPane })),
+);
 
 function FeaturePaneFallback() {
     return <div className="h-full w-full bg-app-bg" />;
@@ -18,6 +41,7 @@ function FeaturePaneFallback() {
 /** Lazy feature content rendering; pane layout, identity and resource ownership stay generic. */
 export function FeaturePaneBody({
     connectionId,
+    contentKey,
     featureId,
     pluginId,
     instanceId,
@@ -25,6 +49,7 @@ export function FeaturePaneBody({
     focused,
 }: {
     connectionId: string;
+    contentKey: string;
     featureId?: SplitFeatureId;
     pluginId?: string;
     instanceId?: string;
@@ -35,25 +60,50 @@ export function FeaturePaneBody({
     const plugin = pluginId ? panels.find((panel) => panel.id === pluginId) : undefined;
     return (
         <Suspense fallback={<FeaturePaneFallback />}>
+            {featureId === 'serial' && (
+                <ErrorBoundary isolate>
+                    <SerialTerminalPane />
+                </ErrorBoundary>
+            )}
+            {featureId === 'vnc' && (
+                <ErrorBoundary isolate>
+                    <VncPane
+                        key={connectionId}
+                        connectionId={connectionId}
+                        contentKey={contentKey}
+                        visible={visible}
+                        focused={focused}
+                    />
+                </ErrorBoundary>
+            )}
             {featureId === 'security' && (
                 <ErrorBoundary isolate>
-                    <SecurityPanel connectionId={connectionId} visible={visible} focused={focused} />
+                    <SecurityPanel
+                        connectionId={connectionId}
+                        visible={visible}
+                        focused={focused}
+                    />
                 </ErrorBoundary>
             )}
             {featureId === 'files' && (
                 <ErrorBoundary isolate>
-                    <FileManager connectionId={connectionId} surface="pane" instanceId={instanceId} active={visible} focused={focused} />
+                    <FileManager
+                        connectionId={connectionId}
+                        surface="pane"
+                        instanceId={instanceId}
+                        active={visible}
+                        focused={focused}
+                    />
                 </ErrorBoundary>
             )}
             {featureId === 'dashboard' && (
-                <Dashboard connectionId={connectionId} isVisible={visible} />
+                <Dashboard
+                    connectionId={connectionId}
+                    isVisible={visible}
+                />
             )}
-            {featureId === 'port-forwarding' && (
-                <TunnelManager connectionId={connectionId} />
-            )}
-            {featureId === 'snippets' && (
-                <SnippetsManager connectionId={connectionId} />
-            )}
+            {featureId === 'port-forwarding' && <TunnelManager connectionId={connectionId} />}
+            {featureId === 'snippets' && <SnippetsManager connectionId={connectionId} />}
             {plugin && (
                 <PluginPanel
                     html={plugin.html}
@@ -66,7 +116,9 @@ export function FeaturePaneBody({
                     focused={focused}
                 />
             )}
-            {pluginId && !plugin && (loaded ? <PluginUnavailable panelId={pluginId} /> : <FeaturePaneFallback />)}
+            {pluginId &&
+                !plugin &&
+                (loaded ? <PluginUnavailable panelId={pluginId} /> : <FeaturePaneFallback />)}
         </Suspense>
     );
 }
