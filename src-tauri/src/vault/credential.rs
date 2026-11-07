@@ -18,6 +18,8 @@ pub const PRIVATE_KEY_FIELD: &str = "privateKey";
 pub const PASSPHRASE_FIELD: &str = "passphrase";
 pub const SSH_CERTIFICATE_FIELD: &str = "sshCertificate";
 pub const PASSWORD_FIELD: &str = "password";
+/// Existing wire and storage tag for passwords shared by connection types.
+pub const PASSWORD_STORAGE_KIND: &str = "ssh-password";
 pub const TOKEN_FIELD: &str = "token";
 pub const SECRET_FIELD: &str = "secret";
 
@@ -25,7 +27,8 @@ pub const SECRET_FIELD: &str = "secret";
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialKind {
     SshPrivateKey,
-    SshPassword,
+    #[serde(rename = "ssh-password", alias = "vnc-password", alias = "password")]
+    Password,
     SshKeyWithPassphrase,
     SshCertificate,
     UsernamePassword,
@@ -47,7 +50,7 @@ impl CredentialKind {
     pub fn from_legacy_kind(kind: &str) -> Self {
         match kind {
             "ssh-private-key" | "ssh-key-with-passphrase" => Self::SshPrivateKey,
-            "ssh-password" => Self::SshPassword,
+            PASSWORD_STORAGE_KIND | "vnc-password" | "password" => Self::Password,
             "ssh-agent-key" => Self::ExternalKeychainReference,
             "ssh-certificate" => Self::SshCertificate,
             "api-token" | "api-key" => Self::ApiToken,
@@ -71,7 +74,7 @@ impl CredentialKind {
     pub fn canonical_storage_kind(&self) -> &'static str {
         match self {
             Self::SshPrivateKey | Self::SshKeyWithPassphrase => "ssh-private-key",
-            Self::SshPassword => "ssh-password",
+            Self::Password => PASSWORD_STORAGE_KIND,
             Self::SshCertificate => "ssh-certificate",
             Self::UsernamePassword => "username-password",
             Self::ApiToken => "api-token",
@@ -87,6 +90,12 @@ impl CredentialKind {
             Self::PluginDefined => "plugin-defined",
             Self::GenericSecret => "generic-secret",
         }
+    }
+
+    /// Keep existing envelope metadata when an update uses a compatible password alias.
+    pub fn matches_storage_kind(&self, kind: &str) -> bool {
+        self.canonical_storage_kind() == kind
+            || (*self == Self::Password && Self::from_legacy_kind(kind) == Self::Password)
     }
 }
 
@@ -253,7 +262,7 @@ pub fn secret_values_from_legacy(kind: &str, secret: &str) -> BTreeMap<String, S
 pub fn primary_secret_field_name(kind: &CredentialKind) -> &'static str {
     match kind {
         CredentialKind::SshPrivateKey | CredentialKind::SshKeyWithPassphrase => PRIVATE_KEY_FIELD,
-        CredentialKind::SshPassword | CredentialKind::UsernamePassword => PASSWORD_FIELD,
+        CredentialKind::Password | CredentialKind::UsernamePassword => PASSWORD_FIELD,
         CredentialKind::ApiToken => TOKEN_FIELD,
         _ => SECRET_FIELD,
     }
@@ -452,13 +461,15 @@ fn canonical_fields(
             }
             fields
         }
-        CredentialKind::SshPassword | CredentialKind::UsernamePassword => vec![secret_field(
-            PASSWORD_FIELD,
-            "Password",
-            true,
-            CredentialFieldFormat::Password,
-            None,
-        )],
+        CredentialKind::Password | CredentialKind::UsernamePassword => {
+            vec![secret_field(
+                PASSWORD_FIELD,
+                "Password",
+                true,
+                CredentialFieldFormat::Password,
+                None,
+            )]
+        }
         CredentialKind::ApiToken => vec![secret_field(
             TOKEN_FIELD,
             "Token",
@@ -485,7 +496,7 @@ fn normalized_fields(
         kind,
         CredentialKind::SshPrivateKey
             | CredentialKind::SshKeyWithPassphrase
-            | CredentialKind::SshPassword
+            | CredentialKind::Password
             | CredentialKind::UsernamePassword
             | CredentialKind::ApiToken
     ) {
@@ -599,8 +610,36 @@ mod tests {
         let credential = legacy_record_to_credential(&record);
 
         assert_eq!(credential.credential_id, "item-1");
-        assert_eq!(credential.kind, CredentialKind::SshPassword);
+        assert_eq!(credential.kind, CredentialKind::Password);
         assert_eq!(credential.fields[0].name, "password");
+    }
+
+    #[test]
+    fn legacy_password_kinds_share_the_same_typed_reference_without_plaintext() {
+        for alias in [PASSWORD_STORAGE_KIND, "vnc-password", "password"] {
+            let mut record = legacy_record(alias);
+            normalize_record_credential(&mut record);
+            let credential = record.credential.as_ref().unwrap();
+
+            assert_eq!(credential.credential_id, "cred-1");
+            assert_eq!(credential.kind, CredentialKind::Password);
+            assert_eq!(record.kind, PASSWORD_STORAGE_KIND);
+            assert_eq!(credential.metadata.legacy_kind.as_deref(), Some(alias));
+            assert_eq!(
+                credential.fields[0].value_ref.as_deref(),
+                Some("secret:password")
+            );
+            assert!(credential.fields[0].value.is_none());
+            assert_eq!(
+                primary_secret_value(&record),
+                Some("not-copied-to-envelope")
+            );
+            assert!(validate_secret_values_for_kind(alias, &BTreeMap::new()).is_err());
+
+            let typed = serde_json::from_value::<CredentialKind>(serde_json::json!(alias)).unwrap();
+            assert_eq!(typed, CredentialKind::Password);
+            assert_eq!(serde_json::to_value(typed).unwrap(), PASSWORD_STORAGE_KIND);
+        }
     }
 
     #[test]
@@ -623,7 +662,7 @@ mod tests {
 
         let credential = record.credential.as_ref().expect("credential envelope");
         assert_eq!(credential.credential_id, "cred-1");
-        assert_eq!(credential.kind, CredentialKind::SshPassword);
+        assert_eq!(credential.kind, CredentialKind::Password);
         assert_eq!(credential.label, "Prod credential");
         assert_eq!(credential.revision, 7);
         assert_eq!(

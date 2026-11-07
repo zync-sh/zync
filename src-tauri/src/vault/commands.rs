@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use zeroize::Zeroize;
 
 use crate::types::SavedData;
-use crate::vault::credential::validate_secret_values_for_kind;
+use crate::vault::credential::{validate_secret_values_for_kind, PASSPHRASE_FIELD, PASSWORD_FIELD};
 use crate::vault::error::VaultError;
 use crate::vault::secure_to_vault::{SecureToVaultPreview, SecureToVaultResult};
 use crate::vault::store::VaultService;
@@ -383,18 +383,19 @@ pub async fn vault_item_set_ssh_certificate(
     })
 }
 
-/// Trim pasted key/certificate text, preserving passphrase bytes required to decrypt a key.
+/// Trim pasted key and certificate text while preserving password and passphrase bytes.
 fn sanitize_secret_values(
     kind: &str,
     values: &BTreeMap<String, SecretString>,
 ) -> Result<BTreeMap<String, String>, VaultCommandError> {
     let mut sanitized = BTreeMap::new();
     for (name, value) in values {
-        let trimmed = value.expose_secret().trim();
-        let sanitized_value = if name == crate::vault::credential::PASSPHRASE_FIELD {
-            value.expose_secret()
-        } else {
-            trimmed
+        let value = value.expose_secret();
+        let trimmed = value.trim();
+        let sanitized_value = match name.as_str() {
+            PASSPHRASE_FIELD => value,
+            PASSWORD_FIELD if !trimmed.is_empty() => value,
+            _ => trimmed,
         };
         if !sanitized_value.is_empty() {
             sanitized.insert(name.clone(), sanitized_value.to_string());
@@ -415,8 +416,33 @@ fn zeroize_secret_values(values: &mut BTreeMap<String, String>) {
 }
 
 #[cfg(test)]
-mod ssh_certificate_secret_tests {
+mod secret_input_tests {
     use super::*;
+    use crate::vault::credential::PASSWORD_STORAGE_KIND;
+
+    #[test]
+    fn password_input_preserves_whitespace_around_nonblank_passwords() {
+        let password = " test password \t";
+        let values = BTreeMap::from([(
+            PASSWORD_FIELD.into(),
+            SecretString::from(password.to_string()),
+        )]);
+
+        let mut result = sanitize_secret_values(PASSWORD_STORAGE_KIND, &values).unwrap();
+        assert_eq!(result[PASSWORD_FIELD], password);
+        zeroize_secret_values(&mut result);
+    }
+
+    #[test]
+    fn password_input_rejects_whitespace_only_passwords() {
+        let values = BTreeMap::from([(
+            PASSWORD_FIELD.into(),
+            SecretString::from(" \t ".to_string()),
+        )]);
+
+        let error = sanitize_secret_values(PASSWORD_STORAGE_KIND, &values).unwrap_err();
+        assert_eq!(error.code, "invalid_secret_values");
+    }
 
     #[test]
     fn certificate_input_trims_public_text_without_changing_passphrase_bytes() {

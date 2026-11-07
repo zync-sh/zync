@@ -1205,6 +1205,8 @@ async fn resolve_auth_method(
     vault: &tokio::sync::Mutex<crate::vault::store::VaultService>,
     require_private_key: bool,
 ) -> Result<Vec<RelinkedVaultRefUpdate>, String> {
+    use crate::vault::credential::PASSWORD_STORAGE_KIND;
+
     let crate::types::AuthMethod::VaultRef {
         item_id,
         credential_id,
@@ -1240,7 +1242,7 @@ async fn resolve_auth_method(
     };
     drop(svc);
     *auth_method = match record.kind.as_str() {
-        "ssh-password" if !require_private_key => crate::types::AuthMethod::Password {
+        PASSWORD_STORAGE_KIND if !require_private_key => crate::types::AuthMethod::Password {
             password: crate::vault::credential::primary_secret_value(&record)
                 .ok_or_else(|| "Vault password credential has no password value".to_string())?
                 .to_string(),
@@ -1271,6 +1273,46 @@ async fn resolve_auth_method(
         }
     };
     Ok(relinked)
+}
+
+#[cfg(test)]
+mod vault_password_auth_tests {
+    use super::*;
+    use crate::types::{AuthMethod, CredentialItemKind};
+
+    #[tokio::test]
+    async fn ssh_password_resolution_accepts_existing_vnc_links_and_rejects_agent_use() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = crate::vault::store::VaultService::new(directory.path().into());
+        service
+            .initialize("isolated fixture passphrase", false)
+            .unwrap();
+        let vault = tokio::sync::Mutex::new(service);
+
+        for kind in ["ssh-password", "vnc-password", "password"] {
+            let item_kind: CredentialItemKind =
+                serde_json::from_value(serde_json::json!(kind)).unwrap();
+            assert_eq!(serde_json::to_value(item_kind).unwrap(), "ssh-password");
+
+            let record = vault
+                .lock()
+                .await
+                .item_create("Fixture", kind, "shared-secret", None)
+                .unwrap();
+            let mut auth = AuthMethod::VaultRef {
+                item_id: record.id.clone(),
+                credential_id: record.logical_id.clone(),
+            };
+            assert!(resolve_auth_method("host", &mut auth, &vault, true)
+                .await
+                .is_err());
+            assert!(resolve_auth_method("host", &mut auth, &vault, false)
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(matches!(auth, AuthMethod::Password { password } if password == "shared-secret"));
+        }
+    }
 }
 
 #[tauri::command]
