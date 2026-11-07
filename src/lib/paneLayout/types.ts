@@ -7,7 +7,15 @@ export const MAX_PANE_NESTING = 8;
 export const MIN_PANE_RATIO = 0.2;
 
 /** Host feature tabs that may occupy a split leaf. Plugins use `PluginPaneContent`. */
-export const SPLIT_FEATURE_IDS = ['files', 'port-forwarding', 'dashboard', 'snippets', 'security'] as const;
+export const SPLIT_FEATURE_IDS = [
+    'files',
+    'port-forwarding',
+    'dashboard',
+    'snippets',
+    'security',
+    'serial',
+    'vnc',
+] as const;
 export type SplitFeatureId = (typeof SPLIT_FEATURE_IDS)[number];
 
 const SPLIT_FEATURE_ID_SET: ReadonlySet<string> = new Set(SPLIT_FEATURE_IDS);
@@ -78,10 +86,11 @@ export function termPaneContent(termId: string): TermPaneContent {
     return { kind: 'term', termId };
 }
 
-export function featurePaneContent(featureId: SplitFeatureId, instanceId?: string): FeaturePaneContent {
-    return instanceId
-        ? { kind: 'feature', featureId, instanceId }
-        : { kind: 'feature', featureId };
+export function featurePaneContent(
+    featureId: SplitFeatureId,
+    instanceId?: string,
+): FeaturePaneContent {
+    return instanceId ? { kind: 'feature', featureId, instanceId } : { kind: 'feature', featureId };
 }
 
 export function newFeatureInstanceId(featureId: SplitFeatureId): string {
@@ -96,7 +105,10 @@ export function newPluginInstanceId(): string {
     return `plugin-${crypto.randomUUID()}`;
 }
 
-export function pluginPaneContent(pluginId: string, instanceId = newPluginInstanceId()): PluginPaneContent {
+export function pluginPaneContent(
+    pluginId: string,
+    instanceId = newPluginInstanceId(),
+): PluginPaneContent {
     return { kind: 'plugin', pluginId, instanceId };
 }
 

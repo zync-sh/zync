@@ -59,6 +59,12 @@ pub struct TabSnapshot {
     pub connection_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vault_profile_id: Option<String>,
+    /// Device-local VNC profile identity. Restoring a tab never restores its transport.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_profile_id: Option<String>,
+    /// Device-local serial profile identity; a restored tab waits for an explicit hardware open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial_profile_id: Option<String>,
     /// User-facing alias only; never changes connection or content identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_alias: Option<String>,
@@ -487,6 +493,18 @@ mod tests {
             display_alias: Some("My workspace".into()),
             ..Default::default()
         });
+        data.tabs.push(TabSnapshot {
+            id: "viewer".into(),
+            tab_type: "vnc".into(),
+            vnc_profile_id: Some("vnc-profile".into()),
+            ..Default::default()
+        });
+        data.tabs.push(TabSnapshot {
+            id: "serial".into(),
+            tab_type: "serial".into(),
+            serial_profile_id: Some("serial-profile".into()),
+            ..Default::default()
+        });
         data.terminals.insert(
             "local".into(),
             (0..MAX_TABS_PER_SCOPE + 3)
@@ -510,6 +528,13 @@ mod tests {
             restored.tabs[0].display_alias.as_deref(),
             Some("My workspace")
         );
+        assert_eq!(
+            restored.tabs[1].vnc_profile_id.as_deref(),
+            Some("vnc-profile")
+        );
+        assert!(restored.tabs[1].connection_id.is_none());
+        assert_eq!(restored.tabs[2].serial_profile_id.as_deref(), Some("serial-profile"));
+        assert!(restored.tabs[2].connection_id.is_none());
         assert_eq!(restored.terminals["local"].len(), MAX_TABS_PER_SCOPE);
     }
 
