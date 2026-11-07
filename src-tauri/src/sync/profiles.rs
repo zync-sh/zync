@@ -2,13 +2,67 @@ use super::types::{SyncError, SyncProfile, SyncProfilesStore, SyncProviderKind, 
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 const SYNC_PROFILES_FILE: &str = "sync-profiles.json";
 const SYNC_PROFILES_LOCK_STALE_SECS: u64 = 120;
 static SYNC_PROFILES_IO_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static SYNC_PROFILES_ASYNC_GATE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+/// Admit one profile I/O worker without blocking async runtime threads during lock contention.
+/// Running work owns the permit until it exits, even if its awaiting caller is cancelled.
+pub async fn run_profile_io<T, F>(operation: F) -> SyncResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> SyncResult<T> + Send + 'static,
+{
+    let permit = SYNC_PROFILES_ASYNC_GATE
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| {
+            SyncError::new(
+                "sync_profile_write_failed",
+                "sync profile I/O owner is unavailable",
+            )
+        })?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        operation()
+    })
+    .await
+    .map_err(|error| {
+        SyncError::new(
+            "sync_profile_write_failed",
+            format!("Sync profile I/O task failed: {error}"),
+        )
+    })?
+}
+
+/// Read one provider profile through the bounded blocking owner.
+pub async fn get_profile_async(
+    data_dir: &Path,
+    provider: SyncProviderKind,
+) -> SyncResult<Option<SyncProfile>> {
+    let data_dir = data_dir.to_path_buf();
+    run_profile_io(move || get_profile(&data_dir, provider)).await
+}
+
+/// Await a serialized profile mutation without running filesystem locks or retries on async workers.
+pub async fn upsert_profile_async<F>(
+    data_dir: &Path,
+    provider: SyncProviderKind,
+    build: F,
+) -> SyncResult<SyncProfile>
+where
+    F: FnMut(Option<SyncProfile>) -> SyncProfile + Send + 'static,
+{
+    let data_dir = data_dir.to_path_buf();
+    run_profile_io(move || upsert_profile(&data_dir, provider, build)).await
+}
 
 /// Returns current unix timestamp in seconds.
 /// If system clock is misconfigured and appears before UNIX_EPOCH,
@@ -230,6 +284,8 @@ pub fn get_profile(data_dir: &Path, provider: SyncProviderKind) -> SyncResult<Op
         .find(|profile| profile.provider == provider.as_str()))
 }
 
+/// Mutate one profile atomically under the existing process lock; unchanged content retains its timestamp.
+/// Async callers must enter through the blocking owner rather than calling this boundary directly.
 pub fn upsert_profile<F>(
     data_dir: &Path,
     provider: SyncProviderKind,
@@ -255,8 +311,22 @@ where
         .position(|profile| profile.provider == provider.as_str());
 
     let current = index.map(|idx| store.profiles[idx].clone());
-    let mut updated = build(current);
+    let mut updated = build(current.clone());
     updated.provider = provider.as_str().to_string();
+    if let Some(current) = current {
+        updated.updated_at = current.updated_at;
+        let serialize = |profile: &SyncProfile| {
+            serde_json::to_value(profile).map_err(|error| {
+                SyncError::new(
+                    "sync_profile_write_failed",
+                    format!("Failed to compare sync profiles: {error}"),
+                )
+            })
+        };
+        if serialize(&updated)? == serialize(&current)? {
+            return Ok(current);
+        }
+    }
     updated.updated_at = now_secs();
 
     if let Some(idx) = index {
@@ -272,6 +342,109 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_profile() -> SyncProfile {
+        SyncProfile {
+            provider: "google".into(),
+            connected: true,
+            email: None,
+            avatar_url: None,
+            last_sync: None,
+            last_error: None,
+            last_error_code: None,
+            domain_policies: Vec::new(),
+            domain_statuses: Vec::new(),
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn unchanged_profile_keeps_timestamp_and_does_not_rewrite_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let created =
+            upsert_profile(root.path(), SyncProviderKind::Google, |_| fixture_profile()).unwrap();
+        let path = profiles_path(root.path());
+        let old_time = std::time::UNIX_EPOCH + Duration::from_secs(100);
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old_time))
+            .unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let unchanged = upsert_profile(root.path(), SyncProviderKind::Google, |existing| {
+            let mut profile = existing.unwrap();
+            profile.updated_at = u64::MAX; // Builder timestamps are not a meaningful data change.
+            profile
+        })
+        .unwrap();
+        assert_eq!(unchanged.updated_at, created.updated_at);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            modified
+        );
+        let changed = upsert_profile(root.path(), SyncProviderKind::Google, |existing| {
+            let mut profile = existing.unwrap();
+            profile.last_error = Some("fixture failure".into());
+            profile
+        })
+        .unwrap();
+        assert_eq!(changed.last_error.as_deref(), Some("fixture failure"));
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            modified
+        );
+    }
+
+    #[tokio::test]
+    async fn file_lock_contention_does_not_stall_the_async_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = profiles_lock_path(root.path());
+        std::fs::write(&lock, lock_owner_token()).unwrap();
+        let directory = root.path().to_path_buf();
+        let writer = tokio::spawn(async move {
+            upsert_profile_async(&directory, SyncProviderKind::Google, |_| fixture_profile()).await
+        });
+        let start = std::time::Instant::now();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let elapsed = start.elapsed();
+        std::fs::remove_file(lock).unwrap();
+        let result = writer.await.unwrap();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "profile file lock must wait on a blocking worker"
+        );
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiter_does_not_release_a_running_profile_owner() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let first = tokio::spawn(run_profile_io(move || {
+            let _ = started.send(());
+            resume.recv().unwrap();
+            Ok(())
+        }));
+        ready.await.unwrap();
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        let admitted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let second_flag = admitted.clone();
+        let second = tokio::spawn(run_profile_io(move || {
+            second_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let ran_early = admitted.load(std::sync::atomic::Ordering::SeqCst);
+        release.send(()).unwrap();
+        second.await.unwrap().unwrap();
+        assert!(
+            !ran_early,
+            "the running operation must retain the one-worker admission permit"
+        );
+        assert!(admitted.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn upsert_profile_creates_and_updates_provider_entry() {

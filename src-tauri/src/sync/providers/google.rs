@@ -109,6 +109,8 @@ struct DriveFile {
     #[allow(dead_code)]
     #[serde(rename = "modifiedTime")]
     modified_time: Option<String>,
+    #[serde(default, rename = "sha256Checksum")]
+    sha256_checksum: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -142,18 +144,36 @@ fn b64url_no_pad(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn http_client() -> SyncResult<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+static HTTP_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+static UPLOAD_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+
+/// Share a successful pool without caching initialization failures or authentication headers.
+fn pooled_http_client(
+    cache: &Mutex<Option<reqwest::Client>>,
+    timeout: Duration,
+) -> SyncResult<reqwest::Client> {
+    let mut cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(client) = cached.as_ref() {
+        return Ok(client.clone());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
         .build()
-        .map_err(|e| sync_err("http_client_init_failed", e.to_string()))
+        .map_err(|error| sync_err("http_client_init_failed", error.to_string()))?;
+    *cached = Some(client.clone());
+    Ok(client)
 }
 
+/// Share the normal-request pool; bearer credentials remain attached per request.
+fn http_client() -> SyncResult<reqwest::Client> {
+    pooled_http_client(&HTTP_CLIENT, Duration::from_secs(30))
+}
+
+/// Keep upload timeout policy and connection reuse separate from normal metadata calls.
 fn http_upload_client() -> SyncResult<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()
-        .map_err(|e| sync_err("http_client_init_failed", e.to_string()))
+    pooled_http_client(&UPLOAD_CLIENT, Duration::from_secs(180))
 }
 
 fn bind_redirect_listener() -> Option<(u16, std::net::TcpListener)> {
@@ -567,7 +587,10 @@ async fn find_files_by_name_prefix(
     loop {
         let mut request = http_client()?.get(format!("{GDRIVE_API}/files")).query(&[
             ("spaces", APPDATA_SPACE),
-            ("fields", "nextPageToken,files(id,name,modifiedTime)"),
+            (
+                "fields",
+                "nextPageToken,files(id,name,modifiedTime,sha256Checksum)",
+            ),
             (
                 "q",
                 &format!("name contains '{escaped_prefix}' and trashed=false"),
@@ -598,6 +621,7 @@ async fn find_files_by_name_prefix(
             Some(ProviderCredentialObject {
                 object_name: name,
                 object_id: Some(file.id),
+                content_checksum: file.sha256_checksum,
             })
         }));
 
@@ -830,6 +854,22 @@ async fn fetch_google_identity(token: &str) -> GoogleUserIdentity {
 
 #[derive(Default)]
 pub struct GoogleVaultProvider;
+
+/// Keep duplicate object names ordered while independent objects share the upload window.
+fn group_upload_records(records: Vec<ProviderUploadRecord>) -> Vec<Vec<ProviderUploadRecord>> {
+    let mut by_name = HashMap::new();
+    let mut groups: Vec<Vec<ProviderUploadRecord>> = Vec::new();
+    for record in records {
+        let index = *by_name
+            .entry(record.object_name.clone())
+            .or_insert_with(|| {
+                groups.push(Vec::new());
+                groups.len() - 1
+            });
+        groups[index].push(record);
+    }
+    groups
+}
 
 #[async_trait]
 impl VaultProviderV1 for GoogleVaultProvider {
@@ -1082,13 +1122,30 @@ impl VaultProviderV1 for GoogleVaultProvider {
         let provider_data_dir = data_dir(app);
         let token = get_valid_google_token(&provider_data_dir).await?;
         let existing_ids = existing_file_ids_for_upload(&token, &records).await?;
-        let mut latest_synced_at = 0;
-
-        for record in records {
-            let existing_id = existing_ids.get(&record.object_name).cloned();
-            upload_named_bytes(&token, &record.object_name, record.payload, existing_id).await?;
-            latest_synced_at = now_secs();
-        }
+        let groups = group_upload_records(records);
+        let completed = super::super::work_window::write_window(groups, 4, |group| {
+            let token = &token;
+            let existing_ids = &existing_ids;
+            async move {
+                let mut previous_id = None;
+                for (index, record) in group.into_iter().enumerate() {
+                    // A duplicate newly-created name must be looked up again after its first write.
+                    let existing_id = if index == 0 {
+                        existing_ids.get(&record.object_name).cloned()
+                    } else if previous_id.is_some() {
+                        previous_id.clone()
+                    } else {
+                        find_file_by_name(token, &record.object_name).await?
+                    };
+                    previous_id = existing_id.clone();
+                    upload_named_bytes(token, &record.object_name, record.payload, existing_id)
+                        .await?;
+                }
+                Ok::<_, SyncError>(now_secs())
+            }
+        })
+        .await?;
+        let latest_synced_at = completed.into_iter().max().unwrap_or(0);
 
         record_google_sync(&provider_data_dir, latest_synced_at).await?;
         Ok(latest_synced_at)

@@ -50,6 +50,78 @@ struct PluginState {
 pub struct PluginScanner;
 
 impl PluginScanner {
+    /// Load only the selected runtime package while retaining scan ordering and approval rules.
+    /// Other packages contribute manifest identities, never payload reads or integrity hashes.
+    pub(crate) fn load_runtime_plugin(
+        app: &AppHandle,
+        plugin_id: &str,
+    ) -> Result<(Plugin, String)> {
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .context("Failed to resolve app config directory")?;
+        let state = Self::load_state(app)?;
+        let mut plugin = match load_matching_plugin(
+            &config_dir.join("plugins"),
+            plugin_id,
+            Self::load_plugin,
+        )? {
+            Some(plugin) => plugin,
+            None => {
+                // Built-ins have no package tree. Reuse the scanner's complete built-in catalog.
+                Self::builtin_plugins()
+                    .into_iter()
+                    .find(|plugin| plugin.manifest.id == plugin_id)
+                    .ok_or_else(|| anyhow!("Plugin is not installed"))?
+            }
+        };
+        let builtin = plugin.path.starts_with("builtin://");
+        let digest = if builtin {
+            format!("builtin:{}:{}", plugin.manifest.id, plugin.manifest.version)
+        } else {
+            package::digest_directory(Path::new(&plugin.path))
+                .context("Failed to verify plugin package contents")?
+        };
+        let approved = builtin
+            || user_plugin_enabled_by_policy(
+                plugin.manifest.manifest_version(),
+                state.developer_mode,
+                plugin.manifest.manifest_version() >= 2
+                    && grants::is_package_approved(
+                        app,
+                        &plugin.manifest,
+                        &digest,
+                        state.developer_mode,
+                    ),
+            );
+        plugin.enabled = approved && *state.enabled_plugins.get(plugin_id).unwrap_or(&true);
+        Ok((plugin, digest))
+    }
+
+    /// Build the same ordered built-in inventory used by discovery and targeted runtime loading.
+    fn builtin_plugins() -> Vec<Plugin> {
+        let mut plugins = vec![
+            builtins::builtin_theme_manager(),
+            builtins::builtin_codemirror_editor_provider(),
+            builtins::builtin_plain_editor_provider(),
+            builtins::builtin_dark(),
+            builtins::builtin_dracula(),
+            builtins::builtin_oxide(),
+            builtins::builtin_monokai(),
+            builtins::builtin_midnight(),
+            builtins::builtin_monokai_pro(),
+            builtins::builtin_light(),
+            builtins::builtin_gruvbox_light(),
+            builtins::builtin_solarized_light(),
+            builtins::builtin_catppuccin_latte(),
+            builtins::builtin_tokyo_light(),
+            builtins::builtin_synthwave(),
+            builtins::builtin_nordic(),
+        ];
+        plugins.extend(builtins::builtin_icon_themes());
+        plugins
+    }
+
     /// Scans the plugins directory and returns a list of loaded plugins.
     /// Plugins are located in `app_config_dir/plugins`.
     pub fn scan(app: &AppHandle) -> Result<Vec<Plugin>> {
@@ -108,24 +180,8 @@ impl PluginScanner {
             plugins.push(p);
         };
 
-        inject(builtins::builtin_theme_manager());
-        inject(builtins::builtin_codemirror_editor_provider());
-        inject(builtins::builtin_plain_editor_provider());
-        inject(builtins::builtin_dark());
-        inject(builtins::builtin_dracula());
-        inject(builtins::builtin_oxide());
-        inject(builtins::builtin_monokai());
-        inject(builtins::builtin_midnight());
-        inject(builtins::builtin_monokai_pro());
-        inject(builtins::builtin_light());
-        inject(builtins::builtin_gruvbox_light());
-        inject(builtins::builtin_solarized_light());
-        inject(builtins::builtin_catppuccin_latte());
-        inject(builtins::builtin_tokyo_light());
-        inject(builtins::builtin_synthwave());
-        inject(builtins::builtin_nordic());
-        for theme in builtins::builtin_icon_themes() {
-            inject(theme);
+        for plugin in Self::builtin_plugins() {
+            inject(plugin);
         }
 
         Ok(plugins)
@@ -341,6 +397,37 @@ impl PluginScanner {
     }
 }
 
+/// Find the first loadable matching manifest without opening unrelated package payloads.
+fn load_matching_plugin<T>(
+    root: &Path,
+    plugin_id: &str,
+    mut load: impl FnMut(&PathBuf) -> Result<T>,
+) -> Result<Option<T>> {
+    if !root.exists() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if !should_scan_plugin_dir(&entry.file_name()) {
+            continue;
+        }
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let matches = read_manifest_file(&path.join("manifest.json"))
+            .ok()
+            .and_then(|source| serde_json::from_str::<Manifest>(&source).ok())
+            .is_some_and(|manifest| manifest.id == plugin_id);
+        if matches {
+            if let Ok(plugin) = load(&path) {
+                return Ok(Some(plugin));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn should_scan_plugin_dir(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     !name.starts_with('.') && !name.starts_with("tmp-")
@@ -360,7 +447,9 @@ fn user_plugin_enabled_by_policy(
 
 #[cfg(test)]
 mod scanner_tests {
-    use super::{should_scan_plugin_dir, user_plugin_enabled_by_policy, PluginScanner};
+    use super::{
+        load_matching_plugin, should_scan_plugin_dir, user_plugin_enabled_by_policy, PluginScanner,
+    };
     use std::ffi::OsStr;
 
     #[test]
@@ -376,6 +465,77 @@ mod scanner_tests {
         assert!(user_plugin_enabled_by_policy(1, true, false));
         assert!(user_plugin_enabled_by_policy(2, false, true));
         assert!(!user_plugin_enabled_by_policy(2, true, false));
+    }
+
+    #[test]
+    fn runtime_lookup_opens_only_matching_package_payloads_and_accepts_legacy_folder_names() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/plugins/manifest-v2-demo/manifest.json"
+        ))
+        .unwrap();
+        for (name, id) in [
+            ("arbitrary-legacy-folder", "dev.fixture.selected"),
+            ("unrelated", "dev.fixture.other"),
+            (".hidden", "dev.fixture.selected"),
+            ("tmp-staging", "dev.fixture.selected"),
+        ] {
+            let dir = root.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            let mut value = manifest.clone();
+            value["id"] = id.into();
+            std::fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_vec(&value).unwrap(),
+            )
+            .unwrap();
+            std::fs::write(dir.join("worker.js"), [0xff]).unwrap();
+        }
+        let mut loads = Vec::new();
+        let selected = load_matching_plugin(root.path(), "dev.fixture.selected", |dir| {
+            loads.push(dir.file_name().unwrap().to_string_lossy().into_owned());
+            Ok(dir.clone())
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected.file_name().unwrap(), "arbitrary-legacy-folder");
+        assert_eq!(loads, vec!["arbitrary-legacy-folder"]);
+    }
+
+    #[test]
+    fn runtime_lookup_keeps_the_scan_rule_for_invalid_duplicate_candidates() {
+        let root = tempfile::tempdir().unwrap();
+        let manifest = include_str!("../../tests/fixtures/plugins/manifest-v2-demo/manifest.json");
+        for name in ["one", "two"] {
+            let dir = root.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+        }
+        let mut attempts = 0;
+        let selected =
+            load_matching_plugin(root.path(), "dev.zync.examples.manifest-v2-demo", |dir| {
+                attempts += 1;
+                if attempts == 1 {
+                    return Err(anyhow::anyhow!("invalid signature or package"));
+                }
+                Ok(dir.clone())
+            })
+            .unwrap();
+        assert!(selected.is_some());
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn targeted_and_discovery_builtin_catalogs_have_unique_identical_identities() {
+        let plugins = PluginScanner::builtin_plugins();
+        let ids = plugins
+            .iter()
+            .map(|plugin| plugin.manifest.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), plugins.len());
+        assert!(ids.contains("com.zync.theme.manager"));
+        assert!(ids.contains("com.zync.editor.codemirror"));
+        assert!(ids.contains("com.zync.editor.plain-plugin"));
     }
 
     #[test]

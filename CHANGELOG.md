@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.38.2] - 2026-11-06
+
 ### Added
 
 - **Files column controls:** Resize list columns by dragging or keyboard, and
@@ -11,6 +13,27 @@ All notable changes to Zync are documented in this file. The format is based on 
   choices are saved locally after completed changes. ([7850716a])
 
 ### Changed
+
+- **Port Forwarding feedback:** A forward's border pulses while it starts in
+  list or grid view, and its Start button shows **Starting…** until the attempt
+  finishes. Running forwards have a steady green highlight. With reduced
+  motion enabled, the starting border also stays steady. ([3ed7e190])
+
+- **AI conversation rendering:** Show long conversations in pages, with access
+  to older messages and complete tool output. Live updates reuse finished
+  message rendering, and auto-scroll resumes when the conversation fits on one
+  page again. AI requests also reuse HTTP connections. ([64739d08])
+- **Vault and Drive sync performance:** Reuse HTTP connections, process sync
+  records in bounded groups, and skip repeat credential uploads when Drive
+  verifies the existing backup. **Upload all again** is available for a full
+  backup. Vault refreshes also reuse counts and unchanged credential metadata. ([c1f57934])
+- **Editor and app responsiveness:** Avoid repeated full scans in the plain
+  editor and skip oversized CodeMirror cache snapshots before serialization.
+  Release Notes highlighting loads when opened, and updater progress no longer
+  rerenders the application root. ([64739d08])
+- **Plugin and tunnel performance:** Startup verifies the selected plugin
+  package without loading unrelated payloads. Forwarding listeners on the same
+  SSH transport share a background liveness check. ([1f9712ca], [08defa69])
 
 - **Vault restore performance:** Batch local credential writes while preserving
   conflict decisions, remote revisions, history, and per-record failure results.
@@ -120,6 +143,14 @@ All notable changes to Zync are documented in this file. The format is based on 
   skips checkouts without the project runner; committed checks use a merge base. ([148a5d26])
 
 ### Fixed
+
+- **Linux AppImage packaging:** Set readable file and traversable directory
+  permissions before repacking the AppImage for Wayland compatibility.
+
+- **Background resource cleanup:** Release terminal and file-drop listeners
+  when their panes close during registration, discard failed plugin requests,
+  and remove staging files after failed atomic saves while preserving recovery
+  backups. ([64739d08], [1f9712ca], [08defa69])
 
 - **Ghost reconnect behavior:** Keep captured autocomplete requests on their
   current SSH transport instead of starting a reconnect they cannot adopt. ([8c71793c])
@@ -3001,7 +3032,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.2...HEAD
+[2.38.2]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.2
 [2.38.0]: https://github.com/zync-sh/zync/compare/v2.37.0...v2.38.0
 [2.37.0]: https://github.com/zync-sh/zync/compare/v2.36.0...v2.37.0
 [2.36.0]: https://github.com/zync-sh/zync/compare/v2.35.1...v2.36.0
@@ -3372,3 +3404,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [abb99367]: https://github.com/zync-sh/zync/commit/abb9936791b40b1bc1f09f2cee8b3cd1d0be8736
 [718dc895]: https://github.com/zync-sh/zync/commit/718dc89582953a47902f44695d78beaa5b39d004
 [10b76fc2]: https://github.com/zync-sh/zync/commit/10b76fc2034a54a3f6fe721442fa554555c83ddd
+[08defa69]: https://github.com/zync-sh/zync/commit/08defa695dca25be546ff902edeefb856f901758
+[c1f57934]: https://github.com/zync-sh/zync/commit/c1f5793423e368361fdd7062a975ff392be4441e
+[64739d08]: https://github.com/zync-sh/zync/commit/64739d08e860c9608d663c5d7bbc9e8eed19620f
+[1f9712ca]: https://github.com/zync-sh/zync/commit/1f9712ca9a75432fb0b3326a31aefc9fe0467630
+[3ed7e190]: https://github.com/zync-sh/zync/commit/3ed7e190ca739a31d775b078a9529782b059da13

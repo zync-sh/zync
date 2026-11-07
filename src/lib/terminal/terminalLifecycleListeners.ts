@@ -38,7 +38,11 @@ export function terminalLifecycleChannelMatches(
 }
 
 /** Attaches generation-gated ready and exit listeners once per cached terminal. */
-export function attachTerminalLifecycleListeners(sessionId: string, _term: XTerm): void {
+export function attachTerminalLifecycleListeners(
+    sessionId: string,
+    _term: XTerm,
+    register: typeof listen = listen,
+): void {
     const cached = terminalCache.get(sessionId);
     if (!cached || cached.listenerAttached) {
         return;
@@ -51,23 +55,25 @@ export function attachTerminalLifecycleListeners(sessionId: string, _term: XTerm
     // Set early to prevent concurrent attach attempts; catches below handle registration failures without unhandled rejections.
     cached.listenerAttached = true;
 
-    listen<TerminalLifecycleEvent>(`terminal-ready-${sessionId}`, (event) => {
+    register<TerminalLifecycleEvent>(`terminal-ready-${sessionId}`, (event) => {
         const entry = terminalCache.get(sessionId);
-        if (!entry || !terminalLifecycleChannelMatches(entry, event.payload)) {
+        if (entry !== cached || !terminalLifecycleChannelMatches(entry, event.payload)) {
             return;
         }
         handleTerminalReady(sessionId, event.payload.generation);
     })
         .then((unlistenFn) => {
-            if (terminalCache.has(sessionId)) {
-                terminalCache.get(sessionId)?.unlisten?.push(unlistenFn);
+            if (terminalCache.get(sessionId) === cached) {
+                cached.unlisten?.push(unlistenFn);
+            } else {
+                return unlistenFn();
             }
         })
         .catch((e) => console.warn(`[terminal] ready listener attach failed for ${sessionId}`, e));
 
-    listen<TerminalLifecycleEvent>(`terminal-exit-${sessionId}`, (event) => {
+    register<TerminalLifecycleEvent>(`terminal-exit-${sessionId}`, (event) => {
         const entry = terminalCache.get(sessionId);
-        if (!entry) {
+        if (entry !== cached) {
             return;
         }
 
@@ -94,8 +100,10 @@ export function attachTerminalLifecycleListeners(sessionId: string, _term: XTerm
         }
     })
         .then((unlistenFn) => {
-            if (terminalCache.has(sessionId)) {
-                terminalCache.get(sessionId)?.unlisten?.push(unlistenFn);
+            if (terminalCache.get(sessionId) === cached) {
+                cached.unlisten?.push(unlistenFn);
+            } else {
+                return unlistenFn();
             }
         })
         .catch((e) => console.warn(`[terminal] exit listener attach failed for ${sessionId}`, e));

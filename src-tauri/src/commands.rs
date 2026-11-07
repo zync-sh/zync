@@ -8144,6 +8144,7 @@ pub async fn plugins_discard_inspection(
         .map_err(|e| e.to_string())
 }
 
+/// Verify/load a selected plugin on a blocking worker before registering its native runtime.
 #[tauri::command]
 pub async fn plugins_runtime_start(
     app: AppHandle,
@@ -8152,9 +8153,15 @@ pub async fn plugins_runtime_start(
     plugin_id: String,
 ) -> Result<crate::plugins::broker::PluginRuntimeRegistration, String> {
     recovery.status().map_err(|error| error.to_string())?;
-    state
-        .start_runtime(&app, &plugin_id)
-        .map_err(|error| error.to_string())
+    // Resolve managed state inside the owned task; no borrowed State crosses this boundary.
+    let _ = state;
+    tokio::task::spawn_blocking(move || {
+        app.state::<crate::plugins::broker::PluginBrokerState>()
+            .start_runtime(&app, &plugin_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Plugin runtime start task failed: {error}"))?
 }
 
 #[tauri::command]

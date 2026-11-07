@@ -240,13 +240,7 @@ pub async fn vault_item_list(
     vault: State<'_, Mutex<VaultService>>,
 ) -> VaultResult<Vec<VaultItemMeta>> {
     let vault = vault.lock().await;
-    run_vault_blocking(|| {
-        let items = vault.item_list().map_err(VaultCommandError::from)?;
-        items
-            .into_iter()
-            .map(|record| vault.item_meta(&record).map_err(Into::into))
-            .collect()
-    })
+    run_vault_blocking(|| vault.item_list_metadata().map_err(Into::into))
 }
 
 #[derive(Deserialize)]

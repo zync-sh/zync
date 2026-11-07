@@ -1,76 +1,107 @@
-import { ReactNode, lazy, Suspense, useState, useEffect, useLayoutEffect, memo, useCallback, useRef, useMemo } from 'react';
-import { Sidebar } from './Sidebar';
-import { WorkspaceNavigationFrame } from './navigation/WorkspaceNavigationFrame';
-import { sidebarPresentation, setSidebarVisibility } from '../../features/workspace/application/sidebarPresentation';
-import { HostWorkspaceFrame } from './navigation/HostWorkspaceFrame';
-import { useRetainedItems } from './useRetainedItems';
-import { retainedItemsInMountOrder } from './retainedItems';
-import { useAppStore, Tab } from '../../store/useAppStore';
-import type { CoreTabView } from '../../features/connections/domain/types';
-import { usePlugins } from '../../context/PluginContext';
-import { useShallow } from 'zustand/react/shallow';
-import { cn } from '../../lib/utils';
-import { StatusBar } from './StatusBar';
-import { TabBar } from './TabBar';
-import { ShortcutManager } from '../managers/ShortcutManager';
-import { CommandPalette } from './CommandPalette';
-import { WorkspaceTabBar } from './WorkspaceTabBar';
-import { usePluginPaneNavigation } from './usePluginPaneNavigation';
-import { useFeaturePaneNavigation } from './useFeaturePaneNavigation';
-import { WorkspaceContextActions } from '../workspace/WorkspaceContextActions';
-import {
-    TabDockOverlay,
-    type DockTabPointerHandlers,
-} from './tabDock';
-import { collectLeaves, isFeatureContent, isPluginContent, isSplitFeatureId, isSplitLayout, layoutForPlugin, layoutForFeatureInstance, paneContentKey } from '../../lib/paneLayout';
-import { featureTabsFromPaneGroups, stablePluginPanelInventory } from './featureTabInventory';
-import type { ShellEntry } from '../../lib/shells/types';
-import type { FeatureId, WorkspaceFeatureTab } from './featureMeta';
-import { deriveWorkspaceContentInventory, findWorkspaceContentPane } from '../../features/workspace/domain/contentInventory';
-import { hiddenWorkspaceContent, selectedWorkspaceContentId, visibleContentFallback } from '../../features/workspace/domain/visibleContent';
-import { selectExistingWorkspaceContent } from '../../features/workspace/application/selectExistingContent';
-import { workspaceCanvases } from '../../features/workspace/domain/canvases';
-import { paneTabReleaseSource, planPaneTabInsertion } from '../../features/workspace/domain/paneTabRelease';
-import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
-import { GLOBAL_SNIPPETS_CONNECTION_ID, LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
 import { listen } from '@tauri-apps/api/event';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
-import { ShieldAlert, Loader2 } from 'lucide-react';
-import { ConnectStagePanel, PanelLoader, useConnectionStageOverlay } from '../loaders';
-import { SurveyPromptModal } from '../survey/SurveyPromptModal';
-import { SurveyReminderButton } from '../survey/SurveyReminderButton';
-import { FeedbackInbox } from '../../features/feedbackInbox/FeedbackInbox';
+import { Loader2, ShieldAlert } from 'lucide-react';
 import {
-    normalizeSurveySettings,
+    lazy,
+    memo,
+    ReactNode,
+    Suspense,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import { useShallow } from 'zustand/react/shallow';
+
+import { usePlugins } from '../../context/PluginContext';
+import { useCustomThemeStyle } from '../../features/appearance/presentation/useCustomThemeStyle';
+import { useElementColorStyle } from '../../features/appearance/presentation/useElementColorStyle';
+import {
+    GLOBAL_SNIPPETS_CONNECTION_ID,
+    LOCAL_TERMINAL_CONNECTION_ID,
+} from '../../features/connections/application/tabService';
+import type { CoreTabView } from '../../features/connections/domain/types';
+import { FeedbackInbox } from '../../features/feedbackInbox/FeedbackInbox';
+import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
+import {
     initializeSurveyIdentity,
+    normalizeSurveySettings,
     resolveSurveyExperience,
     type SurveyPromptKind,
 } from '../../features/survey';
-import { getDebugSurveyPromptKind, isDebugSurveyPromptEnabled } from '../../lib/debugFlags';
-import ReleaseNotesTab from '../tabs/ReleaseNotesTab';
-
-import { SnippetSidebar } from '../snippets/SnippetSidebar';
-import { SetupWizard } from '../onboarding/SetupWizard';
+import { registerTunnelTransportLostListener } from '../../features/tunnels/application/tunnelTransportLost';
+import { selectExistingWorkspaceContent } from '../../features/workspace/application/selectExistingContent';
+import {
+    setSidebarVisibility,
+    sidebarPresentation,
+} from '../../features/workspace/application/sidebarPresentation';
+import { workspaceCanvases } from '../../features/workspace/domain/canvases';
+import {
+    deriveWorkspaceContentInventory,
+    findWorkspaceContentPane,
+} from '../../features/workspace/domain/contentInventory';
+import {
+    paneTabReleaseSource,
+    planPaneTabInsertion,
+} from '../../features/workspace/domain/paneTabRelease';
+import {
+    hiddenWorkspaceContent,
+    selectedWorkspaceContentId,
+    visibleContentFallback,
+} from '../../features/workspace/domain/visibleContent';
 import { useFileSystemEvents } from '../../hooks/useFileSystemEvents';
-import { AiSidebar } from '../ai/AiSidebar';
-import { ModalRoot } from '../ui/ModalRoot';
-import { LayoutMotionScope } from '../ui/LayoutMotion';
+import { getDebugSurveyPromptKind, isDebugSurveyPromptEnabled } from '../../lib/debugFlags';
+import {
+    collectLeaves,
+    isFeatureContent,
+    isPluginContent,
+    isSplitFeatureId,
+    isSplitLayout,
+    layoutForFeatureInstance,
+    layoutForPlugin,
+    paneContentKey,
+} from '../../lib/paneLayout';
+import type { ShellEntry } from '../../lib/shells/types';
 import {
     cancelAllIdlePtySuspends,
     cancelIdlePtySuspend,
     resolveIdleHostPtySuspendDelayMs,
+    resolveShellExitConnectionId,
     scheduleIdlePtySuspend,
     shouldIdleSuspendConnection,
-    resolveShellExitConnectionId,
     terminalService,
 } from '../../lib/terminal';
 import { resolveLocalWindowsShellId } from '../../lib/terminal/spawnContext';
+import { cn } from '../../lib/utils';
+import { Tab, useAppStore } from '../../store/useAppStore';
+import { AiSidebar } from '../ai/AiSidebar';
+import { ConnectStagePanel, PanelLoader, useConnectionStageOverlay } from '../loaders';
+import { ShortcutManager } from '../managers/ShortcutManager';
+import { SetupWizard } from '../onboarding/SetupWizard';
+import { SnippetSidebar } from '../snippets/SnippetSidebar';
+import { SurveyPromptModal } from '../survey/SurveyPromptModal';
+import { SurveyReminderButton } from '../survey/SurveyReminderButton';
 import { refreshAllCachedTerminalThemes } from '../terminal/terminalTheme';
-import { useElementColorStyle } from '../../features/appearance/presentation/useElementColorStyle';
-import { useCustomThemeStyle } from '../../features/appearance/presentation/useCustomThemeStyle';
-import { registerTunnelTransportLostListener } from '../../features/tunnels/application/tunnelTransportLost';
-
+import { Button } from '../ui/Button';
+import { LayoutMotionScope } from '../ui/LayoutMotion';
+import { Modal } from '../ui/Modal';
+import { ModalRoot } from '../ui/ModalRoot';
+import { WorkspaceContextActions } from '../workspace/WorkspaceContextActions';
+import { CommandPalette } from './CommandPalette';
+import type { FeatureId, WorkspaceFeatureTab } from './featureMeta';
+import { featureTabsFromPaneGroups, stablePluginPanelInventory } from './featureTabInventory';
+import { HostWorkspaceFrame } from './navigation/HostWorkspaceFrame';
+import { WorkspaceNavigationFrame } from './navigation/WorkspaceNavigationFrame';
+import { retainedItemsInMountOrder } from './retainedItems';
+import { Sidebar } from './Sidebar';
+import { StatusBar } from './StatusBar';
+import { TabBar } from './TabBar';
+import { type DockTabPointerHandlers, TabDockOverlay } from './tabDock';
+import { useFeaturePaneNavigation } from './useFeaturePaneNavigation';
+import { usePluginPaneNavigation } from './usePluginPaneNavigation';
+import { useRetainedItems } from './useRetainedItems';
+import { WorkspaceTabBar } from './WorkspaceTabBar';
 
 // Side-effect imports — these register each modal into the registry at startup.
 // Add new modals here. Plugins register their own modals in their entry point.
@@ -91,25 +122,43 @@ declare global {
 }
 
 // Lazy Load Heavy Components
-const TerminalManager = lazy(() => import('../terminal/TerminalManager').then(module => ({ default: module.TerminalManager })));
-const GlobalTunnelList = lazy(() => import('../tunnel/GlobalTunnelList').then(module => ({ default: module.GlobalTunnelList })));
-const GlobalSecurityAuditsPanel = lazy(() => import('../../features/security/ui/GlobalSecurityAuditsPanel').then(module => ({ default: module.GlobalSecurityAuditsPanel })));
-const PublicUrlsPanel = lazy(() => import('../share/PublicUrlsPanel').then(module => ({ default: module.PublicUrlsPanel })));
-const SettingsJsonEditorPanel = lazy(() =>
-    import('../settings/SettingsJsonEditorPanel').then(module => ({ default: module.SettingsJsonEditorPanel }))
+const TerminalManager = lazy(() =>
+    import('../terminal/TerminalManager').then((module) => ({ default: module.TerminalManager })),
 );
+const ReleaseNotesTab = lazy(() => import('../tabs/ReleaseNotesTab'));
+const GlobalTunnelList = lazy(() =>
+    import('../tunnel/GlobalTunnelList').then((module) => ({ default: module.GlobalTunnelList })),
+);
+const GlobalSecurityAuditsPanel = lazy(() =>
+    import('../../features/security/ui/GlobalSecurityAuditsPanel').then((module) => ({
+        default: module.GlobalSecurityAuditsPanel,
+    })),
+);
+const PublicUrlsPanel = lazy(() =>
+    import('../share/PublicUrlsPanel').then((module) => ({ default: module.PublicUrlsPanel })),
+);
+const SettingsJsonEditorPanel = lazy(() =>
+    import('../settings/SettingsJsonEditorPanel').then((module) => ({
+        default: module.SettingsJsonEditorPanel,
+    })),
+);
+
 import { VaultWorkspaceLoading } from '../vault/VaultWorkspaceLoading';
 
 const VaultWorkspacePanel = lazy(() =>
-    import('../vault/VaultWorkspacePanel').then(module => ({ default: module.default }))
+    import('../vault/VaultWorkspacePanel').then((module) => ({ default: module.default })),
 );
 
-function newWorkspaceFeatureTab(featureId: FeatureId, id = `feature-${crypto.randomUUID()}`): WorkspaceFeatureTab {
+/** Create a kind-agnostic feature tab with a distinct layout instance identity. */
+function newWorkspaceFeatureTab(
+    featureId: FeatureId,
+    id = `feature-${crypto.randomUUID()}`,
+): WorkspaceFeatureTab {
     return { id, featureId, instanceId: id };
 }
 const newFeatureInstanceId = () => `feature-${crypto.randomUUID()}`;
 const SyncBackupWorkspacePanel = lazy(() =>
-    import('../sync/SyncBackupWorkspacePanel').then(module => ({ default: module.default }))
+    import('../sync/SyncBackupWorkspacePanel').then((module) => ({ default: module.default })),
 );
 
 const TabLoading = () => <PanelLoader />;
@@ -135,7 +184,12 @@ const SplashScreen = () => (
                         aria-hidden
                     >
                         {/* Solid themed plate (panel + accent), not transparent soft fill */}
-                        <rect width="512" height="512" rx="112" className="zync-splash-plate" />
+                        <rect
+                            width="512"
+                            height="512"
+                            rx="112"
+                            className="zync-splash-plate"
+                        />
                         <rect
                             className="zync-splash-ring-track stroke-app-accent"
                             x="9"
@@ -204,12 +258,17 @@ function isPluginTabView(view: string): view is `plugin:${string}` {
     return view.startsWith('plugin:');
 }
 
-
 /**
  * Transparency is now handled by the .bg-transparent class on the layout div.
  */
 
-function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connectionCount }: {
+function ConfirmCloseModal({
+    isOpen,
+    onClose,
+    onConfirm,
+    isShuttingDown,
+    connectionCount,
+}: {
     isOpen: boolean;
     onClose: () => void;
     onConfirm: () => void;
@@ -219,20 +278,25 @@ function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connect
     return (
         <Modal
             isOpen={isOpen}
-            onClose={isShuttingDown ? () => { } : onClose}
+            onClose={isShuttingDown ? () => {} : onClose}
             title="Active Connections Detected"
             width="max-w-md"
         >
             <div className="space-y-4">
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-orange-400">
-                    <ShieldAlert className="shrink-0" size={20} />
+                    <ShieldAlert
+                        className="shrink-0"
+                        size={20}
+                    />
                     <p className="text-sm font-medium">
-                        You have {connectionCount} active connection{connectionCount > 1 ? 's' : ''}. Closing the app will disconnect all sessions.
+                        You have {connectionCount} active connection{connectionCount > 1 ? 's' : ''}
+                        . Closing the app will disconnect all sessions.
                     </p>
                 </div>
 
                 <p className="text-sm text-app-muted leading-relaxed">
-                    Are you sure you want to exit? Your active terminals and tunnels will be closed gracefully.
+                    Are you sure you want to exit? Your active terminals and tunnels will be closed
+                    gracefully.
                 </p>
 
                 <div className="flex justify-end gap-3 pt-2">
@@ -252,10 +316,15 @@ function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connect
                     >
                         {isShuttingDown ? (
                             <div className="flex items-center gap-2">
-                                <Loader2 size={14} className="animate-spin" />
+                                <Loader2
+                                    size={14}
+                                    className="animate-spin"
+                                />
                                 <span>Closing...</span>
                             </div>
-                        ) : "Exit App"}
+                        ) : (
+                            'Exit App'
+                        )}
                     </Button>
                 </div>
             </div>
@@ -264,19 +333,18 @@ function ConfirmCloseModal({ isOpen, onClose, onConfirm, isShuttingDown, connect
 }
 const EMPTY_ARRAY: string[] = [];
 
-const TabContent = memo(function TabContent({ tab, isActive }: {
-    tab: Tab;
-    isActive: boolean;
-}) {
-    const setTabView = useAppStore(state => state.setTabView);
-    const connect = useAppStore(state => state.connect);
-    const cancelConnect = useAppStore(state => state.cancelConnect);
+const TabContent = memo(function TabContent({ tab, isActive }: { tab: Tab; isActive: boolean }) {
+    const setTabView = useAppStore((state) => state.setTabView);
+    const connect = useAppStore((state) => state.connect);
+    const cancelConnect = useAppStore((state) => state.cancelConnect);
     const terminalTransparencyEnabled = useAppStore(
-        state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
+        (state) => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1,
     );
 
     // Connection Selectors - Optimized
-    const connection = useAppStore(useShallow(state => state.connections.find(c => c.id === tab.connectionId)));
+    const connection = useAppStore(
+        useShallow((state) => state.connections.find((c) => c.id === tab.connectionId)),
+    );
 
     // Plugin panels
     const { panels: pluginPanels, plugins: installedPlugins } = usePlugins();
@@ -286,75 +354,147 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     );
 
     // Terminal Store Selectors - Optimized
-    const createTerminal = useAppStore(state => state.createTerminal);
-    const closeTerminalGroup = useAppStore(state => state.closeTerminalGroup);
-    const setActiveTerminal = useAppStore(state => state.setActiveTerminal);
+    const createTerminal = useAppStore((state) => state.createTerminal);
+    const closeTerminalGroup = useAppStore((state) => state.closeTerminalGroup);
+    const setActiveTerminal = useAppStore((state) => state.setActiveTerminal);
 
     // Feature Pinning
-    const toggleConnectionFeature = useAppStore(state => state.toggleConnectionFeature);
-    const localPinnedFeatures = useAppStore(state => state.settings.localTerm?.pinnedFeatures);
+    const toggleConnectionFeature = useAppStore((state) => state.toggleConnectionFeature);
+    const localPinnedFeatures = useAppStore((state) => state.settings.localTerm?.pinnedFeatures);
 
     // Selection is local chrome state; the canonical pane tree owns open instances.
     const [activeFeatureTabId, setActiveFeatureTabId] = useState<string | null>(null);
-    const paneGroups = useAppStore(state => (
-        tab.connectionId ? state.paneLayouts[tab.connectionId] : undefined
-    ));
+    const paneGroups = useAppStore((state) =>
+        tab.connectionId ? state.paneLayouts[tab.connectionId] : undefined,
+    );
     const featureTabs = useMemo(() => featureTabsFromPaneGroups(paneGroups), [paneGroups]);
-    const terminalInventory = useAppStore(state => tab.connectionId ? state.terminals[tab.connectionId] : undefined);
-    const presentationScope = useAppStore(state => tab.connectionId ? state.contentPresentation[tab.connectionId] : undefined);
-    const selectedOwner = useAppStore(state => tab.connectionId ? state.activePaneGroupOwner[tab.connectionId] : null);
-    const selectedTerminal = useAppStore(state => tab.connectionId ? state.activeTerminalIds[tab.connectionId] : null);
-    const hiddenIds = useMemo(() => tab.connectionId
-        ? hiddenWorkspaceContent(useAppStore.getState(), tab.connectionId) : new Set<string>(),
-    [paneGroups, presentationScope, tab.connectionId, terminalInventory]);
-    const selectContent = useCallback((id: string) => Boolean(tab.connectionId && selectExistingWorkspaceContent(
-        useAppStore.getState(), tab.connectionId, id, setActiveFeatureTabId, view => setTabView(tab.id, view),
-    )), [setTabView, tab.connectionId, tab.id]);
-    const selectedContentId = useCallback(() => tab.connectionId ? selectedWorkspaceContentId(
-        useAppStore.getState(), tab.connectionId,
-        isSplitFeatureId(tab.view) ? activeFeatureTabId ?? undefined : undefined,
-        isPluginTabView(tab.view) ? tab.view.slice('plugin:'.length) : undefined,
-        isSplitFeatureId(tab.view) ? tab.view : undefined,
-    ) : null, [activeFeatureTabId, tab.connectionId, tab.view]);
-    const setContentHidden = useCallback((id: string, hidden: boolean) => {
-        if (!tab.connectionId) return false;
-        const selected = selectedContentId();
-        if (!useAppStore.getState().setContentHidden(tab.connectionId, id, hidden)) return false;
-        if (selected === id && hidden) {
-            const fallback = visibleContentFallback(useAppStore.getState(), tab.connectionId, selected);
-            if (fallback) selectContent(fallback.id);
-        }
-        return true;
-    }, [selectContent, selectedContentId, tab.connectionId]);
+    const terminalInventory = useAppStore((state) =>
+        tab.connectionId ? state.terminals[tab.connectionId] : undefined,
+    );
+    const presentationScope = useAppStore((state) =>
+        tab.connectionId ? state.contentPresentation[tab.connectionId] : undefined,
+    );
+    const selectedOwner = useAppStore((state) =>
+        tab.connectionId ? state.activePaneGroupOwner[tab.connectionId] : null,
+    );
+    const selectedTerminal = useAppStore((state) =>
+        tab.connectionId ? state.activeTerminalIds[tab.connectionId] : null,
+    );
+    const hiddenIds = useMemo(
+        () =>
+            tab.connectionId
+                ? hiddenWorkspaceContent(useAppStore.getState(), tab.connectionId)
+                : new Set<string>(),
+        [paneGroups, presentationScope, tab.connectionId, terminalInventory],
+    );
+    const selectContent = useCallback(
+        (id: string) =>
+            Boolean(
+                tab.connectionId &&
+                    selectExistingWorkspaceContent(
+                        useAppStore.getState(),
+                        tab.connectionId,
+                        id,
+                        setActiveFeatureTabId,
+                        (view) => setTabView(tab.id, view),
+                    ),
+            ),
+        [setTabView, tab.connectionId, tab.id],
+    );
+    const selectedContentId = useCallback(
+        () =>
+            tab.connectionId
+                ? selectedWorkspaceContentId(
+                      useAppStore.getState(),
+                      tab.connectionId,
+                      isSplitFeatureId(tab.view) ? (activeFeatureTabId ?? undefined) : undefined,
+                      isPluginTabView(tab.view) ? tab.view.slice('plugin:'.length) : undefined,
+                      isSplitFeatureId(tab.view) ? tab.view : undefined,
+                  )
+                : null,
+        [activeFeatureTabId, tab.connectionId, tab.view],
+    );
+    const setContentHidden = useCallback(
+        (id: string, hidden: boolean) => {
+            if (!tab.connectionId) {
+                return false;
+            }
+            const selected = selectedContentId();
+            if (!useAppStore.getState().setContentHidden(tab.connectionId, id, hidden)) {
+                return false;
+            }
+            if (selected === id && hidden) {
+                const fallback = visibleContentFallback(
+                    useAppStore.getState(),
+                    tab.connectionId,
+                    selected,
+                );
+                if (fallback) {
+                    selectContent(fallback.id);
+                }
+            }
+            return true;
+        },
+        [selectContent, selectedContentId, tab.connectionId],
+    );
     const revealAllContent = useCallback(() => {
-        if (!tab.connectionId) return false;
+        if (!tab.connectionId) {
+            return false;
+        }
         const selected = selectedContentId();
-        if (!useAppStore.getState().revealAllContent(tab.connectionId)) return false;
+        if (!useAppStore.getState().revealAllContent(tab.connectionId)) {
+            return false;
+        }
         const fallback = visibleContentFallback(useAppStore.getState(), tab.connectionId, selected);
-        if (fallback) selectContent(fallback.id);
+        if (fallback) {
+            selectContent(fallback.id);
+        }
         return true;
     }, [selectContent, selectedContentId, tab.connectionId]);
     const [contentsOpenRequest, setContentsOpenRequest] = useState(0);
     useEffect(() => {
-        if (!isActive || tab.type !== 'connection' || !tab.connectionId) return;
-        return listenWorkspacePresentationActions(useAppStore.getState,
-            target => target.tabId === tab.id && target.connectionId === tab.connectionId && target.action !== 'customize-tab',
-            target => {
-                if (target.action === 'contents') setContentsOpenRequest(value => value + 1);
-                else if (target.action === 'reveal-all' && !revealAllContent()) useAppStore.getState().showToast('error', 'Hidden panes could not be shown.');
-            });
+        if (!isActive || tab.type !== 'connection' || !tab.connectionId) {
+            return;
+        }
+        return listenWorkspacePresentationActions(
+            useAppStore.getState,
+            (target) =>
+                target.tabId === tab.id &&
+                target.connectionId === tab.connectionId &&
+                target.action !== 'customize-tab',
+            (target) => {
+                if (target.action === 'contents') {
+                    setContentsOpenRequest((value) => value + 1);
+                } else if (target.action === 'reveal-all' && !revealAllContent()) {
+                    useAppStore.getState().showToast('error', 'Hidden panes could not be shown.');
+                }
+            },
+        );
     }, [isActive, revealAllContent, tab.connectionId, tab.id, tab.type]);
     // Restores/guarded closes may leave the selected identity hidden or missing.
     // Repair selection only; all-hidden retains the canonical owner for recovery.
     useEffect(() => {
-        if (!isActive || !tab.connectionId) return;
+        if (!isActive || !tab.connectionId) {
+            return;
+        }
         const selected = selectedContentId();
-        if (!selected || !hiddenIds.has(selected)) return;
+        if (!selected || !hiddenIds.has(selected)) {
+            return;
+        }
         const fallback = visibleContentFallback(useAppStore.getState(), tab.connectionId, selected);
-        if (fallback) selectContent(fallback.id);
-    }, [hiddenIds, isActive, selectedContentId, selectedOwner, selectedTerminal, selectContent, tab.connectionId]);
+        if (fallback) {
+            selectContent(fallback.id);
+        }
+    }, [
+        hiddenIds,
+        isActive,
+        selectedContentId,
+        selectedOwner,
+        selectedTerminal,
+        selectContent,
+        tab.connectionId,
+    ]);
     /** Heavy panels stay mounted after first visit; CSS hide avoids remount + reconcile cost. */
-
 
     // Snippet quick access overlay state
     const [isSnippetSidebarOpen, setIsSnippetSidebarOpen] = useState(false);
@@ -365,15 +505,36 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     // Effect hooks must be unconditional
     // Ensure pinned feature kinds and restored split instances have inventory tabs.
-    const pinnedFeatures = tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID ? (localPinnedFeatures || EMPTY_ARRAY) : (connection?.pinnedFeatures || EMPTY_ARRAY);
-    const leaveMissingPluginView = useCallback(() => setTabView(tab.id, 'terminal'), [setTabView, tab.id]);
-    usePluginPaneNavigation({ connectionId: tab.connectionId, view: tab.view, pinnedFeatures, isActive,
-        groups: paneGroups, getState: useAppStore.getState, onMissingView: leaveMissingPluginView });
+    const pinnedFeatures =
+        tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID
+            ? localPinnedFeatures || EMPTY_ARRAY
+            : connection?.pinnedFeatures || EMPTY_ARRAY;
+    const leaveMissingPluginView = useCallback(
+        () => setTabView(tab.id, 'terminal'),
+        [setTabView, tab.id],
+    );
+    usePluginPaneNavigation({
+        connectionId: tab.connectionId,
+        view: tab.view,
+        pinnedFeatures,
+        isActive,
+        groups: paneGroups,
+        getState: useAppStore.getState,
+        onMissingView: leaveMissingPluginView,
+    });
 
-    useFeaturePaneNavigation({ connectionId: tab.connectionId, view: tab.view, pinnedFeatures,
-        isActive, groups: paneGroups, activeInstanceId: activeFeatureTabId,
-        getState: useAppStore.getState, createInstanceId: newFeatureInstanceId,
-        onSelectInstance: setActiveFeatureTabId, onMissingView: leaveMissingPluginView });
+    useFeaturePaneNavigation({
+        connectionId: tab.connectionId,
+        view: tab.view,
+        pinnedFeatures,
+        isActive,
+        groups: paneGroups,
+        activeInstanceId: activeFeatureTabId,
+        getState: useAppStore.getState,
+        createInstanceId: newFeatureInstanceId,
+        onSelectInstance: setActiveFeatureTabId,
+        onMissingView: leaveMissingPluginView,
+    });
 
     useEffect(() => {
         if (tab.view === 'files') {
@@ -382,29 +543,51 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     }, [tab.view]);
 
     // Listen for keyboard shortcut events to open features
-    const handleOpenFeature = useCallback((feature: string) => {
-        if (isSplitFeatureId(feature)) {
-            const created = newWorkspaceFeatureTab(feature);
-            if (tab.connectionId && !useAppStore.getState().ensureFeaturePane(tab.connectionId, feature, created.instanceId)) return;
-            if (feature === 'files' && tab.connectionId) {
-                const current = featureTabs.find(item => item.id === activeFeatureTabId && item.featureId === 'files');
-                useAppStore.getState().copyFilesListing(
-                    tab.connectionId,
-                    current?.instanceId,
-                    created.instanceId,
-                );
+    const handleOpenFeature = useCallback(
+        (feature: string) => {
+            if (isSplitFeatureId(feature)) {
+                const created = newWorkspaceFeatureTab(feature);
+                if (
+                    tab.connectionId &&
+                    !useAppStore
+                        .getState()
+                        .ensureFeaturePane(tab.connectionId, feature, created.instanceId)
+                ) {
+                    return;
+                }
+                if (feature === 'files' && tab.connectionId) {
+                    const current = featureTabs.find(
+                        (item) => item.id === activeFeatureTabId && item.featureId === 'files',
+                    );
+                    useAppStore
+                        .getState()
+                        .copyFilesListing(
+                            tab.connectionId,
+                            current?.instanceId,
+                            created.instanceId,
+                        );
+                }
+                setActiveFeatureTabId(created.id);
+                if (tab.connectionId) {
+                    const store = useAppStore.getState();
+                    store.activatePaneGroup(tab.connectionId, created.instanceId);
+                }
+                setTabView(tab.id, feature);
+                return;
             }
-            setActiveFeatureTabId(created.id);
-            if (tab.connectionId) {
-                const store = useAppStore.getState();
-                store.activatePaneGroup(tab.connectionId, created.instanceId);
+            if (
+                isPluginTabView(feature) &&
+                tab.connectionId &&
+                !useAppStore
+                    .getState()
+                    .ensurePluginPane(tab.connectionId, feature.slice('plugin:'.length))
+            ) {
+                return;
             }
-            setTabView(tab.id, feature);
-            return;
-        }
-        if (isPluginTabView(feature) && tab.connectionId && !useAppStore.getState().ensurePluginPane(tab.connectionId, feature.slice('plugin:'.length))) return;
-        setTabView(tab.id, feature as Tab['view']);
-    }, [activeFeatureTabId, featureTabs, pinnedFeatures, setTabView, tab.connectionId, tab.id]);
+            setTabView(tab.id, feature as Tab['view']);
+        },
+        [activeFeatureTabId, featureTabs, pinnedFeatures, setTabView, tab.connectionId, tab.id],
+    );
 
     useEffect(() => {
         const handleFeatureEvent = (e: Event) => {
@@ -420,10 +603,11 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     // Snippet sidebar toggle
     useEffect(() => {
+        /** Toggle the snippets surface only for the event's owning workspace tab. */
         const handler = (e: Event) => {
             const ev = e as CustomEvent;
             if (ev.detail?.tabId === tab.id) {
-                setIsSnippetSidebarOpen(prev => !prev);
+                setIsSnippetSidebarOpen((prev) => !prev);
             }
         };
         window.addEventListener('ssh-ui:toggle-snippet-sidebar', handler);
@@ -435,10 +619,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     if (tab.type === 'port-forwarding') {
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
                 <Suspense fallback={<TabLoading />}>
                     <GlobalTunnelList />
                 </Suspense>
@@ -447,17 +628,18 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     }
 
     if (tab.type === 'security-audits') {
-        return <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
-            <Suspense fallback={<TabLoading />}><GlobalSecurityAuditsPanel active={isActive} /></Suspense>
-        </div>;
+        return (
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
+                <Suspense fallback={<TabLoading />}>
+                    <GlobalSecurityAuditsPanel active={isActive} />
+                </Suspense>
+            </div>
+        );
     }
 
     if (tab.type === 'public-urls') {
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
                 <Suspense fallback={<TabLoading />}>
                     <PublicUrlsPanel />
                 </Suspense>
@@ -467,11 +649,10 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     if (tab.type === 'release-notes') {
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
-                <ReleaseNotesTab />
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
+                <Suspense fallback={<PanelLoader />}>
+                    <ReleaseNotesTab />
+                </Suspense>
             </div>
         );
     }
@@ -479,10 +660,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
     if (tab.type === 'settings') {
         // Workspace-tab surface for native settings.json editing.
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
                 <Suspense fallback={<TabLoading />}>
                     <SettingsJsonEditorPanel />
                 </Suspense>
@@ -492,10 +670,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     if (tab.type === 'vault') {
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
                 <Suspense fallback={<VaultWorkspaceLoading />}>
                     <VaultWorkspacePanel profileId={tab.vaultProfileId} />
                 </Suspense>
@@ -505,10 +680,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     if (tab.type === 'sync') {
         return (
-            <div className={cn(
-                "absolute inset-0 z-10 bg-app-bg",
-                !isActive && "hidden"
-            )}>
+            <div className={cn('absolute inset-0 z-10 bg-app-bg', !isActive && 'hidden')}>
                 <Suspense fallback={<TabLoading />}>
                     <SyncBackupWorkspacePanel />
                 </Suspense>
@@ -522,10 +694,11 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
 
     const isConnecting = connection?.status === 'connecting';
     const isError = connection?.status === 'error';
-    const { stage, visible: stageVisible, showWorkspace } = useConnectionStageOverlay(
-        Boolean(isConnecting),
-        Boolean(isError),
-    );
+    const {
+        stage,
+        visible: stageVisible,
+        showWorkspace,
+    } = useConnectionStageOverlay(Boolean(isConnecting), Boolean(isError));
     const forceOpaqueShell = isConnecting || isError || Boolean(stage);
 
     /**
@@ -536,437 +709,712 @@ const TabContent = memo(function TabContent({ tab, isActive }: {
      * - Plugin panels use dynamic `plugin:*` view ids, so we keep a guarded
      *   cast only after runtime validation.
      */
-    const handleTabSelect = useCallback((view: string, termId?: string) => {
-        const isCoreView = isCoreTabView(view);
-        const isPluginView = isPluginTabView(view);
+    const handleTabSelect = useCallback(
+        (view: string, termId?: string) => {
+            const isCoreView = isCoreTabView(view);
+            const isPluginView = isPluginTabView(view);
 
-        if (!isCoreView && !isPluginView) {
-            console.warn('[MainLayout] Ignoring unknown tab view:', view);
-            return;
-        }
-
-        if (isPluginView) {
-            const pluginId = view.slice('plugin:'.length);
-            const pluginExists = workspacePluginPanels.some((panel) => panel.id === pluginId);
-            if (!pluginExists) {
-                console.warn('[MainLayout] Ignoring plugin tab view without registered panel:', view);
+            if (!isCoreView && !isPluginView) {
+                console.warn('[MainLayout] Ignoring unknown tab view:', view);
                 return;
             }
-            if (tab.connectionId) {
-                const store = useAppStore.getState();
-                if (!store.ensurePluginPane(tab.connectionId, pluginId)) return;
-                const groups = useAppStore.getState().paneLayouts[tab.connectionId];
-                const layout = layoutForPlugin(groups, pluginId, store.activePaneGroupOwner[tab.connectionId]);
-                const owner = Object.entries(groups ?? {}).find(([, candidate]) => candidate === layout)?.[0];
-                const pane = layout && collectLeaves(layout.root).find(leaf => isPluginContent(leaf.content) && leaf.content.pluginId === pluginId);
-                if (owner && pane) {
-                    selectContent(paneContentKey(pane.content, pane.id));
+
+            if (isPluginView) {
+                const pluginId = view.slice('plugin:'.length);
+                const pluginExists = workspacePluginPanels.some((panel) => panel.id === pluginId);
+                if (!pluginExists) {
+                    console.warn(
+                        '[MainLayout] Ignoring plugin tab view without registered panel:',
+                        view,
+                    );
                     return;
                 }
-            }
-        }
-
-        const isShellTabSwitch = view === 'terminal' && Boolean(termId);
-        if (isShellTabSwitch && termId && tab.connectionId) {
-            const contentId = paneContentKey({ kind: 'term', termId }, termId);
-            if (useAppStore.getState().workspaceDocking[tab.connectionId]?.placements[contentId]) {
-                selectContent(contentId);
-                return;
-            }
-            const currentView = useAppStore.getState().tabs.find(t => t.id === tab.id)?.view;
-            if (currentView !== 'terminal') {
-                setTabView(tab.id, 'terminal');
-            }
-            setActiveTerminal(tab.connectionId, termId);
-            return;
-        }
-        if (isSplitFeatureId(view)) {
-            const selected = featureTabs.find(item => item.id === activeFeatureTabId && item.featureId === view)
-                ?? featureTabs.find(item => item.featureId === view);
-            if (selected) setActiveFeatureTabId(selected.id);
-        }
-        setTabView(tab.id, view);
-        if (view === 'terminal' && termId && tab.connectionId) {
-            setActiveTerminal(tab.connectionId, termId);
-        }
-    }, [activeFeatureTabId, featureTabs, workspacePluginPanels, selectContent, setTabView, tab.id, tab.connectionId, setActiveTerminal]);
-
-    const handlePluginTabSelect = useCallback((contentId: string) => {
-        if (!tab.connectionId) return;
-        const store = useAppStore.getState();
-        const current = findWorkspaceContentPane(store.paneLayouts[tab.connectionId], contentId);
-        if (!current || !isPluginContent(current.pane.content)) return;
-        selectContent(contentId);
-    }, [selectContent, tab.connectionId]);
-
-    const handlePluginTabClose = useCallback((contentId: string) => {
-        if (!tab.connectionId) return;
-        const store = useAppStore.getState();
-        const current = findWorkspaceContentPane(store.paneLayouts[tab.connectionId], contentId);
-        if (!current || !isPluginContent(current.pane.content)) return;
-        const panelId = current.pane.content.pluginId;
-        const wasActive = tab.view === `plugin:${panelId}`
-            && store.activePaneGroupOwner[tab.connectionId] === current.owner;
-        const closed = isSplitLayout(current.layout)
-            ? store.closePaneInSplit(tab.connectionId, current.pane.id)
-            : store.closePaneGroup(tab.connectionId, current.owner);
-        if (!closed) return;
-        const remaining = deriveWorkspaceContentInventory([], useAppStore.getState().paneLayouts[tab.connectionId]);
-        const siblings = remaining.filter(item => isPluginContent(item.content) && item.content.pluginId === panelId);
-        const feature = `plugin:${panelId}`;
-        if (siblings.length === 0) {
-            if (pinnedFeatures.includes(feature)) toggleConnectionFeature(tab.connectionId, feature);
-        }
-        if (wasActive) {
-            const fallback = siblings[0] ?? remaining.find(item => isPluginContent(item.content));
-            if (fallback) handlePluginTabSelect(fallback.id);
-            else setTabView(tab.id, 'terminal');
-        }
-    }, [handlePluginTabSelect, pinnedFeatures, setTabView, tab.connectionId, tab.id, tab.view, toggleConnectionFeature]);
-
-    const handleFeatureTabSelect = useCallback((featureTabId: string, featureId: FeatureId) => {
-        if (!tab.connectionId) return;
-        const item = deriveWorkspaceContentInventory([], useAppStore.getState().paneLayouts[tab.connectionId])
-            .find(item => isFeatureContent(item.content) && item.content.featureId === featureId
-                && item.content.instanceId === featureTabId);
-        if (item) selectContent(item.id);
-    }, [selectContent, tab.connectionId]);
-
-    const handleFeatureTabClose = useCallback((featureTabId: string, featureId: FeatureId) => {
-        const closing = featureTabs.find(item => item.id === featureTabId);
-        if (tab.connectionId && closing?.instanceId) {
-            const store = useAppStore.getState();
-            const groups = store.paneLayouts[tab.connectionId];
-            const layout = layoutForFeatureInstance(groups, closing.instanceId);
-            if (layout) {
-                const owner = Object.entries(groups ?? {}).find(([, candidate]) => candidate === layout)?.[0];
-                const pane = collectLeaves(layout.root).find(leaf => (
-                    isFeatureContent(leaf.content)
-                    && leaf.content.instanceId === closing.instanceId
-                ));
-                if (owner && pane) {
-                    if (isSplitLayout(layout)) {
-                        if (!store.closePaneInSplit(tab.connectionId, pane.id)) return;
-                    } else {
-                        if (!store.closePaneGroup(tab.connectionId, owner)) return;
+                if (tab.connectionId) {
+                    const store = useAppStore.getState();
+                    if (!store.ensurePluginPane(tab.connectionId, pluginId)) {
+                        return;
+                    }
+                    const groups = useAppStore.getState().paneLayouts[tab.connectionId];
+                    const layout = layoutForPlugin(
+                        groups,
+                        pluginId,
+                        store.activePaneGroupOwner[tab.connectionId],
+                    );
+                    const owner = Object.entries(groups ?? {}).find(
+                        ([, candidate]) => candidate === layout,
+                    )?.[0];
+                    const pane =
+                        layout &&
+                        collectLeaves(layout.root).find(
+                            (leaf) =>
+                                isPluginContent(leaf.content) && leaf.content.pluginId === pluginId,
+                        );
+                    if (owner && pane) {
+                        selectContent(paneContentKey(pane.content, pane.id));
+                        return;
                     }
                 }
             }
-        }
-        const closingIndex = featureTabs.findIndex(item => item.id === featureTabId);
-        const next = featureTabs.filter(item => item.id !== featureTabId);
-        if (tab.view === featureId && activeFeatureTabId === featureTabId) {
-            const fallback = next[Math.min(closingIndex, next.length - 1)]
-                ?? [...next].reverse().find(item => item.featureId === featureId);
-            if (fallback) {
-                handleFeatureTabSelect(fallback.id, fallback.featureId);
-            } else {
-                setActiveFeatureTabId(null);
-                setTabView(tab.id, 'terminal');
-            }
-        }
-    }, [activeFeatureTabId, featureTabs, handleFeatureTabSelect, setTabView, tab.connectionId, tab.id, tab.view]);
 
-    const handlePaneGroupClose = useCallback((owner: string) => {
-        if (!tab.connectionId) return;
-        const store = useAppStore.getState();
-        const layout = store.paneLayouts[tab.connectionId]?.[owner];
-        if (!layout) return;
-
-        const leaves = collectLeaves(layout.root);
-        const closedFeatureInstances = new Set(leaves.flatMap(leaf => (
-            isFeatureContent(leaf.content) && leaf.content.instanceId
-                ? [leaf.content.instanceId]
-                : []
-        )));
-        const closedLegacyFeatures = new Set(leaves.flatMap(leaf => (
-            isFeatureContent(leaf.content) && !leaf.content.instanceId
-                ? [leaf.content.featureId]
-                : []
-        )));
-        const closedPlugins = new Set(leaves.flatMap(leaf => (
-            isPluginContent(leaf.content) ? [leaf.content.pluginId] : []
-        )));
-        const firstClosedFeatureIndex = featureTabs.findIndex(item => (
-            closedFeatureInstances.has(item.instanceId)
-            || closedLegacyFeatures.has(item.featureId)
-        ));
-        const remainingFeatureTabs = featureTabs.filter(item => (
-            !closedFeatureInstances.has(item.instanceId)
-            && !closedLegacyFeatures.has(item.featureId)
-        ));
-        if (!store.closePaneGroup(tab.connectionId, owner)) return;
-        const groupsAfterClose = useAppStore.getState().paneLayouts[tab.connectionId];
-        const remainingPluginItems = deriveWorkspaceContentInventory([], groupsAfterClose).filter(item => isPluginContent(item.content));
-        const remainingPluginIds = new Set(remainingPluginItems.flatMap(item => isPluginContent(item.content) ? [item.content.pluginId] : []));
-        for (const panelId of closedPlugins) {
-            const view = `plugin:${panelId}`;
-            if (!remainingPluginIds.has(panelId) && pinnedFeatures.includes(view)) toggleConnectionFeature(tab.connectionId, view);
-        }
-
-        const fallbackFeatureIndex = firstClosedFeatureIndex < 0
-            ? remainingFeatureTabs.length - 1
-            : Math.min(firstClosedFeatureIndex, remainingFeatureTabs.length - 1);
-        const fallbackFeature = remainingFeatureTabs[Math.max(0, fallbackFeatureIndex)];
-        if (fallbackFeature) {
-            setActiveFeatureTabId(fallbackFeature.id);
-            const fallbackLayout = layoutForFeatureInstance(
-                groupsAfterClose,
-                fallbackFeature.instanceId,
-            );
-            if (fallbackLayout && isSplitLayout(fallbackLayout)) {
-                const fallbackOwner = Object.entries(groupsAfterClose ?? {})
-                    .find(([, candidate]) => candidate === fallbackLayout)?.[0];
-                if (fallbackOwner) store.activatePaneGroup(tab.connectionId, fallbackOwner);
-                setTabView(tab.id, 'terminal');
-                return;
-            }
-            setTabView(tab.id, fallbackFeature.featureId);
-            return;
-        }
-        setActiveFeatureTabId(null);
-        const fallbackPlugin = remainingPluginItems[0];
-        if (fallbackPlugin) {
-            handlePluginTabSelect(fallbackPlugin.id);
-            return;
-        }
-        setTabView(tab.id, 'terminal');
-    }, [featureTabs, handlePluginTabSelect, pinnedFeatures, setTabView, tab.connectionId, tab.id, toggleConnectionFeature]);
-
-    const handleFeaturePaneOpened = useCallback((_feature: string) => {
-    }, []);
-
-
-    const dockPointer = useMemo<DockTabPointerHandlers>(() => ({
-        contextId: tab.id,
-        isEnabled: () => useAppStore.getState().activeTabId === tab.id,
-        getSurface: () => dockSurfaceRef.current,
-        getTabStrip: () => tab.connectionId ? document.querySelector<HTMLElement>(
-            `[data-workspace-tab-strip][data-workspace-scope="${CSS.escape(tab.connectionId)}"] [data-tab-drag-strip]`,
-        ) : null,
-        getPaneTabSource: payload => {
-            const store = useAppStore.getState();
-            if (!tab.connectionId || store.activeTabId !== tab.id || store.tabs.find(item => item.id === tab.id)?.connectionId !== tab.connectionId
-                || !store.sessionLoaded || store.isRestoring || store.sessionPersistenceBlocked) return null;
-            const source = paneTabReleaseSource(workspaceCanvases(store.terminals[tab.connectionId] ?? [], store.paneLayouts[tab.connectionId]),
-                payload, store.contentPresentation[tab.connectionId]);
-            return source && (source.memberIds.length > 1 || store.workspaceDocking[tab.connectionId]?.placements[source.contentId]) ? source : null;
-        },
-        canDropPaneTab: insertion => {
-            if (!tab.connectionId) return false;
-            const store = useAppStore.getState();
-            return planPaneTabInsertion(store.terminals[tab.connectionId] ?? [], store.paneLayouts[tab.connectionId],
-                store.contentPresentation[tab.connectionId], insertion) !== null;
-        },
-        onPaneTabDrop: insertion => {
-            const store = useAppStore.getState();
-            if (!tab.connectionId || store.activeTabId !== tab.id || store.tabs.find(item => item.id === tab.id)?.connectionId !== tab.connectionId) return false;
-            if (!store.releasePaneFromSplit(tab.connectionId, { contentId: insertion.source.contentId }, insertion)) {
-                showToast('info', 'This pane cannot return to that tab position now. Its layout has been kept unchanged.');
-                return false;
-            }
-            selectContent(insertion.source.contentId);
-            return true;
-        },
-        // Dragging never changes the visible destination canvas.
-        onDragStart: () => {},
-        onDragEnd: (payload, target) => {
-            if (!target || !tab.connectionId || useAppStore.getState().activeTabId !== tab.id) return;
-            if (target.kind === 'region') {
-                const store = useAppStore.getState();
-                const contentId = store.dropWorkspaceContent(tab.connectionId, payload, target.region);
-                if (!contentId) {
-                    showToast('info', 'This pane cannot move there now. Check its availability and the four-pane limit.');
+            const isShellTabSwitch = view === 'terminal' && Boolean(termId);
+            if (isShellTabSwitch && termId && tab.connectionId) {
+                const contentId = paneContentKey({ kind: 'term', termId }, termId);
+                if (
+                    useAppStore.getState().workspaceDocking[tab.connectionId]?.placements[contentId]
+                ) {
+                    selectContent(contentId);
                     return;
                 }
-                if (useAppStore.getState().focusWorkspaceContent(tab.connectionId, contentId) && target.region === 'workspace') {
+                const currentView = useAppStore.getState().tabs.find((t) => t.id === tab.id)?.view;
+                if (currentView !== 'terminal') {
                     setTabView(tab.id, 'terminal');
                 }
+                setActiveTerminal(tab.connectionId, termId);
                 return;
             }
-            const { edge, paneId, contentId } = target;
-            if (!edge || !paneId || !tab.connectionId) return;
-            const result = dockInSplit(tab.connectionId, payload, edge, contentId ? { contentId } : paneId);
-            if (result === 'refused-cap') {
-                showToast('info', 'There is no room for another pane. Move a docked pane back to the workspace or close a pane first.');
-                return;
+            if (isSplitFeatureId(view)) {
+                const selected =
+                    featureTabs.find(
+                        (item) => item.id === activeFeatureTabId && item.featureId === view,
+                    ) ?? featureTabs.find((item) => item.featureId === view);
+                if (selected) {
+                    setActiveFeatureTabId(selected.id);
+                }
             }
-            if ((result === 'opened' || result === 'moved' || result === 'focused')
-                && !useAppStore.getState().workspaceDockFocus[tab.connectionId]) {
-                setTabView(tab.id, 'terminal');
+            setTabView(tab.id, view);
+            if (view === 'terminal' && termId && tab.connectionId) {
+                setActiveTerminal(tab.connectionId, termId);
             }
         },
-        onDragCancel: () => {},
-    }), [dockInSplit, selectContent, setTabView, showToast, tab.connectionId, tab.id]);
+        [
+            activeFeatureTabId,
+            featureTabs,
+            workspacePluginPanels,
+            selectContent,
+            setTabView,
+            tab.id,
+            tab.connectionId,
+            setActiveTerminal,
+        ],
+    );
 
-    const handleTogglePin = useCallback((feature: string) => {
-        if (tab.connectionId) {
-            toggleConnectionFeature(tab.connectionId, feature);
-        }
-    }, [tab.connectionId, toggleConnectionFeature]);
+    const handlePluginTabSelect = useCallback(
+        (contentId: string) => {
+            if (!tab.connectionId) {
+                return;
+            }
+            const store = useAppStore.getState();
+            const current = findWorkspaceContentPane(
+                store.paneLayouts[tab.connectionId],
+                contentId,
+            );
+            if (!current || !isPluginContent(current.pane.content)) {
+                return;
+            }
+            selectContent(contentId);
+        },
+        [selectContent, tab.connectionId],
+    );
 
-    const handleTerminalClose = useCallback((termId: string) => {
-        if (tab.connectionId) {
-            closeTerminalGroup(tab.connectionId, termId);
-        }
-    }, [tab.connectionId, closeTerminalGroup]);
+    const handlePluginTabClose = useCallback(
+        (contentId: string) => {
+            if (!tab.connectionId) {
+                return;
+            }
+            const store = useAppStore.getState();
+            const current = findWorkspaceContentPane(
+                store.paneLayouts[tab.connectionId],
+                contentId,
+            );
+            if (!current || !isPluginContent(current.pane.content)) {
+                return;
+            }
+            const panelId = current.pane.content.pluginId;
+            const wasActive =
+                tab.view === `plugin:${panelId}` &&
+                store.activePaneGroupOwner[tab.connectionId] === current.owner;
+            const closed = isSplitLayout(current.layout)
+                ? store.closePaneInSplit(tab.connectionId, current.pane.id)
+                : store.closePaneGroup(tab.connectionId, current.owner);
+            if (!closed) {
+                return;
+            }
+            const remaining = deriveWorkspaceContentInventory(
+                [],
+                useAppStore.getState().paneLayouts[tab.connectionId],
+            );
+            const siblings = remaining.filter(
+                (item) => isPluginContent(item.content) && item.content.pluginId === panelId,
+            );
+            const feature = `plugin:${panelId}`;
+            if (siblings.length === 0) {
+                if (pinnedFeatures.includes(feature)) {
+                    toggleConnectionFeature(tab.connectionId, feature);
+                }
+            }
+            if (wasActive) {
+                const fallback =
+                    siblings[0] ?? remaining.find((item) => isPluginContent(item.content));
+                if (fallback) {
+                    handlePluginTabSelect(fallback.id);
+                } else {
+                    setTabView(tab.id, 'terminal');
+                }
+            }
+        },
+        [
+            handlePluginTabSelect,
+            pinnedFeatures,
+            setTabView,
+            tab.connectionId,
+            tab.id,
+            tab.view,
+            toggleConnectionFeature,
+        ],
+    );
 
-    const handleNewTerminal = useCallback((shell?: ShellEntry) => {
-        if (!tab.connectionId) return;
-        let created: string | null;
-        if (shell) {
-            created = createTerminal(tab.connectionId, { shellOverride: shell.id, title: shell.label });
-        } else if (
-            tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID
-            && window.electronUtils?.platform === 'win32'
-        ) {
-            // Windows only: stamp settings default so tab icons do not track later Default Shell changes.
-            const raw = useAppStore.getState().settings.localTerm?.windowsShell;
-            const shellId = resolveLocalWindowsShellId(raw);
-            created = createTerminal(tab.connectionId, { shellOverride: shellId });
-        } else {
-            created = createTerminal(tab.connectionId);
-        }
-        if (!created) return;
-        setTabView(tab.id, 'terminal');
-    }, [tab.connectionId, createTerminal, tab.id, setTabView]);
+    const handleFeatureTabSelect = useCallback(
+        (featureTabId: string, featureId: FeatureId) => {
+            if (!tab.connectionId) {
+                return;
+            }
+            const item = deriveWorkspaceContentInventory(
+                [],
+                useAppStore.getState().paneLayouts[tab.connectionId],
+            ).find(
+                (item) =>
+                    isFeatureContent(item.content) &&
+                    item.content.featureId === featureId &&
+                    item.content.instanceId === featureTabId,
+            );
+            if (item) {
+                selectContent(item.id);
+            }
+        },
+        [selectContent, tab.connectionId],
+    );
 
-    // Ensure we start with at least 'terminal' available conceptually, 
+    const handleFeatureTabClose = useCallback(
+        (featureTabId: string, featureId: FeatureId) => {
+            const closing = featureTabs.find((item) => item.id === featureTabId);
+            if (tab.connectionId && closing?.instanceId) {
+                const store = useAppStore.getState();
+                const groups = store.paneLayouts[tab.connectionId];
+                const layout = layoutForFeatureInstance(groups, closing.instanceId);
+                if (layout) {
+                    const owner = Object.entries(groups ?? {}).find(
+                        ([, candidate]) => candidate === layout,
+                    )?.[0];
+                    const pane = collectLeaves(layout.root).find(
+                        (leaf) =>
+                            isFeatureContent(leaf.content) &&
+                            leaf.content.instanceId === closing.instanceId,
+                    );
+                    if (owner && pane) {
+                        if (isSplitLayout(layout)) {
+                            if (!store.closePaneInSplit(tab.connectionId, pane.id)) {
+                                return;
+                            }
+                        } else {
+                            if (!store.closePaneGroup(tab.connectionId, owner)) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            const closingIndex = featureTabs.findIndex((item) => item.id === featureTabId);
+            const next = featureTabs.filter((item) => item.id !== featureTabId);
+            if (tab.view === featureId && activeFeatureTabId === featureTabId) {
+                const fallback =
+                    next[Math.min(closingIndex, next.length - 1)] ??
+                    [...next].reverse().find((item) => item.featureId === featureId);
+                if (fallback) {
+                    handleFeatureTabSelect(fallback.id, fallback.featureId);
+                } else {
+                    setActiveFeatureTabId(null);
+                    setTabView(tab.id, 'terminal');
+                }
+            }
+        },
+        [
+            activeFeatureTabId,
+            featureTabs,
+            handleFeatureTabSelect,
+            setTabView,
+            tab.connectionId,
+            tab.id,
+            tab.view,
+        ],
+    );
+
+    const handlePaneGroupClose = useCallback(
+        (owner: string) => {
+            if (!tab.connectionId) {
+                return;
+            }
+            const store = useAppStore.getState();
+            const layout = store.paneLayouts[tab.connectionId]?.[owner];
+            if (!layout) {
+                return;
+            }
+
+            const leaves = collectLeaves(layout.root);
+            const closedFeatureInstances = new Set(
+                leaves.flatMap((leaf) =>
+                    isFeatureContent(leaf.content) && leaf.content.instanceId
+                        ? [leaf.content.instanceId]
+                        : [],
+                ),
+            );
+            const closedLegacyFeatures = new Set(
+                leaves.flatMap((leaf) =>
+                    isFeatureContent(leaf.content) && !leaf.content.instanceId
+                        ? [leaf.content.featureId]
+                        : [],
+                ),
+            );
+            const closedPlugins = new Set(
+                leaves.flatMap((leaf) =>
+                    isPluginContent(leaf.content) ? [leaf.content.pluginId] : [],
+                ),
+            );
+            const firstClosedFeatureIndex = featureTabs.findIndex(
+                (item) =>
+                    closedFeatureInstances.has(item.instanceId) ||
+                    closedLegacyFeatures.has(item.featureId),
+            );
+            const remainingFeatureTabs = featureTabs.filter(
+                (item) =>
+                    !closedFeatureInstances.has(item.instanceId) &&
+                    !closedLegacyFeatures.has(item.featureId),
+            );
+            if (!store.closePaneGroup(tab.connectionId, owner)) {
+                return;
+            }
+            const groupsAfterClose = useAppStore.getState().paneLayouts[tab.connectionId];
+            const remainingPluginItems = deriveWorkspaceContentInventory(
+                [],
+                groupsAfterClose,
+            ).filter((item) => isPluginContent(item.content));
+            const remainingPluginIds = new Set(
+                remainingPluginItems.flatMap((item) =>
+                    isPluginContent(item.content) ? [item.content.pluginId] : [],
+                ),
+            );
+            for (const panelId of closedPlugins) {
+                const view = `plugin:${panelId}`;
+                if (!remainingPluginIds.has(panelId) && pinnedFeatures.includes(view)) {
+                    toggleConnectionFeature(tab.connectionId, view);
+                }
+            }
+
+            const fallbackFeatureIndex =
+                firstClosedFeatureIndex < 0
+                    ? remainingFeatureTabs.length - 1
+                    : Math.min(firstClosedFeatureIndex, remainingFeatureTabs.length - 1);
+            const fallbackFeature = remainingFeatureTabs[Math.max(0, fallbackFeatureIndex)];
+            if (fallbackFeature) {
+                setActiveFeatureTabId(fallbackFeature.id);
+                const fallbackLayout = layoutForFeatureInstance(
+                    groupsAfterClose,
+                    fallbackFeature.instanceId,
+                );
+                if (fallbackLayout && isSplitLayout(fallbackLayout)) {
+                    const fallbackOwner = Object.entries(groupsAfterClose ?? {}).find(
+                        ([, candidate]) => candidate === fallbackLayout,
+                    )?.[0];
+                    if (fallbackOwner) {
+                        store.activatePaneGroup(tab.connectionId, fallbackOwner);
+                    }
+                    setTabView(tab.id, 'terminal');
+                    return;
+                }
+                setTabView(tab.id, fallbackFeature.featureId);
+                return;
+            }
+            setActiveFeatureTabId(null);
+            const fallbackPlugin = remainingPluginItems[0];
+            if (fallbackPlugin) {
+                handlePluginTabSelect(fallbackPlugin.id);
+                return;
+            }
+            setTabView(tab.id, 'terminal');
+        },
+        [
+            featureTabs,
+            handlePluginTabSelect,
+            pinnedFeatures,
+            setTabView,
+            tab.connectionId,
+            tab.id,
+            toggleConnectionFeature,
+        ],
+    );
+
+    const handleFeaturePaneOpened = useCallback((_feature: string) => {}, []);
+
+    const dockPointer = useMemo<DockTabPointerHandlers>(
+        () => ({
+            contextId: tab.id,
+            isEnabled: () => useAppStore.getState().activeTabId === tab.id,
+            getSurface: () => dockSurfaceRef.current,
+            /** Read current content-strip geometry for dock hit testing. */
+            getTabStrip: () =>
+                tab.connectionId
+                    ? document.querySelector<HTMLElement>(
+                          `[data-workspace-tab-strip][data-workspace-scope="${CSS.escape(tab.connectionId)}"] [data-tab-drag-strip]`,
+                      )
+                    : null,
+            /** Resolve a pane-tab drag against its current canvas and presentation owner. */
+            getPaneTabSource: (payload) => {
+                const store = useAppStore.getState();
+                if (
+                    !tab.connectionId ||
+                    store.activeTabId !== tab.id ||
+                    store.tabs.find((item) => item.id === tab.id)?.connectionId !==
+                        tab.connectionId ||
+                    !store.sessionLoaded ||
+                    store.isRestoring ||
+                    store.sessionPersistenceBlocked
+                ) {
+                    return null;
+                }
+                const source = paneTabReleaseSource(
+                    workspaceCanvases(
+                        store.terminals[tab.connectionId] ?? [],
+                        store.paneLayouts[tab.connectionId],
+                    ),
+                    payload,
+                    store.contentPresentation[tab.connectionId],
+                );
+                return source &&
+                    (source.memberIds.length > 1 ||
+                        store.workspaceDocking[tab.connectionId]?.placements[source.contentId])
+                    ? source
+                    : null;
+            },
+            /** Validate tab insertion against the current kind-agnostic layout. */
+            canDropPaneTab: (insertion) => {
+                if (!tab.connectionId) {
+                    return false;
+                }
+                const store = useAppStore.getState();
+                return (
+                    planPaneTabInsertion(
+                        store.terminals[tab.connectionId] ?? [],
+                        store.paneLayouts[tab.connectionId],
+                        store.contentPresentation[tab.connectionId],
+                        insertion,
+                    ) !== null
+                );
+            },
+            /** Return a pane to the selected tab position only while its captured workspace still owns it. */
+            onPaneTabDrop: (insertion) => {
+                const store = useAppStore.getState();
+                if (
+                    !tab.connectionId ||
+                    store.activeTabId !== tab.id ||
+                    store.tabs.find((item) => item.id === tab.id)?.connectionId !== tab.connectionId
+                ) {
+                    return false;
+                }
+                if (
+                    !store.releasePaneFromSplit(
+                        tab.connectionId,
+                        { contentId: insertion.source.contentId },
+                        insertion,
+                    )
+                ) {
+                    showToast(
+                        'info',
+                        'This pane cannot return to that tab position now. Its layout has been kept unchanged.',
+                    );
+                    return false;
+                }
+                selectContent(insertion.source.contentId);
+                return true;
+            },
+            // Dragging never changes the visible destination canvas.
+            onDragStart: () => {},
+            /** Commit a valid region or tab drop while preserving the visible destination canvas. */
+            onDragEnd: (payload, target) => {
+                if (!target || !tab.connectionId || useAppStore.getState().activeTabId !== tab.id) {
+                    return;
+                }
+                if (target.kind === 'region') {
+                    const store = useAppStore.getState();
+                    const contentId = store.dropWorkspaceContent(
+                        tab.connectionId,
+                        payload,
+                        target.region,
+                    );
+                    if (!contentId) {
+                        showToast(
+                            'info',
+                            'This pane cannot move there now. Check its availability and the four-pane limit.',
+                        );
+                        return;
+                    }
+                    if (
+                        useAppStore.getState().focusWorkspaceContent(tab.connectionId, contentId) &&
+                        target.region === 'workspace'
+                    ) {
+                        setTabView(tab.id, 'terminal');
+                    }
+                    return;
+                }
+                const { edge, paneId, contentId } = target;
+                if (!edge || !paneId || !tab.connectionId) {
+                    return;
+                }
+                const result = dockInSplit(
+                    tab.connectionId,
+                    payload,
+                    edge,
+                    contentId ? { contentId } : paneId,
+                );
+                if (result === 'refused-cap') {
+                    showToast(
+                        'info',
+                        'There is no room for another pane. Move a docked pane back to the workspace or close a pane first.',
+                    );
+                    return;
+                }
+                if (
+                    (result === 'opened' || result === 'moved' || result === 'focused') &&
+                    !useAppStore.getState().workspaceDockFocus[tab.connectionId]
+                ) {
+                    setTabView(tab.id, 'terminal');
+                }
+            },
+            onDragCancel: () => {},
+        }),
+        [dockInSplit, selectContent, setTabView, showToast, tab.connectionId, tab.id],
+    );
+
+    const handleTogglePin = useCallback(
+        (feature: string) => {
+            if (tab.connectionId) {
+                toggleConnectionFeature(tab.connectionId, feature);
+            }
+        },
+        [tab.connectionId, toggleConnectionFeature],
+    );
+
+    const handleTerminalClose = useCallback(
+        (termId: string) => {
+            if (tab.connectionId) {
+                closeTerminalGroup(tab.connectionId, termId);
+            }
+        },
+        [tab.connectionId, closeTerminalGroup],
+    );
+
+    const handleNewTerminal = useCallback(
+        (shell?: ShellEntry) => {
+            if (!tab.connectionId) {
+                return;
+            }
+            let created: string | null;
+            if (shell) {
+                created = createTerminal(tab.connectionId, {
+                    shellOverride: shell.id,
+                    title: shell.label,
+                });
+            } else if (
+                tab.connectionId === LOCAL_TERMINAL_CONNECTION_ID &&
+                window.electronUtils?.platform === 'win32'
+            ) {
+                // Windows only: stamp settings default so tab icons do not track later Default Shell changes.
+                const raw = useAppStore.getState().settings.localTerm?.windowsShell;
+                const shellId = resolveLocalWindowsShellId(raw);
+                created = createTerminal(tab.connectionId, { shellOverride: shellId });
+            } else {
+                created = createTerminal(tab.connectionId);
+            }
+            if (!created) {
+                return;
+            }
+            setTabView(tab.id, 'terminal');
+        },
+        [tab.connectionId, createTerminal, tab.id, setTabView],
+    );
+
+    // Ensure we start with at least 'terminal' available conceptually,
     // though combined bar renders terminals from store.
 
     // Each tab content is rendered but hidden if not active
     return (
-        <WorkspaceContextActions connectionId={tab.connectionId ?? ''} tabId={tab.id} active={isActive} openRequest={contentsOpenRequest}
-            onSetHidden={setContentHidden} onSelectContent={selectContent} onRevealAll={revealAllContent}>
-        <div className={cn(
-            "absolute inset-0 flex flex-col",
-            forceOpaqueShell || !(tab.view === 'terminal' && terminalTransparencyEnabled)
-                ? "bg-app-bg"
-                : "bg-transparent",
-            !isActive && "hidden"
-        )}>
-            {showWorkspace && (
-                <HostWorkspaceFrame active={isActive} navigation={tab.connectionId !== GLOBAL_SNIPPETS_CONNECTION_ID ? (
-                        <WorkspaceTabBar
-                            connectionId={tab.connectionId}
-                            tabId={tab.id}
-                            activeView={tab.view}
-                            featureTabs={featureTabs}
-                            activeFeatureTabId={activeFeatureTabId}
-                            pinnedFeatures={pinnedFeatures}
-                            pluginPanels={workspacePluginPanels}
-                            onTabSelect={handleTabSelect}
-                            onPluginTabSelect={handlePluginTabSelect}
-                            onPluginTabClose={handlePluginTabClose}
-                            onFeatureTabSelect={handleFeatureTabSelect}
-                            onFeatureTabClose={handleFeatureTabClose}
-                            onTerminalClose={handleTerminalClose}
-                            onNewTerminal={handleNewTerminal}
-                            onOpenFeature={handleOpenFeature}
-                            onFeaturePaneOpened={handleFeaturePaneOpened}
-                            onPaneGroupClose={handlePaneGroupClose}
-                            onTogglePin={handleTogglePin}
-                            sessionToolsOpen={isSnippetSidebarOpen}
-                            onToggleSessionTools={() => setIsSnippetSidebarOpen((open) => !open)}
-                            dockPointer={dockPointer}
-                        />
-                    ) : null}>
-
-                    {/* Content Area */}
-                    <div ref={dockSurfaceRef} className="flex-1 overflow-hidden relative flex flex-col">
-                        <Suspense fallback={<TabLoading />}>
-
-                            {/* 
+        <WorkspaceContextActions
+            connectionId={tab.connectionId ?? ''}
+            tabId={tab.id}
+            active={isActive}
+            openRequest={contentsOpenRequest}
+            onSetHidden={setContentHidden}
+            onSelectContent={selectContent}
+            onRevealAll={revealAllContent}
+        >
+            <div
+                className={cn(
+                    'absolute inset-0 flex flex-col',
+                    forceOpaqueShell || !(tab.view === 'terminal' && terminalTransparencyEnabled)
+                        ? 'bg-app-bg'
+                        : 'bg-transparent',
+                    !isActive && 'hidden',
+                )}
+            >
+                {showWorkspace && (
+                    <HostWorkspaceFrame
+                        active={isActive}
+                        navigation={
+                            tab.connectionId !== GLOBAL_SNIPPETS_CONNECTION_ID ? (
+                                <WorkspaceTabBar
+                                    connectionId={tab.connectionId}
+                                    tabId={tab.id}
+                                    activeView={tab.view}
+                                    featureTabs={featureTabs}
+                                    activeFeatureTabId={activeFeatureTabId}
+                                    pinnedFeatures={pinnedFeatures}
+                                    pluginPanels={workspacePluginPanels}
+                                    onTabSelect={handleTabSelect}
+                                    onPluginTabSelect={handlePluginTabSelect}
+                                    onPluginTabClose={handlePluginTabClose}
+                                    onFeatureTabSelect={handleFeatureTabSelect}
+                                    onFeatureTabClose={handleFeatureTabClose}
+                                    onTerminalClose={handleTerminalClose}
+                                    onNewTerminal={handleNewTerminal}
+                                    onOpenFeature={handleOpenFeature}
+                                    onFeaturePaneOpened={handleFeaturePaneOpened}
+                                    onPaneGroupClose={handlePaneGroupClose}
+                                    onTogglePin={handleTogglePin}
+                                    sessionToolsOpen={isSnippetSidebarOpen}
+                                    onToggleSessionTools={() =>
+                                        setIsSnippetSidebarOpen((open) => !open)
+                                    }
+                                    dockPointer={dockPointer}
+                                />
+                            ) : null
+                        }
+                    >
+                        {/* Content Area */}
+                        <div
+                            ref={dockSurfaceRef}
+                            className="flex-1 overflow-hidden relative flex flex-col"
+                        >
+                            <Suspense fallback={<TabLoading />}>
+                                {/*
                                 Terminal View
                                 Pass hideTabs={true} to disable its internal tab bar
                             */}
-                            <div
-                                className={cn(
-                                    "flex-1 min-h-0 min-w-0 relative",
-                                    terminalTransparencyEnabled && !forceOpaqueShell ? "bg-transparent" : "bg-app-bg"
-                                )}
-                            >
-                                <TerminalManager
+                                <div
+                                    className={cn(
+                                        'flex-1 min-h-0 min-w-0 relative',
+                                        terminalTransparencyEnabled && !forceOpaqueShell
+                                            ? 'bg-transparent'
+                                            : 'bg-app-bg',
+                                    )}
+                                >
+                                    <TerminalManager
+                                        connectionId={tab.connectionId}
+                                        isWorkspaceActive={isActive}
+                                        isTerminalView
+                                        pluginPanelId={
+                                            isPluginTabView(tab.view)
+                                                ? tab.view.slice('plugin:'.length)
+                                                : undefined
+                                        }
+                                        featureView={
+                                            isSplitFeatureId(tab.view) ? tab.view : undefined
+                                        }
+                                        hiddenContentIds={hiddenIds}
+                                        hiddenContentFallback={
+                                            <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+                                                <p className="text-sm text-app-muted">
+                                                    All panes in this view are hidden. Your sessions
+                                                    are still open.
+                                                </p>
+                                                <Button
+                                                    variant="secondary"
+                                                    onClick={revealAllContent}
+                                                >
+                                                    Show all panes
+                                                </Button>
+                                            </div>
+                                        }
+                                        hideTabs={true}
+                                        dockPointer={dockPointer}
+                                        featureInstanceId={
+                                            isSplitFeatureId(tab.view)
+                                                ? featureTabs.find(
+                                                      (item) => item.id === activeFeatureTabId,
+                                                  )?.instanceId
+                                                : undefined
+                                        }
+                                    />
+                                </div>
+
+                                <SnippetSidebar
                                     connectionId={tab.connectionId}
-                                    isWorkspaceActive={isActive}
-                                    isTerminalView
-                                    pluginPanelId={isPluginTabView(tab.view) ? tab.view.slice('plugin:'.length) : undefined}
-                                    featureView={isSplitFeatureId(tab.view) ? tab.view : undefined}
-                                    hiddenContentIds={hiddenIds}
-                                    hiddenContentFallback={<div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
-                                        <p className="text-sm text-app-muted">All panes in this view are hidden. Your sessions are still open.</p>
-                                        <Button variant="secondary" onClick={revealAllContent}>Show all panes</Button>
-                                    </div>}
-                                    hideTabs={true}
-                                    dockPointer={dockPointer}
-                                    featureInstanceId={
-                                        isSplitFeatureId(tab.view)
-                                            ? (featureTabs.find(item => item.id === activeFeatureTabId)?.instanceId)
-                                            : undefined
-                                    }
+                                    tabId={tab.id}
+                                    isOpen={isSnippetSidebarOpen}
+                                    onClose={() => setIsSnippetSidebarOpen(false)}
+                                    restoreTerminalFocus={tab.view === 'terminal'}
                                 />
-                            </div>
 
-                            <SnippetSidebar
-                                connectionId={tab.connectionId}
-                                tabId={tab.id}
-                                isOpen={isSnippetSidebarOpen}
-                                onClose={() => setIsSnippetSidebarOpen(false)}
-                                restoreTerminalFocus={tab.view === 'terminal'}
-                            />
-
-                            <TabDockOverlay />
-
-                        </Suspense>
+                                <TabDockOverlay />
+                            </Suspense>
+                        </div>
+                    </HostWorkspaceFrame>
+                )}
+                {stage && (
+                    <div
+                        className={cn(
+                            'absolute inset-0 z-40 flex flex-col bg-app-bg transition-opacity duration-200 ease-out',
+                            stageVisible ? 'opacity-100' : 'opacity-0 pointer-events-none',
+                        )}
+                    >
+                        <ConnectStagePanel
+                            status={stage}
+                            name={connection?.name ?? tab.title}
+                            host={connection?.host}
+                            icon={connection?.icon}
+                            lastError={connection?.lastError}
+                            onCancel={() => {
+                                if (connection) {
+                                    void cancelConnect(connection.id);
+                                }
+                            }}
+                            onRetry={() => {
+                                if (connection) {
+                                    void connect(connection.id);
+                                }
+                            }}
+                        />
                     </div>
-                </HostWorkspaceFrame>
-            )}
-            {stage && (
-                <div
-                    className={cn(
-                        'absolute inset-0 z-40 flex flex-col bg-app-bg transition-opacity duration-200 ease-out',
-                        stageVisible ? 'opacity-100' : 'opacity-0 pointer-events-none',
-                    )}
-                >
-                    <ConnectStagePanel
-                        status={stage}
-                        name={connection?.name ?? tab.title}
-                        host={connection?.host}
-                        icon={connection?.icon}
-                        lastError={connection?.lastError}
-                        onCancel={() => {
-                            if (connection) void cancelConnect(connection.id);
-                        }}
-                        onRetry={() => {
-                            if (connection) void connect(connection.id);
-                        }}
-                    />
-                </div>
-            )}
-        </div>
+                )}
+            </div>
         </WorkspaceContextActions>
     );
 });
 
+/** Coordinate retained workspace surfaces, application chrome and startup prompts. */
 export function MainLayout({ children }: { children: ReactNode }) {
     useFileSystemEvents(); // Enable global FS event listeners
 
-    const tabs = useAppStore(state => state.tabs);
-    const activeTabId = useAppStore(state => state.activeTabId);
+    const tabs = useAppStore((state) => state.tabs);
+    const activeTabId = useAppStore((state) => state.activeTabId);
     const activeWorkspaceTab = useMemo(
         () => (activeTabId !== null ? tabs.find((t: Tab) => t.id === activeTabId) : undefined),
         [tabs, activeTabId],
     );
-    const workspaceTabIds = useMemo(
-        () => tabs.map(tab => tab.id),
-        [tabs],
-    );
+    const workspaceTabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
     const retainedWorkspaceTabs = useRetainedItems(workspaceTabIds, activeWorkspaceTab?.id ?? null);
     const suspendIdleHostPtys = useAppStore(
-        state => state.settings.terminal.suspendIdleHostPtys ?? false,
+        (state) => state.settings.terminal.suspendIdleHostPtys ?? false,
     );
     const idleHostPtySuspendMinutes = useAppStore(
-        state => state.settings.terminal.idleHostPtySuspendMinutes ?? 2,
+        (state) => state.settings.terminal.idleHostPtySuspendMinutes ?? 2,
     );
     const prevWorkspaceConnectionIdRef = useRef<string | null>(null);
 
@@ -982,9 +1430,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
             cancelAllIdlePtySuspends();
         } else {
             if (
-                prevConnectionId
-                && prevConnectionId !== nextConnectionId
-                && shouldIdleSuspendConnection(prevConnectionId)
+                prevConnectionId &&
+                prevConnectionId !== nextConnectionId &&
+                shouldIdleSuspendConnection(prevConnectionId)
             ) {
                 const prevTabs = useAppStore.getState().terminals[prevConnectionId];
                 scheduleIdlePtySuspend(prevConnectionId, prevTabs, { delayMs });
@@ -996,18 +1444,18 @@ export function MainLayout({ children }: { children: ReactNode }) {
         }
 
         prevWorkspaceConnectionIdRef.current = nextConnectionId;
-    }, [
-        activeWorkspaceTab?.connectionId,
-        suspendIdleHostPtys,
-        idleHostPtySuspendMinutes,
-    ]);
+    }, [activeWorkspaceTab?.connectionId, suspendIdleHostPtys, idleHostPtySuspendMinutes]);
 
     useEffect(() => () => cancelAllIdlePtySuspends(), []);
 
     useEffect(() => {
         terminalService.setCloseTabHandler((connectionId, termId) => {
             const store = useAppStore.getState();
-            const resolved = resolveShellExitConnectionId(termId, connectionId || undefined, store.terminals);
+            const resolved = resolveShellExitConnectionId(
+                termId,
+                connectionId || undefined,
+                store.terminals,
+            );
             if (resolved) {
                 store.closePaneOnShellExit(resolved, termId);
             }
@@ -1017,10 +1465,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     useEffect(() => registerTunnelTransportLostListener(), []);
 
-    const showWelcomeScreen = useAppStore(state => state.showWelcomeScreen);
-    const isLoadingSettings = useAppStore(state => state.isLoadingSettings);
-    const sessionLoaded = useAppStore(state => state.sessionLoaded);
-    const loadSnippets = useAppStore(state => state.loadSnippets);
+    const showWelcomeScreen = useAppStore((state) => state.showWelcomeScreen);
+    const isLoadingSettings = useAppStore((state) => state.isLoadingSettings);
+    const sessionLoaded = useAppStore((state) => state.sessionLoaded);
+    const loadSnippets = useAppStore((state) => state.loadSnippets);
 
     // Pre-load snippets once on app startup so the picker/sidebar always have data
     useEffect(() => {
@@ -1034,13 +1482,20 @@ export function MainLayout({ children }: { children: ReactNode }) {
     const isSmallScreen = windowWidth < 640;
     const isTablet = windowWidth < 1024;
 
-    const settings = useAppStore(state => state.settings);
-    const globalSidebarSection = useAppStore(state => state.globalSidebarSection);
-    const sidebarCollapsed = sidebarPresentation(settings.workspaceNavigation, globalSidebarSection, settings.sidebarCollapsed).collapsed;
-    const updateSettings = useAppStore(state => state.updateSettings);
-    const updateSurveySettings = useAppStore(state => state.updateSurveySettings);
-    const setSidebarCollapsedLocal = useAppStore(state => state.setSidebarCollapsedLocal);
-    const [surveyContext, setSurveyContext] = useState<{ kind: SurveyPromptKind; version: string } | null>(null);
+    const settings = useAppStore((state) => state.settings);
+    const globalSidebarSection = useAppStore((state) => state.globalSidebarSection);
+    const sidebarCollapsed = sidebarPresentation(
+        settings.workspaceNavigation,
+        globalSidebarSection,
+        settings.sidebarCollapsed,
+    ).collapsed;
+    const updateSettings = useAppStore((state) => state.updateSettings);
+    const updateSurveySettings = useAppStore((state) => state.updateSurveySettings);
+    const setSidebarCollapsedLocal = useAppStore((state) => state.setSidebarCollapsedLocal);
+    const [surveyContext, setSurveyContext] = useState<{
+        kind: SurveyPromptKind;
+        version: string;
+    } | null>(null);
     const [isSurveyPromptOpen, setIsSurveyPromptOpen] = useState(false);
     const [isSurveyReminderVisible, setIsSurveyReminderVisible] = useState(false);
     const surveyChecked = useRef(false);
@@ -1050,19 +1505,21 @@ export function MainLayout({ children }: { children: ReactNode }) {
     // Shutdown Management
     const [isShutdownModalOpen, setIsShutdownModalOpen] = useState(false);
     const [isShuttingDown, setIsShuttingDown] = useState(false);
-    const connections = useAppStore(state => state.connections);
-    const disconnect = useAppStore(state => state.disconnect);
-    const activeConnections = connections.filter(c => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID);
+    const connections = useAppStore((state) => state.connections);
+    const disconnect = useAppStore((state) => state.disconnect);
+    const activeConnections = connections.filter(
+        (c) => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID,
+    );
 
     const handleShutdown = useCallback(async () => {
         setIsShuttingDown(true);
         try {
             // Disconnect all active connections
-            const disconnectPromises = activeConnections.map(c => disconnect(c.id));
+            const disconnectPromises = activeConnections.map((c) => disconnect(c.id));
             await Promise.all(disconnectPromises);
 
             // Brief delay to ensure state updates reach backend
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 500));
 
             window.ipcRenderer?.invoke('app_exit');
         } catch (error) {
@@ -1072,10 +1529,15 @@ export function MainLayout({ children }: { children: ReactNode }) {
     }, [activeConnections, disconnect]);
 
     useEffect(() => {
+        /** Register graceful shutdown handling and dispose registrations that finish after unmount. */
         const setupShutdownListener = async () => {
             const unlisten = await listen('app:request-close', () => {
                 // Check latest state
-                const currentConnections = useAppStore.getState().connections.filter(c => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID);
+                const currentConnections = useAppStore
+                    .getState()
+                    .connections.filter(
+                        (c) => c.status === 'connected' && c.id !== LOCAL_TERMINAL_CONNECTION_ID,
+                    );
                 if (currentConnections.length > 0) {
                     setIsShutdownModalOpen(true);
                 } else {
@@ -1087,7 +1549,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
         const shutdownCleanup = setupShutdownListener();
         return () => {
-            shutdownCleanup.then(unlisten => unlisten());
+            shutdownCleanup.then((unlisten) => unlisten());
         };
     }, []);
 
@@ -1122,22 +1584,27 @@ export function MainLayout({ children }: { children: ReactNode }) {
     useEffect(() => {}, []);
 
     // Version Tracking for Release Notes
-    const openReleaseNotesTab = useAppStore(state => state.openReleaseNotesTab);
+    const openReleaseNotesTab = useAppStore((state) => state.openReleaseNotesTab);
     const versionChecked = useRef(false);
 
     useEffect(() => {
         // Restore the saved workspace before opening/version-stamping transient tabs.
-        if (isLoadingSettings || !sessionLoaded || versionChecked.current) return;
+        if (isLoadingSettings || !sessionLoaded || versionChecked.current) {
+            return;
+        }
         versionChecked.current = true;
 
         // Capture synchronously before any await / lastSeenVersion rewrite so survey
         // can tell "upgraded from older build" vs "brand-new install".
         surveyPreviousVersionRef.current = useAppStore.getState().settings.lastSeenVersion || '';
 
+        /** Open release notes after session restore when the installed version has changed. */
         const checkVersionAndShowNotes = async () => {
             try {
                 const currentVersion = await window.ipcRenderer?.invoke('app:getVersion');
-                if (!currentVersion) return;
+                if (!currentVersion) {
+                    return;
+                }
                 const storedVersion = useAppStore.getState().settings.lastSeenVersion;
 
                 // Signal 1: 'zync-just-updated' flag is written by UpdateNotification
@@ -1173,19 +1640,23 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     // Profile survey: prompt once, then keep an app-level reminder until submission.
     useEffect(() => {
-        if (isLoadingSettings || !sessionLoaded || surveyChecked.current) return;
+        if (isLoadingSettings || !sessionLoaded || surveyChecked.current) {
+            return;
+        }
         surveyChecked.current = true;
 
         const state = useAppStore.getState();
         const survey = normalizeSurveySettings(state.settings.survey);
         const previousSeenVersion =
-            surveyPreviousVersionRef.current
-            ?? (state.settings.lastSeenVersion || '');
+            surveyPreviousVersionRef.current ?? (state.settings.lastSeenVersion || '');
 
+        /** Evaluate survey eligibility after settings and version state are available. */
         const maybeShowSurvey = async () => {
             try {
                 const currentVersion = await window.ipcRenderer?.invoke('app:getVersion');
-                if (!currentVersion || typeof currentVersion !== 'string') return;
+                if (!currentVersion || typeof currentVersion !== 'string') {
+                    return;
+                }
 
                 const identifiedSurvey = initializeSurveyIdentity(
                     survey,
@@ -1194,10 +1665,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
                     new Date().toISOString(),
                 );
                 if (
-                    identifiedSurvey.firstObservedVersion !== survey.firstObservedVersion
-                    || identifiedSurvey.firstObservedAt !== survey.firstObservedAt
-                    || identifiedSurvey.existingInstallAtFirstObservation
-                        !== survey.existingInstallAtFirstObservation
+                    identifiedSurvey.firstObservedVersion !== survey.firstObservedVersion ||
+                    identifiedSurvey.firstObservedAt !== survey.firstObservedAt ||
+                    identifiedSurvey.existingInstallAtFirstObservation !==
+                        survey.existingInstallAtFirstObservation
                 ) {
                     void updateSurveySettings({
                         firstObservedVersion: identifiedSurvey.firstObservedVersion,
@@ -1214,25 +1685,32 @@ export function MainLayout({ children }: { children: ReactNode }) {
                     : null;
                 const experience = debugKind
                     ? {
-                        kind: debugKind,
-                        version: currentVersion,
-                        shouldPrompt: true,
-                        showReminder: false,
-                    }
-                    : resolveSurveyExperience(identifiedSurvey, currentVersion, previousSeenVersion);
-                if (!experience) return;
+                          kind: debugKind,
+                          version: currentVersion,
+                          shouldPrompt: true,
+                          showReminder: false,
+                      }
+                    : resolveSurveyExperience(
+                          identifiedSurvey,
+                          currentVersion,
+                          previousSeenVersion,
+                      );
+                if (!experience) {
+                    return;
+                }
 
                 const context = { kind: experience.kind, version: experience.version };
                 setSurveyContext(context);
                 setIsSurveyReminderVisible(experience.showReminder);
 
-                if (!experience.shouldPrompt) return;
+                if (!experience.shouldPrompt) {
+                    return;
+                }
 
                 if (!debugKind) {
                     void updateSurveySettings({
-                        installCompleted: context.kind === 'install'
-                            ? false
-                            : identifiedSurvey.installCompleted,
+                        installCompleted:
+                            context.kind === 'install' ? false : identifiedSurvey.installCompleted,
                         lifecycleState: 'pending',
                         promptKind: context.kind,
                         promptVersion: context.version,
@@ -1245,9 +1723,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
                     // Prefer showing after What's New is closed (max ~8s).
                     const started = Date.now();
                     await new Promise<void>((resolve) => {
+                        /** Wait for release notes to close before resolving the bounded survey-prompt delay. */
                         const tick = () => {
                             const activeId = useAppStore.getState().activeTabId;
-                            const active = useAppStore.getState().tabs.find((tab) => tab.id === activeId);
+                            const active = useAppStore
+                                .getState()
+                                .tabs.find((tab) => tab.id === activeId);
                             const notesOpen = active?.type === 'release-notes';
                             if (!notesOpen || Date.now() - started > 8000) {
                                 resolve();
@@ -1270,51 +1751,58 @@ export function MainLayout({ children }: { children: ReactNode }) {
         void maybeShowSurvey();
     }, [isLoadingSettings, sessionLoaded, updateSurveySettings]);
 
-    const persistSurveyResult = useCallback(async (
-        submitted: boolean,
-        prefs?: {
+    const persistSurveyResult = useCallback(
+        async (
+            submitted: boolean,
+            prefs?: {
+                lastRole?: string;
+                lastWorkContext?: string;
+                lastDiscoverySource?: string;
+                lastPrimaryUse?: string;
+                lastImprovementPriority?: string;
+            },
+        ) => {
+            const context = surveyContext;
+            if (!context) {
+                return;
+            }
+
+            const currentSurvey = normalizeSurveySettings(useAppStore.getState().settings.survey);
+            const prefPatch = submitted
+                ? {
+                      lastRole: prefs?.lastRole ?? '',
+                      lastWorkContext: prefs?.lastWorkContext ?? '',
+                      lastDiscoverySource: prefs?.lastDiscoverySource ?? '',
+                      lastPrimaryUse: prefs?.lastPrimaryUse ?? '',
+                      lastImprovementPriority: prefs?.lastImprovementPriority ?? '',
+                  }
+                : {};
+            await updateSurveySettings({
+                installCompleted:
+                    context.kind === 'install' ? submitted : currentSurvey.installCompleted,
+                lifecycleState: submitted ? 'completed' : 'dismissed',
+                promptKind: context.kind,
+                promptVersion: context.version,
+                releaseSeenVersion: context.version,
+                ...prefPatch,
+            });
+        },
+        [surveyContext, updateSurveySettings],
+    );
+
+    const handleSurveySubmitted = useCallback(
+        async (prefs: {
             lastRole?: string;
             lastWorkContext?: string;
             lastDiscoverySource?: string;
             lastPrimaryUse?: string;
             lastImprovementPriority?: string;
+        }) => {
+            await persistSurveyResult(true, prefs);
+            setIsSurveyReminderVisible(false);
         },
-    ) => {
-        const context = surveyContext;
-        if (!context) return;
-
-        const currentSurvey = normalizeSurveySettings(useAppStore.getState().settings.survey);
-        const prefPatch = submitted
-            ? {
-                lastRole: prefs?.lastRole ?? '',
-                lastWorkContext: prefs?.lastWorkContext ?? '',
-                lastDiscoverySource: prefs?.lastDiscoverySource ?? '',
-                lastPrimaryUse: prefs?.lastPrimaryUse ?? '',
-                lastImprovementPriority: prefs?.lastImprovementPriority ?? '',
-            }
-            : {};
-        await updateSurveySettings({
-            installCompleted: context.kind === 'install'
-                ? submitted
-                : currentSurvey.installCompleted,
-            lifecycleState: submitted ? 'completed' : 'dismissed',
-            promptKind: context.kind,
-            promptVersion: context.version,
-            releaseSeenVersion: context.version,
-            ...prefPatch,
-        });
-    }, [surveyContext, updateSurveySettings]);
-
-    const handleSurveySubmitted = useCallback(async (prefs: {
-        lastRole?: string;
-        lastWorkContext?: string;
-        lastDiscoverySource?: string;
-        lastPrimaryUse?: string;
-        lastImprovementPriority?: string;
-    }) => {
-        await persistSurveyResult(true, prefs);
-        setIsSurveyReminderVisible(false);
-    }, [persistSurveyResult]);
+        [persistSurveyResult],
+    );
 
     const handleSurveyDismissed = useCallback(() => {
         setIsSurveyPromptOpen(false);
@@ -1330,16 +1818,16 @@ export function MainLayout({ children }: { children: ReactNode }) {
     }, []);
 
     // Theme Application Effect
-    const theme = useAppStore(state => state.settings.theme);
-    const accentColor = useAppStore(state => state.settings.accentColor);
-    const customTheme = useAppStore(state => state.settings.customTheme);
+    const theme = useAppStore((state) => state.settings.theme);
+    const accentColor = useAppStore((state) => state.settings.accentColor);
+    const customTheme = useAppStore((state) => state.settings.customTheme);
     useCustomThemeStyle(theme, customTheme);
-    const elementColors = useAppStore(state => state.settings.elementColors);
+    const elementColors = useAppStore((state) => state.settings.elementColors);
     useElementColorStyle(elementColors, refreshAllCachedTerminalThemes);
-    const globalFontFamily = useAppStore(state => state.settings.globalFontFamily);
-    const globalFontSize = useAppStore(state => state.settings.globalFontSize);
+    const globalFontFamily = useAppStore((state) => state.settings.globalFontFamily);
+    const globalFontSize = useAppStore((state) => state.settings.globalFontSize);
     const terminalTransparencyEnabled = useAppStore(
-        state => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1
+        (state) => state.settings.enableVibrancy && (state.settings.windowOpacity ?? 1) < 1,
     );
 
     const persistBootThemeColors = useCallback(() => {
@@ -1350,26 +1838,44 @@ export function MainLayout({ children }: { children: ReactNode }) {
             const text = style.getPropertyValue('--color-app-text').trim();
             const accent = style.getPropertyValue('--color-app-accent').trim();
 
-            if (!bg || !panel || !text || !accent) return;
+            if (!bg || !panel || !text || !accent) {
+                return;
+            }
 
             const accentSoft = `color-mix(in srgb, ${accent} 14%, transparent)`;
-            localStorage.setItem('zync-theme-colors', JSON.stringify({ bg, panel, text, accent, accentSoft }));
+            localStorage.setItem(
+                'zync-theme-colors',
+                JSON.stringify({ bg, panel, text, accent, accentSoft }),
+            );
         } catch (error) {
             console.warn('Failed to persist boot theme colors', error);
         }
     }, []);
 
     useLayoutEffect(() => {
-        if (isLoadingSettings) return;
+        if (isLoadingSettings) {
+            return;
+        }
 
         // Persist for splash screen
         localStorage.setItem('zync-theme', theme);
 
         // Remove old theme classes (Legacy support)
-        document.body.classList.remove('light', 'dark', 'custom', 'dracula', 'monokai', 'midnight', 'warm', 'light-warm');
+        document.body.classList.remove(
+            'light',
+            'dark',
+            'custom',
+            'dracula',
+            'monokai',
+            'midnight',
+            'warm',
+            'light-warm',
+        );
 
         if (theme === 'system') {
-            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
             document.body.classList.add(systemTheme);
             document.body.setAttribute('data-theme', systemTheme);
         } else {
@@ -1421,8 +1927,15 @@ export function MainLayout({ children }: { children: ReactNode }) {
         return () => {
             window.clearTimeout(persistTimer);
         };
-
-    }, [theme, customTheme, accentColor, globalFontFamily, globalFontSize, isLoadingSettings, persistBootThemeColors]);
+    }, [
+        theme,
+        customTheme,
+        accentColor,
+        globalFontFamily,
+        globalFontSize,
+        isLoadingSettings,
+        persistBootThemeColors,
+    ]);
 
     useEffect(() => {
         const refreshAfterRegistry = () => {
@@ -1447,9 +1960,11 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
     const handleAiRunCommand = useCallback((connectionId: string, command: string) => {
         const normalizedCommand = command.endsWith('\r') ? command : `${command}\r`;
-        window.dispatchEvent(new CustomEvent('ssh-ui:run-command', {
-            detail: { connectionId, command: normalizedCommand },
-        }));
+        window.dispatchEvent(
+            new CustomEvent('ssh-ui:run-command', {
+                detail: { connectionId, command: normalizedCommand },
+            }),
+        );
 
         const currentTabId = useAppStore.getState().activeTabId;
         if (currentTabId) {
@@ -1458,10 +1973,13 @@ export function MainLayout({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isLoading || isLoadingSettings || !sessionLoaded) return;
+        if (isLoading || isLoadingSettings || !sessionLoaded) {
+            return;
+        }
         hideBootSplash();
     }, [isLoading, isLoadingSettings, sessionLoaded, hideBootSplash]);
 
+    /** Honor the platform setup policy and show onboarding only when configuration requires it. */
     const checkConfig = async () => {
         try {
             // On Windows, skip wizard entirely (backend auto-configures, and in browser dev mode we don't need wizard)
@@ -1473,7 +1991,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
 
             // Mac/Linux: Check config and show wizard if needed
             const config = await window.ipcRenderer?.invoke('config:get');
-            if (!config) return;
+            if (!config) {
+                return;
+            }
             if (!config.isConfigured) {
                 setShowWizard(true);
             }
@@ -1491,9 +2011,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
     return (
         <div
             className={cn(
-                "relative flex flex-col h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300",
-                !isMaximized && "rounded-xl border border-app-border/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(0,0,0,0.35)]",
-                terminalTransparencyEnabled ? "bg-transparent" : "bg-app-bg"
+                'relative flex flex-col h-screen text-app-text font-sans selection:bg-app-accent/30 overflow-hidden transition-all duration-300',
+                !isMaximized &&
+                    'rounded-xl border border-app-border/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(0,0,0,0.35)]',
+                terminalTransparencyEnabled ? 'bg-transparent' : 'bg-app-bg',
             )}
         >
             {showWizard && <SetupWizard onComplete={() => setShowWizard(false)} />}
@@ -1504,50 +2025,52 @@ export function MainLayout({ children }: { children: ReactNode }) {
             {/* Top Unified Header (TabBar) */}
             <TabBar />
 
-            <LayoutMotionScope><WorkspaceNavigationFrame>
-                {/* Sidebar Overlay for Mobile */}
-                {
-                    isSmallScreen && !sidebarCollapsed && (
+            <LayoutMotionScope>
+                <WorkspaceNavigationFrame>
+                    {/* Sidebar Overlay for Mobile */}
+                    {isSmallScreen && !sidebarCollapsed && (
                         <div
                             className="absolute inset-0 bg-black/50 backdrop-blur-sm z-[45] animate-in fade-in duration-300"
                             onClick={() => {
                                 setSidebarVisibility(useAppStore.getState, true);
                             }}
                         />
-                    )
-                }
+                    )}
 
-                <Sidebar className={isSmallScreen ? "fixed" : ""} />
+                    <Sidebar className={isSmallScreen ? 'fixed' : ''} />
 
-                <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                    {/* Main Content Area */}
-                    <div className="flex-1 overflow-hidden relative flex flex-col">
-                        {tabs.length > 0 && !showWelcomeScreen && activeWorkspaceTab ? (
-                            <>
-                                {retainedItemsInMountOrder(tabs, retainedWorkspaceTabs).map((tab: Tab) => (
-                                    <TabContent
-                                        key={tab.id}
-                                        tab={tab}
-                                        isActive={tab.id === activeWorkspaceTab.id}
-                                    />
-                                ))}
-                            </>
-                        ) : (
-                            <div className="flex-1 bg-app-bg">{children}</div>
-                        )}
+                    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                        {/* Main Content Area */}
+                        <div className="flex-1 overflow-hidden relative flex flex-col">
+                            {tabs.length > 0 && !showWelcomeScreen && activeWorkspaceTab ? (
+                                <>
+                                    {retainedItemsInMountOrder(tabs, retainedWorkspaceTabs).map(
+                                        (tab: Tab) => (
+                                            <TabContent
+                                                key={tab.id}
+                                                tab={tab}
+                                                isActive={tab.id === activeWorkspaceTab.id}
+                                            />
+                                        ),
+                                    )}
+                                </>
+                            ) : (
+                                <div className="flex-1 bg-app-bg">{children}</div>
+                            )}
+                        </div>
                     </div>
-                </div>
 
-                {/* AI Assistant Right Sidebar */}
-                <AiSidebar
-                    connectionId={
-                        showWelcomeScreen || !activeWorkspaceTab
-                            ? null
-                            : activeWorkspaceTab.connectionId ?? null
-                    }
-                    onRunCommand={handleAiRunCommand}
-                />
-            </WorkspaceNavigationFrame></LayoutMotionScope>
+                    {/* AI Assistant Right Sidebar */}
+                    <AiSidebar
+                        connectionId={
+                            showWelcomeScreen || !activeWorkspaceTab
+                                ? null
+                                : (activeWorkspaceTab.connectionId ?? null)
+                        }
+                        onRunCommand={handleAiRunCommand}
+                    />
+                </WorkspaceNavigationFrame>
+            </LayoutMotionScope>
 
             {/* Bottom Unified Status Bar (Full Width) */}
             <StatusBar />
@@ -1570,7 +2093,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 connectionCount={activeConnections.length}
             />
             {/* Portal Root for Modals/Overlays to ensure they stay within rounded corners */}
-            <div id="modal-portal-root" className="absolute inset-0 pointer-events-none z-[9999]" />
+            <div
+                id="modal-portal-root"
+                className="absolute inset-0 pointer-events-none z-[9999]"
+            />
 
             <SurveyPromptModal
                 open={isSurveyPromptOpen && Boolean(surveyContext)}
@@ -1581,7 +2107,6 @@ export function MainLayout({ children }: { children: ReactNode }) {
                 onDismissed={handleSurveyDismissed}
                 onFinished={handleSurveyFinished}
             />
-        </div >
+        </div>
     );
 }
-

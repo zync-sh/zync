@@ -7,6 +7,19 @@ use uuid::Uuid;
 
 const LEGACY_BACKUP_EXTENSION: &str = "bak";
 
+/// Remove only the invocation-owned staging file on every unpublished/error exit.
+struct TempCleanup(Option<PathBuf>);
+
+impl Drop for TempCleanup {
+    /// A published file has already been renamed away; recovery backups remain untouched.
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Build a unique staging path owned by one atomic replacement attempt.
 fn unique_temp_path(path: &Path, unique_suffix: &Uuid) -> PathBuf {
     path.with_extension(format!("json.tmp.{unique_suffix}"))
 }
@@ -29,7 +42,7 @@ pub fn durable_replace(path: &Path, content: &[u8]) -> io::Result<()> {
 
     let unique_suffix = Uuid::new_v4();
     let temp_path = unique_temp_path(path, &unique_suffix);
-    write_temp_durable(&temp_path, content)?;
+    let mut cleanup = write_temp_durable(&temp_path, content)?;
 
     // Windows may replace an existing destination on rename without staging; clear legacy backups first.
     remove_stale_backup_file(&path.with_extension(LEGACY_BACKUP_EXTENSION))?;
@@ -37,38 +50,43 @@ pub fn durable_replace(path: &Path, content: &[u8]) -> io::Result<()> {
     let backup_path = unique_backup_path(path, &unique_suffix);
 
     match fs::rename(&temp_path, path) {
-        Ok(()) => finalize_durable(path),
+        Ok(()) => {
+            cleanup.0 = None;
+            finalize_durable(path)
+        }
         Err(rename_err) if rename_err.kind() == ErrorKind::AlreadyExists && path.exists() => {
-            replace_with_backup(path, &temp_path, &backup_path)
+            replace_with_backup(path, &temp_path, &backup_path, &mut cleanup)
         }
-        Err(rename_err) => {
-            let _ = fs::remove_file(&temp_path);
-            Err(rename_err)
-        }
+        Err(rename_err) => Err(rename_err),
     }
 }
 
-fn write_temp_durable(temp_path: &Path, content: &[u8]) -> io::Result<()> {
+/// Write and sync staging bytes before making them visible at the destination.
+fn write_temp_durable(temp_path: &Path, content: &[u8]) -> io::Result<TempCleanup> {
     let mut file = OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .open(temp_path)?;
-    file.write_all(content)?;
-    file.sync_all()?;
-    Ok(())
+    let cleanup = TempCleanup(Some(temp_path.to_path_buf()));
+    let result = file.write_all(content).and_then(|()| file.sync_all());
+    drop(file);
+    result?;
+    Ok(cleanup)
 }
 
-fn replace_with_backup(path: &Path, temp_path: &Path, backup_path: &Path) -> io::Result<()> {
-    remove_stale_backup(backup_path, temp_path)?;
-
-    if let Err(stage_err) = fs::rename(path, &backup_path) {
-        let _ = fs::remove_file(temp_path);
-        return Err(stage_err);
-    }
+/// Stage the prior destination, preserving its recovery copy if rollback itself fails.
+fn replace_with_backup(
+    path: &Path,
+    temp_path: &Path,
+    backup_path: &Path,
+    cleanup: &mut TempCleanup,
+) -> io::Result<()> {
+    remove_stale_backup_file(backup_path)?;
+    fs::rename(path, backup_path)?;
 
     match fs::rename(temp_path, path) {
         Ok(()) => {
+            cleanup.0 = None;
             let _ = fs::remove_file(&backup_path);
             finalize_durable(path)
         }
@@ -83,6 +101,7 @@ fn replace_with_backup(path: &Path, temp_path: &Path, backup_path: &Path) -> io:
                     "failed to finalize durable replace ({retry_err}); failed to remove temp file: {remove_err}"
                 )));
             }
+            cleanup.0 = None;
             Err(retry_err)
         }
     }
@@ -93,13 +112,6 @@ fn remove_stale_backup_file(backup_path: &Path) -> io::Result<()> {
         fs::remove_file(backup_path)?;
     }
     Ok(())
-}
-
-fn remove_stale_backup(backup_path: &Path, temp_path: &Path) -> io::Result<()> {
-    remove_stale_backup_file(backup_path).map_err(|error| {
-        let _ = fs::remove_file(temp_path);
-        error
-    })
 }
 
 fn finalize_durable(path: &Path) -> io::Result<()> {
@@ -180,6 +192,42 @@ mod tests {
         assert!(!legacy_backup_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failed_stale_backup_cleanup_removes_staging_but_preserves_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.json");
+        fs::write(&path, b"original").unwrap();
+        let backup = path.with_extension(LEGACY_BACKUP_EXTENSION);
+        fs::create_dir(&backup).unwrap();
+        fs::write(backup.join("recovery"), b"keep").unwrap();
+        assert!(durable_replace(&path, b"replacement").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_eq!(fs::read(backup.join("recovery")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn unpublished_temp_guard_removes_partially_written_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.tmp");
+        let result: io::Result<()> = (|| {
+            let _cleanup = TempCleanup(Some(path.clone()));
+            fs::write(&path, b"partial")?;
+            Err(io::Error::other("injected write/sync failure"))
+        })();
+        assert!(result.is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn staging_collision_never_truncates_or_removes_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collision.tmp");
+        fs::write(&path, b"keep").unwrap();
+        assert!(write_temp_durable(&path, b"new").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"keep");
     }
 }
 

@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import {
     Copy,
     ExternalLink,
@@ -9,26 +8,32 @@ import {
     Search,
     Trash2,
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
-import { isDynamicTunnel, socks5Url, type TunnelType } from '../../features/tunnels/domain/tunnelTypes';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+
+import { userTunnelActions } from '../../features/tunnels/application/userTunnelStoreActions';
+import {
+    isDynamicTunnel,
+    socks5Url,
+    type TunnelType,
+} from '../../features/tunnels/domain/tunnelTypes';
 import {
     formatTunnelFlow,
     TUNNEL_TYPE_META,
     tunnelCopyAddress,
 } from '../../features/tunnels/presentation/tunnelDisplay';
+import { cn } from '../../lib/utils';
 import { TopbarDropdown } from '../ui/TopbarDropdown';
 import type { TunnelConfig } from './TunnelCard';
 
 export type TunnelStatusFilter = 'all' | 'running' | 'stopped' | 'error';
 export type TunnelTypeFilter = 'all' | 'local' | 'remote' | 'dynamic';
 
-export function tunnelMatchesQuery(
-    tunnel: TunnelConfig,
-    query: string,
-    extra?: string[],
-): boolean {
+/** Match saved forward details and optional host labels against a normalized search query. */
+export function tunnelMatchesQuery(tunnel: TunnelConfig, query: string, extra?: string[]): boolean {
     const q = query.trim().toLowerCase();
-    if (!q) return true;
+    if (!q) {
+        return true;
+    }
     const hay = [
         tunnel.name,
         tunnel.localPort != null ? String(tunnel.localPort) : '',
@@ -43,15 +48,25 @@ export function tunnelMatchesQuery(
     return hay.includes(q);
 }
 
+/** Match the forward's runtime status to the selected list filter. */
 export function tunnelMatchesStatus(tunnel: TunnelConfig, filter: TunnelStatusFilter): boolean {
-    if (filter === 'all') return true;
-    if (filter === 'running') return tunnel.status === 'active';
-    if (filter === 'error') return tunnel.status === 'error';
+    if (filter === 'all') {
+        return true;
+    }
+    if (filter === 'running') {
+        return tunnel.status === 'active';
+    }
+    if (filter === 'error') {
+        return tunnel.status === 'error';
+    }
     return tunnel.status !== 'active' && tunnel.status !== 'error';
 }
 
+/** Match the forward type to the selected list filter. */
 export function tunnelMatchesType(tunnel: TunnelConfig, filter: TunnelTypeFilter): boolean {
-    if (filter === 'all') return true;
+    if (filter === 'all') {
+        return true;
+    }
     return tunnel.type === filter;
 }
 
@@ -60,6 +75,7 @@ const TYPE_RING: Record<TunnelType, string> = {
     remote: 'border border-amber-400/15',
     dynamic: 'border border-violet-400/15',
 };
+const ACTIVE_TUNNEL_RING = 'border border-app-success/50 bg-app-success/5 hover:bg-app-success/10';
 
 const TYPE_LABEL: Record<TunnelType, string> = {
     local: 'text-sky-400',
@@ -67,27 +83,36 @@ const TYPE_LABEL: Record<TunnelType, string> = {
     dynamic: 'text-violet-400',
 };
 
+/** Show the forward type and its equivalent SSH command flag. */
 function TypeMetaLabel({ type }: { type: TunnelType }) {
     const meta = TUNNEL_TYPE_META[type];
     return (
-        <span className={cn('shrink-0 text-[10px] font-medium uppercase tracking-wide', TYPE_LABEL[type])}>
+        <span
+            className={cn(
+                'shrink-0 text-[10px] font-medium uppercase tracking-wide',
+                TYPE_LABEL[type],
+            )}
+        >
             {meta.label}
             <span className="ml-1 font-mono opacity-70">{meta.flag}</span>
         </span>
     );
 }
 
+/** Show the current runtime status and expose any error in the tooltip. */
 function StatusDot({ status, error }: { status: TunnelConfig['status']; error?: string }) {
     const color =
         status === 'active'
             ? 'bg-app-success'
             : status === 'error'
-                ? 'bg-red-400'
-                : 'bg-app-muted/40';
+              ? 'bg-red-400'
+              : 'bg-app-muted/40';
     return (
         <span
             className={cn('inline-block h-1.5 w-1.5 shrink-0 rounded-full', color)}
-            title={status === 'error' ? error || 'Error' : status === 'active' ? 'Running' : 'Stopped'}
+            title={
+                status === 'error' ? error || 'Error' : status === 'active' ? 'Running' : 'Stopped'
+            }
         />
     );
 }
@@ -107,9 +132,11 @@ function tunnelFlowLabel(tunnel: TunnelConfig, hostLabel?: string) {
         : `${flow.source} → ${flow.targetHost}:${flow.targetPort}`;
 }
 
+/** Show the forward's current action and prevent repeated starts while it is pending. */
 function TunnelQuickActions({
     tunnel,
     isActive,
+    isStarting,
     copyText,
     onToggle,
     onCopy,
@@ -117,6 +144,7 @@ function TunnelQuickActions({
 }: {
     tunnel: TunnelConfig;
     isActive: boolean;
+    isStarting: boolean;
     copyText: string;
     onToggle: (tunnel: TunnelConfig) => void;
     onCopy: (text: string) => void;
@@ -126,17 +154,20 @@ function TunnelQuickActions({
         <div className="flex shrink-0 items-center gap-0.5">
             <button
                 type="button"
+                disabled={isStarting}
                 onClick={() => onToggle(tunnel)}
                 className={cn(
-                    'h-6 shrink-0 rounded-md px-2 text-[10px] font-medium transition-colors',
-                    isActive
-                        ? 'text-app-success hover:bg-app-success/10'
-                        : tunnel.status === 'error'
+                    'h-6 min-w-16 shrink-0 rounded-md px-2 text-[10px] font-medium transition-colors',
+                    isStarting
+                        ? 'cursor-wait text-app-muted'
+                        : isActive
+                          ? 'text-app-success hover:bg-app-success/10'
+                          : tunnel.status === 'error'
                             ? 'text-red-400 hover:bg-red-400/10'
                             : 'text-app-muted hover:bg-app-surface hover:text-app-text',
                 )}
             >
-                {isActive ? 'Stop' : 'Start'}
+                {isStarting ? 'Starting…' : isActive ? 'Stop' : 'Start'}
             </button>
             <button
                 type="button"
@@ -163,6 +194,7 @@ function TunnelQuickActions({
     );
 }
 
+/** Keep editing, deletion, and SOCKS copy actions available in either view. */
 function TunnelOverflowMenu({
     tunnel,
     socksUrl,
@@ -181,7 +213,9 @@ function TunnelOverflowMenu({
     const isDynamic = isDynamicTunnel(tunnel.type);
 
     useEffect(() => {
-        if (!menuOpen) return;
+        if (!menuOpen) {
+            return;
+        }
         const onDown = (event: MouseEvent) => {
             if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
                 setMenuOpen(false);
@@ -192,10 +226,13 @@ function TunnelOverflowMenu({
     }, [menuOpen]);
 
     return (
-        <div className="relative shrink-0" ref={menuRef}>
+        <div
+            className="relative shrink-0"
+            ref={menuRef}
+        >
             <button
                 type="button"
-                onClick={() => setMenuOpen(open => !open)}
+                onClick={() => setMenuOpen((open) => !open)}
                 className={cn(
                     'rounded-md p-1 text-app-muted transition-opacity hover:bg-app-surface hover:text-app-text',
                     menuOpen
@@ -207,7 +244,11 @@ function TunnelOverflowMenu({
                 <MoreHorizontal size={14} />
             </button>
             {menuOpen && (
-                <TopbarDropdown align="right" widthClass="w-40" className="mt-1">
+                <TopbarDropdown
+                    align="right"
+                    widthClass="w-40"
+                    className="mt-1"
+                >
                     {isDynamic && (
                         <button
                             type="button"
@@ -246,6 +287,16 @@ function TunnelOverflowMenu({
     );
 }
 
+/** Observe the pending start for this forward across both Port Forwarding views. */
+function useTunnelStarting({ id, connectionId, status }: TunnelConfig): boolean {
+    const getSnapshot = useCallback(
+        () => status !== 'active' && userTunnelActions.isStarting({ id, connectionId }),
+        [id, connectionId, status],
+    );
+    return useSyncExternalStore(userTunnelActions.subscribeStarts, getSnapshot);
+}
+
+/** Render a saved forward and its start progress in the list. */
 export function TunnelRow({
     tunnel,
     hostLabel,
@@ -263,28 +314,40 @@ export function TunnelRow({
     showGroup?: boolean;
 } & TunnelItemHandlers) {
     const isActive = tunnel.status === 'active';
+    const isStarting = useTunnelStarting(tunnel);
     const socksUrl = socks5Url(tunnel.bindAddress, tunnel.localPort);
     const copyText = tunnelCopyAddress(tunnel, socksUrl);
     const flowLabel = tunnelFlowLabel(tunnel, hostLabel);
 
     return (
         <div
+            aria-busy={isStarting || undefined}
             className={cn(
                 'group grid items-center gap-x-3 rounded-lg px-2.5 py-1.5 text-[12px] hover:bg-app-surface/40',
-                TYPE_RING[tunnel.type],
+                isActive ? ACTIVE_TUNNEL_RING : TYPE_RING[tunnel.type],
+                isStarting && 'tunnel-connecting-border',
                 showHost
                     ? 'grid-cols-[auto_minmax(0,1.4fr)_auto_minmax(0,1.6fr)_minmax(0,1fr)_auto_auto]'
                     : 'grid-cols-[auto_minmax(0,1.6fr)_auto_minmax(0,1.8fr)_auto_auto]',
             )}
         >
-            <StatusDot status={tunnel.status} error={tunnel.error} />
+            <StatusDot
+                status={tunnel.status}
+                error={tunnel.error}
+            />
 
             <div className="min-w-0">
-                <span className="block truncate font-medium text-app-text" title={tunnel.name}>
+                <span
+                    className="block truncate font-medium text-app-text"
+                    title={tunnel.name}
+                >
                     {tunnel.name}
                 </span>
                 {showGroup && tunnel.group ? (
-                    <span className="block truncate text-[10px] text-app-muted/50" title={tunnel.group}>
+                    <span
+                        className="block truncate text-[10px] text-app-muted/50"
+                        title={tunnel.group}
+                    >
                         {tunnel.group}
                     </span>
                 ) : null}
@@ -304,7 +367,10 @@ export function TunnelRow({
             </button>
 
             {showHost && (
-                <span className="hidden min-w-0 truncate text-app-muted md:block" title={hostLabel}>
+                <span
+                    className="hidden min-w-0 truncate text-app-muted md:block"
+                    title={hostLabel}
+                >
                     {hostLabel || 'Unknown host'}
                 </span>
             )}
@@ -312,6 +378,7 @@ export function TunnelRow({
             <TunnelQuickActions
                 tunnel={tunnel}
                 isActive={isActive}
+                isStarting={isStarting}
                 copyText={copyText}
                 onToggle={onToggle}
                 onCopy={onCopy}
@@ -329,6 +396,7 @@ export function TunnelRow({
     );
 }
 
+/** Render a saved forward and its start progress in the grid. */
 export function TunnelGridCard({
     tunnel,
     hostLabel,
@@ -344,26 +412,38 @@ export function TunnelGridCard({
     showGroup?: boolean;
 } & TunnelItemHandlers) {
     const isActive = tunnel.status === 'active';
+    const isStarting = useTunnelStarting(tunnel);
     const socksUrl = socks5Url(tunnel.bindAddress, tunnel.localPort);
     const copyText = tunnelCopyAddress(tunnel, socksUrl);
     const flowLabel = tunnelFlowLabel(tunnel, hostLabel);
 
     return (
         <div
+            aria-busy={isStarting || undefined}
             className={cn(
                 'group flex flex-col gap-2 rounded-xl px-3 py-2.5 text-[12px] transition-colors hover:bg-app-surface/40',
-                TYPE_RING[tunnel.type],
+                isActive ? ACTIVE_TUNNEL_RING : TYPE_RING[tunnel.type],
+                isStarting && 'tunnel-connecting-border',
             )}
         >
             <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    <StatusDot status={tunnel.status} error={tunnel.error} />
+                    <StatusDot
+                        status={tunnel.status}
+                        error={tunnel.error}
+                    />
                     <div className="min-w-0">
-                        <span className="block truncate font-medium text-app-text" title={tunnel.name}>
+                        <span
+                            className="block truncate font-medium text-app-text"
+                            title={tunnel.name}
+                        >
                             {tunnel.name}
                         </span>
                         {showGroup && tunnel.group ? (
-                            <span className="block truncate text-[10px] text-app-muted/50" title={tunnel.group}>
+                            <span
+                                className="block truncate text-[10px] text-app-muted/50"
+                                title={tunnel.group}
+                            >
                                 {tunnel.group}
                             </span>
                         ) : null}
@@ -392,6 +472,7 @@ export function TunnelGridCard({
             <TunnelQuickActions
                 tunnel={tunnel}
                 isActive={isActive}
+                isStarting={isStarting}
                 copyText={copyText}
                 onToggle={onToggle}
                 onCopy={onCopy}
@@ -509,6 +590,7 @@ export function TunnelTableHeader({ showHost }: { showHost?: boolean }) {
     );
 }
 
+/** Render the controlled search field shared by forwarding views. */
 export function TunnelSearchInput({
     query,
     onQueryChange,
@@ -527,7 +609,7 @@ export function TunnelSearchInput({
             <input
                 type="text"
                 value={query}
-                onChange={e => onQueryChange(e.target.value)}
+                onChange={(e) => onQueryChange(e.target.value)}
                 placeholder={placeholder}
                 className="h-7 w-full rounded-lg border border-app-border/30 bg-app-surface/30 py-1 pl-7 pr-3 text-[11px] placeholder:text-app-muted/30 focus:outline-none focus:ring-1 focus:ring-app-accent/40"
             />
@@ -539,6 +621,7 @@ function countLabel(n: number | undefined) {
     return n && n > 0 ? ` ${n}` : '';
 }
 
+/** Render the search field and status and type filters for saved forwards. */
 export function TunnelFilterToolbar({
     query,
     onQueryChange,
@@ -575,32 +658,56 @@ export function TunnelFilterToolbar({
                 />
             )}
             <div className="flex items-center gap-0.5 rounded-lg bg-app-surface/40 p-0.5">
-                <TunnelFilterChip active={status === 'all'} onClick={() => onStatusChange('all')}>
+                <TunnelFilterChip
+                    active={status === 'all'}
+                    onClick={() => onStatusChange('all')}
+                >
                     All
                 </TunnelFilterChip>
-                <TunnelFilterChip active={status === 'running'} onClick={() => onStatusChange('running')}>
+                <TunnelFilterChip
+                    active={status === 'running'}
+                    onClick={() => onStatusChange('running')}
+                >
                     Running{countLabel(counts?.running)}
                 </TunnelFilterChip>
-                <TunnelFilterChip active={status === 'stopped'} onClick={() => onStatusChange('stopped')}>
+                <TunnelFilterChip
+                    active={status === 'stopped'}
+                    onClick={() => onStatusChange('stopped')}
+                >
                     Stopped{countLabel(counts?.stopped)}
                 </TunnelFilterChip>
                 {(status === 'error' || (counts?.error ?? 0) > 0) && (
-                    <TunnelFilterChip active={status === 'error'} onClick={() => onStatusChange('error')}>
+                    <TunnelFilterChip
+                        active={status === 'error'}
+                        onClick={() => onStatusChange('error')}
+                    >
                         Error{countLabel(counts?.error)}
                     </TunnelFilterChip>
                 )}
             </div>
             <div className="flex items-center gap-0.5 rounded-lg bg-app-surface/40 p-0.5">
-                <TunnelFilterChip active={type === 'all'} onClick={() => onTypeChange('all')}>
+                <TunnelFilterChip
+                    active={type === 'all'}
+                    onClick={() => onTypeChange('all')}
+                >
                     All
                 </TunnelFilterChip>
-                <TunnelFilterChip active={type === 'local'} onClick={() => onTypeChange('local')}>
+                <TunnelFilterChip
+                    active={type === 'local'}
+                    onClick={() => onTypeChange('local')}
+                >
                     <span className="text-sky-400">Local</span>
                 </TunnelFilterChip>
-                <TunnelFilterChip active={type === 'remote'} onClick={() => onTypeChange('remote')}>
+                <TunnelFilterChip
+                    active={type === 'remote'}
+                    onClick={() => onTypeChange('remote')}
+                >
                     <span className="text-amber-400">Remote</span>
                 </TunnelFilterChip>
-                <TunnelFilterChip active={type === 'dynamic'} onClick={() => onTypeChange('dynamic')}>
+                <TunnelFilterChip
+                    active={type === 'dynamic'}
+                    onClick={() => onTypeChange('dynamic')}
+                >
                     <span className="text-violet-400">SOCKS</span>
                 </TunnelFilterChip>
             </div>
@@ -608,13 +715,14 @@ export function TunnelFilterToolbar({
     );
 }
 
+/** Count forwards by runtime status for the filter badges. */
 export function countTunnelFilters(tunnels: TunnelConfig[]) {
     return {
-        running: tunnels.filter(t => t.status === 'active').length,
-        stopped: tunnels.filter(t => t.status !== 'active' && t.status !== 'error').length,
-        error: tunnels.filter(t => t.status === 'error').length,
-        local: tunnels.filter(t => t.type === 'local').length,
-        remote: tunnels.filter(t => t.type === 'remote').length,
-        dynamic: tunnels.filter(t => t.type === 'dynamic').length,
+        running: tunnels.filter((t) => t.status === 'active').length,
+        stopped: tunnels.filter((t) => t.status !== 'active' && t.status !== 'error').length,
+        error: tunnels.filter((t) => t.status === 'error').length,
+        local: tunnels.filter((t) => t.type === 'local').length,
+        remote: tunnels.filter((t) => t.type === 'remote').length,
+        dynamic: tunnels.filter((t) => t.type === 'dynamic').length,
     };
 }

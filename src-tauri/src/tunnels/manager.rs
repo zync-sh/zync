@@ -6,7 +6,8 @@ use anyhow::{anyhow, Result};
 use log::warn;
 use russh::client::Handle;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -32,6 +33,55 @@ pub(crate) async fn probe_ssh_session(session: &Arc<Mutex<Handle<Client>>>) -> b
     tokio::time::timeout(SSH_SESSION_PROBE_TIMEOUT, probe)
         .await
         .unwrap_or(false)
+}
+
+/// One monitor per exact SSH transport; its final listener owner cancels background work.
+#[derive(Debug)]
+struct SharedSessionProbe {
+    state: tokio::sync::watch::Receiver<bool>,
+    abort: tokio::task::AbortHandle,
+    reported: AtomicBool,
+}
+
+impl SharedSessionProbe {
+    /// A live accept loop reports failure once; a detached monitor never tears down a connection.
+    fn report_failure(&self, sender: &SessionFailureSender, connection_id: &str) {
+        if !self.reported.swap(true, Ordering::Relaxed) {
+            let _ = sender.send(connection_id.to_owned());
+        }
+    }
+}
+
+impl Drop for SharedSessionProbe {
+    /// Listener removal releases the probe even while SSH channel opening is stalled.
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
+
+/// Weak ownership prevents closed tunnel sets from retaining a transport or background task.
+#[derive(Debug, Default)]
+struct SessionProbeRegistry(std::sync::Mutex<HashMap<usize, Weak<SharedSessionProbe>>>);
+
+impl SessionProbeRegistry {
+    /// Share only an identical live transport; a replacement connection gets its own monitor.
+    fn get_or_insert(
+        &self,
+        identity: usize,
+        create: impl FnOnce() -> SharedSessionProbe,
+    ) -> Arc<SharedSessionProbe> {
+        let mut entries = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        entries.retain(|_, value| value.strong_count() > 0);
+        if let Some(existing) = entries.get(&identity).and_then(Weak::upgrade) {
+            return existing;
+        }
+        let monitor = Arc::new(create());
+        entries.insert(identity, Arc::downgrade(&monitor));
+        monitor
+    }
 }
 
 /// Stable runtime key for a saved tunnel config (unique per connection + endpoints).
@@ -79,17 +129,46 @@ pub struct TunnelManager {
     pub local_listeners:
         Arc<Mutex<HashMap<String, (tokio::task::AbortHandle, tokio::sync::broadcast::Sender<()>)>>>,
     failure_tx: SessionFailureSender,
+    session_probes: Arc<SessionProbeRegistry>,
 }
 
 impl TunnelManager {
+    /// Construct shared tunnel state and weak transport-monitor ownership.
     pub fn new(failure_tx: SessionFailureSender) -> Self {
         Self {
             remote_forwards: Arc::new(Mutex::new(HashMap::new())),
             local_listeners: Arc::new(Mutex::new(HashMap::new())),
             failure_tx,
+            session_probes: Arc::new(SessionProbeRegistry::default()),
         }
     }
 
+    /// Run liveness checks outside accept loops, shared by all listeners on this transport.
+    fn shared_session_probe(&self, session: Arc<Mutex<Handle<Client>>>) -> Arc<SharedSessionProbe> {
+        let identity = Arc::as_ptr(&session) as usize;
+        self.session_probes.get_or_insert(identity, || {
+            let (state_tx, state) = tokio::sync::watch::channel(true);
+            let task = tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(Duration::from_secs(SESSION_PROBE_INTERVAL_SECS));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    interval.tick().await;
+                    if !probe_ssh_session(&session).await {
+                        let _ = state_tx.send(false);
+                        break;
+                    }
+                }
+            });
+            SharedSessionProbe {
+                state,
+                abort: task.abort_handle(),
+                reported: AtomicBool::new(false),
+            }
+        })
+    }
+
+    /// Bind a local listener whose clients and monitor share the captured SSH transport.
     pub async fn start_local_forwarding(
         &self,
         session: Arc<Mutex<Handle<Client>>>,
@@ -147,10 +226,9 @@ impl TunnelManager {
         let (tx, _rx) = tokio::sync::broadcast::channel(1);
         let tx_for_store = tx.clone();
 
+        let probe_owner = self.shared_session_probe(session.clone());
         let handle = tokio::spawn(async move {
-            let mut session_probe =
-                tokio::time::interval(Duration::from_secs(SESSION_PROBE_INTERVAL_SECS));
-            session_probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut probe_state = probe_owner.state.clone();
 
             loop {
                 let accept_fut = listener.accept();
@@ -205,14 +283,10 @@ impl TunnelManager {
                         println!("[TUNNEL] Listener stopped via signal");
                         break;
                     }
-                    _ = session_probe.tick() => {
-                        if !probe_ssh_session(&session).await {
-                            println!(
-                                "[TUNNEL] SSH session probe failed for {}; stopping tunnels",
-                                connection_id
-                            );
+                    changed = probe_state.changed() => {
+                        if changed.is_err() || !*probe_state.borrow() {
+                            probe_owner.report_failure(&failure_tx, &connection_id);
                             let _ = tx.send(());
-                            let _ = failure_tx.send(connection_id.clone());
                             break;
                         }
                     }
@@ -284,10 +358,9 @@ impl TunnelManager {
         let session = session.clone();
         let failure_tx = self.failure_tx.clone();
 
+        let probe_owner = self.shared_session_probe(session.clone());
         let handle = tokio::spawn(async move {
-            let mut session_probe =
-                tokio::time::interval(Duration::from_secs(SESSION_PROBE_INTERVAL_SECS));
-            session_probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut probe_state = probe_owner.state.clone();
 
             loop {
                 let accept_fut = listener.accept();
@@ -316,14 +389,10 @@ impl TunnelManager {
                         println!("[TUNNEL] Dynamic listener stopped via signal");
                         break;
                     }
-                    _ = session_probe.tick() => {
-                        if !probe_ssh_session(&session).await {
-                            println!(
-                                "[TUNNEL] SSH session probe failed for {}; stopping tunnels",
-                                connection_id
-                            );
+                    changed = probe_state.changed() => {
+                        if changed.is_err() || !*probe_state.borrow() {
+                            probe_owner.report_failure(&failure_tx, &connection_id);
                             let _ = tx.send(());
-                            let _ = failure_tx.send(connection_id.clone());
                             break;
                         }
                     }
@@ -722,6 +791,48 @@ async fn find_next_available_port(start_port: u16, max_attempts: u8) -> Option<u
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn liveness_monitors_share_transport_identity_and_release_after_last_listener() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let registry = super::SessionProbeRegistry::default();
+        let starts = AtomicUsize::new(0);
+        let make = || {
+            starts.fetch_add(1, Ordering::SeqCst);
+            let (_tx, state) = tokio::sync::watch::channel(true);
+            let task = tokio::spawn(std::future::pending::<()>());
+            super::SharedSessionProbe {
+                state,
+                abort: task.abort_handle(),
+                reported: AtomicBool::new(false),
+            }
+        };
+        let first = registry.get_or_insert(1, make);
+        let second = registry.get_or_insert(1, make);
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        let (failure_tx, mut failures) = tokio::sync::mpsc::unbounded_channel();
+        first.report_failure(&failure_tx, "fixture");
+        second.report_failure(&failure_tx, "fixture");
+        assert_eq!(failures.try_recv().unwrap(), "fixture");
+        assert!(failures.try_recv().is_err());
+        let replacement = registry.get_or_insert(2, make);
+        assert!(!std::sync::Arc::ptr_eq(&first, &replacement));
+        assert_eq!(starts.load(Ordering::SeqCst), 2);
+        let abort = first.abort.clone();
+        drop(first);
+        assert!(!abort.is_finished());
+        drop(second);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !abort.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(abort.is_finished());
+        let _new_owner = registry.get_or_insert(1, make);
+        assert_eq!(starts.load(Ordering::SeqCst), 3);
+    }
+
     use super::*;
 
     fn sample_tunnel(tunnel_type: &str, connection_id: &str) -> SavedTunnel {

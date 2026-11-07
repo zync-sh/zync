@@ -11,7 +11,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, Sparkles, XCircle } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -34,6 +34,11 @@ import { cn } from '../../lib/utils';
 import { AgentIcon } from './AgentIcon';
 import { AiSetupErrorCard } from './AiSetupErrorCard';
 import { CheckpointBlock } from './CheckpointBlock';
+import {
+    CONVERSATION_PAGE_SIZE,
+    type ConversationPageAnchor,
+    resolveConversationPage,
+} from './conversationPage';
 import { PlanBubble } from './PlanBubble';
 import { ToolCallBlock } from './ToolCallBlock';
 
@@ -50,6 +55,7 @@ interface ConversationThreadProps {
 
 // Stable fallback so the Zustand selector never returns a new [] reference on every snapshot call.
 const NO_MESSAGES: ConversationMessage[] = [];
+const MARKDOWN_PLUGINS = [remarkGfm];
 
 // ── Empty state ────────────────────────────────────────────────────────────────
 
@@ -110,6 +116,8 @@ function formatTechnicalTerms(text: string): string {
 
 /** Renders streamed reasoning and an activity cursor while its run is active. */
 function ThinkingBubble({ text, isActive }: { text: string; isActive: boolean }) {
+    const deferredText = useDeferredValue(text);
+    const displayedText = isActive ? deferredText : text;
     return (
         <div className="flex items-start gap-2.5">
             <div className="shrink-0 mt-0.5 w-6 h-6 rounded-full bg-gradient-to-br from-purple-500/20 to-app-accent/20 border border-purple-500/30 flex items-center justify-center">
@@ -129,8 +137,8 @@ function ThinkingBubble({ text, isActive }: { text: string; isActive: boolean })
         [&_pre_code]:bg-transparent [&_pre_code]:border-0 [&_pre_code]:p-0 [&_pre_code]:text-app-text/80
         [&_strong]:text-app-text [&_em]:text-app-text/70"
             >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {formatTechnicalTerms(text)}
+                <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
+                    {formatTechnicalTerms(displayedText)}
                 </ReactMarkdown>
                 {isActive && (
                     <span className="inline-block w-[2px] h-[13px] ml-0.5 bg-app-accent/70 align-bottom animate-pulse" />
@@ -224,7 +232,7 @@ function DoneBubble({
               [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-app-surface/60
               [&_code]:border [&_code]:border-app-border/30 [&_code]:font-mono [&_code]:text-[11px]"
                         >
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            <ReactMarkdown remarkPlugins={MARKDOWN_PLUGINS}>
                                 {formatTechnicalTerms(summary)}
                             </ReactMarkdown>
                         </div>
@@ -328,14 +336,41 @@ export function ConversationThread({ scope, activeRunId, isLocal }: Conversation
     // getSnapshot call causes React's concurrent mode to detect a false "change" and loop infinitely.
     const messages = useAgentRunStore((s) => s.conversations[scope] ?? NO_MESSAGES);
     const bottomRef = useRef<HTMLDivElement>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const [pageAnchor, setPageAnchor] = useState<ConversationPageAnchor | null>(null);
+    const hasMultiplePages = messages.length > CONVERSATION_PAGE_SIZE;
+    const page = resolveConversationPage(messages, pageAnchor);
+    const toolExpansions = useMemo(() => new Map<string, boolean>(), [scope]);
+    const getToolExpansion = useCallback((id: string) => toolExpansions.get(id), [toolExpansions]);
+    const setToolExpansion = useCallback(
+        (id: string, expanded: boolean) => {
+            toolExpansions.set(id, expanded);
+        },
+        [toolExpansions],
+    );
+    useEffect(() => {
+        setPageAnchor(null);
+    }, [scope, hasMultiplePages]);
+    useEffect(() => {
+        if (!messages.length) {
+            toolExpansions.clear();
+        }
+    }, [messages.length, toolExpansions]);
+    useEffect(() => {
+        if (pageAnchor) {
+            scrollRef.current?.scrollTo({ top: 0 });
+        }
+    }, [pageAnchor]);
 
     // Helper: access store actions without subscribing (avoids re-render loops).
     const act = useAgentRunStore.getState;
 
     // Auto-scroll to bottom on new messages
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, [messages.length]);
+        if (!pageAnchor) {
+            bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+    }, [messages.length, pageAnchor]);
 
     // ── Mount Tauri event listeners ────────────────────────────────────────────
     useEffect(() => {
@@ -511,93 +546,189 @@ export function ConversationThread({ scope, activeRunId, isLocal }: Conversation
     const lastMsgIdx = messages.length - 1;
 
     return (
-        <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth px-3 py-3 space-y-3">
+        <div
+            ref={scrollRef}
+            className="flex-1 min-h-0 overflow-y-auto scroll-smooth px-3 py-3 space-y-3"
+        >
             {isLocal && <LocalWarningBanner />}
-            {messages.map((msg: ConversationMessage, idx: number) => {
-                switch (msg.type) {
-                    case 'user':
-                        return (
-                            <UserBubble
-                                key={msg.id}
-                                text={msg.text}
-                            />
-                        );
-
-                    case 'thinking':
-                        // Cursor blinks only on the last thinking bubble while run is active
-                        return (
-                            <ThinkingBubble
-                                key={msg.id}
-                                text={msg.text}
-                                isActive={isRunning && idx === lastMsgIdx}
-                            />
-                        );
-
-                    case 'tool-call':
-                        return (
-                            <ToolCallBlock
-                                key={msg.id}
-                                message={msg}
-                            />
-                        );
-
-                    case 'checkpoint':
-                        return (
-                            <CheckpointBlock
-                                key={msg.id}
-                                message={msg}
-                                onContinue={() => handleCheckpointContinue(msg.checkpointId)}
-                                onStop={() => handleCheckpointStop(msg.checkpointId)}
-                                onAlwaysAllow={
-                                    msg.command
-                                        ? () =>
-                                              handleCheckpointAlwaysAllow(
-                                                  msg.checkpointId,
-                                                  msg.command!,
-                                              )
-                                        : undefined
-                                }
-                            />
-                        );
-
-                    case 'plan':
-                        return (
-                            <PlanBubble
-                                key={msg.id}
-                                message={msg}
-                                onApprove={() => handlePlanApprove(msg.planId)}
-                                onReject={() => handlePlanReject(msg.planId)}
-                            />
-                        );
-
-                    case 'done':
-                        return (
-                            <DoneBubble
-                                key={msg.id}
-                                success={msg.success}
-                                summary={msg.summary}
-                                actions={msg.actions}
-                                sessionPath={msg.sessionPath}
-                            />
-                        );
-
-                    case 'error':
-                        return (
-                            <ErrorBubble
-                                key={msg.id}
-                                message={msg.message}
-                            />
-                        );
-
-                    default:
-                        return null;
-                }
-            })}
+            {hasMultiplePages && (
+                <nav
+                    aria-label="Conversation pages"
+                    className="flex flex-wrap items-center gap-2 text-[11px] text-app-muted"
+                >
+                    <button
+                        type="button"
+                        disabled={page.start === 0}
+                        onClick={() => {
+                            const index = Math.max(0, page.start - CONVERSATION_PAGE_SIZE);
+                            setPageAnchor({ id: messages[index].id, index });
+                        }}
+                        className="rounded px-2 py-1 hover:bg-app-surface disabled:opacity-40"
+                    >
+                        Older messages
+                    </button>
+                    <span>
+                        {page.start + 1}–{page.end} of {messages.length}
+                    </span>
+                    <button
+                        type="button"
+                        disabled={page.end === messages.length}
+                        onClick={() => {
+                            const index = page.start + CONVERSATION_PAGE_SIZE;
+                            setPageAnchor(
+                                index >= messages.length - CONVERSATION_PAGE_SIZE
+                                    ? null
+                                    : { id: messages[index].id, index },
+                            );
+                        }}
+                        className="rounded px-2 py-1 hover:bg-app-surface disabled:opacity-40"
+                    >
+                        Newer messages
+                    </button>
+                    {pageAnchor && (
+                        <button
+                            type="button"
+                            onClick={() => setPageAnchor(null)}
+                            className="rounded px-2 py-1 text-app-accent hover:bg-app-surface"
+                        >
+                            Latest
+                        </button>
+                    )}
+                </nav>
+            )}
+            {messages.slice(page.start, page.end).map((msg, idx) => (
+                <ConversationMessageRow
+                    key={msg.id}
+                    msg={msg}
+                    isActiveThinking={isRunning && page.start + idx === lastMsgIdx}
+                    getToolExpansion={getToolExpansion}
+                    setToolExpansion={setToolExpansion}
+                    handleCheckpointContinue={handleCheckpointContinue}
+                    handleCheckpointStop={handleCheckpointStop}
+                    handleCheckpointAlwaysAllow={handleCheckpointAlwaysAllow}
+                    handlePlanApprove={handlePlanApprove}
+                    handlePlanReject={handlePlanReject}
+                />
+            ))}
             {isRunning && <RunningStatusBar messages={messages} />}
             <div ref={bottomRef} />
         </div>
     );
 }
+
+interface ConversationMessageRowProps {
+    msg: ConversationMessage;
+    isActiveThinking: boolean;
+    handleCheckpointContinue: (id: string) => Promise<void>;
+    handleCheckpointStop: (id: string) => Promise<void>;
+    handleCheckpointAlwaysAllow: (id: string, command: string) => Promise<void>;
+    handlePlanApprove: (id: string) => Promise<void>;
+    handlePlanReject: (id: string) => Promise<void>;
+    getToolExpansion: (id: string) => boolean | undefined;
+    setToolExpansion: (id: string, expanded: boolean) => void;
+}
+
+/** Keep completed Markdown/tool rows stable while the one live message receives stream updates. */
+const ConversationMessageRow = memo(function ConversationMessageRow({
+    msg,
+    isActiveThinking,
+    handleCheckpointContinue,
+    handleCheckpointStop,
+    handleCheckpointAlwaysAllow,
+    handlePlanApprove,
+    handlePlanReject,
+    getToolExpansion,
+    setToolExpansion,
+}: ConversationMessageRowProps) {
+    return (
+        <div
+            className="[contain:layout_paint]"
+            data-agent-message-id={msg.id}
+        >
+            {renderMessage()}
+        </div>
+    );
+
+    /** Preserve every message type and its existing approval handlers within one memo boundary. */
+    function renderMessage() {
+        switch (msg.type) {
+            case 'user':
+                return (
+                    <UserBubble
+                        key={msg.id}
+                        text={msg.text}
+                    />
+                );
+
+            case 'thinking':
+                // Cursor blinks only on the last thinking bubble while run is active
+                return (
+                    <ThinkingBubble
+                        key={msg.id}
+                        text={msg.text}
+                        isActive={isActiveThinking}
+                    />
+                );
+
+            case 'tool-call':
+                return (
+                    <ToolCallBlock
+                        key={msg.id}
+                        message={msg}
+                        initialExpanded={getToolExpansion(msg.id)}
+                        onExpansionChange={(expanded) => setToolExpansion(msg.id, expanded)}
+                    />
+                );
+
+            case 'checkpoint':
+                return (
+                    <CheckpointBlock
+                        key={msg.id}
+                        message={msg}
+                        onContinue={() => handleCheckpointContinue(msg.checkpointId)}
+                        onStop={() => handleCheckpointStop(msg.checkpointId)}
+                        onAlwaysAllow={
+                            msg.command
+                                ? () => handleCheckpointAlwaysAllow(msg.checkpointId, msg.command!)
+                                : undefined
+                        }
+                    />
+                );
+
+            case 'plan':
+                return (
+                    <PlanBubble
+                        key={msg.id}
+                        message={msg}
+                        onApprove={() => handlePlanApprove(msg.planId)}
+                        onReject={() => handlePlanReject(msg.planId)}
+                    />
+                );
+
+            case 'done':
+                return (
+                    <DoneBubble
+                        key={msg.id}
+                        success={msg.success}
+                        summary={msg.summary}
+                        actions={msg.actions}
+                        sessionPath={msg.sessionPath}
+                    />
+                );
+
+            case 'error':
+                return (
+                    <ErrorBubble
+                        key={msg.id}
+                        message={msg.message}
+                    />
+                );
+
+            default:
+                return null;
+        }
+    }
+});
 
 // ── Running indicator (used by AiSidebar in the header area) ─────────────────
 

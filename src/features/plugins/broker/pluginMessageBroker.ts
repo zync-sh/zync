@@ -1,36 +1,42 @@
+import { ipcRenderer } from '../../../lib/tauri-ipc';
+import { useAppStore } from '../../../store/useAppStore';
 import { postCurrentWorkerResponse } from '../pluginCommandBridge';
 import {
     authorizePluginCommandRegistration,
     registerNativePluginPane,
 } from '../runtime/nativePluginRuntime';
-import { handlePluginFilesystemMessage } from '../runtime/pluginFilesystem';
-import { handlePluginSshCommandMessage } from '../runtime/pluginSshCommand';
-import { fetchPluginNetworkResource } from '../runtime/pluginNetwork';
 import { validatePluginPaneMessage } from '../runtime/paneMessages';
+import { handlePluginFilesystemMessage } from '../runtime/pluginFilesystem';
+import { fetchPluginNetworkResource } from '../runtime/pluginNetwork';
+import { createOptionalPermissionRequester } from '../runtime/pluginOptionalPermission';
+import { handlePluginSshCommandMessage } from '../runtime/pluginSshCommand';
 import {
     deletePluginStorageValue,
     getPluginStorageValue,
     listPluginStorageKeys,
     setPluginStorageValue,
 } from '../runtime/pluginStorage';
+import { handleTerminalWorkerMessage } from '../terminal/paneBridge';
 import { handlePluginNotificationMessage } from './pluginNotificationBroker';
 import type { PluginBrokerWorker, PluginMessageBrokerDependencies } from './types';
-import { ipcRenderer } from '../../../lib/tauri-ipc';
-import { useAppStore } from '../../../store/useAppStore';
-import { createOptionalPermissionRequester } from '../runtime/pluginOptionalPermission';
-import { handleTerminalWorkerMessage } from '../terminal/paneBridge';
 
 const requestOptionalPermission = createOptionalPermissionRequester({
-    inspect: (runtimeInstanceId, capability, approvedDigest) => ipcRenderer.invoke(
-        'plugins:runtime_optional_permission', { runtimeInstanceId, capability, approvedDigest },
-    ),
-    confirm: prompt => useAppStore.getState().showConfirmDialog({
-        title: 'Allow plugin permission?',
-        message: `${prompt.pluginName} requests ${prompt.capability}.\n\n${prompt.reason}${prompt.capability === 'ssh.command.execute' ? '\n\nThis allows commands to run with the connected SSH account’s privileges.' : ''}\n\nAllow saves this permission. You can revoke it in Settings → Plugins. Deny cancels this action; the next attempt will ask again.`,
-        confirmText: 'Allow',
-        cancelText: 'Deny',
-        variant: 'danger',
-    }),
+    /** Ask native permission policy whether a digest-bound optional grant needs user approval. */
+    inspect: (runtimeInstanceId, capability, approvedDigest) =>
+        ipcRenderer.invoke('plugins:runtime_optional_permission', {
+            runtimeInstanceId,
+            capability,
+            approvedDigest,
+        }),
+    /** Present the host-owned optional-permission confirmation dialog. */
+    confirm: (prompt) =>
+        useAppStore.getState().showConfirmDialog({
+            title: 'Allow plugin permission?',
+            message: `${prompt.pluginName} requests ${prompt.capability}.\n\n${prompt.reason}${prompt.capability === 'ssh.command.execute' ? '\n\nThis allows commands to run with the connected SSH account’s privileges.' : ''}\n\nAllow saves this permission. You can revoke it in Settings → Plugins. Deny cancels this action; the next attempt will ask again.`,
+            confirmText: 'Allow',
+            cancelText: 'Deny',
+            variant: 'danger',
+        }),
 });
 
 const ACTION_PERMISSIONS: Record<string, string> = {
@@ -54,7 +60,12 @@ const ACTION_PERMISSIONS: Record<string, string> = {
 };
 
 export interface PluginMessageBroker<W extends PluginBrokerWorker> {
-    handleMessage(pluginId: string, type: unknown, payload: unknown, requester: W): Promise<boolean>;
+    handleMessage(
+        pluginId: string,
+        type: unknown,
+        payload: unknown,
+        requester: W,
+    ): Promise<boolean>;
 }
 
 /**
@@ -64,6 +75,7 @@ export interface PluginMessageBroker<W extends PluginBrokerWorker> {
 export function createPluginMessageBroker<W extends PluginBrokerWorker>(
     dependencies: PluginMessageBrokerDependencies<W>,
 ): PluginMessageBroker<W> {
+    /** Post a broker response only while its requester remains the current worker. */
     const respond = (
         requester: W,
         pluginId: string,
@@ -72,16 +84,21 @@ export function createPluginMessageBroker<W extends PluginBrokerWorker>(
     ) => {
         postCurrentWorkerResponse(
             requester,
-            candidate => dependencies.runtime.isCurrentWorker(pluginId, candidate),
+            (candidate) => dependencies.runtime.isCurrentWorker(pluginId, candidate),
             type,
             payload,
         );
     };
 
     return {
+        /** Route a current worker message, pausing control-response expiry during permission approval. */
         async handleMessage(pluginId, rawType, rawPayload, requester) {
-            if (typeof rawType !== 'string') return true;
-            if (!dependencies.runtime.isCurrentWorker(pluginId, requester)) return true;
+            if (typeof rawType !== 'string') {
+                return true;
+            }
+            if (!dependencies.runtime.isCurrentWorker(pluginId, requester)) {
+                return true;
+            }
 
             const type = rawType;
             const payload = record(rawPayload);
@@ -89,53 +106,112 @@ export function createPluginMessageBroker<W extends PluginBrokerWorker>(
                 respond(requester, pluginId, type, response);
             };
             const runtimeInstanceId = dependencies.runtime.getRuntimeInstanceId(pluginId);
-            const current = () => Boolean(runtimeInstanceId)
-                && dependencies.runtime.isCurrentWorker(pluginId, requester)
-                && dependencies.runtime.isCurrentRuntime(pluginId, runtimeInstanceId!);
+            /** Fence broker continuations to both captured worker and native runtime identities. */
+            const current = () =>
+                Boolean(runtimeInstanceId) &&
+                dependencies.runtime.isCurrentWorker(pluginId, requester) &&
+                dependencies.runtime.isCurrentRuntime(pluginId, runtimeInstanceId!);
 
             const capability = ACTION_PERMISSIONS[type];
             if (capability && runtimeInstanceId) {
+                const requestId = payload?.requestId;
+                /** Pause the control RPC only while an actual user dialog is visible. */
+                const onWait = (waitingForUser: boolean) => {
+                    if (current()) {
+                        requester.postMessage({
+                            type: 'host:request:phase',
+                            payload: { requestId, waitingForUser },
+                        });
+                    }
+                };
                 try {
-                    if (!await requestOptionalPermission(runtimeInstanceId, capability, current)) {
-                        if (current()) reply({ requestId: payload?.requestId, error: `Permission denied: ${capability}` });
+                    if (
+                        !(await requestOptionalPermission(
+                            runtimeInstanceId,
+                            capability,
+                            current,
+                            type === 'api:terminal:context' && typeof requestId === 'string'
+                                ? onWait
+                                : undefined,
+                        ))
+                    ) {
+                        if (current()) {
+                            reply({
+                                requestId: payload?.requestId,
+                                error: `Permission denied: ${capability}`,
+                            });
+                        }
                         return true;
                     }
                 } catch (error) {
-                    if (current()) reply({ requestId: payload?.requestId, error: error instanceof Error ? error.message : String(error) });
+                    if (current()) {
+                        reply({
+                            requestId: payload?.requestId,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    }
                     return true;
                 }
             }
 
-            if (await handlePluginFilesystemMessage({
-                type,
-                payload,
-                runtimeInstanceId,
-                isCurrent: current,
-                respond: reply,
-            })) return true;
+            if (
+                await handlePluginFilesystemMessage({
+                    type,
+                    payload,
+                    runtimeInstanceId,
+                    isCurrent: current,
+                    respond: reply,
+                })
+            ) {
+                return true;
+            }
 
-            if (await handlePluginSshCommandMessage({
-                type, payload, runtimeInstanceId, isCurrent: current, respond: reply,
-            })) return true;
+            if (
+                await handlePluginSshCommandMessage({
+                    type,
+                    payload,
+                    runtimeInstanceId,
+                    isCurrent: current,
+                    respond: reply,
+                })
+            ) {
+                return true;
+            }
 
             if (type === 'api:terminal:context' || type === 'api:terminal:prepare') {
                 try {
-                    const result = await handleTerminalWorkerMessage(pluginId, runtimeInstanceId, type, payload);
-                    if (current()) reply({ requestId: payload?.requestId, result });
+                    const result = await handleTerminalWorkerMessage(
+                        pluginId,
+                        runtimeInstanceId,
+                        type,
+                        payload,
+                    );
+                    if (current()) {
+                        reply({ requestId: payload?.requestId, result });
+                    }
                 } catch (error) {
-                    if (current()) reply({ requestId: payload?.requestId, error: error instanceof Error ? error.message : String(error) });
+                    if (current()) {
+                        reply({
+                            requestId: payload?.requestId,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    }
                 }
                 return true;
             }
 
-            if (await handlePluginNotificationMessage(
-                dependencies,
-                pluginId,
-                type,
-                payload ?? {},
-                requester,
-                reply,
-            )) return true;
+            if (
+                await handlePluginNotificationMessage(
+                    dependencies,
+                    pluginId,
+                    type,
+                    payload ?? {},
+                    requester,
+                    reply,
+                )
+            ) {
+                return true;
+            }
 
             switch (type) {
                 case 'api:log':
@@ -175,6 +251,7 @@ export function createPluginMessageBroker<W extends PluginBrokerWorker>(
     };
 }
 
+/** Validate and publish a pane contribution only after native runtime authorization. */
 async function handlePanelRegistration<W extends PluginBrokerWorker>(
     dependencies: PluginMessageBrokerDependencies<W>,
     pluginId: string,
@@ -196,7 +273,9 @@ async function handlePanelRegistration<W extends PluginBrokerWorker>(
 
     try {
         const registered = await registerNativePluginPane(runtimeInstanceId, paneKindId);
-        if (!isCurrent(dependencies, pluginId, requester, runtimeInstanceId)) return true;
+        if (!isCurrent(dependencies, pluginId, requester, runtimeInstanceId)) {
+            return true;
+        }
         const title = payload?.title;
         const html = payload?.html;
         if (!registered && (typeof title !== 'string' || typeof html !== 'string')) {
@@ -234,15 +313,15 @@ async function handlePanelRegistration<W extends PluginBrokerWorker>(
     return true;
 }
 
+/** Validate an owned pane destination before delivering a plugin message. */
 function handlePaneMessage<W extends PluginBrokerWorker>(
     dependencies: PluginMessageBrokerDependencies<W>,
     pluginId: string,
     payload: Record<string, unknown> | undefined,
     respond: (payload: Record<string, unknown>) => void,
 ): true {
-    const paneInstanceId = typeof payload?.paneInstanceId === 'string'
-        ? payload.paneInstanceId
-        : '';
+    const paneInstanceId =
+        typeof payload?.paneInstanceId === 'string' ? payload.paneInstanceId : '';
     const parsed = validatePluginPaneMessage(payload?.message);
     const target = dependencies.getPaneMessageTarget(pluginId, paneInstanceId);
     if (!paneInstanceId || !parsed.ok || !target) {
@@ -257,6 +336,7 @@ function handlePaneMessage<W extends PluginBrokerWorker>(
     return true;
 }
 
+/** Authorize and register a command contribution for the current plugin runtime. */
 async function handleCommandRegistration<W extends PluginBrokerWorker>(
     dependencies: PluginMessageBrokerDependencies<W>,
     pluginId: string,
@@ -279,7 +359,9 @@ async function handleCommandRegistration<W extends PluginBrokerWorker>(
 
     try {
         await authorizePluginCommandRegistration(runtimeInstanceId, commandId, title);
-        if (!isCurrent(dependencies, pluginId, requester, runtimeInstanceId)) return true;
+        if (!isCurrent(dependencies, pluginId, requester, runtimeInstanceId)) {
+            return true;
+        }
         dependencies.registerCommand({ id: commandId, title, pluginId });
         respond({ requestId, result: { ok: true } });
     } catch (error) {
@@ -293,6 +375,7 @@ async function handleCommandRegistration<W extends PluginBrokerWorker>(
     return true;
 }
 
+/** Route bounded private-storage operations and preserve current-runtime response fencing. */
 async function handleStorage(
     type: string,
     payload: Record<string, unknown> | undefined,
@@ -314,14 +397,19 @@ async function handleStorage(
             if (type === 'api:storage:get') {
                 result = await getPluginStorageValue(runtimeInstanceId, key);
             } else if (type === 'api:storage:set') {
-                const value = requiredString(payload?.value, 'Plugin storage value must be a string');
+                const value = requiredString(
+                    payload?.value,
+                    'Plugin storage value must be a string',
+                );
                 await setPluginStorageValue(runtimeInstanceId, key, value);
                 result = true;
             } else {
                 result = await deletePluginStorageValue(runtimeInstanceId, key);
             }
         }
-        if (isCurrentRuntime()) respond({ requestId, result });
+        if (isCurrentRuntime()) {
+            respond({ requestId, result });
+        }
     } catch (error) {
         if (isCurrentRuntime()) {
             respond({ requestId, error: error instanceof Error ? error.message : String(error) });
@@ -330,6 +418,7 @@ async function handleStorage(
     return true;
 }
 
+/** Fetch through native network policy and reply only to the active runtime. */
 async function handleNetwork(
     payload: Record<string, unknown> | undefined,
     runtimeInstanceId: string | undefined,
@@ -348,7 +437,9 @@ async function handleNetwork(
             throw new Error('Plugin network Accept header must be a string');
         }
         const result = await fetchPluginNetworkResource(runtimeInstanceId, { url, accept });
-        if (isCurrentRuntime()) respond({ requestId, result });
+        if (isCurrentRuntime()) {
+            respond({ requestId, result });
+        }
     } catch (error) {
         if (isCurrentRuntime()) {
             respond({ requestId, error: error instanceof Error ? error.message : String(error) });
@@ -357,23 +448,30 @@ async function handleNetwork(
     return true;
 }
 
+/** Require the same worker and native runtime before publishing asynchronous broker results. */
 function isCurrent<W extends PluginBrokerWorker>(
     dependencies: PluginMessageBrokerDependencies<W>,
     pluginId: string,
     requester: W,
     runtimeInstanceId: string,
 ): boolean {
-    return dependencies.runtime.isCurrentWorker(pluginId, requester)
-        && dependencies.runtime.isCurrentRuntime(pluginId, runtimeInstanceId);
+    return (
+        dependencies.runtime.isCurrentWorker(pluginId, requester) &&
+        dependencies.runtime.isCurrentRuntime(pluginId, runtimeInstanceId)
+    );
 }
 
+/** Accept object-shaped request payloads without trusting primitive or missing input. */
 function record(value: unknown): Record<string, unknown> | undefined {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
+        ? (value as Record<string, unknown>)
         : undefined;
 }
 
+/** Reject absent or non-string broker fields before issuing native requests. */
 function requiredString(value: unknown, message: string): string {
-    if (typeof value !== 'string') throw new Error(message);
+    if (typeof value !== 'string') {
+        throw new Error(message);
+    }
     return value;
 }

@@ -440,6 +440,9 @@ pub struct ProviderCredentialObject {
     pub object_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_id: Option<String>,
+    /// Provider-reported SHA-256 of encrypted binary content, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_checksum: Option<String>,
 }
 
 #[derive(Clone)]
