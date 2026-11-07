@@ -39,7 +39,8 @@ fixture folders only when needed; keep feature-specific support beside its tests
   Convert a legacy JavaScript suite before adding cases or assertions. Python
   and Rust tests keep their native languages.
 - Keep one test implementation. Register typed unit suites directly in
-  `runAllAgentTests.mjs`; do not add per-suite JavaScript launchers. Existing
+  `runAllAgentTests.mjs` using their `.ts` or `.tsx` source paths; do not register
+  generated build paths or add per-suite JavaScript launchers. Existing
   launchers for unmigrated features may remain.
 - Ensure typed sources are included in `../tsconfig.agent-tests.json`. After a
   move, update imports, source paths, runner entries and documented commands.
@@ -48,10 +49,10 @@ fixture folders only when needed; keep feature-specific support beside its tests
 
 ## Commands
 
-Run from the app repository root (`zync/`):
+Run from the app repository root (`zync/`). The shared runner compiles typed
+suites automatically before executing them:
 
 ```sh
-npm run compile:agent-tests
 node tests/runAllAgentTests.mjs ai --browser
 npm run test:git-hooks
 npm run test:files

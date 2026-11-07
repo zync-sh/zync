@@ -1,7 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { readTestBuild } from '../scripts/agent-test-build.mjs';
+
+export { readTestBuild };
 
 const JS_RUNTIME_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.json', '.node']);
 
@@ -47,68 +52,55 @@ function normalizeEmittedImports(directory) {
     }
 }
 
-const [feature, ...testArguments] = process.argv.slice(2);
-const browserSuites = {
-    ai: '.tmp-agent-tests/tests/ai/conversationPerformance.browser.test.js',
-    files: '.tmp-agent-tests/tests/files/filesProduction.browser.test.js',
-    vnc: '.tmp-agent-tests/tests/vnc/vncViewer.browser.test.js',
+export const browserSuites = {
+    ai: 'tests/ai/conversationPerformance.browser.test.ts',
+    files: 'tests/files/filesProduction.browser.test.ts',
+    vnc: 'tests/vnc/vncViewer.browser.test.ts',
 };
-const browserRun = Object.hasOwn(browserSuites, feature) && testArguments[0] === '--browser';
-if (
-    (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature) && !browserRun) ||
-    (testArguments.length > 0 && !browserRun)
-) {
-    console.error(
-        'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal | vnc --browser]',
-    );
-    process.exit(1);
-}
-
-normalizeEmittedImports(path.resolve('.tmp-agent-tests'));
-
-const tests = [
-    '.tmp-agent-tests/tests/editor/performance.test.js',
-    '.tmp-agent-tests/tests/ai/conversationPage.test.js',
-    '.tmp-agent-tests/tests/files/fileDropLifecycle.test.js',
-    '.tmp-agent-tests/tests/plugins/workerRequests.test.js',
-    '.tmp-agent-tests/tests/vault/refresh.test.js',
-    '.tmp-agent-tests/tests/vault/credentialReferences.test.js',
-    '.tmp-agent-tests/tests/dashboard/dashboardMetrics.test.js',
-    '.tmp-agent-tests/tests/dashboard/dashboardMetadata.test.js',
-    '.tmp-agent-tests/tests/securityAssessment.test.js',
+export const tests = [
+    'tests/editor/performance.test.ts',
+    'tests/ai/conversationPage.test.ts',
+    'tests/files/fileDropLifecycle.test.ts',
+    'tests/plugins/workerRequests.test.ts',
+    'tests/vault/refresh.test.ts',
+    'tests/vault/credentialReferences.test.ts',
+    'tests/dashboard/dashboardMetrics.test.ts',
+    'tests/dashboard/dashboardMetadata.test.ts',
+    'tests/securityAssessment.test.ts',
     'tests/securityPanelRetry.test.mjs',
-    '.tmp-agent-tests/tests/tunnels/userTunnelActions.test.js',
-    '.tmp-agent-tests/tests/tunnelConnectionLifecycle.test.js',
+    'tests/tunnels/userTunnelActions.test.ts',
+    'tests/tunnelConnectionLifecycle.test.ts',
     'tests/featureConnectionWorkspace.test.mjs',
-    '.tmp-agent-tests/tests/vaultSshCertificate.test.js',
-    '.tmp-agent-tests/tests/connectionOptions.test.js',
-    '.tmp-agent-tests/tests/networkInterface.test.js',
+    'tests/vaultSshCertificate.test.ts',
+    'tests/connectionOptions.test.ts',
+    'tests/networkInterface.test.ts',
     'tests/terminalLifecycleOwnership.test.mjs',
     'tests/reconnectPaneFocus.test.mjs',
     'tests/changedFunctionDocs.test.mjs',
-    '.tmp-agent-tests/tests/tooling/testLanguagePolicy.test.js',
-    '.tmp-agent-tests/tests/tooling/gitHooks.test.js',
+    'tests/tooling/testLanguagePolicy.test.ts',
+    'tests/tooling/agentTestRunner.test.ts',
+    'tests/tooling/gitHooks.test.ts',
     'tests/terminalOutputFlow.test.mjs',
     'tests/terminalRendererLifecycle.test.mjs',
-    '.tmp-agent-tests/tests/ghost/ghostCwdSafety.test.js',
-    '.tmp-agent-tests/tests/ghost/ghostInputBudget.test.js',
+    'tests/ghost/ghostCwdSafety.test.ts',
+    'tests/ghost/ghostInputBudget.test.ts',
     'tests/ghostPromptSafety.test.mjs',
-    '.tmp-agent-tests/tests/files/folderSizes.test.js',
-    '.tmp-agent-tests/tests/files/filePermissions.test.js',
-    '.tmp-agent-tests/tests/files/editorSaveAccess.test.js',
-    '.tmp-agent-tests/tests/files/fileDestinationReservations.test.js',
-    '.tmp-agent-tests/tests/files/fileActivationFocus.test.js',
-    '.tmp-agent-tests/tests/files/transferState.test.js',
-    '.tmp-agent-tests/tests/files/transferOperations.test.js',
-    '.tmp-agent-tests/tests/files/fileSystemRefresh.test.js',
+    'tests/files/folderSizes.test.ts',
+    'tests/files/filePermissions.test.ts',
+    'tests/files/editorSaveAccess.test.ts',
+    'tests/files/fileDestinationReservations.test.ts',
+    'tests/files/fileActivationFocus.test.ts',
+    'tests/files/transferState.test.ts',
+    'tests/files/transferOperations.test.ts',
+    'tests/files/fileSystemRefresh.test.ts',
     'tests/layoutMotion.test.mjs',
-    '.tmp-agent-tests/tests/files/filePanelLayout.test.js',
-    '.tmp-agent-tests/tests/files/fileViewportAnchor.test.js',
+    'tests/files/filePanelLayout.test.ts',
+    'tests/files/fileViewportAnchor.test.ts',
     'tests/uiControls.test.mjs',
-    '.tmp-agent-tests/tests/files/fileBreadcrumbLayout.test.js',
-    '.tmp-agent-tests/tests/files/fileSelectionSummary.test.js',
-    '.tmp-agent-tests/tests/files/fileFolderOptions.test.js',
-    '.tmp-agent-tests/tests/files/filePathCompletion.test.js',
+    'tests/files/fileBreadcrumbLayout.test.ts',
+    'tests/files/fileSelectionSummary.test.ts',
+    'tests/files/fileFolderOptions.test.ts',
+    'tests/files/filePathCompletion.test.ts',
     'tests/uiSurfaces.test.mjs',
     'tests/uiLayoutPrimitives.test.mjs',
     'tests/sidebarControls.test.mjs',
@@ -118,23 +110,24 @@ const tests = [
     'tests/appearanceTypographyControls.test.mjs',
     'tests/elementColors.test.mjs',
     'tests/themeDocument.test.mjs',
+    'tests/appearance/themeSelection.test.ts',
     'tests/themeReviewFixes.test.mjs',
     'tests/themeFiles.test.mjs',
     'tests/themeKeyReference.test.mjs',
     'tests/chromeActions.test.mjs',
-    '.tmp-agent-tests/tests/workspace/chromeActionRendering.test.js',
+    'tests/workspace/chromeActionRendering.test.ts',
     'tests/elementColorPresentation.test.mjs',
     'tests/elementColorPreview.test.mjs',
     'tests/elementColorEditor.test.mjs',
     'tests/colorPicker.test.mjs',
     'tests/settingsControlIntegration.test.mjs',
     'tests/terminalIdlePtyPolicy.test.mjs',
-    '.tmp-agent-tests/tests/workspace/workspacePresentation.test.js',
+    'tests/workspace/workspacePresentation.test.ts',
     'tests/workspaceRegistrations.test.mjs',
     'tests/workspaceArchitecture.test.mjs',
     'tests/contentPresentation.test.mjs',
     'tests/combinedTabPresentation.test.mjs',
-    '.tmp-agent-tests/tests/workspace/workspaceContentLifecycle.test.js',
+    'tests/workspace/workspaceContentLifecycle.test.ts',
     'tests/workspaceContents.test.mjs',
     'tests/featurePaneNavigation.test.mjs',
     'tests/workspaceVisibility.test.mjs',
@@ -150,7 +143,7 @@ const tests = [
     'tests/workspaceRegionDropPointer.test.mjs',
     'tests/tabDrag.test.mjs',
     'tests/workspaceShortcutActions.test.mjs',
-    '.tmp-agent-tests/tests/workspace/mainTabPresentation.test.js',
+    'tests/workspace/mainTabPresentation.test.ts',
     'tests/paneHeader.test.mjs',
     'tests/displayAliasDialog.test.mjs',
     'tests/workspaceTabList.test.mjs',
@@ -163,8 +156,8 @@ const tests = [
     'tests/pluginFallbacks.test.mjs',
     'tests/pluginPaneFocus.test.mjs',
     'tests/paneDropClick.test.mjs',
-    '.tmp-agent-tests/tests/ai/agentRunStore.test.js',
-    '.tmp-agent-tests/tests/ai/agentStreamRuntime.test.js',
+    'tests/ai/agentRunStore.test.ts',
+    'tests/ai/agentStreamRuntime.test.ts',
     'tests/aiSidebarResize.test.mjs',
     'tests/codeMirrorHelpers.test.mjs',
     'tests/cspStyleNonce.test.mjs',
@@ -183,16 +176,16 @@ const tests = [
     'tests/editorStatusReport.test.mjs',
     'tests/plainDocumentState.test.mjs',
     'tests/paneCloseBlockers.test.mjs',
-    '.tmp-agent-tests/tests/workspace/paneCloseEditorGuard.test.js',
-    '.tmp-agent-tests/tests/files/editorReadPolicy.test.js',
-    '.tmp-agent-tests/tests/files/fileManagerDisconnectedSave.test.js',
-    '.tmp-agent-tests/tests/files/fileManagerEditorIdentity.test.js',
-    '.tmp-agent-tests/tests/plugins/pluginPanelSshConfirmation.test.js',
+    'tests/workspace/paneCloseEditorGuard.test.ts',
+    'tests/files/editorReadPolicy.test.ts',
+    'tests/files/fileManagerDisconnectedSave.test.ts',
+    'tests/files/fileManagerEditorIdentity.test.ts',
+    'tests/plugins/pluginPanelSshConfirmation.test.ts',
     'tests/pluginCommandBridge.test.mjs',
     'tests/pluginShortcuts.test.mjs',
     'tests/pluginManifestTypes.test.mjs',
     'tests/pluginIconPath.test.mjs',
-    '.tmp-agent-tests/tests/plugins/pluginPaneRetention.test.js',
+    'tests/plugins/pluginPaneRetention.test.ts',
     'tests/pluginDeveloperMode.test.mjs',
     'tests/pluginManagementController.test.mjs',
     'tests/pluginBrokerBoundary.test.mjs',
@@ -205,7 +198,7 @@ const tests = [
     'tests/pluginMessageRateLimiter.test.mjs',
     'tests/pluginMessageEnvelope.test.mjs',
     'tests/pluginReloadQueue.test.mjs',
-    '.tmp-agent-tests/tests/plugins/pluginRecoveryStartup.test.js',
+    'tests/plugins/pluginRecoveryStartup.test.ts',
     'tests/pluginOptionalPermission.test.mjs',
     'tests/shellDiscoveryGate.test.mjs',
     'tests/pluginRuntimeSupervisor.test.mjs',
@@ -222,20 +215,20 @@ const tests = [
     'tests/ghostSuggestionsHelpers.test.mjs',
     'tests/terminalOutputStream.test.mjs',
     'tests/fileDropToTerminal.test.mjs',
-    '.tmp-agent-tests/tests/files/fileGridLayout.test.js',
-    '.tmp-agent-tests/tests/files/fileListPresentation.test.js',
-    '.tmp-agent-tests/tests/files/fileMarquee.test.js',
-    '.tmp-agent-tests/tests/files/filePathNav.test.js',
-    '.tmp-agent-tests/tests/files/filePathAbsolute.test.js',
-    '.tmp-agent-tests/tests/files/fileVolumes.test.js',
+    'tests/files/fileGridLayout.test.ts',
+    'tests/files/fileListPresentation.test.ts',
+    'tests/files/fileMarquee.test.ts',
+    'tests/files/filePathNav.test.ts',
+    'tests/files/filePathAbsolute.test.ts',
+    'tests/files/fileVolumes.test.ts',
     'tests/themedIconSrc.test.mjs',
     'tests/materialIconTheme.test.mjs',
     'tests/iconThemeRegistry.test.mjs',
-    '.tmp-agent-tests/tests/files/fileSearchFilter.test.js',
-    '.tmp-agent-tests/tests/files/fileSystemBrowsingContracts.test.js',
+    'tests/files/fileSearchFilter.test.ts',
+    'tests/files/fileSystemBrowsingContracts.test.ts',
     'tests/errorBoundary.test.mjs',
     'tests/releaseNotesMarkdown.test.mjs',
-    '.tmp-agent-tests/tests/tooling/tauriAssetScope.test.js',
+    'tests/tooling/tauriAssetScope.test.ts',
     'tests/providerCatalog.test.mjs',
     'tests/quickConnectParsing.test.mjs',
     'tests/quickConnectSubcomponents.test.mjs',
@@ -248,12 +241,12 @@ const tests = [
     'tests/featureTabInventory.test.mjs',
     'tests/paneLayout.test.mjs',
     'tests/paneLayoutVisibility.test.mjs',
-    '.tmp-agent-tests/tests/workspace/dockInSplit.self.test.js',
-    '.tmp-agent-tests/tests/workspace/workspaceOpenItems.test.js',
-    '.tmp-agent-tests/tests/workspace/transportPanePlacement.test.js',
-    '.tmp-agent-tests/tests/vnc/vncProfiles.test.js',
-    '.tmp-agent-tests/tests/serial/serialSession.test.js',
-    '.tmp-agent-tests/tests/serial/serialProfiles.test.js',
+    'tests/workspace/dockInSplit.self.test.ts',
+    'tests/workspace/workspaceOpenItems.test.ts',
+    'tests/workspace/transportPanePlacement.test.ts',
+    'tests/vnc/vncProfiles.test.ts',
+    'tests/serial/serialSession.test.ts',
+    'tests/serial/serialProfiles.test.ts',
     'tests/openHerePaths.test.mjs',
     'tests/appAddItems.test.mjs',
     'tests/shellExit.test.mjs',
@@ -270,8 +263,8 @@ const tests = [
     'tests/terminalRendererSession.test.mjs',
     'tests/terminalRendererController.test.mjs',
     'tests/terminalRendererDiagnostics.test.mjs',
-    '.tmp-agent-tests/tests/terminal/terminalRendererSetup.test.js',
-    '.tmp-agent-tests/tests/terminal/terminalInputPipeline.test.js',
+    'tests/terminal/terminalRendererSetup.test.ts',
+    'tests/terminal/terminalInputPipeline.test.ts',
     'tests/terminalInputQueue.test.mjs',
     'tests/terminalPtyLifecycle.test.mjs',
     'tests/terminalPtyKeyTranslations.test.mjs',
@@ -288,10 +281,10 @@ const tests = [
     'tests/terminalTabClose.test.mjs',
     'tests/terminalScrollbackPreserve.test.mjs',
     'tests/terminalConnectionWakeup.test.mjs',
-    '.tmp-agent-tests/tests/terminal/terminalLifecycleIntegration.test.js',
+    'tests/terminal/terminalLifecycleIntegration.test.ts',
     'tests/terminalOutputPayload.test.mjs',
     'tests/terminalPanelRestore.test.mjs',
-    '.tmp-agent-tests/tests/terminal/terminalResizeSync.test.js',
+    'tests/terminal/terminalResizeSync.test.ts',
     'tests/terminalFit.test.mjs',
     'tests/terminalReconnectReset.test.mjs',
     'tests/sidebarSubmit.test.mjs',
@@ -309,39 +302,73 @@ const tests = [
     'tests/updaterFlow.test.mjs',
 ];
 
-const selectedTests = browserRun
-    ? [browserSuites[feature]]
-    : feature === 'ai'
-      ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/ai/'))
-      : feature === 'files'
-        ? tests.filter((file) => file.startsWith('.tmp-agent-tests/tests/files/'))
-        : feature === 'ghost'
-          ? tests.filter(
-                (file) =>
-                    file.startsWith('.tmp-agent-tests/tests/ghost/') ||
-                    file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
-                    file === 'tests/ghostPromptSafety.test.mjs' ||
-                    file === 'tests/terminalShellContext.test.mjs',
-            )
-          : feature === 'terminal'
-            ? tests.filter(
-                  (file) =>
-                      file.startsWith('tests/terminal') ||
-                      file.startsWith('.tmp-agent-tests/tests/terminal/') ||
-                      file.startsWith('.tmp-agent-tests/tests/serial/'),
-              )
-            : tests;
+/** Compile once before executing source-registered suites, including direct CLI invocation. */
+export function runAgentTests(arguments_ = process.argv.slice(2), spawn = spawnSync) {
+    const [feature, ...testArguments] = arguments_;
+    const browserRun = Object.hasOwn(browserSuites, feature) && testArguments[0] === '--browser';
+    if (
+        (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature) && !browserRun) ||
+        (testArguments.length > 0 && !browserRun)
+    ) {
+        console.error(
+            'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal | vnc --browser]',
+        );
+        return 1;
+    }
+    const build = readTestBuild();
+    const require = createRequire(import.meta.url);
+    const compilation = spawn(
+        process.execPath,
+        [require.resolve('typescript/bin/tsc'), '-p', build.configFile],
+        { stdio: 'inherit' },
+    );
+    if (compilation.status !== 0) {
+        return compilation.status ?? 1;
+    }
+    normalizeEmittedImports(build.outputDirectory);
+    const selectedTests = browserRun
+        ? [browserSuites[feature]]
+        : feature === 'ai'
+          ? tests.filter((file) => file.startsWith('tests/ai/'))
+          : feature === 'files'
+            ? tests.filter((file) => file.startsWith('tests/files/'))
+            : feature === 'ghost'
+              ? tests.filter(
+                    (file) =>
+                        file.startsWith('tests/ghost/') ||
+                        file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
+                        file === 'tests/ghostPromptSafety.test.mjs' ||
+                        file === 'tests/terminalShellContext.test.mjs',
+                )
+              : feature === 'terminal'
+                ? tests.filter(
+                      (file) =>
+                          file.startsWith('tests/terminal') || file.startsWith('tests/serial/'),
+                  )
+                : tests;
+    for (const source of selectedTests) {
+        const file = build.resolveTestFile(source);
+        const legacyTerminal = source.startsWith('tests/terminal') && /\.[cm]?js$/.test(source);
+        const args = legacyTerminal
+            ? [
+                  '--input-type=module',
+                  '--eval',
+                  `globalThis.window={ipcRenderer:{invoke:async()=>undefined,send:()=>{},on:()=>()=>{}},dispatchEvent:()=>true};globalThis.document={body:{getAttribute:()=> 'dark'}};await import(${JSON.stringify(pathToFileURL(file).href)})`,
+              ]
+            : [file, ...(browserRun ? testArguments.slice(1) : [])];
+        const result = spawn(process.execPath, args, { stdio: 'inherit' });
+        if (result.status !== 0) {
+            return result.status ?? 1;
+        }
+    }
+    return 0;
+}
 
-for (const file of selectedTests) {
-    const args = file.startsWith('tests/terminal')
-        ? [
-              '--input-type=module',
-              '--eval',
-              `globalThis.window={ipcRenderer:{invoke:async()=>undefined,send:()=>{},on:()=>()=>{}},dispatchEvent:()=>true};globalThis.document={body:{getAttribute:()=> 'dark'}};await import(${JSON.stringify(pathToFileURL(path.resolve(file)).href)})`,
-          ]
-        : [file, ...(browserRun ? testArguments.slice(1) : [])];
-    const result = spawnSync(process.execPath, args, { stdio: 'inherit' });
-    if (result.status !== 0) {
-        process.exit(result.status ?? 1);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    try {
+        process.exitCode = runAgentTests();
+    } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
     }
 }
