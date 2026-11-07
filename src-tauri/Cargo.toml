@@ -42,6 +42,8 @@ tempfile = "3.24"
 # Use the published package; preserve RSA/compression on the ring backend.
 russh = { version = "=0.64.1", default-features = false, features = ["ring", "flate2", "rsa"] }
 portable-pty = "0.8"
+# Keep serial enumeration usable without adding a Linux runtime packaging dependency.
+serialport = { version = "4.10.1", default-features = false }
 sysinfo = "0.33"
 anyhow = "1.0"
 async-trait = "0.1"
@@ -81,6 +83,8 @@ hmac = "0.13"
 ed25519-dalek = "2.2"
 zeroize = { version = "1.8", features = ["derive"] }
 secrecy = { version = "0.10", features = ["serde"] }
+# Classic RFB password challenge for explicitly linked VNC profiles.
+des = { version = "0.9", features = ["zeroize"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 redb = "2"
 rust_xlsxwriter = { version = "=0.101.0", default-features = false }

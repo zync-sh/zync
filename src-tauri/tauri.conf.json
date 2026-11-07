@@ -26,7 +26,7 @@
     "security": {
       "csp": {
         "default-src": "'self' customprotocol: asset:",
-        "connect-src": "ipc: http://ipc.localhost https: http://127.0.0.1:* http://localhost:*",
+        "connect-src": "ipc: http://ipc.localhost https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:*",
         "font-src": "'self' data: asset: http://asset.localhost",
         "img-src": "'self' data: blob: asset: http://asset.localhost https:",
         "media-src": "'self' blob: https:",
@@ -101,7 +101,8 @@
       "dmg"
     ],
     "resources": {
-      "licenses/russh.txt": "licenses/russh.txt"
+      "licenses/russh.txt": "licenses/russh.txt",
+      "licenses/novnc/": "licenses/novnc/"
     }
   },
   "plugins": {

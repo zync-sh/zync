@@ -1,0 +1,81 @@
+diff --git a/node_modules/@novnc/novnc/core/rfb.js b/node_modules/@novnc/novnc/core/rfb.js
+index 80011e4a..fe7adbdb 100644
+--- a/node_modules/@novnc/novnc/core/rfb.js
++++ b/node_modules/@novnc/novnc/core/rfb.js
+@@ -147,2 +147,4 @@ export default class RFB extends EventTargetMixin {
+         this._enabledContinuousUpdates = false;
++        this._pendingContinuousUpdateStops = 0;
++        this._updatesPaused = false;
+
+@@ -325,2 +327,26 @@ export default class RFB extends EventTargetMixin {
+
++    // Pause only framebuffer traffic. Keep handling all other RFB messages.
++    get updatesPaused() { return this._updatesPaused; }
++    set updatesPaused(paused) {
++        if (paused === this._updatesPaused) { return; }
++        this._updatesPaused = paused;
++        if (this._rfbConnectionState !== "connected") { return; }
++
++        if (paused) {
++            if (this._enabledContinuousUpdates) {
++                this._enabledContinuousUpdates = false;
++                this._pendingContinuousUpdateStops++;
++                RFB.messages.enableContinuousUpdates(this._sock, false, 0, 0, 0, 0);
++            }
++            return;
++        }
++
++        if (this._supportsContinuousUpdates) {
++            this._enabledContinuousUpdates = true;
++            this._updateContinuousUpdates();
++        }
++        // The server honors a full refresh even in continuous mode.
++        RFB.messages.fbUpdateRequest(this._sock, false, 0, 0, this._fbWidth, this._fbHeight);
++    }
++
+     get clippingViewport() { return this._clippingViewport; }
+@@ -2221,3 +2247,5 @@ export default class RFB extends EventTargetMixin {
+         this._sendEncodings();
+-        RFB.messages.fbUpdateRequest(this._sock, false, 0, 0, this._fbWidth, this._fbHeight);
++        if (!this._updatesPaused) {
++            RFB.messages.fbUpdateRequest(this._sock, false, 0, 0, this._fbWidth, this._fbHeight);
++        }
+
+@@ -2566,3 +2594,3 @@ export default class RFB extends EventTargetMixin {
+
+-        let first, ret;
++        let ret;
+         switch (msgType) {
+@@ -2570,3 +2598,3 @@ export default class RFB extends EventTargetMixin {
+                 ret = this._framebufferUpdate();
+-                if (ret && !this._enabledContinuousUpdates) {
++                if (ret && !this._enabledContinuousUpdates && !this._updatesPaused) {
+                     RFB.messages.fbUpdateRequest(this._sock, true, 0, 0,
+@@ -2590,12 +2618,18 @@ export default class RFB extends EventTargetMixin {
+             case 150: // EndOfContinuousUpdates
+-                first = !this._supportsContinuousUpdates;
+-                this._supportsContinuousUpdates = true;
+-                this._enabledContinuousUpdates = false;
+-                if (first) {
+-                    this._enabledContinuousUpdates = true;
+-                    this._updateContinuousUpdates();
+-                    Log.Info("Enabling continuous updates.");
++                if (!this._supportsContinuousUpdates) {
++                    this._supportsContinuousUpdates = true;
++                    if (!this._updatesPaused) {
++                        this._enabledContinuousUpdates = true;
++                        this._updateContinuousUpdates();
++                        Log.Info("Enabling continuous updates.");
++                    }
++                } else if (this._pendingContinuousUpdateStops > 0) {
++                    // An acknowledgement can arrive after the pane has resumed.
++                    this._pendingContinuousUpdateStops--;
+                 } else {
+-                    // FIXME: We need to send a framebufferupdaterequest here
+-                    // if we add support for turning off continuous updates
++                    this._enabledContinuousUpdates = false;
++                    if (!this._updatesPaused) {
++                        RFB.messages.fbUpdateRequest(this._sock, true, 0, 0,
++                                                     this._fbWidth, this._fbHeight);
++                    }
+                 }

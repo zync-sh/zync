@@ -36,9 +36,9 @@ export default defineConfig({
         },
     },
 
-    // Keep the context engine's data files out of dependency pre-bundling.
+    // Keep the context engine's data files and locally patched noVNC out of the prebundle cache.
     optimizeDeps: {
-        exclude: ['@enjoys/context-engine'],
+        exclude: ['@enjoys/context-engine', '@novnc/novnc'],
     },
 
     build: {
@@ -48,10 +48,13 @@ export default defineConfig({
                 onlyExplicitManualChunks: true,
                 // Keep large editor/runtime dependencies in dedicated chunks.
                 // This reduces hot chunk warnings and improves incremental cache reuse.
-                /** Keep deferred syntax highlighting separate from shared and terminal/editor runtime chunks. */
+                /** Keep deferred viewers and syntax highlighting out of startup dependencies. */
                 manualChunks(id) {
                     if (!normalizePath(id).includes('/node_modules/')) {
                         return;
+                    }
+                    if (hasNodeModulePackage(id, '@novnc/novnc')) {
+                        return 'novnc';
                     }
                     if (
                         [

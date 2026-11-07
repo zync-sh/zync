@@ -1,0 +1,24 @@
+The VNC viewer bundles noVNC 1.7.0 from the @novnc/novnc npm package.
+Its core uses the Mozilla Public License 2.0. See LICENSE.txt for
+component licenses and attribution.
+
+Zync bundles the core JavaScript library and its imported vendor modules.
+It does not bundle noVNC's standalone app, styles, images, or Orbitron fonts.
+LICENSE.txt is retained unchanged as upstream's complete license overview;
+its standalone-app and font entries do not describe assets shipped by Zync.
+LICENSE.MPL-2.0 contains the core license, LICENSE.pako contains pako's MIT
+terms, and NOTICE.txt preserves the bundled DES module's actual copyright
+notices and terms rather than generic BSD license templates.
+
+Exact upstream package:
+https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz
+
+Upstream source:
+https://github.com/novnc/noVNC/tree/v1.7.0
+
+Zync's modifications to that source are included beside this notice. From the
+npm project root, apply them to the exact package above in this order:
+
+git apply src-tauri/licenses/novnc/pause-framebuffer.patch
+git apply src-tauri/licenses/novnc/discard-resized-framebuffer.patch
+git apply src-tauri/licenses/novnc/desktop-size-and-zoom.patch
