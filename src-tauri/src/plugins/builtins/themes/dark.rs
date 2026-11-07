@@ -76,6 +76,44 @@ pub(crate) fn builtin_dracula() -> Plugin {
     }
 }
 
+pub(crate) fn builtin_oxide() -> Plugin {
+    Plugin {
+        path: "builtin://oxide".to_string(),
+        manifest: Manifest {
+            id: "com.zync.theme.oxide".to_string(),
+            name: "Oxide Theme".to_string(),
+            version: "1.0.0".to_string(),
+            main: None,
+            style: Some("theme.css".to_string()),
+            mode: Some("dark".to_string()),
+            preview_bg: Some("#161616".to_string()),
+            preview_accent: Some("#ED756E".to_string()),
+            icon: None,
+            manifest_type: None,
+            icons_path: None,
+            editor: None,
+            extensions: ManifestExtensions::default(),
+        },
+        script: None,
+        style: Some(
+            r#"
+            [data-theme='oxide'] {
+                --color-app-bg: #161616;
+                --color-app-panel: #222222;
+                --color-app-surface: #2E2E2E;
+                --color-app-border: #3A3A3A;
+                --color-app-text: #7BD77F;
+                --color-app-muted: #C39900;
+                --color-app-accent: #ED756E;
+            }
+        "#
+            .to_string(),
+        ),
+        editor_html: None,
+        enabled: true,
+    }
+}
+
 pub(crate) fn builtin_monokai() -> Plugin {
     Plugin {
         path: "builtin://monokai".to_string(),

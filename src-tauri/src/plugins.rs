@@ -106,6 +106,7 @@ impl PluginScanner {
             builtins::builtin_plain_editor_provider(),
             builtins::builtin_dark(),
             builtins::builtin_dracula(),
+            builtins::builtin_oxide(),
             builtins::builtin_monokai(),
             builtins::builtin_midnight(),
             builtins::builtin_monokai_pro(),
