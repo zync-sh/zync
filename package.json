@@ -1,7 +1,7 @@
 {
   "name": "zync",
   "private": true,
-  "version": "2.38.2",
+  "version": "2.39.0",
   "type": "module",
   "repository": {
     "type": "git",

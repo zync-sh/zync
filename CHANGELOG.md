@@ -4,8 +4,13 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.39.0] - 2026-11-07
+
 ### Added
 
+- **Oxide theme:** A built-in dark theme with bright green text, mustard gold
+  secondary text and soft red accents, contributed by Michael Hart
+  ([@ThrownWolfCon](https://github.com/ThrownWolfCon)). ([#148](https://github.com/zync-sh/zync/pull/148), [ce0f4d5f])
 - **Serial connections:** Save device-local serial profiles with configurable baud,
   framing, flow control and Enter behavior. Open independent terminal tabs with
   bounded input/output and explicit hardware connection after restore. ([31d18732], [e351f453])
@@ -3073,7 +3078,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.38.2...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.39.0...HEAD
+[2.39.0]: https://github.com/zync-sh/zync/compare/v2.38.2...v2.39.0
 [2.38.2]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.2
 [2.38.0]: https://github.com/zync-sh/zync/compare/v2.37.0...v2.38.0
 [2.37.0]: https://github.com/zync-sh/zync/compare/v2.36.0...v2.37.0
@@ -3467,3 +3473,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [cd7d4f00]: https://github.com/zync-sh/zync/commit/cd7d4f0075337b750a3c70c6e972547b26258218
 [822354de]: https://github.com/zync-sh/zync/commit/822354de2d0a611de6be334ea44b57df7bc67f37
 [6353993d]: https://github.com/zync-sh/zync/commit/6353993d98451ebaa0ec82bd18f93d01951dd509
+[ce0f4d5f]: https://github.com/zync-sh/zync/commit/ce0f4d5f9292dfa4c213020139706d09a9cc3ebd
