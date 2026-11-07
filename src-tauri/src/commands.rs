@@ -670,7 +670,9 @@ impl AppState {
 #[allow(dead_code)]
 pub struct ConnectionHandle {
     pub config: ConnectionConfig,
-    pub session: Option<Arc<Mutex<Handle<Client>>>>,
+    /// The inner Arc lets an owned channel open retain the authenticated transport
+    /// without holding the shared operation lock while awaiting confirmation.
+    pub session: Option<Arc<Mutex<Arc<Handle<Client>>>>>,
     pub sftp_session: Option<Arc<russh_sftp::client::SftpSession>>,
     /// Opaque runtime binding, renewed whenever an SFTP channel is installed.
     pub file_permission_session: String,
@@ -720,7 +722,7 @@ async fn reconnect_connection(
 
     Ok(ConnectionHandle {
         config: config.clone(),
-        session: Some(Arc::new(Mutex::new(session))),
+        session: Some(Arc::new(Mutex::new(Arc::new(session)))),
         sftp_session: None,
         file_permission_session: uuid::Uuid::new_v4().to_string(),
         sftp_identity_maps: Arc::new(tokio::sync::OnceCell::new()),
@@ -3228,7 +3230,7 @@ fn connection_not_ready_error(connection_id: &str) -> String {
 async fn get_live_ssh_session(
     connection_id: &str,
     state: &State<'_, AppState>,
-) -> Result<Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>, String> {
+) -> Result<Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>, String> {
     let (existing, reconnect_lock, generation) = {
         let connections = state.connections.lock().await;
         let conn = connections.get(connection_id)
@@ -3280,7 +3282,7 @@ async fn open_ssh_channel_with_single_reconnect(
 }
 
 async fn run_connection_probe(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
     command: &str,
 ) -> Option<String> {
     const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -3668,7 +3670,7 @@ mod sftp_open_error_tests {
 }
 
 async fn open_sftp_stream(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
 ) -> Result<russh::ChannelStream<russh::client::Msg>, OpenSftpError> {
     let channel = {
         let guard = session.lock().await;
@@ -3688,7 +3690,7 @@ async fn open_sftp_stream(
 
 /// Initialize the cached SFTP session with shared packet and per-file queue bounds.
 async fn open_sftp_session(
-    session: &Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+    session: &Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
 ) -> Result<Arc<russh_sftp::client::SftpSession>, OpenSftpError> {
     let sftp = russh_sftp::client::SftpSession::new_with_config(
         open_sftp_stream(session).await?,
@@ -4976,7 +4978,7 @@ pub async fn fs_rename(
 
 /// Returns false only when the server-side mutation definitely did not start.
 async fn try_remote_files_mutation(
-    session: &Arc<Mutex<Handle<Client>>>,
+    session: &Arc<Mutex<Arc<Handle<Client>>>>,
     command: String,
     label: &str,
 ) -> Result<bool, String> {
@@ -6713,7 +6715,7 @@ pub async fn fs_transfer_file(
     }).await
 }
 
-struct SshStageCopy { session: Arc<Mutex<Handle<Client>>> }
+struct SshStageCopy { session: Arc<Mutex<Arc<Handle<Client>>>> }
 
 /// Service admission errors precede filesystem writes; preserve queued cancellation.
 fn transfer_not_started_error(error: String) -> String {

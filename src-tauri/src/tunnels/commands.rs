@@ -122,7 +122,7 @@ async fn apply_runtime_tunnel_status(
 
     let sessions_by_connection: HashMap<
         String,
-        Arc<Mutex<russh::client::Handle<crate::ssh::Client>>>,
+        Arc<Mutex<Arc<russh::client::Handle<crate::ssh::Client>>>>,
     > = {
         let connections = state.connections.lock().await;
         connection_ids

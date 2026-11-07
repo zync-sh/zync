@@ -8,7 +8,7 @@ use std::{
 use tokio::sync::{oneshot, watch, Mutex as AsyncMutex};
 use zeroize::Zeroizing;
 
-pub type Session = Arc<AsyncMutex<Handle<Client>>>;
+pub type Session = Arc<AsyncMutex<Arc<Handle<Client>>>>;
 
 struct Job<T> {
     connection: String,

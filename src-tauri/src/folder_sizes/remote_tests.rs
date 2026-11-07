@@ -249,7 +249,7 @@ async fn transport(behavior: Behavior) -> Transport {
         .unwrap();
     assert!(handle.authenticate_none("fixture").await.unwrap().success());
     Transport {
-        session: Arc::new(AsyncMutex::new(handle)),
+        session: Arc::new(AsyncMutex::new(Arc::new(handle))),
         started,
         closed,
         task,

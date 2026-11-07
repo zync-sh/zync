@@ -18,7 +18,7 @@ const SOCKS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub async fn handle_socks5_client(
     mut client: TcpStream,
-    session: Arc<Mutex<Handle<Client>>>,
+    session: Arc<Mutex<Arc<Handle<Client>>>>,
     connection_id: String,
     failure_tx: SessionFailureSender,
     stop_tx: broadcast::Sender<()>,
@@ -56,7 +56,7 @@ async fn read_exact_or_cancel(
 /// Bounds SOCKS negotiation and SSH setup, then relays until completion or cancellation.
 async fn run_socks5_client(
     client: &mut TcpStream,
-    session: Arc<Mutex<Handle<Client>>>,
+    session: Arc<Mutex<Arc<Handle<Client>>>>,
     connection_id: &str,
     failure_tx: &SessionFailureSender,
     stop_tx: &broadcast::Sender<()>,

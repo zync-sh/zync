@@ -49,7 +49,7 @@ impl server::Handler for TestServer {
 }
 
 async fn setup() -> (
-    Arc<tokio::sync::Mutex<client::Handle<TestClient>>>,
+    Arc<tokio::sync::Mutex<Arc<client::Handle<TestClient>>>>,
     Arc<Notify>,
     Arc<Notify>,
     oneshot::Receiver<()>,
@@ -83,7 +83,7 @@ async fn setup() -> (
         .unwrap();
     assert!(client.authenticate_none("test").await.unwrap().success());
     (
-        Arc::new(tokio::sync::Mutex::new(client)),
+        Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
         opened,
         allow,
         closed_rx,

@@ -88,7 +88,7 @@ async fn session(fixture: &Fixture) -> crate::security::jobs::Session {
     )
     .await
     .expect("Connect only to this generated, pinned loopback SSH fixture.");
-    Arc::new(Mutex::new(session))
+    Arc::new(Mutex::new(Arc::new(session)))
 }
 
 /// Real PostgreSQL SCRAM, Redis ACL and Oracle MySQL CLI use the same captured SSH adapters as the product.

@@ -13,7 +13,7 @@ use tokio::{
     time::{timeout, Duration, Instant},
 };
 
-type Session<H> = Arc<AsyncMutex<client::Handle<H>>>;
+type Session<H> = Arc<AsyncMutex<Arc<client::Handle<H>>>>;
 const MAX_OUTPUT: usize = 8192;
 const MAX_REQUEST: usize = 131072;
 const MAX_CACHED: usize = 64;
@@ -26,7 +26,7 @@ pub fn supports_kernel(kernel: Option<&str>) -> bool {
 pub struct SupportCache<H: client::Handler = crate::ssh::Client> {
     // Weak owners prevent reconnects, pointer reuse or a closed session from
     // inheriting old support decisions. Only unsupported transports are cached.
-    blocked: Mutex<VecDeque<Weak<AsyncMutex<client::Handle<H>>>>>,
+    blocked: Mutex<VecDeque<Weak<AsyncMutex<Arc<client::Handle<H>>>>>>,
 }
 
 impl<H: client::Handler> Default for SupportCache<H> {

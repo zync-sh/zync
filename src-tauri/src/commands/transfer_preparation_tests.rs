@@ -118,7 +118,7 @@ impl Fixture {
         .await
         .unwrap();
         Self {
-            session: Arc::new(Mutex::new(session)),
+            session: Arc::new(Mutex::new(Arc::new(session))),
             observed,
             _server: server,
         }

@@ -14,7 +14,7 @@ const DEADLINE: Duration = Duration::from_secs(10);
 const ACCESS_DEADLINE: Duration = Duration::from_secs(1);
 const STDOUT: &[u8] = b"fixture stdout\n";
 const STDERR: &[u8] = b"fixture stderr\n";
-type Session = Arc<Mutex<client::Handle<crate::ssh::Client>>>;
+type Session = Arc<Mutex<Arc<client::Handle<crate::ssh::Client>>>>;
 type Connections = Arc<Mutex<HashMap<String, ConnectionHandle>>>;
 
 struct Task<T>(tokio::task::JoinHandle<T>);
@@ -259,7 +259,7 @@ async fn fixture(behavior: Behavior) -> Fixture {
             .await
             .expect("authenticate against pinned disposable fixture");
     Fixture {
-        session: Arc::new(Mutex::new(session)),
+        session: Arc::new(Mutex::new(Arc::new(session))),
         observed,
         task,
     }
