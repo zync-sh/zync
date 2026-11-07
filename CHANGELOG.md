@@ -4,6 +4,41 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Serial connections:** Save device-local serial profiles with configurable baud,
+  framing, flow control and Enter behavior. Open independent terminal tabs with
+  bounded input/output and explicit hardware connection after restore. ([31d18732], [e351f453])
+- **VNC connections:** Open remote desktops through an existing SSH connection or
+  a saved direct endpoint. Configure remote resolution and viewer scale, use a
+  saved Vault password, and manage the viewer from its tab menu. ([0387ecff], [ccef7d87])
+- **SSH verification:** Respond to server-required keyboard-interactive prompts
+  during Connect and Test Connection, with masked input, cancellation and support
+  for multiple rounds. Background reconnects leave verification for an explicit
+  connection attempt. ([8cc6df81])
+
+### Changed
+
+- **Connection workflows:** Choose SSH, VNC or Serial from the shared connection
+  form. Saved transport profiles support Save & Connect, Back, independent tabs,
+  and idle session restore. VNC and Serial sidebar sections start collapsed and
+  appear only when profiles exist. ([c7ca739e], [6be8d0de], [7000de7c], [17253d4d])
+- **Vault passwords:** Reuse a saved Password entry across explicitly linked SSH
+  and VNC connections, including inline creation from the VNC form. Existing
+  password identities and history remain usable. ([2de227e8], [6c37ca69])
+- **VNC rendering:** Load the viewer on demand, pause desktop updates while hidden,
+  refresh on return, and discard stale image content after a desktop resize. ([0e1cad47])
+- **Transport regression coverage:** Organize the updated connection, Vault and
+  workspace suites by feature and add typed Serial/VNC lifecycle, profile and UI
+  regressions. ([0fdcf068])
+
+### Fixed
+
+- **VNC cancellation and cleanup:** Cancelling Vault unlock stops the connection
+  attempt. SSH channel confirmations arriving after timeout or cancellation are
+  closed safely, with pending cleanup bounded without holding the shared SSH
+  operation lock. ([cd7d4f00], [0387ecff], [ccef7d87])
+
 ## [2.38.2] - 2026-11-06
 
 ### Added
@@ -3409,3 +3444,18 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [64739d08]: https://github.com/zync-sh/zync/commit/64739d08e860c9608d663c5d7bbc9e8eed19620f
 [1f9712ca]: https://github.com/zync-sh/zync/commit/1f9712ca9a75432fb0b3326a31aefc9fe0467630
 [3ed7e190]: https://github.com/zync-sh/zync/commit/3ed7e190ca739a31d775b078a9529782b059da13
+
+[31d18732]: https://github.com/zync-sh/zync/commit/31d18732e6e6dccf6e52bb60971ade560c27584d
+[e351f453]: https://github.com/zync-sh/zync/commit/e351f453a4f7cbb10b681af535cab8bb0415a06c
+[0387ecff]: https://github.com/zync-sh/zync/commit/0387ecffee51d36b5dfd5352efe2c4d7d2c51fa6
+[ccef7d87]: https://github.com/zync-sh/zync/commit/ccef7d87ee195287496adfed8365dbf1ea48e66e
+[8cc6df81]: https://github.com/zync-sh/zync/commit/8cc6df817c748cb83b5dc49aeaae6dfd9968f452
+[c7ca739e]: https://github.com/zync-sh/zync/commit/c7ca739e07c9e474303065ac39ebbfba0f9054c1
+[6be8d0de]: https://github.com/zync-sh/zync/commit/6be8d0de6baf5d65cfc1acb836fb4b4a2cb1ad29
+[7000de7c]: https://github.com/zync-sh/zync/commit/7000de7cdf104c4fb68506791ee288135218d7d3
+[17253d4d]: https://github.com/zync-sh/zync/commit/17253d4da60a47bc9f9c53330233c6516564c779
+[2de227e8]: https://github.com/zync-sh/zync/commit/2de227e82c8343daf07dacaaf533d08a889f6138
+[6c37ca69]: https://github.com/zync-sh/zync/commit/6c37ca69c33803bde63bff28281691b387569605
+[0e1cad47]: https://github.com/zync-sh/zync/commit/0e1cad47b6a9824a600d347e4e4f5418a4302f2d
+[0fdcf068]: https://github.com/zync-sh/zync/commit/0fdcf06839c353a87ab75a580df04983856aa66c
+[cd7d4f00]: https://github.com/zync-sh/zync/commit/cd7d4f0075337b750a3c70c6e972547b26258218
