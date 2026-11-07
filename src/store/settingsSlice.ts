@@ -18,6 +18,7 @@ import {
     type ThemeSettingsSnapshot,
     themeSettingsSnapshot,
 } from '../features/appearance/domain/themeDocument';
+import { themeSelectionPatch } from '../features/appearance/domain/themeSelection';
 import { refreshConnectionTabTitles } from '../features/connections/application/tabService.js';
 import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import {
@@ -124,6 +125,10 @@ async function persistSettingsUpdate(
         if (get().isLoadingSettings || get().isReloadingSettings) {
             throw new Error('Wait for settings to finish loading.');
         }
+        const selection =
+            'theme' in actualSettings
+                ? themeSelectionPatch(themeSettingsSnapshot(previous), actualSettings.theme)
+                : undefined;
         await persistSettings(actualSettings, themeSettingsSnapshot(previous));
         const current = get();
         if (
@@ -139,7 +144,7 @@ async function persistSettingsUpdate(
                 'Theme was saved, but settings changed before confirmation. Reload settings before changing the theme again.',
             );
         }
-        const settings = { ...current.settings, ...actualSettings };
+        const settings = { ...current.settings, ...actualSettings, ...selection };
         set({
             settings,
             ...(actualSettings.privacy && 'showHostAddressesInLists' in actualSettings.privacy

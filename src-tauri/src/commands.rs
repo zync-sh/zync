@@ -6259,6 +6259,29 @@ pub async fn settings_theme_set(
     persist_settings_patch(&app, settings, Some(&expected)).await
 }
 
+/// Preserve ordinary nested settings merges while replacing the trusted element
+/// envelope of an explicit theme selection. Caller validation and derivation run
+/// under SETTINGS_MUTATION_LOCK before this merge policy is used for persistence.
+fn merge_settings_patch(
+    current: Value,
+    settings: Value,
+    theme_edit: bool,
+) -> Result<Value, String> {
+    let selected_colors = if theme_edit && settings.get("theme").is_some() {
+        settings.get("elementColors").cloned()
+    } else {
+        None
+    };
+    let mut merged = ensure_object_settings(merge_json_values(current, settings))?;
+    // Deep merge would retain old override keys even when the new map is empty.
+    if let Some(colors) = selected_colors {
+        merged["elementColors"] = colors;
+    }
+    Ok(merged)
+}
+
+/// Serialize preference writes and snapshot-guarded theme changes in one transaction.
+/// Validate caller fields before inserting derived colors into an explicit selection.
 async fn persist_settings_patch(
     app: &AppHandle,
     settings: Value,
@@ -6275,14 +6298,119 @@ async fn persist_settings_patch(
     crate::element_color_settings::validate_managed_patch(&current, &settings)?;
     crate::theme_settings::validate_managed_patch(&current, &settings)?;
     crate::chrome_action_settings::validate_managed_patch(&current, &settings)?;
+    let settings = if expected_theme.is_some() {
+        crate::theme_settings::prepare_theme_selection_patch(&current, settings)?
+    } else {
+        settings
+    };
     let current_data_path = data_path_from_settings(&current);
-    let merged = ensure_object_settings(merge_json_values(current, settings))?;
+    let merged = merge_settings_patch(current, settings, expected_theme.is_some())?;
     let next_data_path = data_path_from_settings(&merged);
     persist_settings_json(app, &merged)?;
     if current_data_path != next_data_path {
         clear_data_dir_cache();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod theme_selection_merge_tests {
+    use super::merge_settings_patch;
+    use serde_json::{json, Value};
+
+    fn custom_theme() -> Value {
+        serde_json::from_str::<Value>(include_str!("../../tests/fixtures/themeDocument.json"))
+            .unwrap()["theme"]
+            .clone()
+    }
+
+    #[test]
+    fn preset_selection_removes_old_tab_overrides_and_keeps_unrelated_preferences() {
+        let current = json!({
+            "theme": "custom", "accentColor": "#ffcc00", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {
+                "mainTabs.activeBackground": "#ffc0cb", "contentTabs.activeBackground": "#abcdef"
+            }},
+            "terminal": {"fontSize": 17}, "workspaceNavigation": {"version": 99}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"theme": "oxide"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(merged["theme"], "oxide");
+        assert_eq!(merged["accentColor"], Value::Null);
+        assert_eq!(
+            merged["elementColors"],
+            json!({"version": 1, "overrides": {}})
+        );
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+        assert_eq!(merged["terminal"], current["terminal"]);
+        assert_eq!(
+            merged["workspaceNavigation"],
+            current["workspaceNavigation"]
+        );
+    }
+
+    #[test]
+    fn custom_selection_restores_only_saved_elements_without_merging_old_keys() {
+        let current = json!({
+            "theme": "dark", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {
+                "mainTabs.activeBackground": "#ffc0cb", "terminal.cursor": "#123456"
+            }}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"theme": "custom"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(
+            merged["elementColors"],
+            json!({"version": 1, "overrides": {"terminal.cursor": "#abcdef"}})
+        );
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+    }
+
+    #[test]
+    fn accent_only_theme_edit_preserves_element_overrides() {
+        let current = json!({
+            "theme": "dark", "elementColors": {"version": 1, "overrides": {"terminal.cursor": "#123456"}}
+        });
+        let prepared = crate::theme_settings::prepare_theme_selection_patch(
+            &current,
+            json!({"accentColor": "#abcdef"}),
+        )
+        .unwrap();
+        let merged = merge_settings_patch(current.clone(), prepared, true).unwrap();
+        assert_eq!(merged["elementColors"], current["elementColors"]);
+        assert_eq!(merged["accentColor"], "#abcdef");
+        assert_eq!(merged["theme"], "dark");
+    }
+
+    #[test]
+    fn ordinary_settings_merge_keeps_its_existing_nested_restore_behavior() {
+        let current = json!({
+            "theme": "custom", "accentColor": "#ffcc00", "customTheme": custom_theme(),
+            "elementColors": {"version": 1, "overrides": {"mainTabs.activeBackground": "#ffc0cb"}},
+            "terminal": {"fontSize": 17, "lineHeight": 1.4}
+        });
+        let merged = merge_settings_patch(
+            current.clone(),
+            json!({"theme": "dark", "terminal": {"fontSize": 18}}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(merged["elementColors"], current["elementColors"]);
+        assert_eq!(merged["customTheme"], current["customTheme"]);
+        assert_eq!(merged["accentColor"], current["accentColor"]);
+        assert_eq!(
+            merged["terminal"],
+            json!({"fontSize": 18, "lineHeight": 1.4})
+        );
+    }
 }
 
 /// Replace only global navigation chrome and host tab placement; never session geometry or resources.

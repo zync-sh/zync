@@ -16,6 +16,7 @@ const { createPreferencesQueue } = load('features/settings/application/acknowled
 const { themeSettingsSnapshot, sameThemeSettings } = load(
     'features/appearance/domain/themeDocument.ts',
 );
+const { themeSelectionPatch } = load('features/appearance/domain/themeSelection.ts');
 const { createChromeActionUpdater } = load('features/workspace/application/updateChromeActions.ts');
 const { parseWorkspaceNavigation, resolveWorkspaceNavigation } = load(
     'features/workspace/domain/navigation.ts',
@@ -80,6 +81,7 @@ function realStore(
         createNavigationUpdater,
         createElementColorUpdater,
         createThemeImportUpdater,
+        themeSelectionPatch,
         themeSettingsSnapshot,
         sameThemeSettings,
         createChromeActionUpdater,

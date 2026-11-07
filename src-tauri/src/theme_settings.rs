@@ -87,6 +87,36 @@ pub(crate) fn validate_managed_patch(current: &Value, patch: &Value) -> Result<(
     Ok(())
 }
 
+/// Derive an explicit theme's global colors after validating the caller's original patch.
+/// Keep the saved custom document and all non-theme fields; the caller replaces the
+/// derived element envelope atomically rather than deep-merging its override map.
+pub(crate) fn prepare_theme_selection_patch(
+    current: &Value,
+    mut patch: Value,
+) -> Result<Value, String> {
+    let Some(theme) = patch.get("theme") else {
+        return Ok(patch);
+    };
+    let theme = theme.as_str().ok_or("Choose a valid theme.")?;
+    if current.get("elementColors").is_some_and(|value| {
+        !value.is_null() && crate::element_color_settings::normalize(value).is_none()
+    }) {
+        return Err("Element colors use an unsupported format. Review settings.json before changing the theme.".into());
+    }
+    let elements = if theme == "custom" {
+        current
+            .get("customTheme")
+            .and_then(normalize)
+            .ok_or("Import a valid custom theme first.")?["elements"]
+            .clone()
+    } else {
+        json!({"version": 1, "overrides": {}})
+    };
+    patch["accentColor"] = Value::Null;
+    patch["elementColors"] = elements;
+    Ok(patch)
+}
+
 /// Ordinary theme/accent edits participate in the same boundary so an earlier request
 /// cannot overwrite a later import. Other generic settings remain outside this contract.
 pub(crate) fn validate_theme_patch(
@@ -110,12 +140,22 @@ pub(crate) fn validate_theme_patch(
     {
         return Err("Theme/colors changed. Refresh settings before saving again.".into());
     }
-    // An acknowledgement may be lost after a successful write. Accept an exact
-    // theme/accent retry only while import-owned palette/element data is unchanged.
+    // A lost acknowledgement may be retried against its original snapshot only
+    // when the exact derived selection is still current. A later import or color
+    // edit must never be erased by that retry.
     let identical_retry = now["customTheme"] == expected["customTheme"]
-        && now["elementColors"] == expected["elementColors"]
-        && patch.get("theme").unwrap_or(&expected["theme"]) == &now["theme"]
-        && patch.get("accentColor").unwrap_or(&expected["accentColor"]) == &now["accentColor"];
+        && if patch.get("theme").is_some() {
+            prepare_theme_selection_patch(expected, patch.clone()).is_ok_and(|selected| {
+                selected["theme"] == now["theme"]
+                    && selected["accentColor"] == now["accentColor"]
+                    && selected["elementColors"] == now["elementColors"]
+            })
+        } else {
+            now["theme"] == expected["theme"]
+                && now["elementColors"] == expected["elementColors"]
+                && patch.get("accentColor").unwrap_or(&expected["accentColor"])
+                    == &now["accentColor"]
+        };
     if expected != &now && !identical_retry {
         return Err("Theme/colors changed. Refresh settings before saving again.".into());
     }
@@ -187,7 +227,7 @@ mod tests {
 
     #[test]
     fn identical_theme_retry_is_safe_but_never_crosses_a_newer_import() {
-        let before = json!({"theme":"dark"}); let after = json!({"theme":"light","accentColor":null});
+        let before = json!({"theme":"dark"}); let after = json!({"theme":"light","accentColor":null,"elementColors":{"version":1,"overrides":{}}});
         let patch = json!({"theme":"light","accentColor":null});
         assert!(validate_theme_patch(&after, &patch, Some(&snapshot(&before))).is_ok());
         let imported = replacement(&after, &snapshot(&after), &fixture()["theme"]).unwrap().unwrap();
@@ -288,5 +328,114 @@ mod tests {
             validate_theme_patch(&future, &json!({"theme":"dark"}), Some(&snapshot(&future)))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn explicit_selection_resets_global_overrides_without_replacing_the_saved_custom_theme() {
+        let current = json!({
+            "theme": "custom", "accentColor": "#ffcc00", "customTheme": fixture()["theme"],
+            "elementColors": {"version": 1, "overrides": {
+                "mainTabs.activeBackground": "#ffc0cb", "contentTabs.activeBackground": "#abcdef"
+            }},
+            "terminal": {"fontSize": 17}, "workspaceNavigation": {"version": 99}
+        });
+        let before = current.clone();
+        let patch = prepare_theme_selection_patch(
+            &current,
+            json!({"theme": "oxide", "accentColor": "#123456", "compactMode": true}),
+        )
+        .unwrap();
+        assert_eq!(patch["theme"], "oxide");
+        assert_eq!(patch["accentColor"], Value::Null);
+        assert_eq!(
+            patch["elementColors"],
+            json!({"version": 1, "overrides": {}})
+        );
+        assert_eq!(patch["compactMode"], true);
+        assert!(patch.get("customTheme").is_none());
+        assert_eq!(current, before);
+    }
+
+    #[test]
+    fn selecting_custom_restores_its_saved_elements_instead_of_current_overrides() {
+        let current = json!({
+            "theme": "dark", "accentColor": "#ffcc00", "customTheme": fixture()["theme"],
+            "elementColors": {"version": 1, "overrides": {"mainTabs.activeBackground": "#123456"}}
+        });
+        let patch = prepare_theme_selection_patch(&current, json!({"theme": "custom"})).unwrap();
+        assert_eq!(
+            patch["elementColors"],
+            normalize(&current["customTheme"]).unwrap()["elements"]
+        );
+        assert_eq!(patch["accentColor"], Value::Null);
+        assert!(patch.get("customTheme").is_none());
+    }
+
+    #[test]
+    fn accent_only_edits_leave_known_and_future_element_preferences_untouched() {
+        for elements in [
+            json!({"version": 1, "overrides": {"terminal.cursor": "#123456"}}),
+            json!({"version": 99, "opaque": ["preserve"]}),
+        ] {
+            let current = json!({"theme": "dark", "elementColors": elements});
+            let patch = json!({"accentColor": "#abcdef", "compactMode": true});
+            assert_eq!(
+                prepare_theme_selection_patch(&current, patch.clone()).unwrap(),
+                patch
+            );
+            assert!(validate_theme_patch(&current, &patch, Some(&snapshot(&current))).is_ok());
+        }
+    }
+
+    #[test]
+    fn explicit_selection_preserves_unknown_data_by_rejecting_future_element_envelopes() {
+        for elements in [json!({"version": 99}), json!("opaque"), json!({})] {
+            let current = json!({"theme": "dark", "elementColors": elements});
+            assert!(prepare_theme_selection_patch(&current, json!({"theme": "light"})).is_err());
+        }
+        for current in [json!({}), json!({"elementColors": null})] {
+            assert!(prepare_theme_selection_patch(&current, json!({"theme": "light"})).is_ok());
+        }
+        let future = json!({"theme": "custom", "customTheme": {"version": 99}});
+        assert!(prepare_theme_selection_patch(&future, json!({"theme": "dark"})).is_ok());
+        assert!(prepare_theme_selection_patch(&future, json!({"theme": "custom"})).is_err());
+    }
+
+    #[test]
+    fn selection_retries_match_derived_colors_and_cannot_erase_later_color_edits_or_imports() {
+        let before = json!({
+            "theme": "custom", "customTheme": fixture()["theme"],
+            "elementColors": {"version": 1, "overrides": {"mainTabs.activeBackground": "#ffcc00"}}
+        });
+        let expected = snapshot(&before);
+        for theme in ["oxide", "custom"] {
+            let patch = json!({"theme": theme});
+            let selected = prepare_theme_selection_patch(&before, patch.clone()).unwrap();
+            let mut after = before.clone();
+            for (key, value) in selected.as_object().unwrap() {
+                after[key] = value.clone();
+            }
+            assert!(validate_theme_patch(&after, &patch, Some(&expected)).is_ok());
+            let mut edited = after.clone();
+            edited["elementColors"]["overrides"]["terminal.cursor"] = json!("#123456");
+            assert!(validate_theme_patch(&edited, &patch, Some(&expected)).is_err());
+            let mut next_theme = fixture()["theme"].clone();
+            next_theme["name"] = json!("New imported theme");
+            let imported = replacement(&after, &snapshot(&after), &next_theme)
+                .unwrap()
+                .unwrap();
+            assert!(validate_theme_patch(&imported, &patch, Some(&expected)).is_err());
+        }
+    }
+
+    #[test]
+    fn trusted_selection_derivation_does_not_relax_original_caller_managed_guards() {
+        let current = json!({"theme": "dark"});
+        let original = json!({"theme": "light", "elementColors": {"version": 1, "overrides": {}}});
+        assert!(
+            crate::element_color_settings::validate_managed_patch(&current, &original).is_err()
+        );
+        assert!(prepare_theme_selection_patch(&current, original).is_ok());
+        assert!(prepare_theme_selection_patch(&current, json!({"theme": null})).is_err());
     }
 }

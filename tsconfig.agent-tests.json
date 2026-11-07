@@ -21,6 +21,7 @@
         "sourceMap": false
     },
     "include": [
+        "tests/appearance/**/*.ts",
         "tests/vault/**/*.ts",
         "tests/serial/**/*.ts",
         "tests/serial/**/*.tsx",
