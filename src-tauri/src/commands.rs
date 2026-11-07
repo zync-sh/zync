@@ -1,6 +1,7 @@
 use crate::fs::{FileEntry, FileSystem, SftpIdentityMaps};
 use crate::fs_volumes::{list_local_volumes, FileVolume};
 use crate::pty::PtyManager;
+use crate::ssh::keyboard_interactive;
 use crate::ssh::{Client, SshManager};
 use crate::types::*;
 use anyhow::Result;
@@ -714,9 +715,10 @@ async fn reconnect_connection(
     config: &ConnectionConfig,
     ssh_manager: &crate::ssh::SshManager,
     tunnel_manager: &crate::tunnels::TunnelManager,
+    verification: Option<&keyboard_interactive::Attempt>,
 ) -> Result<ConnectionHandle, String> {
     let (session, auth_banner, host_key_fingerprint) = ssh_manager
-        .connect_with_identity(config.clone(), Arc::new(tunnel_manager.clone()))
+        .connect_with_identity(config.clone(), Arc::new(tunnel_manager.clone()), verification)
         .await
         .map_err(|e| format!("Failed to connect: {}", e))?;
 
@@ -918,10 +920,13 @@ async fn inject_remembered_key_passphrases_blocking(
     Ok(())
 }
 
+/// Connect an explicit foreground attempt and route any verification challenge to its caller.
 #[tauri::command]
 pub async fn ssh_connect(
     app: AppHandle,
+    webview: tauri::Webview,
     mut config: ConnectionConfig,
+    verification_channel: Option<tauri::ipc::JavaScriptChannelId>,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<ConnectionResponse, String> {
@@ -935,6 +940,8 @@ pub async fn ssh_connect(
                 .fetch_add(1, Ordering::Relaxed)
                 .to_string()
         });
+    let verification = verification_channel
+        .map(|channel| keyboard_interactive::Attempt::new(attempt_id.clone(), webview, channel));
     let mut prepare_cancel_rx = {
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         let mut connect_tasks = state.connect_tasks.lock().await;
@@ -1026,7 +1033,8 @@ pub async fn ssh_connect(
     let ssh_manager = state.ssh_manager.clone();
     let tunnel_manager = state.tunnel_manager.clone();
     let connect_task = tokio::spawn(async move {
-        reconnect_connection(&task_config, &ssh_manager, &tunnel_manager).await
+        reconnect_connection(&task_config, &ssh_manager, &tunnel_manager, verification.as_ref())
+            .await
     });
     let spawn_outcome = {
         let mut connect_tasks = state.connect_tasks.lock().await;
@@ -1282,20 +1290,46 @@ pub async fn ssh_agent_signature_respond(
         .map_err(|error| error.to_string())
 }
 
+/// Send the renderer's response to its pending SSH authentication round.
+#[tauri::command]
+pub fn ssh_verification_reply(
+    webview: tauri::Webview,
+    attempt_id: String,
+    request_id: String,
+    responses: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .ssh_manager
+        .verification
+        .reply(webview.label(), &attempt_id, &request_id, responses)
+        .map_err(|error| error.to_string())
+}
+
+/// Verify the configured host and optional challenge without installing a saved session.
 #[tauri::command]
 pub async fn ssh_test_connection(
+    webview: tauri::Webview,
     mut config: ConnectionConfig,
+    verification_channel: Option<tauri::ipc::JavaScriptChannelId>,
     state: State<'_, AppState>,
     vault: State<'_, tokio::sync::Mutex<crate::vault::store::VaultService>>,
 ) -> Result<String, String> {
+    let verification = verification_channel.map(|channel| {
+        keyboard_interactive::Attempt::new(uuid::Uuid::new_v4().to_string(), webview, channel)
+    });
     let _relinked = resolve_vault_refs(&mut config, &vault).await?;
     inject_remembered_key_passphrases_blocking(&mut config).await?;
     match state
         .ssh_manager
-        .connect(config.clone(), Arc::new((*state.tunnel_manager).clone()))
+        .connect_with_identity(
+            config,
+            state.tunnel_manager.clone(),
+            verification.as_ref(),
+        )
         .await
     {
-        Ok(session) => {
+        Ok((session, _, _)) => {
             // Try a simple command to verify session
             let result = match session.channel_open_session().await {
                 Ok(mut channel) => {
@@ -3197,7 +3231,7 @@ async fn reconnect_stored_connection(
     inject_remembered_key_passphrases_blocking(&mut connect_config).await?;
 
     let mut new_handle =
-        reconnect_connection(&connect_config, &state.ssh_manager, &state.tunnel_manager).await?;
+        reconnect_connection(&connect_config, &state.ssh_manager, &state.tunnel_manager, None).await?;
     new_handle.config = original_config;
     new_handle.uses_vault_auth = uses_vault_auth;
     new_handle.detected_os = previous_detected_os;

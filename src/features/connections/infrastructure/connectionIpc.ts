@@ -1,12 +1,17 @@
 import type { NetworkInterface, NetworkPreference } from '../domain/types.js';
+import { withSshVerification } from './sshVerificationIpc.js';
 
 /** Enumerate device adapters only on an explicit picker/connection request. */
-export const listNetworkInterfacesIpc = (): Promise<NetworkInterface[]> => window.ipcRenderer.invoke('ssh:networkInterfaces');
+export const listNetworkInterfacesIpc = (): Promise<NetworkInterface[]> =>
+    window.ipcRenderer.invoke('ssh:networkInterfaces');
 /** Device egress preferences are kept outside synced/exported host records. */
 export const getNetworkPreferenceIpc = (connectionId: string): Promise<NetworkPreference> =>
     window.ipcRenderer.invoke('ssh:networkPreference', { connectionId });
 /** Persist an adapter identity rather than a transient IP address or interface index. */
-export const saveNetworkPreferenceIpc = (connectionId: string, preference: NetworkPreference): Promise<void> =>
+export const saveNetworkPreferenceIpc = (
+    connectionId: string,
+    preference: NetworkPreference,
+): Promise<void> =>
     window.ipcRenderer.invoke('ssh:setNetworkPreference', { connectionId, preference });
 
 export interface AuthMethodPassword {
@@ -111,16 +116,26 @@ export const respondAgentSignatureIpc = async (
     decision: AgentSignatureDecision,
 ): Promise<void> => window.ipcRenderer.invoke('ssh:agentSignatureRespond', { requestId, decision });
 
-export const testConnectionIpc = async (config: ConnectionConfigPayload): Promise<string> =>
-    window.ipcRenderer.invoke('ssh:test', config);
+/** Allow a test initiated by the editor to answer server authentication prompts. */
+export const testConnectionIpc = async (
+    config: ConnectionConfigPayload,
+    signal?: AbortSignal,
+): Promise<string> =>
+    withSshVerification(
+        (channel) => window.ipcRenderer.invoke('ssh:test', config, channel),
+        signal,
+    );
 
 export const importSshConfigIpc = async (): Promise<ImportedConnectionPayload[]> =>
     window.ipcRenderer.invoke('ssh:importConfig');
 
-export const importSshConfigFromFileIpc = async (path: string): Promise<ImportedConnectionPayload[]> =>
-    importSshConfigBySourceIpc({ sourceType: 'file', path });
+export const importSshConfigFromFileIpc = async (
+    path: string,
+): Promise<ImportedConnectionPayload[]> => importSshConfigBySourceIpc({ sourceType: 'file', path });
 
-export const importSshConfigFromTextIpc = async (content: string): Promise<ImportedConnectionPayload[]> =>
+export const importSshConfigFromTextIpc = async (
+    content: string,
+): Promise<ImportedConnectionPayload[]> =>
     importSshConfigBySourceIpc({ sourceType: 'text', content });
 
 export const importSshConfigBySourceIpc = async (
@@ -128,11 +143,16 @@ export const importSshConfigBySourceIpc = async (
 ): Promise<ImportedConnectionPayload[]> =>
     window.ipcRenderer.invoke('ssh:importConfigBySource', request);
 
-export const internalizeImportedConnectionsIpc = async (connections: ImportedConnectionPayload[]): Promise<ImportedConnectionPayload[]> =>
+export const internalizeImportedConnectionsIpc = async (
+    connections: ImportedConnectionPayload[],
+): Promise<ImportedConnectionPayload[]> =>
     window.ipcRenderer.invoke('ssh:internalize-connections', connections);
 
-export const connectIpc = async (config: ConnectionConfigPayload): Promise<ConnectResponsePayload> =>
-    window.ipcRenderer.invoke('ssh:connect', config);
+/** Carry server prompts on the same foreground connection attempt. */
+export const connectIpc = async (
+    config: ConnectionConfigPayload,
+): Promise<ConnectResponsePayload> =>
+    withSshVerification((channel) => window.ipcRenderer.invoke('ssh:connect', config, channel));
 
 export const disconnectIpc = async (connectionId: string): Promise<void> =>
     window.ipcRenderer.invoke('ssh:disconnect', connectionId);

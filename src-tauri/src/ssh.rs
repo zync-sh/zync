@@ -17,6 +17,8 @@ use crate::types::{AgentForwardingConfig, AuthMethod, ConnectionConfig, HostKeyA
 use russh::client::Msg;
 use tokio::net::TcpStream;
 
+pub(crate) mod keyboard_interactive;
+
 const MAX_FORWARDED_AGENT_PACKET_SIZE: usize = 256 * 1024;
 const AGENT_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_AUTH_BANNER_CHARS: usize = 16 * 1024;
@@ -742,6 +744,7 @@ fn replace_known_host_keys(
 
 pub struct SshManager {
     consent_broker: Option<AgentConsentBroker>,
+    pub(crate) verification: keyboard_interactive::PromptBroker,
 }
 
 impl SshManager {
@@ -749,6 +752,7 @@ impl SshManager {
     pub fn new() -> Self {
         Self {
             consent_broker: None,
+            verification: keyboard_interactive::PromptBroker::default(),
         }
     }
 
@@ -760,14 +764,17 @@ impl SshManager {
         (
             Self {
                 consent_broker: Some(broker),
+                verification: keyboard_interactive::PromptBroker::default(),
             },
             prompt_count,
         )
     }
 
+    /// Bind signature consent and interactive SSH verification to the desktop app.
     pub fn with_app(app: tauri::AppHandle) -> Self {
         Self {
             consent_broker: Some(AgentConsentBroker::new(app)),
+            verification: keyboard_interactive::PromptBroker::default(),
         }
     }
 
@@ -782,31 +789,13 @@ impl SshManager {
         Ok(())
     }
 
-    pub async fn connect(
+    /// Connect through the configured hop chain and record the exact verified server key.
+    pub(crate) async fn connect_with_identity(
         &self,
         config: ConnectionConfig,
         tunnel_manager: Arc<crate::tunnels::TunnelManager>,
-    ) -> Result<client::Handle<Client>> {
-        self.connect_with_banner(config, tunnel_manager)
-            .await
-            .map(|(session, _)| session)
-    }
-
-    /// Establish the configured hop chain with explicit egress, host trust and authentication.
-    pub async fn connect_with_banner(
-        &self,
-        config: ConnectionConfig,
-        tunnel_manager: Arc<crate::tunnels::TunnelManager>,
-    ) -> Result<(client::Handle<Client>, Option<String>)> {
-        self.connect_with_identity(config,tunnel_manager).await.map(|(session,banner,_)|(session,banner))
-    }
-
-    /// Capture the key accepted for this exact transport, separately from persisted host approvals.
-    pub async fn connect_with_identity(
-        &self,
-        config: ConnectionConfig,
-        tunnel_manager: Arc<crate::tunnels::TunnelManager>,
-    )->Result<(client::Handle<Client>,Option<String>,String)> {
+        verification: Option<&keyboard_interactive::Attempt>,
+    ) -> Result<(client::Handle<Client>, Option<String>, String)> {
         // Keep-alive: send a heartbeat every 60s to prevent NAT/firewall timeouts on idle sessions
         let client_config = client::Config {
             keepalive_interval: Some(std::time::Duration::from_secs(60)),
@@ -826,10 +815,13 @@ impl SshManager {
                 ));
             }
             // 1. Connect to Jump Host (Recursive)
-            let jump_session =
-                Box::pin(self.connect((**jump_host_config).clone(), tunnel_manager.clone()))
-                    .await
-                    .map_err(|e| anyhow!("Failed to connect to jump host: {}", e))?;
+            let (jump_session, _, _) = Box::pin(self.connect_with_identity(
+                (**jump_host_config).clone(),
+                tunnel_manager.clone(),
+                verification,
+            ))
+            .await
+            .map_err(|e| anyhow!("Failed to connect to jump host: {}", e))?;
 
             // 2. Open Direct TCP/IP Channel through Jump Host
             let channel = jump_session
@@ -865,7 +857,8 @@ impl SshManager {
                 russh::client::connect_stream(client_config, stream, client_handler).await?;
 
             // 5. Authenticate (Target)
-            self.authenticate_session(&mut session, &config).await?;
+            self.authenticate_session(&mut session, &config, verification)
+                .await?;
             let banner = auth_banner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -901,7 +894,8 @@ impl SshManager {
         }
         let mut session = client::connect_stream(client_config, stream, client_handler).await?;
 
-        self.authenticate_session(&mut session, &config).await?;
+        self.authenticate_session(&mut session, &config, verification)
+            .await?;
         let banner = auth_banner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -910,11 +904,12 @@ impl SshManager {
         Ok((session, (!banner.is_empty()).then_some(banner),key))
     }
 
-    /// Authenticate only the configured credential and require complete success.
+    /// Authenticate the configured credential and follow a server-required verification step.
     async fn authenticate_session(
         &self,
         session: &mut client::Handle<Client>,
         config: &ConnectionConfig,
+        verification: Option<&keyboard_interactive::Attempt>,
     ) -> Result<()> {
         if config.certificate_path.is_some()
             && matches!(config.auth_method, AuthMethod::Password { .. })
@@ -936,7 +931,6 @@ impl SshManager {
                 session
                     .authenticate_password(&config.username, password.clone())
                     .await?
-                    .success()
             }
             AuthMethod::PrivateKey {
                 key_path,
@@ -984,10 +978,9 @@ impl SshManager {
             }
         };
 
-        if !auth_res {
-            return Err(anyhow!("Authentication failed"));
-        }
-        Ok(())
+        self.verification
+            .complete(session, config, auth_res, verification)
+            .await
     }
 
     /// Load a single connection-scoped forwarding identity without persisting it.
@@ -1054,7 +1047,7 @@ impl SshManager {
             .map_err(|error| anyhow!("Failed to decode forwarded private key: {error}"))
     }
 
-    /// Authenticate a configured key/certificate while preserving the shared RSA SHA-2 policy.
+    /// Keep partial key or certificate success while applying the shared RSA SHA-2 policy.
     async fn auth_with_key_data<H: client::Handler>(
         session: &mut client::Handle<H>,
         username: &str,
@@ -1062,7 +1055,7 @@ impl SshManager {
         passphrase: Option<&str>,
         certificate_path: Option<&str>,
         certificate_data: Option<&str>,
-    ) -> Result<bool> {
+    ) -> Result<client::AuthResult> {
         let privkey = keys::decode_secret_key(key_data, passphrase)
             .map_err(|e| anyhow!("Failed to decode private key: {}", e))?;
         let hash = if privkey.algorithm().is_rsa() {
@@ -1083,13 +1076,11 @@ impl SshManager {
             let mut signer = CertificateSigner(PrivateKeyWithHashAlg::new(privkey, hash));
             return Ok(session
                 .authenticate_certificate_with(username, cert, hash, &mut signer)
-                .await?
-                .success());
+                .await?);
         }
         Ok(session
             .authenticate_publickey(username, PrivateKeyWithHashAlg::new(privkey, hash))
-            .await?
-            .success())
+            .await?)
     }
 }
 
@@ -1578,8 +1569,8 @@ mod tests {
         ]);
         let (failure_tx, _failure_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let tunnels = Arc::new(TunnelManager::new(failure_tx));
-        let session = manager
-            .connect(
+        let (session, _, _) = manager
+            .connect_with_identity(
                 ConnectionConfig {
                     id: "password-host".into(),
                     name: "password-host".into(),
@@ -1604,6 +1595,7 @@ mod tests {
                     network_interface_id: None,
                 },
                 tunnels,
+                None,
             )
             .await
             .expect("connect password host with selected forwarded key");
@@ -1663,8 +1655,8 @@ mod tests {
         let manager = SshManager::new();
         let (failure_tx, _failure_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let tunnels = Arc::new(TunnelManager::new(failure_tx));
-        let session_a = manager
-            .connect(
+        let (session_a, _, _) = manager
+            .connect_with_identity(
                 ConnectionConfig {
                     id: "host-a".into(),
                     name: "host-a".into(),
@@ -1684,11 +1676,12 @@ mod tests {
                     network_interface_id: None,
                 },
                 tunnels.clone(),
+                None,
             )
             .await
             .expect("authenticate to host A with key A");
-        let session_b = manager
-            .connect(
+        let (session_b, _, _) = manager
+            .connect_with_identity(
                 ConnectionConfig {
                     id: "host-b".into(),
                     name: "host-b".into(),
@@ -1706,6 +1699,7 @@ mod tests {
                     network_interface_id: None,
                 },
                 tunnels,
+                None,
             )
             .await
             .expect("authenticate to host B with password");
