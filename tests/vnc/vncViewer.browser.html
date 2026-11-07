@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VNC viewer checks</title>
+    <link rel="stylesheet" href="../../src/index.css">
+    <style>
+        /* Give noVNC the same bounded viewport it receives in a workspace pane. */
+        #vnc-fixture-workspace { width: 640px; height: 480px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="./vncViewer.browser.tsx"></script>
+</body>
+</html>
