@@ -51,14 +51,15 @@ const [feature, ...testArguments] = process.argv.slice(2);
 const browserSuites = {
     ai: '.tmp-agent-tests/tests/ai/conversationPerformance.browser.test.js',
     files: '.tmp-agent-tests/tests/files/filesProduction.browser.test.js',
+    vnc: '.tmp-agent-tests/tests/vnc/vncViewer.browser.test.js',
 };
 const browserRun = Object.hasOwn(browserSuites, feature) && testArguments[0] === '--browser';
 if (
-    (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature)) ||
+    (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature) && !browserRun) ||
     (testArguments.length > 0 && !browserRun)
 ) {
     console.error(
-        'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal]',
+        'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal | vnc --browser]',
     );
     process.exit(1);
 }
@@ -71,6 +72,7 @@ const tests = [
     '.tmp-agent-tests/tests/files/fileDropLifecycle.test.js',
     '.tmp-agent-tests/tests/plugins/workerRequests.test.js',
     '.tmp-agent-tests/tests/vault/refresh.test.js',
+    '.tmp-agent-tests/tests/vault/credentialReferences.test.js',
     '.tmp-agent-tests/tests/dashboard/dashboardMetrics.test.js',
     '.tmp-agent-tests/tests/dashboard/dashboardMetadata.test.js',
     '.tmp-agent-tests/tests/securityAssessment.test.js',
@@ -120,14 +122,14 @@ const tests = [
     'tests/themeFiles.test.mjs',
     'tests/themeKeyReference.test.mjs',
     'tests/chromeActions.test.mjs',
-    'tests/chromeActionRendering.test.mjs',
+    '.tmp-agent-tests/tests/workspace/chromeActionRendering.test.js',
     'tests/elementColorPresentation.test.mjs',
     'tests/elementColorPreview.test.mjs',
     'tests/elementColorEditor.test.mjs',
     'tests/colorPicker.test.mjs',
     'tests/settingsControlIntegration.test.mjs',
     'tests/terminalIdlePtyPolicy.test.mjs',
-    'tests/workspacePresentation.test.mjs',
+    '.tmp-agent-tests/tests/workspace/workspacePresentation.test.js',
     'tests/workspaceRegistrations.test.mjs',
     'tests/workspaceArchitecture.test.mjs',
     'tests/contentPresentation.test.mjs',
@@ -148,7 +150,7 @@ const tests = [
     'tests/workspaceRegionDropPointer.test.mjs',
     'tests/tabDrag.test.mjs',
     'tests/workspaceShortcutActions.test.mjs',
-    'tests/mainTabPresentation.test.mjs',
+    '.tmp-agent-tests/tests/workspace/mainTabPresentation.test.js',
     'tests/paneHeader.test.mjs',
     'tests/displayAliasDialog.test.mjs',
     'tests/workspaceTabList.test.mjs',
@@ -233,7 +235,7 @@ const tests = [
     '.tmp-agent-tests/tests/files/fileSystemBrowsingContracts.test.js',
     'tests/errorBoundary.test.mjs',
     'tests/releaseNotesMarkdown.test.mjs',
-    'tests/tauriAssetScope.test.mjs',
+    '.tmp-agent-tests/tests/tooling/tauriAssetScope.test.js',
     'tests/providerCatalog.test.mjs',
     'tests/quickConnectParsing.test.mjs',
     'tests/quickConnectSubcomponents.test.mjs',
@@ -247,7 +249,11 @@ const tests = [
     'tests/paneLayout.test.mjs',
     'tests/paneLayoutVisibility.test.mjs',
     '.tmp-agent-tests/tests/workspace/dockInSplit.self.test.js',
-    'tests/workspaceOpenItems.test.mjs',
+    '.tmp-agent-tests/tests/workspace/workspaceOpenItems.test.js',
+    '.tmp-agent-tests/tests/workspace/transportPanePlacement.test.js',
+    '.tmp-agent-tests/tests/vnc/vncProfiles.test.js',
+    '.tmp-agent-tests/tests/serial/serialSession.test.js',
+    '.tmp-agent-tests/tests/serial/serialProfiles.test.js',
     'tests/openHerePaths.test.mjs',
     'tests/appAddItems.test.mjs',
     'tests/shellExit.test.mjs',
@@ -321,7 +327,8 @@ const selectedTests = browserRun
             ? tests.filter(
                   (file) =>
                       file.startsWith('tests/terminal') ||
-                      file.startsWith('.tmp-agent-tests/tests/terminal/'),
+                      file.startsWith('.tmp-agent-tests/tests/terminal/') ||
+                      file.startsWith('.tmp-agent-tests/tests/serial/'),
               )
             : tests;
 
