@@ -19,6 +19,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Changed
 
+- **Test runner:** Register typed suites by their source paths and compile them
+  automatically before execution, resolving generated files from the TypeScript
+  configuration. ([6353993d])
 - **Connection workflows:** Choose SSH, VNC or Serial from the shared connection
   form. Saved transport profiles support Save & Connect, Back, independent tabs,
   and idle session restore. VNC and Serial sidebar sections start collapsed and
@@ -34,6 +37,9 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ### Fixed
 
+- **Theme switching:** Applying a theme removes the previous theme's global color
+  overrides, including active tab backgrounds. Selecting the saved custom theme
+  restores its own colors while preserving individual tab appearance and layout. ([822354de])
 - **VNC cancellation and cleanup:** Cancelling Vault unlock stops the connection
   attempt. SSH channel confirmations arriving after timeout or cancellation are
   closed safely, with pending cleanup bounded without holding the shared SSH
@@ -3459,3 +3465,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [0e1cad47]: https://github.com/zync-sh/zync/commit/0e1cad47b6a9824a600d347e4e4f5418a4302f2d
 [0fdcf068]: https://github.com/zync-sh/zync/commit/0fdcf06839c353a87ab75a580df04983856aa66c
 [cd7d4f00]: https://github.com/zync-sh/zync/commit/cd7d4f0075337b750a3c70c6e972547b26258218
+[822354de]: https://github.com/zync-sh/zync/commit/822354de2d0a611de6be334ea44b57df7bc67f37
+[6353993d]: https://github.com/zync-sh/zync/commit/6353993d98451ebaa0ec82bd18f93d01951dd509
