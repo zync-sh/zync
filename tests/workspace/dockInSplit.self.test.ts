@@ -212,9 +212,8 @@ assert.match(
     /return renderSplitTab\(term\.id, ownedSplit\)/,
     'a shell-owned split must replace that shell tab in place',
 );
-assert.match(
-    tabBarSource,
-    /describePaneGroup\(members, leaves\.length - members\.length\)/,
+assert.ok(
+    hasCall(tabBarSource, 'describePaneGroup', ['members', 'leaves.length-members.length']),
     'split tab chrome must describe visible members without changing canonical group membership',
 );
 assert.match(
@@ -259,12 +258,12 @@ assert.doesNotMatch(
 );
 assert.match(
     paneViewSource,
-    /onWheelCapture=\{\(\) => \{[\s\S]*?if \(!focused\) onFocus\(\)/,
+    /onWheelCapture=\{\(\) => \{[\s\S]*?if \(!focused\)\s*(?:\{\s*)?onFocus\(\)/,
     'wheel input over feature content must activate and scroll the pane under the pointer',
 );
 assert.match(
     paneViewSource,
-    /onWheelCapture=\{\(\) => \{[\s\S]*?if \(!focused\) requestFocus\(\)/,
+    /onWheelCapture=\{\(\) => \{[\s\S]*?if \(!focused\)\s*(?:\{\s*)?requestFocus\(\)/,
     'wheel input over terminal content must activate and scroll the pane under the pointer',
 );
 assert.match(
@@ -314,22 +313,22 @@ assert.match(
 );
 assert.match(
     tabBarSource,
-    /onContextMenu=\{\(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?target: \{ type: 'split', owner, paneId: interactivePaneId \}/,
+    /onContextMenu=\{\(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?target:\s*\{\s*type: 'split',\s*owner,\s*paneId: interactivePaneId,?\s*\}/,
     'generic split tabs must suppress the WebView menu and open the Zync split menu for its visible interaction target',
 );
 assert.match(
     tabBarSource,
-    /const dockPayload = activePane && isPaneLeaf\(activePane\) \? paneDockPayload\(activePane\) : null/,
+    /const dockPayload\s*=\s*activePane && isPaneLeaf\(activePane\)\s*\? paneDockPayload\(activePane\)\s*: null/,
     'a generic Split tab must resolve its focused pane into a drag payload',
 );
 assert.match(
     tabBarSource,
-    /if \(dockPayload\) beginDockPointer\(event, dockPayload\)/,
+    /if \(dockPayload\)\s*(?:\{\s*)?beginDockPointer\(event, dockPayload\)/,
     'dragging a generic Split tab must drag its focused pane',
 );
 assert.match(
     tabBarSource,
-    /if \(consumeClickIfDragged\(\)\) return;[\s\S]*?onSplitSelect\?\.\(owner\)/,
+    /if \(consumeClickIfDragged\(\)\)\s*(?:\{\s*)?return;[\s\S]*?onSplitSelect\?\.\(owner\)/,
     'a completed Split-tab drag must not also activate the clicked group',
 );
 
