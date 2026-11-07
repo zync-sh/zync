@@ -21,6 +21,7 @@ mod pty_output_flush;
 mod pty_output;
 mod terminal_output;
 mod pty_term_env;
+mod serial;
 mod session;
 mod security;
 mod navigation_settings;
@@ -100,6 +101,7 @@ pub fn run() {
             let data_dir = commands::get_data_dir(&app_handle);
             let app_state = AppState::new(data_dir.clone(), app_handle.clone());
             app.manage(app_state);
+            app.manage(serial::SerialSessions::default());
             app.manage(security::SecurityJobs::default());
             app.manage(std::sync::Arc::new(security::snapshots::library::ReportLibrary::new(data_dir.join("security-reports.redb"))));
             app.manage(feedback_inbox::TransportState::default());
@@ -125,6 +127,7 @@ pub fn run() {
                 match payload.event() {
                     tauri::webview::PageLoadEvent::Started => {
                         if let Some(jobs) = webview.try_state::<security::SecurityJobs>() { jobs.cancel_all(); }
+                        if let Some(sessions) = webview.try_state::<serial::SerialSessions>() { sessions.clear(); }
                         plugins::pane_document::clear_all(webview.app_handle());
                         plugins::terminal::clear_all(webview.app_handle());
                     }
@@ -161,6 +164,7 @@ pub fn run() {
                 tauri::WindowEvent::Destroyed => {
                     if window.label() == "main" {
                         if let Some(jobs) = window.try_state::<security::SecurityJobs>() { jobs.cancel_all(); }
+                        if let Some(sessions) = window.try_state::<serial::SerialSessions>() { sessions.clear(); }
                         plugins::pane_document::clear_all(window.app_handle());
                         plugins::terminal::clear_all(window.app_handle());
                     }
@@ -240,6 +244,11 @@ pub fn run() {
             commands::terminal_close,
             commands::terminal_has_active_processes,
             commands::terminal_flush_stats,
+            serial::serial_list_ports,
+            serial::serial_open,
+            serial::serial_write,
+            serial::serial_ack_output,
+            serial::serial_close,
             commands::connections_get,
             commands::connections_save,
             commands::connections_export_to_file,
@@ -487,6 +496,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                if let Some(sessions) = app.try_state::<serial::SerialSessions>() {
+                    sessions.clear();
+                }
                 if let Some(recovery) = app.try_state::<plugins::recovery::PluginRecoveryState>() {
                     if let Err(error) = recovery.mark_clean_exit() {
                         log::warn!("[Plugins] Failed to record a clean app exit: {error}");
