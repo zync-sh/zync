@@ -1,61 +1,63 @@
-import { cn } from '../../lib/utils';
 import { HardDrive } from 'lucide-react';
 
+import { cn } from '../../lib/utils';
+
 interface RadialProgressProps {
-    value: number;
+    value: number | null;
     label: string;
     subtext: string;
-    color?: string;
+    loading: boolean;
     className?: string;
 }
 
-export function RadialProgress({ value, label, subtext, color = '#3b82f6', className }: RadialProgressProps) {
-    // Circle math
-    const radius = 34;
-    const circumference = 2 * Math.PI * radius;
-    const offset = circumference - (value / 100) * circumference;
-
+/** Present disk usage in a compact meter and distinguish pending, missing, and measured readings. */
+export function RadialProgress({ value, label, subtext, loading, className }: RadialProgressProps) {
+    const percentage =
+        value !== null && Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
+    const reading = loading ? 'Waiting for sample' : 'Unavailable';
+    const description = loading ? 'Used space / total space' : 'No reading available';
     return (
-        <div className={cn(
-            'bg-app-panel border border-[var(--color-app-border)] rounded-2xl p-5 flex items-center justify-between shadow-sm transition-all hover:border-[var(--color-app-accent)]/50 hover:shadow-md group relative overflow-hidden backdrop-blur-xl bg-opacity-60',
-            className
-        )}>
-            <div className='flex flex-col z-10'>
-                <h3 className="text-xs font-medium text-[var(--color-app-muted)] uppercase tracking-wider flex items-center gap-2 mb-1">
-                    <HardDrive size={14} className={cn("text-[var(--color-app-muted)]/70 group-hover:text-[var(--color-app-accent)] transition-colors")} />
-                    Disk Usage
-                </h3>
-                <span className="text-3xl font-bold text-[var(--color-app-text)] tracking-tight">{value}%</span>
-                <span className="text-xs text-[var(--color-app-muted)]/70">{label} / {subtext}</span>
+        <section
+            aria-label="Disk usage"
+            className={cn(
+                'min-w-0 rounded-lg border border-app-border bg-app-panel p-4',
+                className,
+            )}
+        >
+            <h3 className="flex items-center gap-2 text-xs font-medium text-app-muted">
+                <HardDrive
+                    size={14}
+                    className="shrink-0"
+                    aria-hidden="true"
+                />
+                Disk usage
+            </h3>
+            <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <span className="text-2xl font-semibold tracking-tight text-app-text tabular-nums">
+                    {percentage === null ? reading : `${Math.round(percentage)}%`}
+                </span>
+                <span className="text-xs text-app-muted">
+                    {percentage === null ? description : `${label} of ${subtext}`}
+                </span>
             </div>
-
-            <div className="relative w-20 h-20 flex items-center justify-center shrink-0">
-                {/* Background Circle */}
-                <svg className="transform -rotate-90 w-full h-full">
-                    <circle
-                        cx="40"
-                        cy="40"
-                        r={radius}
-                        stroke="currentColor"
-                        strokeWidth="8"
-                        fill="transparent"
-                        className="text-[var(--color-app-surface)]"
-                    />
-                    {/* Progress Circle */}
-                    <circle
-                        cx="40"
-                        cy="40"
-                        r={radius}
-                        stroke={color}
-                        strokeWidth="8"
-                        fill="transparent"
-                        strokeDasharray={circumference}
-                        strokeDashoffset={offset}
-                        strokeLinecap="round"
-                        className="transition-all duration-1000 ease-out"
-                    />
-                </svg>
+            <div className="mt-4 flex h-10 items-center">
+                {percentage !== null && (
+                    <div
+                        role="meter"
+                        aria-label="Disk usage"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={percentage}
+                        aria-valuetext={`${Math.round(percentage)} percent, ${label} of ${subtext}`}
+                        className="h-1.5 w-full overflow-hidden rounded-full bg-app-surface"
+                    >
+                        <div
+                            className="h-full rounded-full bg-app-accent"
+                            style={{ width: `${percentage}%` }}
+                        />
+                    </div>
+                )}
             </div>
-        </div>
+        </section>
     );
 }

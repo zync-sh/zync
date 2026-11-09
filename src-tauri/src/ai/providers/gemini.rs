@@ -1,9 +1,85 @@
+use std::{sync::Mutex, time::Duration};
+
+use reqwest::{header::HeaderValue, Client, Method, RequestBuilder, Url};
 use tauri::AppHandle;
 
-use crate::ai::{
-    build_single_prompt, is_billing_error, make_client, make_stream_client, read_error_body,
-    read_sse_stream, sanitize_error, AiConfig, ChatMessage, TerminalContext,
+use crate::ai::transport::{
+    error_without_url, pooled_client, REQUEST_TIMEOUT, STREAM_CONNECT_TIMEOUT,
 };
+use crate::ai::{
+    build_single_prompt, is_billing_error, read_error_body, read_sse_stream, AiConfig, ChatMessage,
+    TerminalContext,
+};
+
+const MODELS_ENDPOINT: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const API_KEY_HEADER: &str = "x-goog-api-key";
+
+#[cfg(test)]
+mod tests;
+
+/// Keep Gemini pools separate because reqwest may forward custom headers on redirects.
+fn gemini_client(streaming: bool) -> Result<Client, String> {
+    static REQUEST_CLIENT: Mutex<Option<Client>> = Mutex::new(None);
+    static STREAM_CLIENT: Mutex<Option<Client>> = Mutex::new(None);
+    let cache = if streaming {
+        &STREAM_CLIENT
+    } else {
+        &REQUEST_CLIENT
+    };
+    pooled_client(cache, || {
+        let builder = Client::builder().redirect(reqwest::redirect::Policy::none());
+        if streaming {
+            builder.connect_timeout(STREAM_CONNECT_TIMEOUT)
+        } else {
+            builder.timeout(REQUEST_TIMEOUT)
+        }
+    })
+}
+
+/// Encode the model as one path segment and leave only the SSE format in the query.
+fn generation_url(model: &str, streaming: bool) -> Url {
+    let mut url = Url::parse(MODELS_ENDPOINT).expect("valid Gemini models URL");
+    let operation = if streaming {
+        "streamGenerateContent"
+    } else {
+        "generateContent"
+    };
+    url.path_segments_mut()
+        .expect("Gemini models URL supports path segments")
+        .push(&format!("{model}:{operation}"));
+    if streaming {
+        url.query_pairs_mut().append_pair("alt", "sse");
+    }
+    url
+}
+
+/// Use the same header value for authentication and redaction of echoed keys.
+fn gemini_api_key(config: &AiConfig) -> Option<&str> {
+    config
+        .api_key()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+}
+
+/// Attach a key to one request without putting it in URLs or debug output.
+fn authenticated_request(
+    client: &Client,
+    method: Method,
+    url: Url,
+    api_key: &str,
+) -> Result<RequestBuilder, String> {
+    let mut value = HeaderValue::from_str(api_key)
+        .map_err(|_| "Invalid Gemini API key format. Check Settings -> AI.".to_string())?;
+    value.set_sensitive(true);
+    Ok(client.request(method, url).header(API_KEY_HEADER, value))
+}
+
+/// Keep provider error details useful if the server echoes the supplied key.
+async fn gemini_error_detail(response: reqwest::Response, api_key: &str) -> String {
+    read_error_body(response)
+        .await
+        .replace(api_key, "[REDACTED]")
+}
 
 pub async fn call(
     query: &str,
@@ -11,29 +87,23 @@ pub async fn call(
     config: &AiConfig,
     history: &[ChatMessage],
 ) -> Result<String, String> {
-    let api_key = config
-        .api_key()
+    let api_key = gemini_api_key(config)
         .ok_or_else(|| "Gemini API key not configured. Go to Settings -> AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
     let prompt = build_single_prompt(query, context, history);
-    let client = make_client().await?;
+    let client = gemini_client(false)?;
 
     let body = serde_json::json!({
         "contents": [{ "parts": [{ "text": prompt }] }],
         "generationConfig": { "temperature": 0.0 }
     });
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
-
-    let response = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+    let response =
+        authenticated_request(&client, Method::POST, generation_url(model, false), api_key)?
+            .json(&body)
+            .send()
+            .await
+            .map_err(error_without_url)?;
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -46,17 +116,14 @@ pub async fn call(
         ));
     }
     if !status.is_success() {
-        let detail = read_error_body(response).await;
+        let detail = gemini_error_detail(response, api_key).await;
         if is_billing_error(&detail) {
             return Err(format!("Gemini billing error: {}", detail));
         }
         return Err(format!("Gemini ({}): {}", model, detail));
     }
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+    let json: serde_json::Value = response.json().await.map_err(error_without_url)?;
     let text = json
         .get("candidates")
         .and_then(|c| c.get(0))
@@ -78,29 +145,23 @@ pub async fn stream(
     config: &AiConfig,
     history: &[ChatMessage],
 ) -> Result<String, String> {
-    let api_key = config
-        .api_key()
+    let api_key = gemini_api_key(config)
         .ok_or_else(|| "Gemini API key not configured. Go to Settings -> AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
     let prompt = build_single_prompt(query, context, history);
-    let client = make_stream_client().await?;
+    let client = gemini_client(true)?;
 
     let body = serde_json::json!({
         "contents": [{ "parts": [{ "text": prompt }] }],
         "generationConfig": { "temperature": 0.0 }
     });
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-        model, api_key
-    );
-
-    let response = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+    let response =
+        authenticated_request(&client, Method::POST, generation_url(model, true), api_key)?
+            .json(&body)
+            .send()
+            .await
+            .map_err(error_without_url)?;
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -113,7 +174,7 @@ pub async fn stream(
         ));
     }
     if !status.is_success() {
-        let detail = read_error_body(response).await;
+        let detail = gemini_error_detail(response, api_key).await;
         if is_billing_error(&detail) {
             return Err(format!("Gemini billing error: {detail}"));
         }
@@ -151,11 +212,10 @@ pub async fn call_agent(
 ) -> Result<crate::ai::types::AssistantResponse, String> {
     use crate::ai::types::{AgentMessage, ToolCall};
 
-    let api_key = config
-        .api_key()
+    let api_key = gemini_api_key(config)
         .ok_or_else(|| "Gemini API key not configured. Go to Settings -> AI.".to_string())?;
     let model = config.model.as_deref().unwrap_or("gemini-2.0-flash");
-    let client = make_client().await?;
+    let client = gemini_client(false)?;
 
     // Convert messages to Gemini `contents` format
     // Gemini uses "user" / "model" roles and does not have a separate "system" role in contents.
@@ -210,10 +270,7 @@ pub async fn call_agent(
         }
     }
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
-    );
+    let url = generation_url(model, false);
 
     let body = serde_json::json!({
         "systemInstruction": { "parts": [{ "text": system }] },
@@ -229,12 +286,11 @@ pub async fn call_agent(
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
             }
-            let resp = client
-                .post(&url)
+            let resp = authenticated_request(&client, Method::POST, url.clone(), api_key)?
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| sanitize_error(&e.to_string()))?;
+                .map_err(error_without_url)?;
             let status = resp.status();
             if status == reqwest::StatusCode::UNAUTHORIZED
                 || status == reqwest::StatusCode::FORBIDDEN
@@ -269,17 +325,14 @@ pub async fn call_agent(
 
     let status = response.status();
     if !status.is_success() {
-        let detail = read_error_body(response).await;
+        let detail = gemini_error_detail(response, api_key).await;
         if is_billing_error(&detail) {
             return Err(format!("Gemini billing error: {detail}"));
         }
         return Err(format!("Gemini ({model}): {detail}"));
     }
 
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+    let json: serde_json::Value = response.json().await.map_err(error_without_url)?;
 
     let parts = json
         .get("candidates")
@@ -348,32 +401,20 @@ pub async fn call_agent(
 }
 
 pub async fn get_models(config: &AiConfig) -> Result<Vec<String>, String> {
-    let api_key = config
-        .api_key()
-        .ok_or_else(|| "No API key configured".to_string())?;
+    let api_key = gemini_api_key(config).ok_or_else(|| "No API key configured".to_string())?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-        api_key
-    );
-    let resp = client
-        .get(&url)
+    let client = gemini_client(false)?;
+    let url = Url::parse(MODELS_ENDPOINT).expect("valid Gemini models URL");
+    let resp = authenticated_request(&client, Method::GET, url, api_key)?
+        .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+        .map_err(error_without_url)?;
     if !resp.status().is_success() {
         return Err(format!("Gemini API error: {}", resp.status()));
     }
 
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| sanitize_error(&e.to_string()))?;
+    let json: serde_json::Value = resp.json().await.map_err(error_without_url)?;
     let mut models: Vec<String> = json["models"]
         .as_array()
         .unwrap_or(&vec![])

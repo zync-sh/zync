@@ -147,7 +147,7 @@ fn spreadsheet_acceptance_uses_latest_matching_note_before_time_checks() {
 fn xlsx_has_summary_and_filterable_findings_without_executable_cells() {
     let bytes = xlsx(&package(), 10000).unwrap();
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-    let names = archive.file_names().map(str::to_string).collect::<Vec<_>>();
+    let names = archive.file_names().collect::<Result<Vec<_>, _>>().unwrap();
     assert!(!names
         .iter()
         .any(|name| name.contains("externalLink") || name.contains("vbaProject")));

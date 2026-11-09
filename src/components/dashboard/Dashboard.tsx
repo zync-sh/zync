@@ -1,24 +1,31 @@
 import { Activity, Cpu, Gauge, LayoutDashboard, Search } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
-import { getConnectionBackendEpoch } from '../../lib/terminal/connectionBackend';
-import { Connection, useAppStore } from '../../store/useAppStore';
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import { useAppStore } from '../../store/useAppStore';
 import { HostConnectionNotice } from '../connections/HostConnectionNotice';
-import { createDashboardMetricsSampler } from './dashboardMetrics';
-import { ProcessWidget } from './ProcessWidget';
+import { Button } from '../ui/Button';
+import { PanelHeader } from '../ui/PanelHeader';
+import type { DashboardProcessSort } from './dashboardDetails';
+import { FilesystemWidget } from './FilesystemWidget';
+import { NetworkWidget } from './NetworkWidget';
+import { ProcessDetailsWidget, ProcessWidget } from './ProcessWidget';
 import { QuickActionsWidget } from './QuickActionsWidget';
 import { RadialProgress } from './RadialProgress';
 import { ResourceWidget } from './ResourceWidget';
 import { UptimeWidget } from './UptimeWidget';
+import { useDashboardDetails } from './useDashboardDetails';
+import { useDashboardMetrics } from './useDashboardMetrics';
 
-const dashboardMetrics = createDashboardMetricsSampler({
-    /** Executes one combined sample through the existing command boundary. */
-    execute: (connectionId, command) =>
-        window.ipcRenderer.invoke('ssh:exec', { connectionId, command }),
-    readEpoch: getConnectionBackendEpoch,
-});
+/** Label the binary memory units returned by free/CIM without oversized raw MiB counts. */
+function formatMemory(mib: number | null | undefined, fallback = 'Not available'): string {
+    if (mib === null || mib === undefined || !Number.isFinite(mib) || mib < 0) {
+        return fallback;
+    }
+    return mib >= 1024 ? `${(mib / 1024).toFixed(1)} GiB` : `${Math.round(mib)} MiB`;
+}
 
-/** Displays shared host samples only while this dashboard owns a visible live target. */
+/** Own one visible host's readings while sharing acquisition across matching dashboard panes. */
 export function Dashboard({
     connectionId,
     isVisible = true,
@@ -28,407 +35,311 @@ export function Dashboard({
 }) {
     const globalId = useAppStore((state) => state.activeConnectionId);
     const connections = useAppStore((state) => state.connections);
-    const settings = useAppStore((state) => state.settings);
-
+    const enableVibrancy = useAppStore((state) => state.settings.enableVibrancy);
+    const showAddresses = useAppStore((state) => state.settings.privacy?.showHostAddressesInLists);
     const activeConnectionId = connectionId || globalId;
-
-    // Find connection status
     const isLocal = activeConnectionId === 'local';
-    const connection = !isLocal
-        ? connections.find((c: Connection) => c.id === activeConnectionId)
-        : null;
+    const connection = isLocal
+        ? undefined
+        : connections.find((item) => item.id === activeConnectionId);
     const isConnected = isLocal || connection?.status === 'connected';
-
-    const [metrics, setMetrics] = useState({
-        cpu: 0,
-        ram: { used: 0, total: 0, percent: 0 },
-        disk: { used: '0', total: '0', percent: 0 },
-        info: { os: 'Loading...', kernel: '', arch: '' },
-        uptime: '',
-        processes: 0,
+    const [processesOpen, setProcessesOpen] = useState(false);
+    const [filesystemsOpen, setFilesystemsOpen] = useState(false);
+    const [processSort, setProcessSort] = useState<DashboardProcessSort>('cpu');
+    const {
+        reading: currentReading,
+        issue: currentIssue,
+        loading: metricsLoading,
+        stale,
+    } = useDashboardMetrics({
+        connectionId: activeConnectionId,
+        isConnected,
+        isVisible,
+    });
+    const detailResources = useDashboardDetails({
+        connectionId: activeConnectionId,
+        isConnected,
+        isVisible,
+        processesOpen,
+        filesystemsOpen,
+        processSort,
     });
 
-    const [history, setHistory] = useState<{
-        cpu: { time: string; value: number }[];
-        ram: { time: string; value: number }[];
-    }>({
-        cpu: Array.from({ length: 20 }, () => ({ time: '', value: 0 })),
-        ram: Array.from({ length: 20 }, () => ({ time: '', value: 0 })),
-    });
-
-    const [isSaturationDetected, setIsSaturationDetected] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const isFetching = useRef<{
-        connectionId: string;
-        epoch: number;
-        isPolling: () => boolean;
-    } | null>(null);
-    const currentTarget = useRef({
-        id: activeConnectionId,
-        visible: isVisible,
-        connected: isConnected,
-    });
-    currentTarget.current = { id: activeConnectionId, visible: isVisible, connected: isConnected };
-
-    /** A visible pane owns its sample even when another workspace connection is globally active. */
-    const fetchMetrics = useCallback(
-        async (isPolling: () => boolean) => {
-            const targetId = activeConnectionId;
-            const epoch =
-                targetId === 'local'
-                    ? 0
-                    : targetId
-                      ? getConnectionBackendEpoch(targetId)
-                      : undefined;
-            if (!targetId || epoch === undefined || !isVisible || document.hidden) {
-                return true;
-            }
-            if (
-                isFetching.current?.connectionId === targetId &&
-                isFetching.current.epoch === epoch &&
-                isFetching.current.isPolling()
-            ) {
-                return true;
-            }
-            const request = { connectionId: targetId, epoch, isPolling };
-            isFetching.current = request;
-            /** Reject late samples/errors after hiding, switching or replacing this pane's transport. */
-            const isCurrent = () =>
-                isPolling() &&
-                currentTarget.current.id === targetId &&
-                currentTarget.current.visible &&
-                currentTarget.current.connected &&
-                (targetId === 'local' || getConnectionBackendEpoch(targetId) === epoch);
-            try {
-                const isWindowsLocal =
-                    targetId === 'local' && navigator.userAgent.includes('Windows');
-                const sample = await dashboardMetrics.sample(targetId, isWindowsLocal);
-                if (!isCurrent()) {
-                    return true;
-                }
-                const cpuLoad = sample.cpu;
-                const memPercent = sample.ram.percent;
-                const osName = sample.info.os;
-                const now = new Date().toLocaleTimeString('en-US', {
-                    hour12: false,
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                });
-                setMetrics(sample);
-                // Auto-detect and set icon based on OS if not already set
-                if (targetId !== 'local' && osName) {
-                    // ... (existing icon logic) ...
-                    /** Maps sampled platform labels to the existing host icon choices. */
-                    const detectOSIcon = (osName: string): string => {
-                        const os = osName.toLowerCase();
-                        if (os.includes('ubuntu')) {
-                            return 'ubuntu';
-                        }
-                        if (os.includes('debian')) {
-                            return 'debian';
-                        }
-                        if (
-                            os.includes('centos') ||
-                            os.includes('red hat') ||
-                            os.includes('rhel')
-                        ) {
-                            return 'redhat';
-                        }
-                        if (os.includes('arch')) {
-                            return 'arch';
-                        }
-                        if (os.includes('kali')) {
-                            return 'kali';
-                        }
-                        if (os.includes('fedora') || os.includes('amazon linux')) {
-                            return 'redhat';
-                        }
-                        if (os.includes('suse') || os.includes('opensuse')) {
-                            return 'linux';
-                        }
-                        if (os.includes('windows')) {
-                            return 'windows';
-                        }
-                        if (
-                            os.includes('darwin') ||
-                            os.includes('macos') ||
-                            os.includes('mac os')
-                        ) {
-                            return 'macos';
-                        }
-                        if (os.includes('pop') || os.includes('mint')) {
-                            return 'ubuntu';
-                        }
-                        return 'linux'; // Default fallback
-                    };
-
-                    const detectedIcon = detectOSIcon(osName);
-                    void useAppStore
-                        .getState()
-                        .setConnectionIconIfMissing(targetId, detectedIcon)
-                        .catch((error) =>
-                            console.warn('Could not save detected host icon:', error),
-                        );
-                }
-
-                setHistory((prev) => ({
-                    cpu: [...prev.cpu.slice(1), { time: now, value: cpuLoad || 0 }],
-                    ram: [...prev.ram.slice(1), { time: now, value: memPercent || 0 }],
-                }));
-
-                // Success - Clear saturation flag and error
-                setIsSaturationDetected(false);
-                setError(null);
-                return true; // Continue polling
-            } catch (error: unknown) {
-                if (!isCurrent()) {
-                    return true;
-                }
-                const errorMsg = error instanceof Error ? error.message : String(error);
-                if (errorMsg.includes('Connection not found')) {
-                    console.warn(
-                        'Backend lost connection, stopping dashboard polling:',
-                        activeConnectionId,
-                    );
-                    if (activeConnectionId) {
-                        useAppStore.getState().disconnect(activeConnectionId as string);
-                    }
-                    return false; // Stop polling
-                }
-
-                // Handle Channel Open Failure - likely saturation
-                if (errorMsg.includes('Channel open failure')) {
-                    console.warn('SSH Channel saturation, skipping update and backing off');
-                    setIsSaturationDetected(true);
-                    // Do not disconnect, just skip this update cycle
-                    return true;
-                } else {
-                    setError(errorMsg);
-                    console.warn('Metrics polling failed:', error);
-                    return true; // Continue trying?
-                }
-            } finally {
-                if (isFetching.current === request) {
-                    isFetching.current = null;
-                }
-            }
-        },
-        [activeConnectionId, isVisible],
-    );
-
-    useEffect(() => {
-        if (!activeConnectionId || !isConnected || !isVisible) {
-            return;
-        }
-
-        // Variable polling interval based on saturation status
-        let timeoutId: ReturnType<typeof setTimeout>;
-        let isActive = true; // Mounted flag
-        void fetchMetrics(() => isActive);
-
-        /** Schedules one next visible polling cycle with the existing saturation backoff. */
-        const scheduleNext = () => {
-            const delay = isSaturationDetected ? 15000 : 3000; // 15s backoff if saturated, else 3s
-            timeoutId = setTimeout(async () => {
-                if (!isActive) {
-                    return;
-                }
-                const shouldContinue = await fetchMetrics(() => isActive);
-                if (shouldContinue && isActive) {
-                    scheduleNext(); // Recursive schedule
-                }
-            }, delay);
-        };
-
-        scheduleNext();
-
-        return () => {
-            isActive = false;
-            clearTimeout(timeoutId);
-        };
-    }, [activeConnectionId, isConnected, isSaturationDetected, isVisible, fetchMetrics]); // Re-run if visibility changes so polling stops immediately when hidden
     if (!activeConnectionId) {
         const platform =
             (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
                 ?.platform ?? navigator.userAgent;
-        const isMac = /mac/i.test(platform);
-
         return (
-            <div className="h-full flex flex-col items-center justify-center -mt-20 px-6">
-                <div className="w-20 h-20 rounded-3xl bg-app-surface/50 border border-app-border/40 flex items-center justify-center mb-8 shadow-sm">
-                    <LayoutDashboard className="text-app-muted/40 w-10 h-10" />
-                </div>
-
-                {/* Global Search Bar */}
-                <div
-                    className="relative group w-full max-w-md cursor-pointer mb-8 animate-in fade-in slide-in-from-bottom-2 duration-500"
-                    onClick={() => {
-                        window.dispatchEvent(new CustomEvent('zync:open-command-palette'));
-                    }}
-                >
-                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <Search className="h-4 w-4 text-app-muted group-hover:text-app-accent transition-colors" />
-                    </div>
-                    <div className="w-full bg-app-surface/40 hover:bg-app-surface/80 border border-app-border/50 hover:border-app-accent/50 rounded-xl text-app-muted text-sm px-4 py-3 pl-10 shadow-sm transition-all flex items-center justify-between">
-                        <span>Search servers, tunnels, settings...</span>
-                        <div className="flex bg-app-bg/60 rounded px-1.5 py-0.5 border border-app-border/40 shadow-sm opacity-70 group-hover:bg-app-accent/10 group-hover:text-app-accent group-hover:border-app-accent/30 transition-all">
-                            <span className="text-[10px] font-mono font-medium tracking-wider">
-                                {isMac ? '⌘' : 'Ctrl'}+P
-                            </span>
-                        </div>
-                    </div>
-                </div>
-
-                <h3 className="text-xl font-semibold text-app-text">Welcome to Zync</h3>
-                <p className="text-sm text-app-muted mt-2 max-w-sm text-center opacity-70 leading-relaxed">
-                    Select a connection from the sidebar, or search for a host above to get started.
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <LayoutDashboard
+                    className="h-8 w-8 text-app-muted"
+                    aria-hidden
+                />
+                <h2 className="text-base font-medium text-app-text">Welcome to Zync</h2>
+                <p className="max-w-sm text-sm text-app-muted">
+                    Select a connection from the sidebar to view its system overview.
                 </p>
+                <Button
+                    type="button"
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={() =>
+                        window.dispatchEvent(new CustomEvent('zync:open-command-palette'))
+                    }
+                >
+                    <Search
+                        size={14}
+                        aria-hidden
+                    />{' '}
+                    Search servers and settings{' '}
+                    <kbd className="text-xs text-app-muted">
+                        {/mac/i.test(platform) ? 'Cmd' : 'Ctrl'}+P
+                    </kbd>
+                </Button>
             </div>
         );
     }
 
-    // Metrics and remote actions belong to the live session; disconnected hosts keep a recovery action instead.
-    if (!isConnected) {
-        return (
-            <div className="h-full min-h-0 overflow-auto bg-app-bg text-app-text">
-                <div className="mx-auto max-w-5xl px-4 py-5 sm:px-7 sm:py-7">
-                    <header className="flex min-w-0 items-center gap-3">
-                        <LayoutDashboard
-                            size={28}
-                            className="shrink-0 text-app-accent"
-                            aria-hidden="true"
-                        />
-                        <div className="min-w-0">
-                            <h1 className="text-base font-semibold tracking-tight">
-                                System overview
-                            </h1>
-                            <p className="mt-1 break-all text-xs text-app-muted">
-                                {connection
-                                    ? `${connection.username}@${connection.host}`
-                                    : 'SSH host'}
-                            </p>
-                        </div>
-                    </header>
+    const metrics = currentReading?.metrics;
+    const memory = metrics?.ram;
+    const systemInfo = [metrics?.info.os, metrics?.info.arch].filter(Boolean).join(' ');
+    const summaryFallback = metricsLoading ? 'Waiting for sample' : 'Not available';
+    const state = metricsLoading ? 'loading' : !metrics ? 'unavailable' : stale ? 'stale' : 'live';
+    const labels = connection ? getConnectionDisplayLabels(connection, showAddresses) : null;
+    const status = !isConnected
+        ? 'Disconnected'
+        : !isVisible
+          ? 'Monitoring paused'
+          : currentIssue
+            ? currentIssue.saturated
+                ? 'Metrics delayed'
+                : 'Metrics update failed'
+            : !metrics
+              ? 'Collecting metrics…'
+              : stale
+                ? 'Metrics out of date'
+                : 'Live Monitoring';
+    return (
+        <section
+            aria-label="System overview"
+            data-dashboard-state={state}
+            className={`h-full min-h-0 overflow-auto bg-app-bg text-app-text ${enableVibrancy ? 'dashboard-vibrancy' : ''}`}
+        >
+            <PanelHeader
+                title="System overview"
+                icon={<LayoutDashboard size={16} />}
+                description={labels ? `${labels.primary} · ${labels.secondary}` : 'Local machine'}
+                actions={
+                    <div className="flex flex-col items-end gap-1 text-xs text-app-muted">
+                        <span
+                            role="status"
+                            className="flex items-center gap-1.5"
+                        >
+                            <span
+                                aria-hidden
+                                className={`h-1.5 w-1.5 rounded-full ${isConnected && !stale && metrics ? 'bg-app-accent' : 'bg-app-muted'}`}
+                            />
+                            {status}
+                        </span>
+                        {currentReading && isConnected && (
+                            <time dateTime={new Date(currentReading.updatedAt).toISOString()}>
+                                Last updated{' '}
+                                {new Date(currentReading.updatedAt).toLocaleTimeString()}
+                            </time>
+                        )}
+                    </div>
+                }
+            />
+            {!isConnected ? (
+                <div className="mx-auto max-w-5xl p-4">
                     <HostConnectionNotice
                         connectionId={activeConnectionId}
                         description="Connect to view live system metrics."
-                        className="mt-5"
                     />
                 </div>
-            </div>
-        );
-    }
-
-    // Dynamic class for grid columns based on dashboard width is best handled by CSS Grid auto-fit
-
-    return (
-        <div
-            className={`p-8 overflow-auto h-full scroll-smooth ${settings.enableVibrancy ? 'dashboard-vibrancy' : ''}`}
-        >
-            {/* Header */}
-            <div className="mb-8 flex justify-between items-end">
-                <div>
-                    <h1 className="text-4xl font-bold bg-gradient-to-r from-[var(--color-app-text)] to-[var(--color-app-muted)] bg-clip-text text-transparent mb-2">
-                        System Overview
-                    </h1>
-                    <p className="text-[var(--color-app-muted)] text-base font-medium flex items-center gap-2">
-                        <span
-                            className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}
+            ) : (
+                <div className="mx-auto grid max-w-[90rem] gap-3 p-3">
+                    {currentIssue && (
+                        <div
+                            className="rounded-lg border border-app-border bg-app-surface/40 p-3 text-sm"
+                            role="alert"
+                        >
+                            <h3 className="font-medium">
+                                {currentIssue.saturated
+                                    ? 'The server is busy'
+                                    : 'Metrics update failed'}
+                            </h3>
+                            <p className="mt-1 text-xs text-app-muted">
+                                {metrics
+                                    ? 'Showing the last successful readings.'
+                                    : 'No metrics have been received yet.'}{' '}
+                                Zync will retry while this dashboard is visible.
+                            </p>
+                            <details className="mt-2 text-xs">
+                                <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-app-accent">
+                                    Metric details
+                                </summary>
+                                <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-app-muted">
+                                    {currentIssue.message}
+                                </pre>
+                            </details>
+                        </div>
+                    )}
+                    <div
+                        role="group"
+                        aria-label="Resource metrics"
+                        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] gap-3"
+                    >
+                        <ResourceWidget
+                            title="CPU Usage"
+                            value={
+                                metrics?.cpu == null
+                                    ? summaryFallback
+                                    : `${metrics.cpu.toFixed(1)}%`
+                            }
+                            subtext={
+                                metrics?.cpu === null
+                                    ? 'No valid CPU reading yet'
+                                    : 'Utilization across all CPUs'
+                            }
+                            icon={Cpu}
+                            data={currentReading?.history.cpu ?? []}
+                        >
+                            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                                <div>
+                                    <dt className="text-app-muted">Logical CPUs</dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {metrics?.cpuDetails.cores?.toLocaleString() ??
+                                            summaryFallback}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-app-muted">I/O wait</dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {metrics?.cpuDetails.iowait == null
+                                            ? summaryFallback
+                                            : `${metrics.cpuDetails.iowait.toFixed(1)}%`}
+                                    </dd>
+                                </div>
+                                <div className="col-span-2">
+                                    <dt className="text-app-muted">
+                                        Load average · 1 / 5 / 15 min
+                                    </dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {metrics?.cpuDetails.loadAverage
+                                            ?.map((value) => value.toFixed(2))
+                                            .join(' / ') ?? summaryFallback}
+                                    </dd>
+                                </div>
+                            </dl>
+                        </ResourceWidget>
+                        <ResourceWidget
+                            title="Memory Usage"
+                            value={
+                                memory?.percent == null
+                                    ? summaryFallback
+                                    : `${memory.percent.toFixed(1)}%`
+                            }
+                            subtext={
+                                memory?.used != null && memory.total != null
+                                    ? `${formatMemory(memory.used)} of ${formatMemory(memory.total)}`
+                                    : 'Used memory / total memory'
+                            }
+                            icon={Activity}
+                            data={currentReading?.history.ram ?? []}
+                        >
+                            <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                                <div>
+                                    <dt className="text-app-muted">Available</dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {formatMemory(memory?.available, summaryFallback)}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt className="text-app-muted">Cached</dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {formatMemory(memory?.cached, summaryFallback)}
+                                    </dd>
+                                </div>
+                                <div className="col-span-2">
+                                    <dt className="text-app-muted">
+                                        Swap / page file · used / total
+                                    </dt>
+                                    <dd className="mt-1 tabular-nums">
+                                        {!memory?.swap
+                                            ? summaryFallback
+                                            : memory.swap.total === 0
+                                              ? 'Not configured'
+                                              : `${formatMemory(memory.swap.used)} / ${formatMemory(memory.swap.total)}`}
+                                    </dd>
+                                </div>
+                            </dl>
+                        </ResourceWidget>
+                        <RadialProgress
+                            value={metrics?.disk.percent ?? null}
+                            label={metrics?.disk.used ?? 'Not available'}
+                            subtext={metrics?.disk.total ?? 'Not available'}
+                            loading={metricsLoading}
                         />
-                        {isConnected ? 'Live Monitoring' : 'Disconnected'}
-                    </p>
-                </div>
-                <div className="text-right flex flex-col items-end gap-2">
-                    {error && (
-                        <div className="bg-red-500/10 text-red-400 text-[10px] px-2 py-1 rounded border border-red-500/20 max-w-[200px] truncate">
-                            {error}
-                        </div>
-                    )}
-                    {metrics.info.os !== 'Loading...' && (
-                        <div className="bg-[var(--color-app-surface)]/50 backdrop-blur px-4 py-2 rounded-lg border border-[var(--color-app-border)] text-xs font-mono text-[var(--color-app-muted)]">
-                            {metrics.info.os} {metrics.info.arch}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 pb-20 auto-rows-[minmax(180px,auto)]">
-                {/* Row 1: Primary Resources */}
-                <ResourceWidget
-                    title="CPU Usage"
-                    value={`${metrics.cpu.toFixed(1)}%`}
-                    subtext="Load Average"
-                    icon={Cpu}
-                    data={history.cpu}
-                    color="#f43f5e"
-                    className="md:col-span-1 xl:col-span-1"
-                />
-
-                <ResourceWidget
-                    title="Memory Usage"
-                    value={`${Math.round(metrics.ram.used)} MB`}
-                    subtext={`of ${Math.round(metrics.ram.total)} MB`}
-                    icon={Activity}
-                    data={history.ram}
-                    color="#8b5cf6"
-                    className="md:col-span-1 xl:col-span-1"
-                />
-
-                {/* Disk & Process */}
-                <RadialProgress
-                    value={metrics.disk.percent}
-                    label={metrics.disk.used}
-                    subtext={metrics.disk.total}
-                    color="#06b6d4"
-                    className="md:col-span-1"
-                />
-
-                <ProcessWidget
-                    count={metrics.processes}
-                    className="md:col-span-1"
-                />
-
-                {/* Row 2: Uptime & Info */}
-                <UptimeWidget
-                    uptime={metrics.uptime}
-                    className="md:col-span-1 xl:col-span-2"
-                />
-
-                <div className="bg-app-panel border border-[var(--color-app-border)] rounded-2xl p-6 flex flex-col justify-between shadow-sm backdrop-blur-xl bg-opacity-60 md:col-span-2 xl:col-span-2 relative overflow-hidden group hover:border-[var(--color-app-accent)]/50 transition-all">
-                    <h3 className="text-xs font-medium text-[var(--color-app-muted)] uppercase tracking-wider flex items-center gap-2 mb-4">
-                        <Gauge
-                            size={14}
-                            className="text-[var(--color-app-muted)]/70 group-hover:text-[var(--color-app-accent)] transition-colors"
-                        />{' '}
-                        System Info
-                    </h3>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                            <span className="text-xs text-[var(--color-app-muted)] uppercase">
-                                Kernel
-                            </span>
-                            <div className="font-mono text-sm text-[var(--color-app-text)]">
-                                {metrics.info.kernel || '-'}
-                            </div>
-                        </div>
-                        <div className="space-y-1">
-                            <span className="text-xs text-[var(--color-app-muted)] uppercase">
-                                Architecture
-                            </span>
-                            <div className="font-mono text-sm text-[var(--color-app-text)]">
-                                {metrics.info.arch || '-'}
-                            </div>
-                        </div>
                     </div>
+                    <NetworkWidget
+                        interfaces={metrics?.network ?? null}
+                        loading={metricsLoading}
+                    />
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] gap-3">
+                        <UptimeWidget
+                            uptime={metrics?.uptime ?? ''}
+                            loading={metricsLoading}
+                        />
+                        <ProcessWidget
+                            count={metrics?.processes ?? null}
+                            loading={metricsLoading}
+                        />
+                        <section
+                            aria-label="System Info"
+                            className="min-w-0 rounded-lg border border-app-border bg-app-panel p-4"
+                        >
+                            <h3 className="flex items-center gap-2 text-xs font-medium text-app-muted">
+                                <Gauge
+                                    size={14}
+                                    aria-hidden
+                                />
+                                System Info
+                            </h3>
+                            <p className="mt-3 break-words text-sm font-medium">
+                                {systemInfo || summaryFallback}
+                            </p>
+                            <dl className="mt-2 text-xs">
+                                <dt className="text-app-muted">Kernel</dt>
+                                <dd className="mt-1 break-all font-mono">
+                                    {metrics?.info.kernel || summaryFallback}
+                                </dd>
+                            </dl>
+                        </section>
+                    </div>
+                    <ProcessDetailsWidget
+                        count={metrics?.processes ?? null}
+                        countLoading={metricsLoading}
+                        open={processesOpen}
+                        onOpenChange={setProcessesOpen}
+                        requestedSort={processSort}
+                        onSortChange={setProcessSort}
+                        sample={detailResources.processes.reading?.sample ?? null}
+                        error={detailResources.processes.issue?.message ?? null}
+                        stale={detailResources.processes.stale}
+                        loading={detailResources.processes.loading}
+                    />
+                    <FilesystemWidget
+                        open={filesystemsOpen}
+                        onOpenChange={setFilesystemsOpen}
+                        sample={detailResources.filesystems.reading?.sample ?? null}
+                        error={detailResources.filesystems.issue?.message ?? null}
+                        stale={detailResources.filesystems.stale}
+                        loading={detailResources.filesystems.loading}
+                    />
+                    <QuickActionsWidget connectionId={activeConnectionId} />
                 </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="pb-8">
-                <QuickActionsWidget connectionId={activeConnectionId} />
-            </div>
-        </div>
+            )}
+        </section>
     );
 }

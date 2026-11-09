@@ -1,4 +1,13 @@
-import { Activity, Layers, Play, RefreshCw, Server, Shield, Terminal } from 'lucide-react';
+import {
+    Activity,
+    Layers,
+    type LucideIcon,
+    Play,
+    RefreshCw,
+    Server,
+    Shield,
+    Terminal,
+} from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '../../lib/utils';
@@ -10,7 +19,7 @@ interface QuickAction {
     id: string;
     label: string;
     command: string;
-    icon: any;
+    icon: LucideIcon;
     description: string;
     type: 'exec' | 'terminal'; // exec = run in background, terminal = paste in terminal
 }
@@ -134,10 +143,7 @@ export function QuickActionsWidget({
     const handleAction = async (action: QuickAction) => {
         if (action.type === 'terminal') {
             openTab(connectionId);
-            // Ideally we'd paste it in too, but we need access to the terminal instance.
-            // For now, simple context switch is okay, or we can use IPC to send 'write' event.
-            // window.ipcRenderer.send('terminal:write', { termId: connectionId, data: action.command + '\r' });
-            // The logic above assumes the termId matches connectionId (which it does in our MainLayout).
+            // Preserve the existing terminal action route after the workspace switch.
             setTimeout(() => {
                 window.ipcRenderer.send('terminal:write', {
                     termId: connectionId,
@@ -157,11 +163,15 @@ export function QuickActionsWidget({
                 title: action.label,
                 output: output || 'Command executed successfully (No Output)',
             });
-        } catch (err: any) {
-            showToast('error', `Command failed: ${err.message}`);
+        } catch (err: unknown) {
+            const message =
+                typeof err === 'object' && err !== null && 'message' in err
+                    ? String(err.message)
+                    : String(err);
+            showToast('error', `Command failed: ${message}`);
             setOutputModal({
                 title: `${action.label} (Failed)`,
-                output: `Error: ${err.message}`,
+                output: `Error: ${message}`,
             });
         } finally {
             setRunning(null);
@@ -174,60 +184,72 @@ export function QuickActionsWidget({
 
     return (
         <>
-            <div
+            <section
+                aria-label="Quick actions"
                 className={cn(
-                    'bg-app-panel border border-app-border rounded-2xl p-6 shadow-sm backdrop-blur-xl bg-opacity-60 flex flex-col',
+                    '@container/actions min-w-0 rounded-lg border border-app-border bg-app-panel p-4',
                     className,
                 )}
             >
-                <h3 className="text-xs font-medium text-app-muted uppercase tracking-wider flex items-center gap-2 mb-4">
-                    <Play size={14} /> Quick Actions
+                <h3 className="mb-3 flex items-center gap-2 text-xs font-medium text-app-muted">
+                    <Play
+                        size={14}
+                        className="shrink-0"
+                        aria-hidden="true"
+                    />{' '}
+                    Quick actions
                 </h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-2 @[32rem]/actions:grid-cols-2 @[50rem]/actions:grid-cols-3">
                     {actions.map((action) => (
-                        <button
+                        <Button
                             key={action.id}
-                            onClick={() => handleAction(action)}
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                                void handleAction(action);
+                            }}
                             disabled={!!running}
-                            className="flex items-start gap-3 p-3 rounded-xl border border-app-border/50 bg-app-surface/30 hover:bg-app-accent/10 hover:border-app-accent/30 transition-all text-left group"
+                            isLoading={running === action.id}
+                            className="h-auto min-w-0 items-start justify-start gap-3 whitespace-normal p-3 text-left"
                         >
-                            <div
-                                className={cn(
-                                    'p-2 rounded-lg transition-colors',
-                                    'bg-app-surface group-hover:bg-app-accent/20 text-app-accent',
-                                )}
-                            >
-                                <action.icon size={18} />
-                            </div>
-                            <div>
-                                <div className="font-semibold text-sm text-app-text group-hover:text-app-accent transition-colors flex items-center gap-2">
+                            {running !== action.id && (
+                                <action.icon
+                                    size={16}
+                                    className="mt-0.5 shrink-0 text-app-muted"
+                                    aria-hidden="true"
+                                />
+                            )}
+                            <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-medium text-app-text">
                                     {action.label}
-                                    {running === action.id && (
-                                        <div className="w-3 h-3 rounded-full border-2 border-app-accent border-t-transparent animate-spin" />
-                                    )}
-                                </div>
-                                <div className="text-xs text-app-muted mt-0.5 line-clamp-1 group-hover:text-app-muted/80">
+                                </span>
+                                <span className="mt-1 block text-xs text-app-muted">
                                     {action.description}
-                                </div>
-                            </div>
-                        </button>
+                                </span>
+                            </span>
+                        </Button>
                     ))}
                 </div>
-            </div>
+            </section>
 
             <Modal
                 isOpen={!!outputModal}
                 onClose={() => setOutputModal(null)}
                 title={outputModal?.title || ''}
             >
-                <div className="bg-[#0f111a] p-4 rounded-lg border border-app-border overflow-auto max-h-[60vh]">
-                    <pre className="font-mono text-xs text-green-400 break-all whitespace-pre-wrap font-ligatures-none">
+                <div className="max-h-[60vh] overflow-auto rounded-lg border border-app-border bg-app-bg p-4">
+                    <pre className="break-all whitespace-pre-wrap font-mono text-xs text-app-text font-ligatures-none">
                         {outputModal?.output}
                     </pre>
                 </div>
                 <div className="flex justify-end mt-4">
-                    <Button onClick={() => setOutputModal(null)}>Close</Button>
+                    <Button
+                        variant="secondary"
+                        onClick={() => setOutputModal(null)}
+                    >
+                        Close
+                    </Button>
                 </div>
             </Modal>
         </>

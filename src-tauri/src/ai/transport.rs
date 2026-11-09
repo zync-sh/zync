@@ -1,13 +1,16 @@
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::ai::AiStreamChunk;
 
 static REQUEST_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
 static STREAM_CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Initialize a pool once after success; a failed initialization remains retryable.
-fn pooled_client(
+pub(super) fn pooled_client(
     cache: &Mutex<Option<reqwest::Client>>,
     builder: impl FnOnce() -> reqwest::ClientBuilder,
 ) -> Result<reqwest::Client, String> {
@@ -25,15 +28,20 @@ fn pooled_client(
 /// Reuse connection pools while retaining the existing finite non-streaming request timeout.
 pub async fn make_client() -> Result<reqwest::Client, String> {
     pooled_client(&REQUEST_CLIENT, || {
-        reqwest::Client::builder().timeout(std::time::Duration::from_secs(30))
+        reqwest::Client::builder().timeout(REQUEST_TIMEOUT)
     })
 }
 
 /// Share streaming connections without adding a total timeout to long model responses.
 pub async fn make_stream_client() -> Result<reqwest::Client, String> {
     pooled_client(&STREAM_CLIENT, || {
-        reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(15))
+        reqwest::Client::builder().connect_timeout(STREAM_CONNECT_TIMEOUT)
     })
+}
+
+/// Keep request URLs out of provider errors returned to the renderer.
+pub(super) fn error_without_url(error: reqwest::Error) -> String {
+    error.without_url().to_string()
 }
 
 fn emit_stream_chunk(app: &AppHandle, request_id: &str, token: String) {
@@ -114,7 +122,7 @@ pub async fn read_sse_stream(
     let mut accumulated = String::new();
     let mut byte_buf: Vec<u8> = Vec::new();
 
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+    while let Some(chunk) = response.chunk().await.map_err(error_without_url)? {
         byte_buf.extend_from_slice(&chunk);
 
         let valid_len = match std::str::from_utf8(&byte_buf) {

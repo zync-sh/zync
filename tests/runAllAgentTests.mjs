@@ -65,6 +65,7 @@ export const tests = [
     'tests/vault/refresh.test.ts',
     'tests/vault/credentialReferences.test.ts',
     'tests/dashboard/dashboardMetrics.test.ts',
+    'tests/dashboard/dashboardDetails.test.ts',
     'tests/dashboard/dashboardMetadata.test.ts',
     'tests/securityAssessment.test.ts',
     'tests/securityPanelRetry.test.mjs',

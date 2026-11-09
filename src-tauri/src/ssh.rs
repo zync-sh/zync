@@ -5,7 +5,7 @@ use russh::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -112,10 +112,10 @@ struct AgentConsentBroker {
         tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<AgentSignatureDecision>>>,
     >,
     prompt_gate: Arc<tokio::sync::Mutex<()>>,
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     test_decisions:
         Option<Arc<tokio::sync::Mutex<std::collections::VecDeque<AgentSignatureDecision>>>>,
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     test_prompt_count: Option<Arc<AtomicUsize>>,
 }
 
@@ -125,14 +125,14 @@ impl AgentConsentBroker {
             app: Some(app),
             pending: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             prompt_gate: Arc::new(tokio::sync::Mutex::new(())),
-            #[cfg(all(test, target_os = "linux"))]
+            #[cfg(test)]
             test_decisions: None,
-            #[cfg(all(test, target_os = "linux"))]
+            #[cfg(test)]
             test_prompt_count: None,
         }
     }
 
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     fn for_test(
         decisions: impl IntoIterator<Item = AgentSignatureDecision>,
     ) -> (Self, Arc<AtomicUsize>) {
@@ -163,7 +163,7 @@ impl AgentConsentBroker {
         if allow_session.load(Ordering::Acquire) {
             return AgentSignatureDecision::AllowSession;
         }
-        #[cfg(all(test, target_os = "linux"))]
+        #[cfg(test)]
         if let Some(decisions) = &self.test_decisions {
             if let Some(prompt_count) = &self.test_prompt_count {
                 prompt_count.fetch_add(1, Ordering::Relaxed);
@@ -745,18 +745,22 @@ fn replace_known_host_keys(
 pub struct SshManager {
     consent_broker: Option<AgentConsentBroker>,
     pub(crate) verification: keyboard_interactive::PromptBroker,
+    /// Pin generated loopback hosts without using the user's known_hosts file.
+    #[cfg(test)]
+    fixture_keys: HashMap<u16, PublicKey>,
 }
 
 impl SshManager {
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             consent_broker: None,
             verification: keyboard_interactive::PromptBroker::default(),
+            fixture_keys: HashMap::new(),
         }
     }
 
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     fn with_test_consent(
         decisions: impl IntoIterator<Item = AgentSignatureDecision>,
     ) -> (Self, Arc<AtomicUsize>) {
@@ -765,6 +769,7 @@ impl SshManager {
             Self {
                 consent_broker: Some(broker),
                 verification: keyboard_interactive::PromptBroker::default(),
+                fixture_keys: HashMap::new(),
             },
             prompt_count,
         )
@@ -775,6 +780,8 @@ impl SshManager {
         Self {
             consent_broker: Some(AgentConsentBroker::new(app)),
             verification: keyboard_interactive::PromptBroker::default(),
+            #[cfg(test)]
+            fixture_keys: HashMap::new(),
         }
     }
 
@@ -879,7 +886,7 @@ impl SshManager {
             auth_banner: auth_banner.clone(),
             presented_key:presented_key.clone(),
             #[cfg(test)]
-            fixture_key:None,
+            fixture_key: self.fixture_keys.get(&config.port).cloned(),
         };
 
         let stream = crate::network_interfaces::connect(
@@ -1106,15 +1113,10 @@ mod tests {
         HOST_KEY_CHALLENGE_PREFIX,
     };
     use crate::types::HostKeyApproval;
-    #[cfg(target_os = "linux")]
-    use russh::keys::PublicKey;
-    use russh::keys::{self, HashAlg, PrivateKey};
+    use russh::keys::{self, HashAlg, PrivateKey, PublicKey};
     use std::time::{SystemTime, UNIX_EPOCH};
-    #[cfg(target_os = "linux")]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    #[cfg(target_os = "linux")]
     use tokio::sync::oneshot;
-    #[cfg(target_os = "linux")]
     use {
         super::{AgentSignatureDecision, SshManager},
         crate::types::{AgentForwardingConfig, AuthMethod, ConnectionConfig},
@@ -1207,17 +1209,14 @@ mod tests {
         assert!(parse_userauth_signature_request(&payload, selected_key, b"ssh-ed25519").is_none());
     }
 
-    #[cfg(target_os = "linux")]
     struct AgentProbeServer {
         result: Option<oneshot::Sender<Option<u32>>>,
     }
 
-    #[cfg(target_os = "linux")]
     struct ConsentProbeServer {
         result: Option<oneshot::Sender<Option<(u32, bool, bool, bool)>>>,
     }
 
-    #[cfg(target_os = "linux")]
     impl server::Handler for AgentProbeServer {
         type Error = anyhow::Error;
 
@@ -1232,7 +1231,7 @@ mod tests {
         async fn auth_publickey(
             &mut self,
             _user: &str,
-            _public_key: &PublicKey,
+            _public_key: server::VerifiedPublicKey<'_>,
         ) -> Result<server::Auth, Self::Error> {
             Ok(server::Auth::Accept)
         }
@@ -1266,7 +1265,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     impl server::Handler for ConsentProbeServer {
         type Error = anyhow::Error;
 
@@ -1344,23 +1342,16 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     async fn spawn_agent_probe_server(
         result: Option<oneshot::Sender<Option<u32>>>,
-    ) -> (SocketAddr, HostKeyApproval) {
+    ) -> (SocketAddr, PublicKey) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind SSH test server");
         let address = listener.local_addr().expect("SSH test server address");
         let host_key = PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519)
             .expect("generate host key");
-        let approval = HostKeyApproval {
-            fingerprint: host_key
-                .public_key()
-                .fingerprint(HashAlg::Sha256)
-                .to_string(),
-            replace: false,
-        };
+        let public_key = host_key.public_key().clone();
         let config = Arc::new(server::Config {
             auth_rejection_time: std::time::Duration::ZERO,
             auth_rejection_time_initial: Some(std::time::Duration::ZERO),
@@ -1374,26 +1365,19 @@ mod tests {
                 .expect("start SSH test session");
             let _ = running.await;
         });
-        (address, approval)
+        (address, public_key)
     }
 
-    #[cfg(target_os = "linux")]
     async fn spawn_consent_probe_server(
         result: oneshot::Sender<Option<(u32, bool, bool, bool)>>,
-    ) -> (SocketAddr, HostKeyApproval) {
+    ) -> (SocketAddr, PublicKey) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind consent probe server");
         let address = listener.local_addr().expect("consent probe server address");
         let host_key = PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519)
             .expect("generate host key");
-        let approval = HostKeyApproval {
-            fingerprint: host_key
-                .public_key()
-                .fingerprint(HashAlg::Sha256)
-                .to_string(),
-            replace: false,
-        };
+        let public_key = host_key.public_key().clone();
         let config = Arc::new(server::Config {
             auth_rejection_time: std::time::Duration::ZERO,
             auth_rejection_time_initial: Some(std::time::Duration::ZERO),
@@ -1416,7 +1400,7 @@ mod tests {
             .expect("start consent probe session");
             let _ = running.await;
         });
-        (address, approval)
+        (address, public_key)
     }
 
     #[test]
@@ -1541,20 +1525,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
-    #[ignore = "Docker end-to-end security regression"]
+    #[ignore = "Requires loopback SSH sockets"]
     async fn selected_key_consent_distinguishes_once_from_connection() {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let home = std::env::temp_dir().join(format!("zync-agent-consent-{suffix}"));
-        std::fs::create_dir_all(home.join(".ssh")).expect("create isolated SSH home");
-        std::env::set_var("HOME", &home);
-
         let (result_tx, result_rx) = oneshot::channel();
-        let (address, approval) = spawn_consent_probe_server(result_tx).await;
+        let (address, host_key) = spawn_consent_probe_server(result_tx).await;
         let forwarded_key =
             PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519)
                 .expect("generate forwarded key");
@@ -1563,10 +1538,11 @@ mod tests {
             .expect("encode forwarded key");
         let forwarded_key_data = String::from_utf8(forwarded_key_data).expect("forwarded key PEM");
 
-        let (manager, prompt_count) = SshManager::with_test_consent([
+        let (mut manager, prompt_count) = SshManager::with_test_consent([
             AgentSignatureDecision::AllowOnce,
             AgentSignatureDecision::AllowSession,
         ]);
+        manager.fixture_keys.insert(address.port(), host_key);
         let (failure_tx, _failure_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let tunnels = Arc::new(TunnelManager::new(failure_tx));
         let (session, _, _) = manager
@@ -1589,7 +1565,7 @@ mod tests {
                         },
                     }),
                     jump_host: None,
-                    host_key_approval: Some(approval),
+                    host_key_approval: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,
@@ -1628,31 +1604,23 @@ mod tests {
 
         channel.close().await.expect("close password host channel");
         drop(session);
-        let _ = std::fs::remove_dir_all(home);
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
-    #[ignore = "Docker end-to-end security regression"]
+    #[ignore = "Requires loopback SSH sockets"]
     async fn authenticated_key_is_not_forwarded_to_a_password_session() {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let home = std::env::temp_dir().join(format!("zync-agent-forward-{suffix}"));
-        std::fs::create_dir_all(home.join(".ssh")).expect("create isolated SSH home");
-        std::env::set_var("HOME", &home);
-
-        let (address_a, approval_a) = spawn_agent_probe_server(None).await;
+        let (address_a, host_key_a) = spawn_agent_probe_server(None).await;
         let (result_tx, result_rx) = oneshot::channel();
-        let (address_b, approval_b) = spawn_agent_probe_server(Some(result_tx)).await;
+        let (address_b, host_key_b) = spawn_agent_probe_server(Some(result_tx)).await;
         let key_a = PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519)
             .expect("generate client key");
         let mut key_data = Vec::new();
         keys::encode_pkcs8_pem(&key_a, &mut key_data).expect("encode client key");
         let key_data = String::from_utf8(key_data).expect("private key PEM");
 
-        let manager = SshManager::new();
+        let mut manager = SshManager::new();
+        manager.fixture_keys.insert(address_a.port(), host_key_a);
+        manager.fixture_keys.insert(address_b.port(), host_key_b);
         let (failure_tx, _failure_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let tunnels = Arc::new(TunnelManager::new(failure_tx));
         let (session_a, _, _) = manager
@@ -1670,7 +1638,7 @@ mod tests {
                     },
                     agent_forwarding: None,
                     jump_host: None,
-                    host_key_approval: Some(approval_a),
+                    host_key_approval: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,
@@ -1693,7 +1661,7 @@ mod tests {
                     },
                     agent_forwarding: None,
                     jump_host: None,
-                    host_key_approval: Some(approval_b),
+                    host_key_approval: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,
@@ -1716,6 +1684,5 @@ mod tests {
 
         channel.close().await.expect("close host B channel");
         drop((session_a, session_b));
-        let _ = std::fs::remove_dir_all(home);
     }
 }
