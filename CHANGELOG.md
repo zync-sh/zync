@@ -31,6 +31,11 @@ All notable changes to Zync are documented in this file. The format is based on 
   Retained process rows show the sort that produced them while a new sort loads.
   ([d2bd24f7])
 
+### Security
+
+- **Updater TLS** uses `rustls 0.23.46` and `rustls-webpki 0.103.16` to pick up
+  TLS and certificate validation fixes.
+
 ## [2.39.0] - 2026-11-07
 
 ### Added
