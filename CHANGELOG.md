@@ -42,6 +42,8 @@ All notable changes to Zync are documented in this file. The format is based on 
   equality checks on that architecture.
 - **Tauri serialization** uses `serde_with 3.21.0` to fix a panic when
   serializing empty entries through `KeyValueMap`.
+- **Terminal test runner** loads its environment from a static module and passes
+  test paths as command-line arguments.
 
 ## [2.39.0] - 2026-11-07
 

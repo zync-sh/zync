@@ -353,9 +353,12 @@ export function runAgentTests(arguments_ = process.argv.slice(2), spawn = spawnS
         const legacyTerminal = source.startsWith('tests/terminal') && /\.[cm]?js$/.test(source);
         const args = legacyTerminal
             ? [
-                  '--input-type=module',
-                  '--eval',
-                  `globalThis.window={ipcRenderer:{invoke:async()=>undefined,send:()=>{},on:()=>()=>{}},dispatchEvent:()=>true};globalThis.document={body:{getAttribute:()=> 'dark'}};await import(${JSON.stringify(pathToFileURL(file).href)})`,
+                  '--import',
+                  pathToFileURL(
+                      build.resolveTestFile('tests/terminal/helpers/legacyTerminalEnvironment.ts'),
+                  ).href,
+                  '--',
+                  file,
               ]
             : [file, ...(browserRun ? testArguments.slice(1) : [])];
         const result = spawn(process.execPath, args, { stdio: 'inherit' });
