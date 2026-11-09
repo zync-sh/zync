@@ -1,34 +1,34 @@
-import { cn } from '../../lib/utils';
 import { Clock } from 'lucide-react';
+
+import { cn } from '../../lib/utils';
 
 interface UptimeWidgetProps {
     uptime: string;
+    loading: boolean;
     className?: string;
 }
 
-export function UptimeWidget({ uptime, className }: UptimeWidgetProps) {
-    // Format uptime nicely if possible (assuming 'up X days, Y hours, ...')
-    // Let's just display it prominently
-
+/** Show the reported uptime as metadata without implying a separate progress measurement. */
+export function UptimeWidget({ uptime, loading, className }: UptimeWidgetProps) {
     return (
-        <div className={cn(
-            'bg-app-panel border border-[var(--color-app-border)] rounded-2xl p-5 flex flex-col justify-between shadow-sm transition-all hover:border-[var(--color-app-accent)]/50 hover:shadow-md group relative overflow-hidden backdrop-blur-xl bg-opacity-60',
-            className
-        )}>
-            <h3 className="text-xs font-medium text-[var(--color-app-muted)] uppercase tracking-wider flex items-center gap-2 mb-1">
-                <Clock size={14} className={cn("text-[var(--color-app-muted)]/70 group-hover:text-[var(--color-app-accent)] transition-colors")} />
-                System Uptime
+        <section
+            aria-label="System uptime"
+            className={cn(
+                'min-w-0 rounded-lg border border-app-border bg-app-panel p-4',
+                className,
+            )}
+        >
+            <h3 className="flex items-center gap-2 text-xs font-medium text-app-muted">
+                <Clock
+                    size={14}
+                    className="shrink-0"
+                    aria-hidden="true"
+                />
+                System uptime
             </h3>
-
-            <div className="flex-1 flex items-center">
-                <span className="text-xl font-bold text-[var(--color-app-text)] tracking-tight line-clamp-2 leading-relaxed">
-                    {uptime || "Calculating..."}
-                </span>
-            </div>
-
-            <div className="w-full h-1 bg-[var(--color-app-surface)] rounded-full mt-2 overflow-hidden">
-                <div className="h-full bg-[var(--color-app-accent)]/50 w-full animate-pulse"></div>
-            </div>
-        </div>
+            <p className="mt-2 break-words text-sm font-medium text-app-text tabular-nums">
+                {uptime || (loading ? 'Waiting for sample' : 'Unavailable')}
+            </p>
+        </section>
     );
 }
