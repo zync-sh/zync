@@ -38,6 +38,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Gemini authentication** sends API keys in a sensitive request header, blocks
   redirects, and redacts keys echoed in error responses.
 - **Linux and macOS updates** use `tar 0.4.46` for patched archive extraction.
+- **ARM64 cryptography** uses `cmov 0.5.4` to correct conditional moves and
+  equality checks on that architecture.
 
 ## [2.39.0] - 2026-11-07
 
