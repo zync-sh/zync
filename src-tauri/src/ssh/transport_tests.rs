@@ -105,10 +105,10 @@ impl server::Handler for Server {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        key: &keys::PublicKey,
+        key: server::VerifiedPublicKey<'_>,
     ) -> anyhow::Result<server::Auth> {
         Ok(
-            if self.certificate.is_none() && user == "fixture" && *key == self.key {
+            if self.certificate.is_none() && user == "fixture" && key.public_key == &self.key {
                 if self.verification_round.is_some() {
                     return Ok(server::Auth::Reject {
                         proceed_with_methods: Some(MethodSet::from(
