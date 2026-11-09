@@ -64,6 +64,7 @@ export const tests = [
     'tests/plugins/workerRequests.test.ts',
     'tests/vault/refresh.test.ts',
     'tests/vault/credentialReferences.test.ts',
+    'tests/connections/hostInventoryAccount.test.ts',
     'tests/dashboard/dashboardMetrics.test.ts',
     'tests/dashboard/dashboardDetails.test.ts',
     'tests/dashboard/dashboardMetadata.test.ts',
