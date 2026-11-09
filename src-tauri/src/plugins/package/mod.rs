@@ -52,14 +52,13 @@ pub fn extract_archive<R: Read + Seek>(
 
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
-        let entry_name = entry.name().to_string();
+        let entry_name = entry.name()?.into_owned();
         validate_archive_entry_name(&entry_name)?;
-        reject_special_archive_entry(&entry)?;
+        reject_special_archive_entry(entry.unix_mode(), &entry_name)?;
 
         let relative_path = entry
             .enclosed_name()
-            .ok_or_else(|| anyhow!("Plugin archive entry escapes its package: {entry_name}"))?
-            .to_path_buf();
+            .ok_or_else(|| anyhow!("Plugin archive entry escapes its package: {entry_name}"))?;
         let normalized = normalized_package_path(&relative_path)?;
         if !paths.insert(normalized) {
             return Err(anyhow!(
@@ -435,13 +434,12 @@ fn normalized_package_path(path: &Path) -> Result<String> {
     Ok(rendered.to_ascii_lowercase())
 }
 
-fn reject_special_archive_entry(entry: &zip::read::ZipFile<'_>) -> Result<()> {
-    if let Some(mode) = entry.unix_mode() {
+fn reject_special_archive_entry(mode: Option<u32>, entry_name: &str) -> Result<()> {
+    if let Some(mode) = mode {
         let kind = mode & 0o170000;
         if kind != 0 && kind != 0o100000 && kind != 0o040000 {
             return Err(anyhow!(
-                "Plugin archive contains a link or special file: {}",
-                entry.name()
+                "Plugin archive contains a link or special file: {entry_name}"
             ));
         }
     }
