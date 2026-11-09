@@ -40,6 +40,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 - **Linux and macOS updates** use `tar 0.4.46` for patched archive extraction.
 - **ARM64 cryptography** uses `cmov 0.5.4` to correct conditional moves and
   equality checks on that architecture.
+- **Tauri serialization** uses `serde_with 3.21.0` to fix a panic when
+  serializing empty entries through `KeyValueMap`.
 
 ## [2.39.0] - 2026-11-07
 
