@@ -4,6 +4,33 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- The **Host Dashboard** uses compact cards that adapt to pane width, themed
+  Quick Actions and readable command output. Readings show their collection time
+  and indicate pending, unavailable or stale data. ([d2bd24f7])
+- **Host diagnostics** include CPU context, available and cached memory, swap or
+  page-file usage, and network rates per interface. Expand Processes to sort by
+  CPU or memory, or Filesystems to inspect local storage and inode usage. Detail
+  scans refresh less often, share results across panes and pause when collapsed
+  or hidden. ([d2bd24f7])
+- **Dashboard history charts** show a percentage scale, actual observation times
+  and the latest reading. Inspect samples with the pointer or keyboard. Labels
+  identify steady readings and gaps in collection. ([d2bd24f7])
+
+### Fixed
+
+- **Linux CPU utilization** comes from successive system CPU counters. Host and
+  process readings use the same interval checks when I/O wait decreases, and
+  cached samples retain their original timestamps. ([d2bd24f7], [be5a6e46])
+- **Linux process counts** exclude the process-list header. ([d2bd24f7])
+- **Linux dashboard collection** works with Fish SSH accounts, keeps summary fields
+  aligned when a reading is missing, and handles non-UTF-8 names in detail scans.
+  Filesystem probes skip covered mounts. ([d2bd24f7], [be5a6e46])
+- **Dashboard reading states** distinguish initial collection from a failed sample.
+  Retained process rows show the sort that produced them while a new sort loads.
+  ([d2bd24f7])
+
 ## [2.39.0] - 2026-11-07
 
 ### Added
@@ -3474,3 +3501,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [822354de]: https://github.com/zync-sh/zync/commit/822354de2d0a611de6be334ea44b57df7bc67f37
 [6353993d]: https://github.com/zync-sh/zync/commit/6353993d98451ebaa0ec82bd18f93d01951dd509
 [ce0f4d5f]: https://github.com/zync-sh/zync/commit/ce0f4d5f9292dfa4c213020139706d09a9cc3ebd
+[d2bd24f7]: https://github.com/zync-sh/zync/commit/d2bd24f7304ca3e104f824a15883a66488a528ad
+[be5a6e46]: https://github.com/zync-sh/zync/commit/be5a6e46b0114279bd90989cc325454dae576d7e
