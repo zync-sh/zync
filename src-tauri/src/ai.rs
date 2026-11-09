@@ -72,10 +72,6 @@ pub(crate) async fn make_stream_client() -> Result<reqwest::Client, String> {
     transport::make_stream_client().await
 }
 
-pub(crate) fn sanitize_error(err: &str) -> String {
-    policy::errors::sanitize_error(err)
-}
-
 pub(crate) async fn read_error_body(response: reqwest::Response) -> String {
     policy::errors::read_error_body(response).await
 }

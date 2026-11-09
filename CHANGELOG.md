@@ -35,6 +35,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 - **Updater TLS** uses `rustls 0.23.46` and `rustls-webpki 0.103.16` to pick up
   TLS and certificate validation fixes.
+- **Gemini authentication** sends API keys in a sensitive request header, blocks
+  redirects, and redacts keys echoed in error responses.
 
 ## [2.39.0] - 2026-11-07
 
