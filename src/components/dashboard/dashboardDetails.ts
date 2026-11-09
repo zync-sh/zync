@@ -79,13 +79,13 @@ const LINUX_PROCESS_AWK =
     LINUX_NAME_AWK +
     String.raw`
 BEGIN {
-    printf "%s%cprocesses%clinux%c1%c", marker, 0, 0, 0, 0;
+    printf "%s%cprocesses%clinux%c1%c", marker, separator, separator, separator, separator;
     if ((getline aggregate < "/proc/stat") > 0) {
         split(aggregate, cpu, / +/);
         if (cpu[1] == "cpu") for (i=2; i<=9; i++) printf "%s%s", (i>2 ? "," : ""), (cpu[i] == "" ? "0" : cpu[i]);
     }
     close("/proc/stat");
-    printf "%c%c", 0, 0;
+    printf "%c%c", separator, separator;
 }
 {
     if ($0 !~ /^\/proc\/[0-9]+$/) next;
@@ -107,9 +107,9 @@ BEGIN {
     if (count < 22 || fields[12] !~ /^[0-9]+$/ || fields[13] !~ /^[0-9]+$/ || fields[20] !~ /^[0-9]+$/) next;
     memory="";
     if (pageSize ~ /^[0-9]+$/ && pageSize > 0 && fields[22] ~ /^[0-9]+$/) memory=sprintf("%.0f",fields[22]*pageSize);
-    printf "P%c%s%c%s%c%s%c%.0f%c%s%c", 0,pid,0,hexName(name,0),0,fields[20],0,fields[12]+fields[13],0,memory,0;
+    printf "P%c%s%c%s%c%s%c%.0f%c%s%c", separator,pid,separator,hexName(name,0),separator,fields[20],separator,fields[12]+fields[13],separator,memory,separator;
 }
-END { printf "END%c%d%c",0,limited ? 1 : 0,0; }
+END { printf "END%c%d%c",separator,limited ? 1 : 0,separator; }
 `;
 
 /** Quote application-owned scripts; endpoint and process data never become command source. */
@@ -123,12 +123,17 @@ export const LINUX_PROCESS_DETAILS_COMMAND = runDashboardPosixScript(
         'if [ -r /proc/stat ] && command -v awk >/dev/null 2>&1; then',
         'LC_ALL=C; export LC_ALL',
         'pageSize=$(getconf PAGESIZE 2>/dev/null)',
+        'sample_processes() {',
         "printf '%s\\n' /proc/[0-9]* | awk -v marker=" +
             shellLiteral(LINUX_FRAME) +
             ' -v limit=' +
             DASHBOARD_PROCESS_SCAN_LIMIT +
-            ' -v pageSize="$pageSize" ' +
+            ' -v pageSize="$pageSize" -v separator="$1" ' +
             shellLiteral(LINUX_PROCESS_AWK),
+        '}',
+        // Some awk implementations drop NUL from printf. Byte 1 cannot occur in the encoded fields.
+        "if command -v tr >/dev/null 2>&1; then sample_processes 1 | tr '\\001' '\\000';",
+        'else sample_processes 0; fi',
         'else ' + unsupportedProcesses + '; fi',
     ].join('\n'),
 );
