@@ -8,6 +8,7 @@ import { VNC_DIRECT_NETWORK_NOTICE } from '../domain/profile';
 
 interface VncDisconnectedViewProps {
     profileName?: string;
+    direct: boolean;
     endpoint: string;
     port: string;
     onPortChange: (port: string) => void;
@@ -23,6 +24,7 @@ interface VncDisconnectedViewProps {
 /** Present connection and recovery actions without taking ownership of the VNC session. */
 export function VncDisconnectedView({
     profileName,
+    direct,
     endpoint,
     port,
     onPortChange,
@@ -63,7 +65,7 @@ export function VncDisconnectedView({
             }
         >
             <div className="mt-3 space-y-3 sm:mt-4 [@media(max-height:560px)]:mt-2.5">
-                {profileName && (
+                {direct && (
                     <p className="text-xs leading-relaxed text-app-muted">
                         {VNC_DIRECT_NETWORK_NOTICE}
                     </p>

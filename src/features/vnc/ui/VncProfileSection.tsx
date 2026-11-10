@@ -6,7 +6,7 @@ import {
     type SidebarSectionCreateItem,
 } from '../../../components/layout/sidebar/SidebarSection';
 import { useAppStore } from '../../../store/useAppStore';
-import { formatVncEndpoint } from '../domain/profile';
+import { describeVncDestination } from '../domain/profile';
 import { confirmDeleteVncProfile, openVncProfileEditor } from './VncProfileManager';
 
 const createMenu: SidebarSectionCreateItem[] = [
@@ -62,7 +62,7 @@ export function VncProfileSection({ compactMode }: { compactMode: boolean }) {
                         <ProfileConnectionItem
                             kindLabel="VNC"
                             name={profile.name}
-                            secondary={showAddresses ? formatVncEndpoint(profile) : undefined}
+                            secondary={showAddresses ? describeVncDestination(profile) : undefined}
                             icon={<Monitor size={16} />}
                             compactMode={compactMode}
                             active={activeProfileId === profile.id}

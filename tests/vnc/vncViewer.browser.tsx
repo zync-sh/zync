@@ -11,10 +11,10 @@ import {
     useContentMenuItems,
     WorkspaceContextActions,
 } from '../../src/components/workspace/WorkspaceContextActions';
-import type { VncProfile } from '../../src/features/vnc/domain/profile';
-import { DirectVncTab } from '../../src/features/vnc/ui/DirectVncTab';
+import { VNC_SSH_LOOPBACK, type VncProfile } from '../../src/features/vnc/domain/profile';
 import { useVncProfileTabMenuItems } from '../../src/features/vnc/ui/useVncProfileTabMenuItems';
 import { VncPane } from '../../src/features/vnc/ui/VncPane';
+import { VncProfileTab } from '../../src/features/vnc/ui/VncProfileTab';
 import { featurePaneContent, paneContentKey, singleFeaturePane } from '../../src/lib/paneLayout';
 import { useAppStore } from '../../src/store/useAppStore';
 
@@ -27,13 +27,15 @@ const contentKey = paneContentKey(featurePaneContent('vnc', viewerId), viewerPan
 const noop = () => {};
 const unavailable = () => false;
 const query = new URLSearchParams(location.search);
+const viaSsh = query.has('via-ssh');
+const ssh = { id: connectionId, host: 'fixture.invalid', port: 22, username: 'fixture' };
 let vaultUnlocked = !query.has('locked');
 const width = Number(query.get('width'));
 const height = Number(query.get('height'));
 const directProfile: VncProfile = {
     id: 'vnc-fixture-direct',
     name: 'Direct VNC fixture',
-    host: 'vnc.fixture.test',
+    host: viaSsh ? VNC_SSH_LOOPBACK : 'vnc.fixture.test',
     port: 5999,
     resolution:
         width && height
@@ -41,6 +43,7 @@ const directProfile: VncProfile = {
             : { mode: query.has('auto') ? 'auto' : 'server' },
     scale: query.get('scale') === '150' ? 150 : 'fit',
     ...(query.has('vault') && { credentialId: 'vnc-fixture-credential' }),
+    ...(viaSsh && { ssh }),
 };
 
 interface Attempt {
@@ -49,6 +52,7 @@ interface Attempt {
     host?: string;
     port: number;
     profileId?: string;
+    useVault?: boolean;
 }
 const starts: Attempt[] = [];
 const stops: string[] = [];
@@ -108,6 +112,45 @@ useAppStore.setState((state) => ({
     sessionLoaded: true,
     settings: { ...state.settings, vncProfiles: [directProfile] },
     saveSession: async () => {},
+    ...(viaSsh && {
+        connect: async (
+            id: string,
+            options?: { preserveWorkspace?: boolean; signal?: AbortSignal },
+        ) => {
+            document.body.dataset.vncSshConnect = JSON.stringify({
+                id,
+                preserveWorkspace: options?.preserveWorkspace,
+                scoped: Boolean(options?.signal),
+            });
+            if (!query.has('queued-ssh')) {
+                useAppStore.setState(({ connections }) => ({
+                    connections: connections.map((host) => ({ ...host, status: 'connecting' })),
+                }));
+            }
+            if (query.has('hold-ssh')) {
+                await new Promise<void>((resolve) => {
+                    options?.signal?.addEventListener(
+                        'abort',
+                        () => {
+                            document.body.dataset.vncSshCancel = id;
+                            useAppStore.setState(({ connections }) => ({
+                                connections: connections.map((host) => ({
+                                    ...host,
+                                    status: 'disconnected',
+                                })),
+                            }));
+                            resolve();
+                        },
+                        { once: true },
+                    );
+                });
+                return;
+            }
+            useAppStore.setState(({ connections }) => ({
+                connections: connections.map((host) => ({ ...host, status: 'connected' })),
+            }));
+        },
+    }),
     paneLayouts: {
         [connectionId]: {
             [viewerId]: viewerPane,
@@ -118,10 +161,10 @@ useAppStore.setState((state) => ({
         {
             id: connectionId,
             name: 'VNC fixture host',
-            host: 'fixture.invalid',
-            port: 22,
-            username: 'fixture',
-            status: 'connected',
+            host: query.has('changed-ssh') ? 'replacement.invalid' : ssh.host,
+            port: ssh.port,
+            username: ssh.username,
+            status: viaSsh ? 'disconnected' : 'connected',
         },
     ],
 }));
@@ -207,7 +250,7 @@ function DirectFixture() {
                 hidden={!visible}
             >
                 {tabs.map((tab) => (
-                    <DirectVncTab
+                    <VncProfileTab
                         key={tab.id}
                         tabId={tab.id}
                         profileId={tab.vncProfileId}

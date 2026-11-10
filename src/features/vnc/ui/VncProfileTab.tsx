@@ -1,9 +1,10 @@
 import type { WorkspaceActions } from '../../../components/workspace/workspaceActionsContext';
 import { useAppStore } from '../../../store/useAppStore';
+import { vncDestinationKey } from '../domain/profile';
 import { VncPane } from './VncPane';
 
 /** Resolve the saved endpoint at the point of use. Endpoint edits retire the old viewer. */
-export function DirectVncTab({
+export function VncProfileTab({
     tabId,
     profileId,
     active,
@@ -29,9 +30,9 @@ export function DirectVncTab({
     }
     return (
         <VncPane
-            key={JSON.stringify([profile.host, profile.port])}
+            key={vncDestinationKey(profile)}
             contentKey={tabId}
-            direct={profile}
+            profile={profile}
             visible={active}
             focused={active}
             registerMenuItems={registerMenuItems}

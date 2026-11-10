@@ -124,9 +124,9 @@ declare global {
 }
 
 // Lazy Load Heavy Components
-const DirectVncTab = lazy(() =>
-    import('../../features/vnc/ui/DirectVncTab').then((module) => ({
-        default: module.DirectVncTab,
+const VncProfileTab = lazy(() =>
+    import('../../features/vnc/ui/VncProfileTab').then((module) => ({
+        default: module.VncProfileTab,
     })),
 );
 const DirectSerialTab = lazy(() =>
@@ -2080,7 +2080,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
                                                                     }
                                                                 />
                                                             ) : (
-                                                                <DirectVncTab
+                                                                <VncProfileTab
                                                                     tabId={tab.id}
                                                                     profileId={tab.vncProfileId}
                                                                     active={
