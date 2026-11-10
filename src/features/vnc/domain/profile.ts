@@ -6,6 +6,15 @@ export interface VncProfile {
     resolution: VncResolution;
     scale: VncScale;
     credentialId?: string;
+    ssh?: VncSshHost;
+}
+
+/** Bind a profile to the saved SSH host identity used to reach its loopback desktop. */
+export interface VncSshHost {
+    id: string;
+    host: string;
+    port: number;
+    username: string;
 }
 
 export type VncResolution =
@@ -27,9 +36,11 @@ export interface VncProfileDraft {
     resolution?: VncResolutionDraft;
     scale?: VncScale;
     credentialId?: string;
+    ssh?: VncSshHost;
 }
 
 export const DEFAULT_VNC_PORT = 5900;
+export const VNC_SSH_LOOPBACK = '127.0.0.1';
 export const DEFAULT_VNC_RESOLUTION: VncResolution = { mode: 'server' };
 export const DEFAULT_VNC_SCALE: VncScale = 'fit';
 // Bound explicit requests by both the maximum side and the framebuffer memory budget.
@@ -45,7 +56,7 @@ export const VNC_RESOLUTION_PRESETS = [
 ] as const;
 export const VNC_PROFILE_NAME_MAX_LENGTH = 120;
 export const VNC_DIRECT_NETWORK_NOTICE =
-    'Direct VNC can expose screen contents and input to the network. Use it only on a trusted network or VPN.';
+    'Direct VNC may be unencrypted, with or without a password. Use a trusted network or VPN, or choose Via SSH.';
 
 const DNS_LABEL = /^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/i;
 const IPV4_PART = /^(?:0|[1-9]\d{0,2})$/;
@@ -95,6 +106,52 @@ export function normalizeVncPort(input: string): number | undefined {
     const text = input.trim();
     const port = Number(text);
     return /^\d+$/.test(text) && port >= 1 && port <= 65535 ? port : undefined;
+}
+
+/** Accept only bounded SSH connection metadata, keeping the exact saved identity. */
+function normalizeVncSshHost(value: unknown): VncSshHost | undefined {
+    if (!value || typeof value !== 'object') {
+        return;
+    }
+    const { id, host, port, username } = value as Partial<VncSshHost>;
+    const valid = (text: unknown): text is string =>
+        typeof text === 'string' &&
+        text.length > 0 &&
+        text.length <= 512 &&
+        !/[\u0000-\u001f\u007f]/.test(text);
+    if (
+        !valid(id) ||
+        id === 'local' ||
+        !valid(host) ||
+        !valid(username) ||
+        typeof port !== 'number' ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+    ) {
+        return;
+    }
+    return { id, host, port, username };
+}
+
+/** A changed or missing SSH host needs explicit profile review before it can carry VNC. */
+export function matchesVncSshHost(saved: VncSshHost, current?: VncSshHost): boolean {
+    return (
+        current?.id === saved.id &&
+        current.host === saved.host &&
+        current.port === saved.port &&
+        current.username === saved.username
+    );
+}
+
+/** Identify the complete VNC destination for connection requests and Vault confirmation. */
+export function vncDestinationKey(profile: Pick<VncProfile, 'host' | 'port' | 'ssh'>): string {
+    const ssh = profile.ssh;
+    return JSON.stringify([
+        profile.host.toLowerCase(),
+        profile.port,
+        ssh && [ssh.id, ssh.host, ssh.port, ssh.username],
+    ]);
 }
 
 type VncProfileValidation =
@@ -171,7 +228,8 @@ function validateResolutionDraft(
 /** Validate the editable fields and return only the metadata allowed in device settings. */
 export function validateVncProfileDraft(draft: VncProfileDraft): VncProfileValidation {
     const name = draft.name.trim();
-    const host = normalizeVncHost(draft.host);
+    const ssh = normalizeVncSshHost(draft.ssh);
+    const host = ssh ? VNC_SSH_LOOPBACK : normalizeVncHost(draft.host);
     const port = normalizeVncPort(draft.port);
     const errors: VncProfileErrors = {};
     if (!name || name.length > VNC_PROFILE_NAME_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(name)) {
@@ -179,6 +237,9 @@ export function validateVncProfileDraft(draft: VncProfileDraft): VncProfileValid
     }
     if (!host) {
         errors.host = 'Enter a host name or IP address. Use the separate port field.';
+    }
+    if (draft.ssh !== undefined && !ssh) {
+        errors.ssh = 'Choose a valid saved SSH host.';
     }
     if (port === undefined) {
         errors.port = 'Enter a whole port number from 1 to 65535.';
@@ -194,7 +255,17 @@ export function validateVncProfileDraft(draft: VncProfileDraft): VncProfileValid
     }
     return !host || port === undefined || !resolution || Object.keys(errors).length > 0
         ? { errors }
-        : { value: { name, host, port, resolution, scale, ...(credentialId && { credentialId }) } };
+        : {
+              value: {
+                  name,
+                  host,
+                  port,
+                  resolution,
+                  scale,
+                  ...(credentialId && { credentialId }),
+                  ...(ssh && { ssh }),
+              },
+          };
 }
 
 /** Preserve legacy auto-resize behavior only when the replacement setting is absent. */
@@ -239,6 +310,7 @@ export function normalizeVncProfiles(input: unknown): VncProfile[] {
             name: item.name,
             host: item.host,
             port: String(item.port),
+            ssh: item.ssh,
         });
         if (value) {
             const credentialId = normalizeVncCredentialId(item.credentialId);
@@ -257,4 +329,11 @@ export function normalizeVncProfiles(input: unknown): VncProfile[] {
 /** Bracket IPv6 for display so the host and port remain visually distinct. */
 export function formatVncEndpoint(profile: Pick<VncProfile, 'host' | 'port'>): string {
     return `${profile.host.includes(':') ? `[${profile.host}]` : profile.host}:${profile.port}`;
+}
+
+/** Describe the visible route without confusing the SSH port and the remote VNC port. */
+export function describeVncDestination(profile: Pick<VncProfile, 'host' | 'port' | 'ssh'>): string {
+    return profile.ssh
+        ? `Loopback port ${profile.port} via ${formatVncEndpoint(profile.ssh)}`
+        : formatVncEndpoint(profile);
 }

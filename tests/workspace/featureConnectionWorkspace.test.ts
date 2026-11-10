@@ -21,18 +21,35 @@ export async function runFeatureConnectionWorkspaceChecks(
     const layout = pure('lib/paneLayout/index.ts');
     let fixtureNumber = 0;
 
-    function fixture({ terminals = false, retry }: { terminals?: boolean; retry?: Retry } = {}) {
+    function fixture({
+        terminals = false,
+        retry,
+        holdConnect = false,
+    }: {
+        terminals?: boolean;
+        retry?: Retry;
+        holdConnect?: boolean;
+    } = {}) {
         const id = `feature-connect-${++fixtureNumber}`;
         let state: any;
         let attempt = 0;
         let keyPreparation = 0;
         let serial = 0;
         const calls: string[] = [];
+        const nativeCancels: Array<{ id: string; attemptId: string }> = [];
+        let nativeAttemptId: string | undefined;
+        let markNativeStarted!: () => void;
+        const nativeStarted = new Promise<void>((resolve) => {
+            markNativeStarted = resolve;
+        });
+        let rejectNativeConnect: ((error: Error) => void) | undefined;
+        const queue = pure('features/connections/infrastructure/connectionOpQueue.ts');
         const connects: Array<
             | {
                   preserveWorkspace?: boolean;
                   skipVaultPrompt?: boolean;
                   skipCredentialPull?: boolean;
+                  signal?: AbortSignal;
               }
             | undefined
         > = [];
@@ -71,6 +88,7 @@ export async function runFeatureConnectionWorkspaceChecks(
                 'features/workspace/domain/mainTabPresentation.ts',
             ),
             '../features/serial/domain/profile': pure('features/serial/domain/profile.ts'),
+            '../features/vnc/domain/profile': pure('features/vnc/domain/profile.ts'),
             '../lib/paneCloseBlockers': {},
             '../lib/paneLayout/types': layout,
             '../features/connections/infrastructure/sshVerificationIpc': {
@@ -113,7 +131,7 @@ export async function runFeatureConnectionWorkspaceChecks(
                 'features/connections/domain/errorSanitization.ts',
             ),
             '../features/connections/application/hostKeyVerification': {
-                connectWithHostKeyVerification: async () => {
+                connectWithHostKeyVerification: async (config: { connect_attempt_id: string }) => {
                     calls.push('host-key-connect');
                     attempt++;
                     if (attempt === 1 && retry === 'vault-access') {
@@ -121,6 +139,13 @@ export async function runFeatureConnectionWorkspaceChecks(
                     }
                     if (attempt === 1 && retry === 'failure') {
                         throw new Error('Synthetic transport failure');
+                    }
+                    if (attempt === 1 && holdConnect) {
+                        nativeAttemptId = config.connect_attempt_id;
+                        await new Promise<never>((_resolve, reject) => {
+                            rejectNativeConnect = reject;
+                            markNativeStarted();
+                        });
                     }
                     return { detected_os: 'linux' };
                 },
@@ -138,6 +163,10 @@ export async function runFeatureConnectionWorkspaceChecks(
             '../features/connections/infrastructure/connectionIpc': {
                 getRemoteCwdIpc: async () => '/home/fixture',
                 readLocalKeyFileIpc: async () => 'synthetic-fixture-key',
+                cancelConnectIpc: async (id: string, attemptId: string) => {
+                    nativeCancels.push({ id, attemptId });
+                    rejectNativeConnect?.(new Error('Fixture attempt cancelled'));
+                },
             },
             '../vault/ipc': {
                 vaultIpc: {
@@ -148,14 +177,13 @@ export async function runFeatureConnectionWorkspaceChecks(
             },
             '../lib/ghostSuggestions/client': {},
             '../lib/ghostSuggestions/ghostDebug': {},
-            '../features/connections/infrastructure/connectionOpQueue': pure(
-                'features/connections/infrastructure/connectionOpQueue.ts',
-            ),
+            '../features/connections/infrastructure/connectionOpQueue': queue,
             '../features/connections/infrastructure/connectCancelState': pure(
                 'features/connections/infrastructure/connectCancelState.ts',
             ),
             '../lib/terminal/connectionBackend': {
                 markConnectionBackendLive: () => calls.push('backend-live'),
+                markConnectionBackendOffline: () => {},
             },
             '../lib/terminal/suspendAllTerminals': {},
             '../features/connections/infrastructure/connectionPersistence': {
@@ -196,6 +224,7 @@ export async function runFeatureConnectionWorkspaceChecks(
             '../features/connections/application/networkInterface': {
                 NetworkSelectionCancelledError,
                 prepareNetworkInterface: async () => calls.push('network-selection'),
+                cancelNetworkPrompts: () => {},
             },
         };
         const globals = {
@@ -331,7 +360,18 @@ export async function runFeatureConnectionWorkspaceChecks(
                 }
             }
         };
-        return { id, get: () => state, calls, connects, before, drain };
+        return {
+            id,
+            get: () => state,
+            calls,
+            connects,
+            before,
+            drain,
+            queue,
+            nativeStarted,
+            nativeCancels,
+            getNativeAttemptId: () => nativeAttemptId,
+        };
     }
 
     /** Connection metadata and existing PTY readiness may change; workspace identity and selection may not. */
@@ -516,6 +556,66 @@ export async function runFeatureConnectionWorkspaceChecks(
             `${retry}: the existing Vault prompt remains the retry owner`,
         );
         equal(subject.get().terminals[subject.id], [], `${retry}: retry creates no shell`);
+
+        const scoped = fixture({ retry });
+        await scoped.get().connect(scoped.id, {
+            preserveWorkspace: true,
+            skipCredentialPull: true,
+            signal: new AbortController().signal,
+        });
+        unchanged(scoped);
+        equal(scoped.connects.length, 1, `${retry}: scoped connect awaits its retry`);
+        equal(
+            scoped.calls.filter((call) => call === 'host-key-connect').length,
+            retry === 'vault-access' ? 2 : 1,
+            `${retry}: scoped connection reaches native success`,
+        );
+    }
+    {
+        const subject = fixture();
+        let release!: () => void;
+        const blocker = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        void subject.queue.runSerializedConnectionOp(subject.id, () => blocker);
+        const earlier = subject.get().connect(subject.id, { preserveWorkspace: true });
+        const controller = new AbortController();
+        const later = subject.get().connect(subject.id, {
+            preserveWorkspace: true,
+            signal: controller.signal,
+        });
+        controller.abort();
+        release();
+        await Promise.all([earlier, later]);
+        unchanged(subject);
+        equal(
+            subject.nativeCancels,
+            [],
+            'A cancelled queued request leaves the earlier SSH attempt alone',
+        );
+        equal(
+            subject.calls.filter((call) => call === 'host-key-connect').length,
+            1,
+            'The cancelled queued request never reaches native SSH',
+        );
+    }
+    {
+        const subject = fixture({ holdConnect: true });
+        const controller = new AbortController();
+        const active = subject.get().connect(subject.id, {
+            preserveWorkspace: true,
+            signal: controller.signal,
+        });
+        await subject.nativeStarted;
+        const later = subject.get().connect(subject.id, { preserveWorkspace: true });
+        controller.abort();
+        await Promise.all([active, later]);
+        equal(
+            subject.nativeCancels,
+            [{ id: subject.id, attemptId: subject.getNativeAttemptId() }],
+            'Active cancellation sends only its native attempt ID',
+        );
+        unchanged(subject);
     }
     {
         const subject = fixture({ retry: 'failure' });
