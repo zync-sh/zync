@@ -2,8 +2,7 @@
 
 use super::{
     accept_viewer,
-    bridge::{Viewer, WRITE_TIMEOUT},
-    relay,
+    bridge::close_with_reason,
     vault_auth::{self, VaultLink},
     Lease, Offer, OPEN_TIMEOUT,
 };
@@ -15,7 +14,6 @@ use tokio::{
     net::{TcpListener, TcpStream},
     time::timeout,
 };
-use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
 
 const INVALID_HOST: &str = "Enter a VNC hostname or IP address without a port or URL.";
 
@@ -122,38 +120,17 @@ pub(super) async fn run(
 ) -> Result<(), &'static str> {
     let connect_and_relay = async move {
         let mut viewer = accept_viewer(listener, offer).await?;
-        let mut stream = match endpoint.connect().await {
+        let stream = match endpoint.connect().await {
             Ok(stream) => stream,
             Err(failure) => return Err(close_with_reason(&mut viewer, failure.reason()).await),
         };
-        if let Some(link) = vault_link {
-            if let Err(failure) = vault_auth::negotiate(
-                &mut viewer,
-                &mut stream,
-                link.key(&endpoint.host, endpoint.port),
-            )
-            .await
-            {
-                return Err(close_with_reason(&mut viewer, failure.reason()).await);
-            }
-        }
-        relay(&mut viewer, stream).await
+        vault_auth::relay_with_vault(&mut viewer, stream, vault_link).await
     };
     tokio::select! {
         biased;
         _ = lease.wait_cancelled() => Ok(()),
         result = connect_and_relay => result,
     }
-}
-
-/// Publish only application-owned failure codes over the authorized viewer socket.
-async fn close_with_reason(viewer: &mut Viewer, reason: &'static str) -> &'static str {
-    let close = CloseFrame {
-        code: CloseCode::Error,
-        reason: reason.into(),
-    };
-    let _ = timeout(WRITE_TIMEOUT, viewer.close(Some(close))).await;
-    reason
 }
 
 #[cfg(test)]

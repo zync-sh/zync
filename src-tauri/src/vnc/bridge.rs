@@ -12,7 +12,7 @@ use tokio_tungstenite::{
     tungstenite::{
         handshake::server::{ErrorResponse, Request, Response},
         http::{header, HeaderMap, HeaderName, StatusCode},
-        protocol::{Message, WebSocketConfig},
+        protocol::{frame::coding::CloseCode, CloseFrame, Message, WebSocketConfig},
     },
     WebSocketStream,
 };
@@ -26,6 +26,16 @@ pub(super) const MAX_VIEWER_MESSAGE_BYTES: usize = 64 * 1024;
 pub(super) const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) type Viewer = WebSocketStream<TcpStream>;
+
+/// Publish only application-owned failure codes over the authorized viewer socket.
+pub(super) async fn close_with_reason(viewer: &mut Viewer, reason: &'static str) -> &'static str {
+    let close = CloseFrame {
+        code: CloseCode::Error,
+        reason: reason.into(),
+    };
+    let _ = timeout(WRITE_TIMEOUT, viewer.close(Some(close))).await;
+    reason
+}
 
 /// A per-listener capability that authorizes exactly one upgrade from the app origin.
 pub(super) struct Offer {

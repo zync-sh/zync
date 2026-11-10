@@ -1,6 +1,10 @@
 use super::*;
 use serde_json::json;
 
+fn direct_credential<'a>(settings: &'a Value, id: &str, host: &str, port: u16) -> Option<&'a str> {
+    saved_profile(settings, id, host, port, None).and_then(saved_credential_id)
+}
+
 #[test]
 fn saved_links_require_exact_unique_endpoint_and_valid_ids() {
     let profile = json!({
@@ -11,20 +15,39 @@ fn saved_links_require_exact_unique_endpoint_and_valid_ids() {
     });
     let settings = json!({"vncProfiles": [profile.clone()]});
     assert_eq!(
-        saved_credential_id(&settings, "desk", "vnc.example.test", 5901),
+        direct_credential(&settings, "desk", "vnc.example.test", 5901),
         Some("local-credential:1")
     );
-    assert!(saved_credential_id(&settings, "desk", "other.example.test", 5901).is_none());
-    assert!(saved_credential_id(&settings, "desk", "vnc.example.test", 5902).is_none());
-    assert!(saved_credential_id(&settings, "absent", "vnc.example.test", 5901).is_none());
+    assert!(direct_credential(&settings, "desk", "other.example.test", 5901).is_none());
+    assert!(direct_credential(&settings, "desk", "vnc.example.test", 5902).is_none());
+    assert!(direct_credential(&settings, "absent", "vnc.example.test", 5901).is_none());
     let duplicate = json!({"vncProfiles": [profile.clone(), profile.clone()]});
-    assert!(saved_credential_id(&duplicate, "desk", "vnc.example.test", 5901).is_none());
+    assert!(direct_credential(&duplicate, "desk", "vnc.example.test", 5901).is_none());
     let mut invalid = settings;
     invalid["vncProfiles"][0]["credentialId"] = json!("../bad");
-    assert!(saved_credential_id(&invalid, "desk", "vnc.example.test", 5901).is_none());
+    assert!(direct_credential(&invalid, "desk", "vnc.example.test", 5901).is_none());
     assert!(profile_id_is_valid("Desk_123-A"));
     assert!(!profile_id_is_valid("../desk"));
     assert!(!profile_id_is_valid(&"x".repeat(129)));
+}
+
+#[test]
+fn saved_ssh_profiles_require_the_authenticated_route_and_cannot_use_direct_auth() {
+    let ssh = json!({"id": "host", "host": "gateway.test", "port": 22, "username": "user"});
+    let mut route = SshRoute::deserialize(&ssh).unwrap();
+    let settings = json!({"vncProfiles": [{
+        "id": "desk", "host": SSH_LOOPBACK, "port": 5901, "ssh": ssh,
+        "credentialId": "local-credential:1",
+    }]});
+    assert_eq!(
+        saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route))
+            .and_then(saved_credential_id),
+        Some("local-credential:1"),
+    );
+    assert!(direct_credential(&settings, "desk", SSH_LOOPBACK, 5901).is_none());
+    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5900, Some(&route)).is_none());
+    route.host = "replacement.test".into();
+    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route)).is_none());
 }
 
 #[test]

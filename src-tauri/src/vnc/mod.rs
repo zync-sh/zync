@@ -8,8 +8,8 @@ mod vault_auth;
 mod tests;
 
 use crate::commands::{AppState, ConnectionHandle};
-use bridge::{accept_viewer, relay, Offer};
-use serde::Serialize;
+use bridge::{accept_viewer, Offer};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     future::Future,
@@ -36,6 +36,7 @@ const BINDING_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const NOT_CONNECTED: &str = "Connect to this SSH host before opening VNC.";
 const CANCELLED: &str = "VNC start was cancelled.";
 const OPEN_TIMED_OUT: &str = "Timed out opening the VNC port through SSH.";
+const SSH_LOOPBACK: &str = "127.0.0.1";
 
 type SshHandle = AsyncMutex<Arc<russh::client::Handle<crate::ssh::Client>>>;
 type Connections = AsyncMutex<HashMap<String, ConnectionHandle>>;
@@ -119,8 +120,18 @@ impl Drop for Lease {
     }
 }
 
+/// Match a saved VNC route against the configuration of the authenticated SSH transport.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+struct SshRoute {
+    id: String,
+    host: String,
+    port: u16,
+    username: String,
+}
+
 struct Binding {
     connection_id: String,
+    route: SshRoute,
     generation: u64,
     session: Weak<SshHandle>,
 }
@@ -138,6 +149,12 @@ impl Binding {
             return Err(NOT_CONNECTED);
         }
         Ok(Self {
+            route: SshRoute {
+                id: connection_id.clone(),
+                host: connection.config.host.clone(),
+                port: connection.config.port,
+                username: connection.config.username.clone(),
+            },
             connection_id,
             generation: connection.reconnect_generation,
             session: Arc::downgrade(session),
@@ -180,7 +197,7 @@ impl Binding {
         let handle = session.lock().await.clone();
         requested.store(true, Ordering::Relaxed);
         handle
-            .channel_open_direct_tcpip("127.0.0.1", port.into(), "127.0.0.1", 0)
+            .channel_open_direct_tcpip(SSH_LOOPBACK, port.into(), SSH_LOOPBACK, 0)
             .await
             .map(|channel| channel.into_stream())
             .map_err(|_| "Could not open the VNC port through SSH.")
@@ -232,6 +249,7 @@ enum Target {
         connections: Arc<Connections>,
         binding: Binding,
         port: u16,
+        vault_link: Option<vault_auth::VaultLink>,
     },
     Direct {
         endpoint: direct::Endpoint,
@@ -256,6 +274,8 @@ pub async fn vnc_start(
     session_id: String,
     connection_id: String,
     port: u16,
+    profile_id: Option<String>,
+    use_vault: Option<bool>,
 ) -> Result<VncAdmission, String> {
     main_window(&window)?;
     if connection_id == "local" {
@@ -263,12 +283,24 @@ pub async fn vnc_start(
     }
     validate_port(port)?;
     let connections = state.connections.clone();
+    let app = window.app_handle().clone();
     admit(&window, &sessions, session_id, async move {
         let binding = Binding::capture(&connections, connection_id).await?;
+        let vault_link = match profile_id {
+            Some(id) => vault_auth::VaultLink::bind_ssh(
+                app,
+                id,
+                port,
+                &binding.route,
+                use_vault.unwrap_or(false),
+            )?,
+            None => None,
+        };
         Ok(Target::Ssh {
             connections,
             binding,
             port,
+            vault_link,
         })
     })
     .await
@@ -338,7 +370,19 @@ async fn admit(
                 connections,
                 binding,
                 port,
-            } => run(listener, offer, &connections, binding, lease, port).await,
+                vault_link,
+            } => {
+                run(
+                    listener,
+                    offer,
+                    &connections,
+                    binding,
+                    lease,
+                    port,
+                    vault_link,
+                )
+                .await
+            }
             Target::Direct {
                 endpoint,
                 vault_link,
@@ -376,6 +420,7 @@ async fn run(
     binding: Binding,
     mut lease: Lease,
     port: u16,
+    vault_link: Option<vault_auth::VaultLink>,
 ) -> Result<(), &'static str> {
     let mut viewer = tokio::select! {
         biased;
@@ -422,6 +467,6 @@ async fn run(
         biased;
         _ = lease.wait_cancelled() => Ok(()),
         _ = binding.wait_invalid(connections) => Err(NOT_CONNECTED),
-        result = relay(&mut viewer, stream) => result,
+        result = vault_auth::relay_with_vault(&mut viewer, stream, vault_link) => result,
     }
 }
