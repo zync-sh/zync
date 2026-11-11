@@ -22,6 +22,6 @@ declare module '@novnc/novnc' {
             width: number,
             height: number,
         ): Promise<'applied' | 'rejected' | 'unavailable'>;
-        sendCredentials(credentials: { password: string }): void;
+        sendCredentials(credentials: { username?: string; password: string }): void;
     }
 }

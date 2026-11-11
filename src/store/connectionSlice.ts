@@ -1417,9 +1417,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         if (!profile) {
             return;
         }
-        const { host, port, credentialId, ssh } = profile;
+        const { host, port, credentialId, ssh, tlsUsername } = profile;
         const request = options?.connect
-            ? { host, port, credentialId, ...(ssh && { ssh }) }
+            ? { host, port, credentialId, ...(ssh && { ssh }), ...(tlsUsername && { tlsUsername }) }
             : undefined;
         const existing = state.tabs.find(
             (tab) => tab.type === 'vnc' && tab.vncProfileId === profileId,

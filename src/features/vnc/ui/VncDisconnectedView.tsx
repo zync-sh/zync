@@ -4,11 +4,10 @@ import { ConnectionStateCard } from '../../../components/connections/ConnectionS
 import { Button } from '../../../components/ui/Button';
 import { Input } from '../../../components/ui/Input';
 import { cn } from '../../../lib/utils';
-import { VNC_DIRECT_NETWORK_NOTICE } from '../domain/profile';
 
 interface VncDisconnectedViewProps {
     profileName?: string;
-    direct: boolean;
+    networkNotice?: string;
     endpoint: string;
     port: string;
     onPortChange: (port: string) => void;
@@ -24,7 +23,7 @@ interface VncDisconnectedViewProps {
 /** Present connection and recovery actions without taking ownership of the VNC session. */
 export function VncDisconnectedView({
     profileName,
-    direct,
+    networkNotice,
     endpoint,
     port,
     onPortChange,
@@ -65,10 +64,8 @@ export function VncDisconnectedView({
             }
         >
             <div className="mt-3 space-y-3 sm:mt-4 [@media(max-height:560px)]:mt-2.5">
-                {direct && (
-                    <p className="text-xs leading-relaxed text-app-muted">
-                        {VNC_DIRECT_NETWORK_NOTICE}
-                    </p>
+                {networkNotice && (
+                    <p className="text-xs leading-relaxed text-app-muted">{networkNotice}</p>
                 )}
                 {error && (
                     <p

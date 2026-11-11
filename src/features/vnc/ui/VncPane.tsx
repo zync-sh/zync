@@ -15,6 +15,8 @@ import {
     DEFAULT_VNC_SCALE,
     describeVncDestination,
     matchesVncSshHost,
+    VNC_DIRECT_NETWORK_NOTICE,
+    VNC_DIRECT_TLS_NOTICE,
     type VncProfile,
     type VncResolution,
     type VncSshHost,
@@ -25,6 +27,7 @@ import { VncPasswordDialog } from './VncPasswordDialog';
 
 interface ViewerAttempt {
     readonly id: string;
+    readonly tlsUsername?: string;
     viewer?: RFB;
     socket?: WebSocket;
     readonly detachListeners: (() => void)[];
@@ -65,6 +68,16 @@ function bridgeFailure(
             return {
                 message: `Could not reach the VNC server at ${endpoint}. Check the address, port, and network.`,
             };
+        case 'vnc-tls-unsupported':
+            return { message: 'The server must offer VeNCrypt X509Plain for Direct TLS.' };
+        case 'vnc-tls-verification-failed':
+            return {
+                message: `Could not establish verified TLS with ${endpoint}. Check that the server certificate is trusted and matches the saved host name or IP address.`,
+            };
+        case 'vnc-tls-handshake-failed':
+            return { message: 'The server did not complete the Direct TLS VNC handshake.' };
+        case 'vnc-tls-timeout':
+            return { message: `Timed out negotiating Direct TLS with ${endpoint}.` };
         case 'vnc-vault-auth-rejected':
             return {
                 message: 'The VNC server rejected the saved Vault password.',
@@ -329,7 +342,11 @@ export function VncPane({
         ) {
             return;
         }
-        const attempt: ViewerAttempt = { id: crypto.randomUUID(), detachListeners: [] };
+        const attempt: ViewerAttempt = {
+            id: crypto.randomUUID(),
+            tlsUsername: profile?.tlsUsername,
+            detachListeners: [],
+        };
         attemptRef.current = attempt;
         setManualRetryCredential(null);
         setError('');
@@ -361,12 +378,10 @@ export function VncPane({
             }
             const bridge =
                 direct && profile
-                    ? await openDirectVncBridge(
-                          attempt.id,
-                          profile.host,
-                          port,
-                          useVault ? profile.id : undefined,
-                      )
+                    ? await openDirectVncBridge(attempt.id, profile.host, port, {
+                          ...(useVault && { profileId: profile.id }),
+                          ...(attempt.tlsUsername && { tlsUsername: attempt.tlsUsername }),
+                      })
                     : connectionId &&
                       (await openVncBridge(
                           attempt.id,
@@ -420,7 +435,10 @@ export function VncPane({
                     return;
                 }
                 const types = (event as CustomEvent<{ types: string[] }>).detail.types;
-                if (types.length === 1 && types[0] === 'password') {
+                const supported = attempt.tlsUsername
+                    ? types.length === 2 && types.includes('username') && types.includes('password')
+                    : types.length === 1 && types[0] === 'password';
+                if (supported) {
                     armTimeout(attempt, true);
                     setPhase('credentials');
                 } else {
@@ -498,7 +516,10 @@ export function VncPane({
         setPhase('starting');
         armTimeout(attempt);
         try {
-            attempt.viewer.sendCredentials({ password });
+            attempt.viewer.sendCredentials({
+                ...(attempt.tlsUsername && { username: attempt.tlsUsername }),
+                password,
+            });
         } catch {
             end(attempt, 'Could not submit the VNC password.');
         }
@@ -547,7 +568,13 @@ export function VncPane({
                     <div className="absolute inset-0">
                         <VncDisconnectedView
                             profileName={profile?.name}
-                            direct={Boolean(direct)}
+                            networkNotice={
+                                direct
+                                    ? profile.tlsUsername
+                                        ? VNC_DIRECT_TLS_NOTICE
+                                        : VNC_DIRECT_NETWORK_NOTICE
+                                    : undefined
+                            }
                             endpoint={endpoint}
                             port={portInput}
                             onPortChange={setPortInput}

@@ -18,6 +18,7 @@ import {
     normalizeVncHost,
     normalizeVncPort,
     VNC_DIRECT_NETWORK_NOTICE,
+    VNC_DIRECT_TLS_NOTICE,
     VNC_PROFILE_NAME_MAX_LENGTH,
     VNC_RESOLUTION_MAX_DIMENSION,
     VNC_RESOLUTION_MAX_PIXELS,
@@ -59,6 +60,7 @@ const AUTH_OPTIONS = [
 
 const TRANSPORT_OPTIONS = [
     { value: 'direct', label: 'Direct' },
+    { value: 'tls', label: 'Direct TLS' },
     { value: 'ssh', label: 'Via SSH' },
 ];
 
@@ -116,9 +118,13 @@ function VncProfileEditor({
 }: BaseModalProps & VncProfileEditorOptions & { profile?: VncProfile }) {
     const saveProfile = useAppStore((state) => state.saveVncProfile);
     const connections = useAppStore((state) => state.connections);
-    const [transport, setTransport] = useState(profile?.ssh ? 'ssh' : 'direct');
+    const [transport, setTransport] = useState(
+        profile?.ssh ? 'ssh' : profile?.tlsUsername ? 'tls' : 'direct',
+    );
     const [sshId, setSshId] = useState(profile?.ssh?.id ?? '');
     const viaSsh = transport === 'ssh';
+    const viaTls = transport === 'tls';
+    const [vncUsername, setVncUsername] = useState(profile?.tlsUsername ?? '');
     const sshHosts = connections.filter(({ id }) => id !== 'local');
     const sshHost = viaSsh ? sshHosts.find(({ id }) => id === sshId) : undefined;
     const ssh = sshHost && {
@@ -158,9 +164,10 @@ function VncProfileEditor({
     const { resolutionChoice: choice, width, height, ...endpointDraft } = draft;
     const host = viaSsh ? VNC_SSH_LOOPBACK : normalizeVncHost(draft.host);
     const port = normalizeVncPort(draft.port);
+    const tlsUsername = viaTls ? vncUsername.trim() : undefined;
     const endpoint =
-        host && port !== undefined && (!viaSsh || ssh)
-            ? vncDestinationKey({ host, port, ssh })
+        host && port !== undefined && (!viaSsh || ssh) && (!viaTls || tlsUsername)
+            ? vncDestinationKey({ host, port, ssh, tlsUsername })
             : undefined;
     const needsConfirmation = Boolean(selection && selection.endpoint !== endpoint);
     const credentialId = authMode === 'vault' && !needsConfirmation ? selection?.id : undefined;
@@ -168,6 +175,7 @@ function VncProfileEditor({
         ...endpointDraft,
         host: viaSsh ? VNC_SSH_LOOPBACK : endpointDraft.host,
         ssh,
+        tlsUsername,
         resolution: resolutionDraft(choice, width, height),
         credentialId,
     };
@@ -348,6 +356,19 @@ function VncProfileEditor({
                         disabled={saving}
                     />
                 </div>
+                {viaTls && (
+                    <Input
+                        label="VNC username"
+                        value={vncUsername}
+                        onChange={(event) => setVncUsername(event.target.value)}
+                        error={errors?.tlsUsername}
+                        autoCapitalize="none"
+                        autoComplete="off"
+                        spellCheck={false}
+                        required
+                        disabled={saving}
+                    />
+                )}
                 <div className="space-y-2">
                     <Select
                         label="VNC authentication"
@@ -509,7 +530,9 @@ function VncProfileEditor({
                         <p>
                             {viaSsh
                                 ? 'Zync uses SSH to reach the VNC server listening on the selected host’s loopback address.'
-                                : VNC_DIRECT_NETWORK_NOTICE}
+                                : viaTls
+                                  ? VNC_DIRECT_TLS_NOTICE
+                                  : VNC_DIRECT_NETWORK_NOTICE}
                         </p>
                         <p>Zync uses the saved password only if the server requests one.</p>
                     </div>
