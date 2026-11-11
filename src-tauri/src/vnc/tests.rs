@@ -380,6 +380,43 @@ async fn direct_vnc_dials_only_after_authorization_and_closes_on_stop() {
 }
 
 #[tokio::test]
+async fn direct_tls_never_exposes_a_legacy_offer_to_the_viewer() {
+    let remote_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut endpoint =
+        direct::Endpoint::parse("127.0.0.1", remote_listener.local_addr().unwrap().port()).unwrap();
+    endpoint.require_tls("desktop-user".into()).unwrap();
+    let (listener, offer, url) = offer().await;
+    let sessions = VncSessions::default();
+    let lease = sessions.reserve(Uuid::new_v4()).unwrap();
+    let task = tokio::spawn(direct::run(listener, offer, endpoint, None, lease));
+    let server = tokio::spawn(async move {
+        let (mut remote, _) = remote_listener.accept().await.unwrap();
+        remote.write_all(RFB_VERSION).await.unwrap();
+        let mut version = [0; RFB_VERSION.len()];
+        remote.read_exact(&mut version).await.unwrap();
+        assert_eq!(&version, RFB_VERSION);
+        remote.write_all(&[1, 2]).await.unwrap();
+        let mut byte = [0u8; 1];
+        let count = timeout(Duration::from_secs(3), remote.read(&mut byte))
+            .await
+            .expect("Direct TLS did not close the legacy VNC connection")
+            .unwrap();
+        assert_eq!(count, 0);
+    });
+    let mut viewer = connect(&url).await;
+    let message = timeout(Duration::from_secs(3), viewer.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(matches!(message, Message::Close(Some(close))
+        if close.code == CloseCode::Error && close.reason.as_str() == "vnc-tls-unsupported"));
+    assert_eq!(task.await.unwrap(), Err("vnc-tls-unsupported"));
+    server.await.unwrap();
+    assert!(sessions.0.lock().unwrap().active.is_empty());
+}
+
+#[tokio::test]
 async fn refused_direct_connection_reports_an_authorized_close_reason() {
     let remote = tokio::net::TcpSocket::new_v4().unwrap();
     // Keep this port reserved without listening so the dial cannot reach another service.
