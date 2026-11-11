@@ -83,10 +83,25 @@ function serveRfb(
     input: { keyEvents: number[]; onPointerDown: (position: PointerCoordinates) => void },
     onResize?: (size: DesktopSize) => void,
     framebufferRequests?: number[],
-    onAuthenticate?: () => void,
+    authentication?: { accepted: () => void; username?: string },
 ) {
-    const securityType = onAuthenticate ? 2 : 1;
-    let phase: 'version' | 'security' | 'challenge' | 'init' | 'request' | 'streaming' = 'version';
+    const username = authentication?.username;
+    const securityType = username ? 19 : authentication ? 2 : 1;
+    let phase:
+        | 'version'
+        | 'security'
+        | 'vencrypt-version'
+        | 'vencrypt-subtype'
+        | 'plain'
+        | 'challenge'
+        | 'init'
+        | 'request'
+        | 'streaming' = 'version';
+    const completeAuthentication = () => {
+        authentication?.accepted();
+        phase = 'init';
+        socket.send(Buffer.alloc(4)); // Successful SecurityResult.
+    };
     socket.onMessage((message) => {
         try {
             assert.ok(Buffer.isBuffer(message), 'RFB uses binary frames');
@@ -98,7 +113,12 @@ function serveRfb(
                     break;
                 case 'security':
                     assert.deepEqual(message, Buffer.from([securityType]));
-                    if (onAuthenticate) {
+                    if (username) {
+                        phase = 'vencrypt-version';
+                        socket.send(Buffer.from([0, 2]));
+                        break;
+                    }
+                    if (authentication) {
                         phase = 'challenge';
                         socket.send(passwordChallenge);
                         break;
@@ -106,11 +126,28 @@ function serveRfb(
                     phase = 'init';
                     socket.send(Buffer.alloc(4)); // Successful SecurityResult.
                     break;
+                case 'vencrypt-version':
+                    assert.deepEqual(message, Buffer.from([0, 2]));
+                    phase = 'vencrypt-subtype';
+                    socket.send(Buffer.from([0, 1]));
+                    socket.send(Buffer.from([0, 0, 1, 0])); // Plain on the local viewer connection.
+                    break;
+                case 'vencrypt-subtype':
+                    assert.equal(message.readUInt32BE(0), 256);
+                    phase = 'plain';
+                    break;
+                case 'plain': {
+                    const userLength = message.readUInt32BE(0);
+                    const passwordLength = message.readUInt32BE(4);
+                    assert.equal(message.length, 8 + userLength + passwordLength);
+                    assert.equal(message.toString('utf8', 8, 8 + userLength), username);
+                    assert.equal(message.toString('utf8', 8 + userLength), fixturePassword);
+                    completeAuthentication();
+                    break;
+                }
                 case 'challenge':
                     assert.deepEqual(message, passwordResponse);
-                    onAuthenticate?.();
-                    phase = 'init';
-                    socket.send(Buffer.alloc(4)); // Successful SecurityResult.
+                    completeAuthentication();
                     break;
                 case 'init':
                     assert.deepEqual(
@@ -203,8 +240,14 @@ try {
     const unknownCloseReason = 'untrusted fixture failure text';
     let directSocket: WebSocketRoute | undefined;
     let directMode = false;
-    let directOutcome: 'connected' | 'refused' | 'unknown' | 'password' | 'vault-rejected' =
-        'connected';
+    let directOutcome:
+        | 'connected'
+        | 'refused'
+        | 'unknown'
+        | 'password'
+        | 'vault-rejected'
+        | 'tls-password'
+        | 'tls-verification-failed' = 'connected';
     let directResizeStatus = 0;
     let onPointerDown: ((position: PointerCoordinates) => void) | undefined;
     let resizable = false;
@@ -225,6 +268,10 @@ try {
                 directSocket = socket;
                 if (directOutcome === 'vault-rejected') {
                     await socket.close({ code: 1011, reason: 'vnc-vault-auth-rejected' });
+                    return;
+                }
+                if (directOutcome === 'tls-verification-failed') {
+                    await socket.close({ code: 1011, reason: 'vnc-tls-verification-failed' });
                     return;
                 }
                 if (directOutcome === 'refused' || directOutcome === 'unknown') {
@@ -259,8 +306,11 @@ try {
                       }
                     : undefined,
                 directMode ? directFramebufferRequests : undefined,
-                directMode && directOutcome === 'password'
-                    ? () => authenticatedAttempts.push(attemptId)
+                directMode && (directOutcome === 'password' || directOutcome === 'tls-password')
+                    ? {
+                          accepted: () => authenticatedAttempts.push(attemptId),
+                          ...(directOutcome === 'tls-password' && { username: 'desktop-user' }),
+                      }
                     : undefined,
             );
         },
@@ -297,6 +347,7 @@ try {
             port: number;
             profileId?: string;
             useVault?: boolean;
+            tlsUsername?: string;
         }[]
     > => JSON.parse((await page.locator('body').getAttribute('data-vnc-starts')) || '[]');
     const stopped = async (): Promise<string[]> =>
@@ -759,6 +810,26 @@ try {
     await password.fill(fixturePassword);
     await authentication.getByRole('button', { name: 'Continue', exact: true }).click();
     await viewer.getByText('Connected', { exact: true }).waitFor();
+
+    directOutcome = 'tls-verification-failed';
+    await page.goto(`${baseUrl}/tests/vnc/vncViewer.browser.html?direct&tls`);
+    await savedProfile.click();
+    await open.click();
+    await viewer
+        .getByRole('alert')
+        .filter({ hasText: 'Could not establish verified TLS' })
+        .waitFor();
+    assert.equal((await started()).length, 1, 'Verification failure never retries legacy Direct');
+    assert.equal((await started()).at(-1)?.tlsUsername, 'desktop-user');
+    assert.equal(await authentication.count(), 0);
+
+    directOutcome = 'tls-password';
+    await open.click();
+    await authentication.waitFor();
+    await password.fill(fixturePassword);
+    await authentication.getByRole('button', { name: 'Continue', exact: true }).click();
+    await viewer.getByText('Connected', { exact: true }).waitFor();
+    assert.equal(authenticatedAttempts.at(-1), (await started()).at(-1)?.sessionId);
 
     /** Start a fresh standalone profile and wait for its first server-rendered pixels. */
     const openDisplayProfile = async (settings: Record<string, string>) => {

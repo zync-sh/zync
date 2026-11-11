@@ -7,6 +7,8 @@ export interface VncProfile {
     scale: VncScale;
     credentialId?: string;
     ssh?: VncSshHost;
+    /** X509Plain account name. Its presence requires verified Direct TLS. */
+    tlsUsername?: string;
 }
 
 /** Bind a profile to the saved SSH host identity used to reach its loopback desktop. */
@@ -37,6 +39,7 @@ export interface VncProfileDraft {
     scale?: VncScale;
     credentialId?: string;
     ssh?: VncSshHost;
+    tlsUsername?: string;
 }
 
 export const DEFAULT_VNC_PORT = 5900;
@@ -57,6 +60,8 @@ export const VNC_RESOLUTION_PRESETS = [
 export const VNC_PROFILE_NAME_MAX_LENGTH = 120;
 export const VNC_DIRECT_NETWORK_NOTICE =
     'Direct VNC may be unencrypted, with or without a password. Use a trusted network or VPN, or choose Via SSH.';
+export const VNC_DIRECT_TLS_NOTICE =
+    'Requires VeNCrypt X509Plain and a server certificate trusted by this device.';
 
 const DNS_LABEL = /^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/i;
 const IPV4_PART = /^(?:0|[1-9]\d{0,2})$/;
@@ -145,12 +150,15 @@ export function matchesVncSshHost(saved: VncSshHost, current?: VncSshHost): bool
 }
 
 /** Identify the complete VNC destination for connection requests and Vault confirmation. */
-export function vncDestinationKey(profile: Pick<VncProfile, 'host' | 'port' | 'ssh'>): string {
+export function vncDestinationKey(
+    profile: Pick<VncProfile, 'host' | 'port' | 'ssh' | 'tlsUsername'>,
+): string {
     const ssh = profile.ssh;
     return JSON.stringify([
         profile.host.toLowerCase(),
         profile.port,
         ssh && [ssh.id, ssh.host, ssh.port, ssh.username],
+        profile.tlsUsername,
     ]);
 }
 
@@ -241,6 +249,16 @@ export function validateVncProfileDraft(draft: VncProfileDraft): VncProfileValid
     if (draft.ssh !== undefined && !ssh) {
         errors.ssh = 'Choose a valid saved SSH host.';
     }
+    const tlsUsername = typeof draft.tlsUsername === 'string' ? draft.tlsUsername.trim() : '';
+    if (
+        draft.tlsUsername !== undefined &&
+        (draft.ssh !== undefined ||
+            !tlsUsername ||
+            /[\u0000-\u001f\u007f]/.test(tlsUsername) ||
+            new TextEncoder().encode(tlsUsername).byteLength > 255)
+    ) {
+        errors.tlsUsername = 'Enter a VNC username using 1 to 255 bytes for Direct TLS.';
+    }
     if (port === undefined) {
         errors.port = 'Enter a whole port number from 1 to 65535.';
     }
@@ -264,6 +282,7 @@ export function validateVncProfileDraft(draft: VncProfileDraft): VncProfileValid
                   scale,
                   ...(credentialId && { credentialId }),
                   ...(ssh && { ssh }),
+                  ...(tlsUsername && { tlsUsername }),
               },
           };
 }
@@ -311,6 +330,7 @@ export function normalizeVncProfiles(input: unknown): VncProfile[] {
             host: item.host,
             port: String(item.port),
             ssh: item.ssh,
+            tlsUsername: item.tlsUsername,
         });
         if (value) {
             const credentialId = normalizeVncCredentialId(item.credentialId);

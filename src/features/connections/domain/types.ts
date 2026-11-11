@@ -93,7 +93,7 @@ export interface Tab {
     vaultProfileId?: VaultProfileId;
     vncProfileId?: string;
     /** One-shot viewer start for the saved endpoint and Vault link. Excluded from session snapshots. */
-    vncConnectRequest?: Pick<VncProfile, 'host' | 'port' | 'credentialId' | 'ssh'>;
+    vncConnectRequest?: Pick<VncProfile, 'host' | 'port' | 'credentialId' | 'ssh' | 'tlsUsername'>;
     serialProfileId?: string;
     /** Explicit one-shot hardware open; never restored from session snapshots. */
     serialConnectRequest?: Omit<SerialProfile, 'id' | 'name'>;

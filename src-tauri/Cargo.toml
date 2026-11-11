@@ -1,6 +1,6 @@
 [package]
 name = "zync"
-version = "2.39.0"
+version = "2.40.0"
 description = "A modern SSH client"
 authors = ["Gajendra"]
 edition = "2021"
@@ -69,6 +69,9 @@ hyper = { version = "=1.8.1", features = ["client", "http1"] }
 hyper-util = { version = "=0.1.19", features = ["tokio"] }
 http-body-util = "0.1"
 tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+# Verify Direct TLS VNC with the platform trust store on the existing TLS backend.
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 futures-util = { version = "0.3", features = ["sink"] }
 # Exclude the BytesMut reserve-overflow range (RUSTSEC-2026-0007).
 bytes = "1.11.1"
@@ -90,6 +93,12 @@ redb = "2"
 rust_xlsxwriter = { version = "=0.101.0", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
+
+[dev-dependencies]
+# Generate ephemeral certificate chains for the loopback VNC TLS peer.
+rcgen = { version = "0.14.10", default-features = false, features = ["ring"] }
+time = "0.3"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
 tauri-plugin-single-instance = { version = "2", default-features = false }
