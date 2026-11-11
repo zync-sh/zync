@@ -346,14 +346,27 @@ mod tests {
     async fn direct_tls_verifies_the_peer_before_requesting_or_sending_plain_credentials() {
         let certificate_host = "desktop.example.test";
         let (ca, acceptor) = tls_peer(certificate_host);
-        let username = "desktop-user";
+        let linked_username = "desktop-user";
         let password = Uuid::new_v4().to_string();
-        for (host, trust_ca, expected) in [
-            (certificate_host, false, Err(Failure::Tls)),
-            ("other.example.test", true, Err(Failure::Tls)),
-            (certificate_host, true, Ok(())),
+        for (host, trust_ca, expected, manual_result) in [
+            (certificate_host, false, Err(Failure::Tls), None),
+            ("other.example.test", true, Err(Failure::Tls), None),
+            (certificate_host, true, Ok(()), None),
+            (certificate_host, true, Ok(()), Some(0u32)),
+            (certificate_host, true, Ok(()), Some(1)),
         ] {
             let expect_success = expected.is_ok();
+            let username = if manual_result.is_some() {
+                "viewer-user"
+            } else {
+                linked_username
+            };
+            let mut security_result = manual_result.unwrap_or_default().to_be_bytes().to_vec();
+            if manual_result == Some(1) {
+                let reason = b"Authentication failed";
+                security_result.extend_from_slice(&(reason.len() as u32).to_be_bytes());
+                security_result.extend_from_slice(reason);
+            }
             let peer_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
             let peer_address = peer_listener.local_addr().unwrap();
             let (listener, offer, url) = offer().await;
@@ -380,30 +393,44 @@ mod tests {
                 stream.read_exact(&mut credentials).await.unwrap();
                 assert_eq!(&credentials[..username.len()], username.as_bytes());
                 assert_eq!(&credentials[username.len()..], password.as_bytes());
-                stream.write_u32(0).await.unwrap();
+                stream.write_all(&security_result).await.unwrap();
                 stream.flush().await.unwrap();
+                if manual_result.is_some() {
+                    stream.shutdown().await.unwrap();
+                }
             };
             let bridge = async {
                 let mut viewer = accept_viewer(listener, offer).await.unwrap();
                 let stream = TcpStream::connect(peer_address).await.unwrap();
                 let linked_password = async {
                     credential_requested.set(true);
-                    Some(Zeroizing::new(password.clone()))
+                    manual_result
+                        .is_none()
+                        .then(|| Zeroizing::new(password.clone()))
                 };
                 let result = prepare(
                     &mut viewer,
                     stream,
                     host,
-                    username,
+                    linked_username,
                     connector,
                     linked_password,
                 )
                 .await;
-                assert_eq!(
-                    result.map(|_| ()),
-                    expected,
-                    "host {host}, trusted {trust_ca}"
-                );
+                if manual_result.is_some() {
+                    relay(
+                        &mut viewer,
+                        result.expect("verified TLS should reach manual authentication"),
+                    )
+                    .await
+                    .unwrap();
+                } else {
+                    assert_eq!(
+                        result.map(|_| ()),
+                        expected,
+                        "host {host}, trusted {trust_ca}"
+                    );
+                }
             };
             let viewer = async {
                 let mut viewer = connect(&url).await;
@@ -413,9 +440,37 @@ mod tests {
                 }
                 assert_eq!(viewer_data(&mut viewer).await, RFB_38);
                 viewer.send(Message::binary(RFB_38.to_vec())).await.unwrap();
-                assert_eq!(viewer_data(&mut viewer).await, [1, 1]);
-                viewer.send(Message::binary(vec![1])).await.unwrap();
-                assert_eq!(viewer_data(&mut viewer).await, [0; 4]);
+                if manual_result.is_some() {
+                    assert_eq!(viewer_data(&mut viewer).await, [1, VENCRYPT]);
+                    viewer.send(Message::binary(vec![VENCRYPT])).await.unwrap();
+                    assert_eq!(viewer_data(&mut viewer).await, VENCRYPT_VERSION);
+                    viewer
+                        .send(Message::binary(VENCRYPT_VERSION.to_vec()))
+                        .await
+                        .unwrap();
+                    assert_eq!(viewer_data(&mut viewer).await, [0, 1]);
+                    assert_eq!(viewer_data(&mut viewer).await, PLAIN.to_be_bytes());
+                    viewer
+                        .send(Message::binary(PLAIN.to_be_bytes().to_vec()))
+                        .await
+                        .unwrap();
+                    let mut credentials = (username.len() as u32).to_be_bytes().to_vec();
+                    credentials.extend_from_slice(&(password.len() as u32).to_be_bytes());
+                    credentials.extend_from_slice(username.as_bytes());
+                    credentials.extend_from_slice(password.as_bytes());
+                    viewer.send(Message::binary(credentials)).await.unwrap();
+                    let mut received = Vec::new();
+                    while received.len() < security_result.len() {
+                        received.extend(viewer_data(&mut viewer).await);
+                    }
+                    assert_eq!(received, security_result);
+                    // Let the peer close first so the relay can finish reading the TLS stream.
+                    assert!(!matches!(viewer.next().await, Some(Ok(Message::Binary(_)))));
+                } else {
+                    assert_eq!(viewer_data(&mut viewer).await, [1, 1]);
+                    viewer.send(Message::binary(vec![1])).await.unwrap();
+                    assert_eq!(viewer_data(&mut viewer).await, [0; 4]);
+                }
             };
             timeout(NEGOTIATION_TIMEOUT, async {
                 tokio::join!(peer, bridge, viewer);
