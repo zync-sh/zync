@@ -6,8 +6,8 @@ use super::{
     vault_auth::VaultLink,
 };
 use bytes::Bytes;
-use native_tls::{Protocol, TlsConnector};
-use std::time::Duration;
+use native_tls::{Protocol, TlsConnector, TlsConnectorBuilder};
+use std::{future::Future, time::Duration};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
@@ -58,9 +58,21 @@ pub(super) async fn run(
     username: &str,
     vault_link: Option<VaultLink>,
 ) -> Result<(), &'static str> {
+    let password = async move {
+        let link = vault_link?;
+        link.credential(|value| Zeroizing::new(value.to_owned()))
+            .await
+    };
     let result = timeout(
         NEGOTIATION_TIMEOUT,
-        prepare(viewer, stream, host, username, vault_link),
+        prepare(
+            viewer,
+            stream,
+            host,
+            username,
+            tls_connector_builder(),
+            password,
+        ),
     )
     .await
     .unwrap_or(Err(Failure::TimedOut));
@@ -70,23 +82,27 @@ pub(super) async fn run(
     }
 }
 
+/// Use the platform trust store and require TLS 1.2 or newer.
+fn tls_connector_builder() -> TlsConnectorBuilder {
+    let mut builder = TlsConnector::builder();
+    builder.min_protocol_version(Some(Protocol::Tlsv12));
+    builder
+}
+
 /// Resolve the linked credential and expose local authentication only after TLS verification.
 async fn prepare(
     viewer: &mut Viewer,
     mut stream: TcpStream,
     host: &str,
     username: &str,
-    vault_link: Option<VaultLink>,
+    connector: TlsConnectorBuilder,
+    password: impl Future<Output = Option<Zeroizing<String>>>,
 ) -> Result<TlsStream<TcpStream>, Failure> {
     select_x509_plain(&mut stream).await?;
-    let connector = tokio::task::spawn_blocking(|| {
-        TlsConnector::builder()
-            .min_protocol_version(Some(Protocol::Tlsv12))
-            .build()
-    })
-    .await
-    .map_err(|_| Failure::Tls)?
-    .map_err(|_| Failure::Tls)?;
+    let connector = tokio::task::spawn_blocking(move || connector.build())
+        .await
+        .map_err(|_| Failure::Tls)?
+        .map_err(|_| Failure::Tls)?;
     let host = host.strip_suffix('.').unwrap_or(host);
     let mut remote = tokio_native_tls::TlsConnector::from(connector)
         .connect(host, stream)
@@ -94,14 +110,7 @@ async fn prepare(
         .map_err(|_| Failure::Tls)?;
 
     let mut pending = begin_viewer_auth(viewer).await?;
-    let password = match vault_link {
-        Some(link) => {
-            link.credential(|value| Zeroizing::new(value.to_owned()))
-                .await
-        }
-        None => None,
-    };
-    if let Some(password) = password {
+    if let Some(password) = password.await {
         authenticate(&mut remote, username, password).await?;
         finish_viewer_auth(viewer, &mut pending, &mut remote).await?;
     } else {
@@ -205,16 +214,56 @@ async fn offer_viewer_plain(viewer: &mut Viewer, pending: &mut Bytes) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{duplex, DuplexStream};
+    use crate::vnc::{
+        bridge::accept_viewer,
+        tests::{connect, offer, viewer_data},
+    };
+    use futures_util::{SinkExt, StreamExt};
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
+        IsCa, KeyPair, KeyUsagePurpose,
+    };
+    use std::{cell::Cell, net::Ipv4Addr, sync::Arc};
+    use tokio::{io::duplex, net::TcpListener};
+    use tokio_rustls::{rustls, TlsAcceptor};
+    use tokio_tungstenite::tungstenite::Message;
+    use uuid::Uuid;
 
-    /// Exercise the real pre-TLS negotiation against a bounded in-memory RFB server.
-    async fn send_rfb_offer(server: &mut DuplexStream, security_types: &[u8]) {
+    /// Send the RFB security list after checking the client's version.
+    async fn send_rfb_offer(
+        server: &mut (impl AsyncRead + AsyncWrite + Unpin),
+        security_types: &[u8],
+    ) {
         server.write_all(&RFB_38).await.unwrap();
         let mut version = [0; RFB_38.len()];
         server.read_exact(&mut version).await.unwrap();
         assert_eq!(version, RFB_38);
         server.write_u8(security_types.len() as u8).await.unwrap();
         server.write_all(security_types).await.unwrap();
+    }
+
+    /// Offer the same VeNCrypt subtypes on both the in-memory and TLS peers.
+    async fn send_vencrypt_offer(
+        server: &mut (impl AsyncRead + AsyncWrite + Unpin),
+        subtypes: &[u32],
+        tls_ready: u8,
+    ) {
+        send_rfb_offer(server, &[2, VENCRYPT]).await;
+        assert_eq!(server.read_u8().await.unwrap(), VENCRYPT);
+        server.write_all(&VENCRYPT_VERSION).await.unwrap();
+        assert_eq!(
+            server.read_u16().await.unwrap(),
+            u16::from_be_bytes(VENCRYPT_VERSION)
+        );
+        server.write_u8(0).await.unwrap();
+        server.write_u8(subtypes.len() as u8).await.unwrap();
+        for subtype in subtypes {
+            server.write_u32(*subtype).await.unwrap();
+        }
+        if subtypes.contains(&X509_PLAIN) {
+            assert_eq!(server.read_u32().await.unwrap(), X509_PLAIN);
+            server.write_u8(tls_ready).await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -246,19 +295,7 @@ mod tests {
         ] {
             let (mut client, mut server) = duplex(64);
             let remote = async move {
-                send_rfb_offer(&mut server, &[2, VENCRYPT]).await;
-                assert_eq!(server.read_u8().await.unwrap(), VENCRYPT);
-                server.write_all(&VENCRYPT_VERSION).await.unwrap();
-                assert_eq!(server.read_u16().await.unwrap(), 2);
-                server.write_u8(0).await.unwrap();
-                server.write_u8(offer.len() as u8).await.unwrap();
-                for subtype in &offer {
-                    server.write_u32(*subtype).await.unwrap();
-                }
-                if offer.contains(&X509_PLAIN) {
-                    assert_eq!(server.read_u32().await.unwrap(), X509_PLAIN);
-                    server.write_u8(ack).await.unwrap();
-                }
+                send_vencrypt_offer(&mut server, &offer, ack).await;
                 assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
             };
             let local = async move {
@@ -269,6 +306,123 @@ mod tests {
             })
             .await
             .unwrap();
+        }
+    }
+
+    /// Generate a CA and a TLS 1.2 server certificate with the given DNS identity.
+    fn tls_peer(host: &str) -> (native_tls::Certificate, TlsAcceptor) {
+        let now = time::OffsetDateTime::now_utc();
+        let validity = time::Duration::days(1);
+        let mut ca = CertificateParams::default();
+        ca.distinguished_name
+            .push(DnType::CommonName, "Zync VNC test CA");
+        ca.not_before = now - validity;
+        ca.not_after = now + validity;
+        ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let issuer = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+        let mut leaf = CertificateParams::new(vec![host.to_owned()]).unwrap();
+        leaf.distinguished_name.push(DnType::CommonName, host);
+        leaf.not_before = now - validity;
+        leaf.not_after = now + validity;
+        leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let key = KeyPair::generate().unwrap();
+        let certificate = leaf.signed_by(&key, &issuer).unwrap();
+        let config =
+            rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![certificate.der().clone()],
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+                )
+                .unwrap();
+        (
+            native_tls::Certificate::from_der(issuer.der().as_ref()).unwrap(),
+            TlsAcceptor::from(Arc::new(config)),
+        )
+    }
+
+    #[tokio::test]
+    async fn direct_tls_verifies_the_peer_before_requesting_or_sending_plain_credentials() {
+        let certificate_host = "desktop.example.test";
+        let (ca, acceptor) = tls_peer(certificate_host);
+        let username = "desktop-user";
+        let password = Uuid::new_v4().to_string();
+        for (host, trust_ca, expected) in [
+            (certificate_host, false, Err(Failure::Tls)),
+            ("other.example.test", true, Err(Failure::Tls)),
+            (certificate_host, true, Ok(())),
+        ] {
+            let expect_success = expected.is_ok();
+            let peer_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+            let peer_address = peer_listener.local_addr().unwrap();
+            let (listener, offer, url) = offer().await;
+            let credential_requested = Cell::new(false);
+            let mut connector = tls_connector_builder();
+            if trust_ca {
+                connector.add_root_certificate(ca.clone());
+            }
+
+            let peer = async {
+                let (mut stream, _) = peer_listener.accept().await.unwrap();
+                send_vencrypt_offer(&mut stream, &[PLAIN, X509_PLAIN], 1).await;
+                let result = acceptor.accept(stream).await;
+                if !expect_success {
+                    if let Ok(mut stream) = result {
+                        assert!(matches!(stream.read(&mut [0u8; 1]).await, Ok(0) | Err(_)));
+                    }
+                    return;
+                }
+                let mut stream = result.unwrap();
+                assert_eq!(stream.read_u32().await.unwrap() as usize, username.len());
+                assert_eq!(stream.read_u32().await.unwrap() as usize, password.len());
+                let mut credentials = vec![0; username.len() + password.len()];
+                stream.read_exact(&mut credentials).await.unwrap();
+                assert_eq!(&credentials[..username.len()], username.as_bytes());
+                assert_eq!(&credentials[username.len()..], password.as_bytes());
+                stream.write_u32(0).await.unwrap();
+                stream.flush().await.unwrap();
+            };
+            let bridge = async {
+                let mut viewer = accept_viewer(listener, offer).await.unwrap();
+                let stream = TcpStream::connect(peer_address).await.unwrap();
+                let linked_password = async {
+                    credential_requested.set(true);
+                    Some(Zeroizing::new(password.clone()))
+                };
+                let result = prepare(
+                    &mut viewer,
+                    stream,
+                    host,
+                    username,
+                    connector,
+                    linked_password,
+                )
+                .await;
+                assert_eq!(
+                    result.map(|_| ()),
+                    expected,
+                    "host {host}, trusted {trust_ca}"
+                );
+            };
+            let viewer = async {
+                let mut viewer = connect(&url).await;
+                if !expect_success {
+                    assert!(!matches!(viewer.next().await, Some(Ok(Message::Binary(_)))));
+                    return;
+                }
+                assert_eq!(viewer_data(&mut viewer).await, RFB_38);
+                viewer.send(Message::binary(RFB_38.to_vec())).await.unwrap();
+                assert_eq!(viewer_data(&mut viewer).await, [1, 1]);
+                viewer.send(Message::binary(vec![1])).await.unwrap();
+                assert_eq!(viewer_data(&mut viewer).await, [0; 4]);
+            };
+            timeout(NEGOTIATION_TIMEOUT, async {
+                tokio::join!(peer, bridge, viewer);
+            })
+            .await
+            .expect("loopback TLS fixture did not finish");
+            assert_eq!(credential_requested.get(), expect_success);
         }
     }
 }

@@ -33,7 +33,7 @@ const VNC_PORT: u16 = 5901;
 
 type Viewer = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-async fn offer() -> (TcpListener, Offer, String) {
+pub(super) async fn offer() -> (TcpListener, Offer, String) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let offer = Offer::new(listener.local_addr().unwrap(), ORIGIN.into());
     let url = offer.websocket_url();
@@ -48,7 +48,7 @@ fn request(url: &str, origin: &'static str) -> tokio_tungstenite::tungstenite::h
     request
 }
 
-async fn connect(url: &str) -> Viewer {
+pub(super) async fn connect(url: &str) -> Viewer {
     connect_async(request(url, ORIGIN)).await.unwrap().0
 }
 
@@ -70,7 +70,7 @@ async fn staged_vault_bridge(
     (connect(&url).await, remote, bridge)
 }
 
-async fn viewer_data(viewer: &mut Viewer) -> Vec<u8> {
+pub(super) async fn viewer_data(viewer: &mut Viewer) -> Vec<u8> {
     timeout(Duration::from_secs(3), viewer.next())
         .await
         .unwrap()
