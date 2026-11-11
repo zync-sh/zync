@@ -149,6 +149,11 @@ try {
     await vncProfile.getByRole('button', { name: 'Back', exact: true }).click();
     await vncProfile.waitFor({ state: 'hidden' });
     await dialog.getByRole('button', { name: /^VNC connection/ }).click();
+    const vncRoute = vncProfile.getByLabel('Connection route', { exact: true });
+    assert.equal(await vncRoute.innerText(), 'Direct TLS');
+    assert.equal(await vncProfile.getByLabel('VNC username', { exact: true }).isVisible(), true);
+    await vncRoute.click();
+    await page.getByRole('option', { name: 'Direct', exact: true }).click();
     const resolution = vncProfile.getByLabel('Remote resolution', { exact: true });
     const scale = vncProfile.getByLabel('Viewer scale', { exact: true });
     await resolution.waitFor();
@@ -183,6 +188,7 @@ try {
     const editVnc = page.getByRole('dialog', { name: 'Edit VNC profile', exact: true });
     await editVnc.waitFor();
     assert.equal(await editVnc.getByRole('button', { name: 'Back', exact: true }).count(), 0);
+    assert.equal(await editVnc.getByLabel('Connection route').innerText(), 'Direct');
     assert.equal(await editVnc.getByLabel('Remote resolution').innerText(), 'Custom resolution');
     assert.equal(await editVnc.getByLabel('Width (pixels)').inputValue(), '1440');
     assert.equal(await editVnc.getByLabel('Height (pixels)').inputValue(), '900');
@@ -204,6 +210,8 @@ try {
     async function fillInlineVncDraft(host: string, name: string) {
         await page.getByRole('button', { name: 'New host fixture', exact: true }).click();
         await dialog.getByRole('button', { name: /^VNC connection/ }).click();
+        await vncRoute.click();
+        await page.getByRole('option', { name: 'Direct', exact: true }).click();
         await vncProfile.getByLabel('Profile name', { exact: true }).fill(name);
         await vncProfile.getByLabel('Host or IP address', { exact: true }).fill(host);
         await vncProfile.getByLabel('VNC authentication').click();
@@ -245,6 +253,7 @@ try {
     await page.getByRole('button', { name: 'New host fixture', exact: true }).click();
     await dialog.getByRole('button', { name: /^VNC connection/ }).click();
     await vncProfile.getByLabel('Profile name', { exact: true }).fill('Connect after saving');
+    await vncProfile.getByLabel('VNC username', { exact: true }).fill('desktop-user');
     const vncHost = vncProfile.getByLabel('Host or IP address', { exact: true });
     await vncHost.fill('fail-save.fixture.invalid');
     const saveAndConnect = vncProfile.getByRole('button', { name: 'Save & Connect', exact: true });
@@ -254,6 +263,12 @@ try {
     await vncHost.fill('connect.fixture.invalid');
     await saveAndConnect.click();
     await vncProfile.waitFor({ state: 'hidden' });
+    const tlsSave = (await readVncWrites()).at(-1);
+    assert.ok(tlsSave?.type === 'save-profile');
+    assert.equal(
+        tlsSave.profiles.find(({ host }) => host === 'connect.fixture.invalid')?.tlsUsername,
+        'desktop-user',
+    );
     assert.deepEqual(
         JSON.parse((await page.locator('body').getAttribute('data-vnc-open')) ?? 'null'),
         {

@@ -119,7 +119,7 @@ function VncProfileEditor({
     const saveProfile = useAppStore((state) => state.saveVncProfile);
     const connections = useAppStore((state) => state.connections);
     const [transport, setTransport] = useState(
-        profile?.ssh ? 'ssh' : profile?.tlsUsername ? 'tls' : 'direct',
+        profile?.ssh ? 'ssh' : profile && !profile.tlsUsername ? 'direct' : 'tls',
     );
     const [sshId, setSshId] = useState(profile?.ssh?.id ?? '');
     const viaSsh = transport === 'ssh';

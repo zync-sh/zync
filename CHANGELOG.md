@@ -4,6 +4,11 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **VNC profile defaults.** New profiles open with **Direct TLS** selected.
+  Existing profiles use their saved connection route.
+
 ## [2.40.0] - 2026-11-11
 
 ### Added
