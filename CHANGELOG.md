@@ -4,6 +4,12 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **VNC over Direct TLS:** Connect to servers that offer VeNCrypt X509Plain.
+  Zync verifies the server certificate before sending a saved Vault password or
+  prompting for one. ([a51083a9], [51255c35])
+
 ### Changed
 
 - The **Host Dashboard** uses compact cards that adapt to pane width, themed
@@ -3517,3 +3523,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [ce0f4d5f]: https://github.com/zync-sh/zync/commit/ce0f4d5f9292dfa4c213020139706d09a9cc3ebd
 [d2bd24f7]: https://github.com/zync-sh/zync/commit/d2bd24f7304ca3e104f824a15883a66488a528ad
 [be5a6e46]: https://github.com/zync-sh/zync/commit/be5a6e46b0114279bd90989cc325454dae576d7e
+[a51083a9]: https://github.com/zync-sh/zync/commit/a51083a907fb7c249ff80e3dd3d8d4dbfc8a82d5
+[51255c35]: https://github.com/zync-sh/zync/commit/51255c35252cdc7f176233f99f45308c578b62ff
