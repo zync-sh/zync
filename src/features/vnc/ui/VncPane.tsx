@@ -8,12 +8,16 @@ import {
 } from '../../../components/workspace/workspaceActionsContext';
 import { useAppStore } from '../../../store/useAppStore';
 import { useVaultStore } from '../../../vault/useVaultStore';
+import { connectionFailureReason } from '../../connections/domain/formPresentation';
 import {
     DEFAULT_VNC_PORT,
+    DEFAULT_VNC_RESOLUTION,
     DEFAULT_VNC_SCALE,
-    formatVncEndpoint,
+    describeVncDestination,
+    matchesVncSshHost,
     type VncProfile,
     type VncResolution,
+    type VncSshHost,
 } from '../domain/profile';
 import { closeVncBridge, openDirectVncBridge, openVncBridge } from '../infrastructure/bridge';
 import { VncDisconnectedView } from './VncDisconnectedView';
@@ -26,13 +30,13 @@ interface ViewerAttempt {
     readonly detachListeners: (() => void)[];
     fixedResizeStarted?: boolean;
     timer?: number;
+    sshConnect?: AbortController;
 }
 
 type Phase = 'idle' | 'starting' | 'credentials' | 'connected';
 type ResizeFailure = 'rejected' | 'unavailable';
 const NEGOTIATION_TIMEOUT_MS = 15_000;
 const PASSWORD_TIMEOUT_MS = 90_000;
-const SSH_VNC_RESOLUTION: VncResolution = { mode: 'auto' };
 const RESIZE_NOTICES: Record<ResizeFailure, string> = {
     rejected:
         'The VNC server rejected the requested resolution. Fitting the current desktop to the pane.',
@@ -40,8 +44,8 @@ const RESIZE_NOTICES: Record<ResizeFailure, string> = {
         'The VNC server could not apply the requested resolution. Fitting the current desktop to the pane.',
 };
 
-/** Translate the authenticated direct bridge's fixed close reasons into endpoint guidance. */
-function directBridgeFailure(
+/** Translate native bridge close codes into endpoint and authentication guidance. */
+function bridgeFailure(
     event: CloseEvent,
     endpoint: string,
 ): { message: string; retryManually?: boolean } | undefined {
@@ -78,6 +82,7 @@ function directBridgeFailure(
 
 /** Detach listeners before closing noVNC so disconnect cannot end a replacement attempt. */
 function disposeViewer(attempt: ViewerAttempt) {
+    attempt.sshConnect?.abort();
     window.clearTimeout(attempt.timer);
     for (const detach of attempt.detachListeners) {
         detach();
@@ -96,29 +101,70 @@ function disposeViewer(attempt: ViewerAttempt) {
     }
 }
 
+/** Open SSH through the normal trust and Vault prompts without switching to a shell tab. */
+async function connectProfileSsh(ssh: VncSshHost, attempt: ViewerAttempt): Promise<void> {
+    const state = useAppStore.getState();
+    const current = state.connections.find(({ id }) => id === ssh.id);
+    if (!matchesVncSshHost(ssh, current)) {
+        throw new Error('Review the saved SSH host in this VNC profile.');
+    }
+    if (current?.status === 'connected') {
+        return;
+    }
+    if (current?.status === 'connecting') {
+        throw new Error('An SSH connection is already in progress. Try again once it finishes.');
+    }
+    const controller = new AbortController();
+    attempt.sshConnect = controller;
+    try {
+        await state.connect(ssh.id, { preserveWorkspace: true, signal: controller.signal });
+    } finally {
+        attempt.sshConnect = undefined;
+    }
+    if (controller.signal.aborted) {
+        return;
+    }
+    const connected = useAppStore.getState().connections.find(({ id }) => id === ssh.id);
+    if (!matchesVncSshHost(ssh, connected)) {
+        throw new Error('Review the saved SSH host in this VNC profile.');
+    }
+    if (connected?.status !== 'connected') {
+        throw new Error(
+            connected?.lastError
+                ? connectionFailureReason(connected.lastError)
+                : 'Could not connect to the saved SSH host.',
+        );
+    }
+}
+
 type VncPaneProps = {
     contentKey: string;
     visible: boolean;
     focused: boolean;
     registerMenuItems?: WorkspaceActions['registerContentMenuItems'];
-} & ({ connectionId: string; direct?: never } | { direct: VncProfile; connectionId?: never });
+} & ({ connectionId: string; profile?: never } | { profile: VncProfile; connectionId?: never });
 
 /** VNC viewer over either a saved direct endpoint or the selected SSH host's loopback. */
 export function VncPane({
-    connectionId,
-    direct,
+    connectionId: paneConnectionId,
+    profile,
     contentKey,
     visible,
     focused,
     registerMenuItems,
 }: VncPaneProps) {
-    const transportReady = useAppStore(
-        (state) =>
-            Boolean(direct) ||
-            state.connections.find((item) => item.id === connectionId)?.status === 'connected',
+    const ssh = profile?.ssh;
+    const direct = profile && !ssh;
+    const connectionId = ssh?.id ?? paneConnectionId;
+    const connection = useAppStore((state) =>
+        state.connections.find((item) => item.id === connectionId),
     );
+    const routeAvailable = !ssh || matchesVncSshHost(ssh, connection);
+    const transportReady = Boolean(direct) || connection?.status === 'connected';
     const connectRequested = useAppStore((state) =>
-        Boolean(direct && state.tabs.some((tab) => tab.id === contentKey && tab.vncConnectRequest)),
+        Boolean(
+            profile && state.tabs.some((tab) => tab.id === contentKey && tab.vncConnectRequest),
+        ),
     );
     const workspaceActions = useWorkspaceContextActions();
     const registerContentMenuItems =
@@ -133,18 +179,18 @@ export function VncPane({
     const [resizeFailure, setResizeFailure] = useState<ResizeFailure | null>(null);
     const [manualRetryCredential, setManualRetryCredential] = useState<string | null>(null);
     const [error, setError] = useState('');
-    const credentialId = direct?.credentialId;
+    const credentialId = profile?.credentialId;
     const manualRetry = Boolean(credentialId && manualRetryCredential === credentialId);
-    const configuredResolution = direct?.resolution ?? SSH_VNC_RESOLUTION;
+    const configuredResolution = profile?.resolution ?? DEFAULT_VNC_RESOLUTION;
     const resolution = sessionResolution ?? configuredResolution;
     const defaultAutoResize = resolution.mode === 'auto';
     const resizeRemoteDesktop = resizeOverride ?? defaultAutoResize;
-    const viewerScale = resizeFailure ? DEFAULT_VNC_SCALE : (direct?.scale ?? DEFAULT_VNC_SCALE);
+    const viewerScale = resizeFailure ? DEFAULT_VNC_SCALE : (profile?.scale ?? DEFAULT_VNC_SCALE);
     const viewportScale = viewerScale === 'fit' ? null : viewerScale / 100;
-    const port = direct?.port ?? Number(portInput);
-    const endpoint = direct ? formatVncEndpoint(direct) : `SSH loopback port ${port}`;
+    const port = profile?.port ?? Number(portInput);
+    const endpoint = profile ? describeVncDestination(profile) : `SSH loopback port ${port}`;
     const validPort =
-        (direct || /^[0-9]+$/.test(portInput)) &&
+        (profile || /^[0-9]+$/.test(portInput)) &&
         Number.isInteger(port) &&
         port >= 1 &&
         port <= 65535;
@@ -202,10 +248,11 @@ export function VncPane({
     );
 
     useEffect(() => {
-        if (!transportReady && attemptRef.current) {
-            end(attemptRef.current, 'The SSH connection closed.');
+        const attempt = attemptRef.current;
+        if (attempt && (!routeAvailable || (!transportReady && !attempt.sshConnect))) {
+            end(attempt, 'The SSH connection closed.');
         }
-    }, [transportReady, end]);
+    }, [routeAvailable, transportReady, end]);
 
     useLayoutEffect(() => {
         /** Synchronize visibility, local scale, and remote resize policy with this viewer. */
@@ -273,7 +320,13 @@ export function VncPane({
     /** Start one viewer, bypassing the saved password only for an explicit manual retry. */
     async function connectViewer({ manualPassword = false } = {}) {
         const target = canvas.current;
-        if (!transportReady || !validPort || !target || attemptRef.current) {
+        if (
+            (!transportReady && !ssh) ||
+            !routeAvailable ||
+            !validPort ||
+            !target ||
+            attemptRef.current
+        ) {
             return;
         }
         const attempt: ViewerAttempt = { id: crypto.randomUUID(), detachListeners: [] };
@@ -283,15 +336,20 @@ export function VncPane({
         setSessionResolution(configuredResolution);
         setPhase('starting');
         try {
+            if (ssh && !transportReady) {
+                await connectProfileSsh(ssh, attempt);
+                if (attemptRef.current !== attempt) {
+                    return;
+                }
+            }
             // The native bridge resolves the linked secret only if the server offers password auth.
-            let profileId: string | undefined;
-            if (direct && credentialId && !manualPassword) {
+            const useVault = Boolean(profile && credentialId && !manualPassword);
+            if (useVault) {
                 if (!(await useVaultStore.getState().requestUnlock())) {
                     // Cancelling unlock ends this attempt; bypassing Vault requires a manual retry.
                     end(attempt);
                     return;
                 }
-                profileId = direct.id;
             }
             if (attemptRef.current !== attempt) {
                 return;
@@ -301,22 +359,34 @@ export function VncPane({
             if (attemptRef.current !== attempt) {
                 return;
             }
-            const bridge = direct
-                ? await openDirectVncBridge(attempt.id, direct.host, port, profileId)
-                : await openVncBridge(attempt.id, connectionId, port);
+            const bridge =
+                direct && profile
+                    ? await openDirectVncBridge(
+                          attempt.id,
+                          profile.host,
+                          port,
+                          useVault ? profile.id : undefined,
+                      )
+                    : connectionId &&
+                      (await openVncBridge(
+                          attempt.id,
+                          connectionId,
+                          port,
+                          profile ? { id: profile.id, useVault } : undefined,
+                      ));
             if (attemptRef.current !== attempt) {
                 await closeVncBridge(attempt.id);
                 return;
             }
-            if (bridge.sessionId !== attempt.id) {
+            if (!bridge || bridge.sessionId !== attempt.id) {
                 throw new Error('Unexpected VNC session.');
             }
-            let endpointFailure: ReturnType<typeof directBridgeFailure>;
-            if (direct) {
+            let endpointFailure: ReturnType<typeof bridgeFailure>;
+            if (profile) {
                 const socket = new WebSocket(bridge.websocketUrl);
                 attempt.socket = socket;
                 const recordFailure = (event: CloseEvent) => {
-                    endpointFailure = directBridgeFailure(event, endpoint);
+                    endpointFailure = bridgeFailure(event, endpoint);
                 };
                 // Capture the bridge reason before noVNC handles close and emits disconnect.
                 socket.addEventListener('close', recordFailure);
@@ -373,7 +443,8 @@ export function VncPane({
                 );
             });
             listen('desktopresizefailure', () => {
-                if (direct && attemptRef.current === attempt) {
+                // A resize rejection has the same fallback for saved profiles and SSH panes.
+                if (attemptRef.current === attempt) {
                     setResizeOverride(false);
                     setResizeFailure('rejected');
                 }
@@ -382,7 +453,7 @@ export function VncPane({
                 if (
                     attemptRef.current === attempt &&
                     endpointFailure?.retryManually &&
-                    profileId &&
+                    useVault &&
                     credentialId
                 ) {
                     setManualRetryCredential(credentialId);
@@ -405,7 +476,7 @@ export function VncPane({
     }
 
     const startRequestedViewer = useEffectEvent(() => {
-        if (direct && useAppStore.getState().takeVncConnectRequest(contentKey, direct)) {
+        if (profile && useAppStore.getState().takeVncConnectRequest(contentKey, profile)) {
             void connectViewer();
         }
     });
@@ -444,7 +515,7 @@ export function VncPane({
             >
                 {status}
             </span>
-            {!transportReady && connectionId && (
+            {!profile && !transportReady && connectionId && (
                 <HostConnectionNotice
                     connectionId={connectionId}
                     className="m-3"
@@ -475,14 +546,23 @@ export function VncPane({
                 {phase !== 'connected' && (
                     <div className="absolute inset-0">
                         <VncDisconnectedView
-                            profileName={direct?.name}
+                            profileName={profile?.name}
+                            direct={Boolean(direct)}
                             endpoint={endpoint}
                             port={portInput}
                             onPortChange={setPortInput}
                             busy={phase !== 'idle'}
-                            canConnect={transportReady && Boolean(validPort)}
+                            canConnect={
+                                (transportReady || Boolean(ssh)) &&
+                                routeAvailable &&
+                                Boolean(validPort)
+                            }
                             status={status}
-                            error={error}
+                            error={
+                                routeAvailable
+                                    ? error
+                                    : 'The SSH host changed or is unavailable. Edit this VNC profile to choose it again.'
+                            }
                             manualRetry={manualRetry}
                             onConnect={() => void connectViewer({ manualPassword: manualRetry })}
                             onCancel={stopViewer}

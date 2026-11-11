@@ -296,6 +296,7 @@ try {
             host?: string;
             port: number;
             profileId?: string;
+            useVault?: boolean;
         }[]
     > => JSON.parse((await page.locator('body').getAttribute('data-vnc-starts')) || '[]');
     const stopped = async (): Promise<string[]> =>
@@ -372,9 +373,18 @@ try {
     await open.click();
     await waitForCornerPixel(pixel);
     assert.ok(resizeSocket);
-    // Wait for the old desktop to be painted before advertising resize support.
-    // The resize acknowledgement itself carries no pixels.
     resizeSocket.send(extendedDesktopSize({ width: 2, height: 2 }));
+    const fittedPixel = [40, 100, 160, 255];
+    resizeSocket.send(framebufferUpdate(fittedPixel));
+    await waitForCornerPixel(fittedPixel);
+    assert.deepEqual(resizeRequests, [], 'An SSH viewer fits the server resolution on open');
+    assert.equal(await canvas.getAttribute('width'), '2');
+
+    await primaryTab.click({ button: 'right' });
+    await resize.waitFor();
+    assert.equal(await resize.getAttribute('aria-checked'), 'false');
+    await resize.click();
+    // The resize acknowledgement itself carries no pixels.
     await page.waitForFunction(() => {
         const screen = document.querySelector('canvas');
         return screen?.width === 640 && screen.height === 480;
@@ -409,6 +419,11 @@ try {
         element.style.width = '400px';
     });
     await rejection;
+    await viewer
+        .getByText(
+            'The VNC server rejected the requested resolution. Fitting the current desktop to the pane.',
+        )
+        .waitFor();
     assert.equal(
         await canvas.getAttribute('width'),
         '480',
@@ -422,13 +437,23 @@ try {
 
     await primaryTab.click({ button: 'right' });
     await resize.waitFor();
-    assert.equal(await resize.getAttribute('aria-checked'), 'true');
-    await resize.click();
+    assert.equal(await resize.getAttribute('aria-checked'), 'false');
+    await page.keyboard.press('Escape');
+    const rejectedRequestCount = resizeRequests.length;
     await workspace.evaluate((element) => {
         element.style.width = '360px';
     });
     await page.waitForFunction(() => document.querySelector('canvas')?.clientWidth === 360);
-    assert.equal(await canvas.getAttribute('width'), '480', 'Disabling auto-resize scales locally');
+    assert.equal(
+        await canvas.getAttribute('width'),
+        '480',
+        'A rejected resize falls back to local fit',
+    );
+    assert.equal(
+        resizeRequests.length,
+        rejectedRequestCount,
+        'Pane resizes do not retry a rejected request',
+    );
     resizeSocket.send(desktopSize({ width: 320, height: 320 }));
     await page.waitForFunction(() => document.querySelector('canvas')?.width === 320);
     assert.deepEqual(await cornerPixel(), resizedPixel, 'Legacy DesktopSize keeps current pixels');
@@ -856,6 +881,65 @@ try {
         zoomRequestStart,
         'Zoom sends no remote size request',
     );
+
+    directOutcome = 'connected';
+    await page.goto(`${baseUrl}/tests/vnc/vncViewer.browser.html?direct&via-ssh&vault`);
+    await connectSavedProfile.click();
+    await viewer.getByText('Connected', { exact: true }).waitFor();
+    const [sshStart] = await started();
+    assert.deepEqual(sshStart, {
+        sessionId: sshStart.sessionId,
+        connectionId: 'vnc-test-host',
+        port: 5999,
+        profileId: 'vnc-fixture-direct',
+        useVault: true,
+    });
+    assert.deepEqual(
+        JSON.parse((await page.locator('body').getAttribute('data-vnc-ssh-connect'))!),
+        {
+            id: 'vnc-test-host',
+            preserveWorkspace: true,
+            scoped: true,
+        },
+    );
+    assert.equal(await viewer.getByText(/with or without a password/).count(), 0);
+
+    directOutcome = 'vault-rejected';
+    await directTab.click({ button: 'right' });
+    await directMenu.getByRole('menuitem', { name: 'Disconnect', exact: true }).click();
+    await open.waitFor();
+    await open.click();
+    await viewer.getByText('The VNC server rejected the saved Vault password.').waitFor();
+    assert.equal((await started()).at(-1)?.useVault, true);
+    directOutcome = 'password';
+    await viewer.getByRole('button', { name: 'Try password manually' }).click();
+    await authentication.waitFor();
+    const manual = (await started()).at(-1);
+    assert.equal(manual?.connectionId, 'vnc-test-host');
+    assert.equal(manual?.profileId, 'vnc-fixture-direct');
+    assert.equal(manual?.useVault, false);
+
+    await page.goto(`${baseUrl}/tests/vnc/vncViewer.browser.html?direct&via-ssh&changed-ssh`);
+    await connectSavedProfile.click();
+    await viewer.getByText(/SSH host changed or is unavailable/).waitFor();
+    assert.equal(await open.isDisabled(), true);
+    assert.deepEqual(await started(), []);
+    assert.equal(await page.locator('body').getAttribute('data-vnc-ssh-connect'), null);
+
+    for (const queued of ['', '&queued-ssh']) {
+        await page.goto(
+            `${baseUrl}/tests/vnc/vncViewer.browser.html?direct&via-ssh&hold-ssh${queued}`,
+        );
+        await connectSavedProfile.click();
+        await page.waitForFunction(() => Boolean(document.body.dataset.vncSshConnect));
+        await viewer.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await open.waitFor();
+        assert.equal(
+            await page.locator('body').getAttribute('data-vnc-ssh-cancel'),
+            'vnc-test-host',
+        );
+        assert.deepEqual(await started(), []);
+    }
 
     assert.deepEqual(errors, []);
     console.log('VNC browser checks passed.');

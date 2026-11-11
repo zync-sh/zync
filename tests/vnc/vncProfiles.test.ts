@@ -5,11 +5,14 @@ import {
     DEFAULT_VNC_RESOLUTION,
     DEFAULT_VNC_SCALE,
     formatVncEndpoint,
+    matchesVncSshHost,
     normalizeVncHost,
     normalizeVncProfiles,
     VNC_RESOLUTION_MAX_DIMENSION,
     VNC_RESOLUTION_PRESETS,
+    VNC_SSH_LOOPBACK,
     validateVncProfileDraft,
+    vncDestinationKey,
 } from '../../src/features/vnc/domain/profile.js';
 
 test('direct VNC profiles accept DNS, IPv4 and IPv6 without interpreting URLs or embedded ports', () => {
@@ -40,6 +43,30 @@ test('direct VNC profiles accept DNS, IPv4 and IPv6 without interpreting URLs or
         assert.equal(normalizeVncHost(invalid), null, invalid);
     }
     assert.equal(formatVncEndpoint({ host: '::1', port: 5900 }), '[::1]:5900');
+});
+
+test('SSH profiles restore their saved route and reject malformed routes without falling back to Direct', () => {
+    const ssh = { id: 'saved-ssh', host: 'ssh.example.test', port: 22, username: 'user' };
+    const draft = { name: 'Desktop', host: '', port: '5901', ssh };
+    const profile = validateVncProfileDraft(draft).value;
+    assert.ok(profile);
+    assert.equal(profile.host, VNC_SSH_LOOPBACK);
+    assert.deepEqual(profile.ssh, ssh);
+    assert.deepEqual(normalizeVncProfiles([{ id: 'saved-vnc', ...profile }]), [
+        { id: 'saved-vnc', ...profile },
+    ]);
+    assert.deepEqual(
+        normalizeVncProfiles([{ id: 'saved-vnc', ...profile, ssh: { ...ssh, id: 'local' } }]),
+        [],
+    );
+    assert.equal(matchesVncSshHost(ssh, { ...ssh }), true);
+    assert.equal(matchesVncSshHost(ssh, { ...ssh, username: 'other' }), false);
+    assert.equal(matchesVncSshHost(ssh), false);
+    assert.notEqual(vncDestinationKey(profile), vncDestinationKey({ ...profile, ssh: undefined }));
+    assert.notEqual(
+        vncDestinationKey(profile),
+        vncDestinationKey({ ...profile, ssh: { ...ssh, port: 2222 } }),
+    );
 });
 
 test('profile inputs validate names and a separate numeric port', () => {

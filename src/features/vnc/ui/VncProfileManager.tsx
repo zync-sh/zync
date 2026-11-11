@@ -15,7 +15,6 @@ import {
     DEFAULT_VNC_PORT,
     DEFAULT_VNC_RESOLUTION,
     DEFAULT_VNC_SCALE,
-    formatVncEndpoint,
     normalizeVncHost,
     normalizeVncPort,
     VNC_DIRECT_NETWORK_NOTICE,
@@ -24,10 +23,12 @@ import {
     VNC_RESOLUTION_MAX_PIXELS,
     VNC_RESOLUTION_PRESETS,
     VNC_SCALE_PERCENTAGES,
+    VNC_SSH_LOOPBACK,
     type VncProfile,
     type VncResolution,
     type VncResolutionDraft,
     validateVncProfileDraft,
+    vncDestinationKey,
 } from '../domain/profile';
 import { VncCredentialPicker } from './VncCredentialPicker';
 
@@ -56,10 +57,10 @@ const AUTH_OPTIONS = [
     { value: 'new-password', label: 'Save password to Vault' },
 ];
 
-/** Compare the effective host and port rather than raw input spelling. */
-function credentialEndpoint(host: string, port: number): string {
-    return formatVncEndpoint({ host: host.toLowerCase(), port });
-}
+const TRANSPORT_OPTIONS = [
+    { value: 'direct', label: 'Direct' },
+    { value: 'ssh', label: 'Via SSH' },
+];
 
 /** Match a saved fixed size to a preset when possible. */
 function resolutionChoice(resolution: VncResolution): string {
@@ -114,8 +115,21 @@ function VncProfileEditor({
     onBack,
 }: BaseModalProps & VncProfileEditorOptions & { profile?: VncProfile }) {
     const saveProfile = useAppStore((state) => state.saveVncProfile);
+    const connections = useAppStore((state) => state.connections);
+    const [transport, setTransport] = useState(profile?.ssh ? 'ssh' : 'direct');
+    const [sshId, setSshId] = useState(profile?.ssh?.id ?? '');
+    const viaSsh = transport === 'ssh';
+    const sshHosts = connections.filter(({ id }) => id !== 'local');
+    const sshHost = viaSsh ? sshHosts.find(({ id }) => id === sshId) : undefined;
+    const ssh = sshHost && {
+        id: sshHost.id,
+        host: sshHost.host,
+        port: sshHost.port,
+        username: sshHost.username,
+    };
     const initialResolution = profile?.resolution ?? DEFAULT_VNC_RESOLUTION;
     const formId = useId();
+    const sshErrorId = useId();
     const resolutionHelp = useId();
     const scaleHelp = useId();
     const [draft, setDraft] = useState({
@@ -136,19 +150,24 @@ function VncProfileEditor({
     const [vaultLabel, setVaultLabel] = useState<string>();
     const [selection, setSelection] = useState(() =>
         profile?.credentialId
-            ? { id: profile.credentialId, endpoint: credentialEndpoint(profile.host, profile.port) }
+            ? { id: profile.credentialId, endpoint: vncDestinationKey(profile) }
             : undefined,
     );
     const pending = useRef(false);
     const creationId = useRef<string | null>(null);
     const { resolutionChoice: choice, width, height, ...endpointDraft } = draft;
-    const host = normalizeVncHost(draft.host);
+    const host = viaSsh ? VNC_SSH_LOOPBACK : normalizeVncHost(draft.host);
     const port = normalizeVncPort(draft.port);
-    const endpoint = host && port !== undefined ? credentialEndpoint(host, port) : undefined;
+    const endpoint =
+        host && port !== undefined && (!viaSsh || ssh)
+            ? vncDestinationKey({ host, port, ssh })
+            : undefined;
     const needsConfirmation = Boolean(selection && selection.endpoint !== endpoint);
     const credentialId = authMode === 'vault' && !needsConfirmation ? selection?.id : undefined;
     const profileDraft = {
         ...endpointDraft,
+        host: viaSsh ? VNC_SSH_LOOPBACK : endpointDraft.host,
+        ssh,
         resolution: resolutionDraft(choice, width, height),
         credentialId,
     };
@@ -168,7 +187,7 @@ function VncProfileEditor({
     /** Create the credential on submit and link its identity before optionally connecting. */
     async function submit(action: 'save' | 'connect') {
         setShowValidation(true);
-        if (!validation.value || needsCredential || pending.current) {
+        if (!validation.value || (viaSsh && !ssh) || needsCredential || pending.current) {
             return;
         }
         if (creatingPassword && (!password.trim() || !passwordLabel)) {
@@ -178,7 +197,7 @@ function VncProfileEditor({
         setSaveAction(action);
         setSaveError('');
         let createdCredentialId: string | undefined;
-        const savedEndpoint = credentialEndpoint(validation.value.host, validation.value.port);
+        const savedEndpoint = vncDestinationKey(validation.value);
         try {
             if (creatingPassword) {
                 if (!(await useVaultStore.getState().requestUnlock())) {
@@ -272,21 +291,55 @@ function VncProfileEditor({
                     required
                     disabled={saving}
                 />
+                <Select
+                    label="Connection route"
+                    value={transport}
+                    options={TRANSPORT_OPTIONS}
+                    onChange={setTransport}
+                    disabled={saving}
+                    showSearch={false}
+                    portal
+                />
                 <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
+                    {viaSsh ? (
+                        <div>
+                            <Select
+                                label="SSH host"
+                                placeholder="Choose a saved SSH host"
+                                value={sshId}
+                                options={sshHosts.map(({ id, name, host, username }) => ({
+                                    value: id,
+                                    label: name || host,
+                                    description: `${username}@${host}`,
+                                }))}
+                                onChange={setSshId}
+                                ariaDescribedBy={sshErrorId}
+                                disabled={saving}
+                                portal
+                            />
+                            <p
+                                id={sshErrorId}
+                                className="mt-1 text-xs text-control-danger"
+                            >
+                                {showValidation && !ssh ? 'Choose a saved SSH host.' : errors?.ssh}
+                            </p>
+                        </div>
+                    ) : (
+                        <Input
+                            label="Host or IP address"
+                            placeholder="desktop.example.com"
+                            value={draft.host}
+                            onChange={(event) => setDraft({ ...draft, host: event.target.value })}
+                            error={errors?.host}
+                            autoCapitalize="none"
+                            autoComplete="off"
+                            spellCheck={false}
+                            required
+                            disabled={saving}
+                        />
+                    )}
                     <Input
-                        label="Host or IP address"
-                        placeholder="desktop.example.com"
-                        value={draft.host}
-                        onChange={(event) => setDraft({ ...draft, host: event.target.value })}
-                        error={errors?.host}
-                        autoCapitalize="none"
-                        autoComplete="off"
-                        spellCheck={false}
-                        required
-                        disabled={saving}
-                    />
-                    <Input
-                        label="Port"
+                        label={viaSsh ? 'VNC port' : 'Port'}
                         inputMode="numeric"
                         value={draft.port}
                         onChange={(event) => setDraft({ ...draft, port: event.target.value })}
@@ -453,7 +506,11 @@ function VncProfileEditor({
                         aria-hidden
                     />
                     <div className="space-y-1">
-                        <p>{VNC_DIRECT_NETWORK_NOTICE}</p>
+                        <p>
+                            {viaSsh
+                                ? 'Zync uses SSH to reach the VNC server listening on the selected host’s loopback address.'
+                                : VNC_DIRECT_NETWORK_NOTICE}
+                        </p>
                         <p>Zync uses the saved password only if the server requests one.</p>
                     </div>
                 </div>

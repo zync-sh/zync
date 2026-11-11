@@ -1,5 +1,6 @@
 //! Local bridge, direct TCP, and encrypted SSH tests. The mock SSH peer never dials a destination.
 
+use super::bridge::relay;
 use super::*;
 use crate::types::{AuthMethod, ConnectionConfig};
 use futures_util::{SinkExt, StreamExt};
@@ -694,7 +695,18 @@ async fn vnc_stays_on_remote_loopback_and_ends_when_ssh_binding_is_replaced() {
     let lease = sessions.reserve(Uuid::new_v4()).unwrap();
     let task = tokio::spawn({
         let connections = connections.clone();
-        async move { run(listener, offer, &connections, binding, lease, VNC_PORT).await }
+        async move {
+            run(
+                listener,
+                offer,
+                &connections,
+                binding,
+                lease,
+                VNC_PORT,
+                None,
+            )
+            .await
+        }
     });
     assert!(matches!(
         observed.try_recv(),
@@ -766,10 +778,18 @@ async fn stopping_pending_offer_drops_its_listener_before_ssh_open() {
     let sessions = VncSessions::default();
     let id = Uuid::new_v4();
     let lease = sessions.reserve(id).unwrap();
-    let task =
-        tokio::spawn(
-            async move { run(listener, offer, &connections, binding, lease, VNC_PORT).await },
-        );
+    let task = tokio::spawn(async move {
+        run(
+            listener,
+            offer,
+            &connections,
+            binding,
+            lease,
+            VNC_PORT,
+            None,
+        )
+        .await
+    });
 
     sessions.stop(id);
     assert_eq!(
@@ -807,7 +827,18 @@ async fn timed_out_ssh_open_retains_admission_and_closes_confirmation_after_the_
     let lease = sessions.reserve(id).unwrap();
     let task = tokio::spawn({
         let connections = connections.clone();
-        async move { run(listener, offer, &connections, binding, lease, VNC_PORT).await }
+        async move {
+            run(
+                listener,
+                offer,
+                &connections,
+                binding,
+                lease,
+                VNC_PORT,
+                None,
+            )
+            .await
+        }
     });
     let mut viewer = connect(&url).await;
     timeout(Duration::from_secs(2), target)
@@ -867,7 +898,18 @@ async fn cancelled_ssh_open_survives_the_deadline_until_transport_loss_releases_
     let lease = sessions.reserve(id).unwrap();
     let task = tokio::spawn({
         let connections = connections.clone();
-        async move { run(listener, offer, &connections, binding, lease, VNC_PORT).await }
+        async move {
+            run(
+                listener,
+                offer,
+                &connections,
+                binding,
+                lease,
+                VNC_PORT,
+                None,
+            )
+            .await
+        }
     });
     let mut viewer = connect(&url).await;
     timeout(Duration::from_secs(2), target)
@@ -926,7 +968,18 @@ async fn stopping_during_ssh_open_closes_the_viewer_and_drains_the_late_channel(
     let lease = sessions.reserve(id).unwrap();
     let task = tokio::spawn({
         let connections = connections.clone();
-        async move { run(listener, offer, &connections, binding, lease, VNC_PORT).await }
+        async move {
+            run(
+                listener,
+                offer,
+                &connections,
+                binding,
+                lease,
+                VNC_PORT,
+                None,
+            )
+            .await
+        }
     });
     let mut viewer = connect(&url).await;
     timeout(Duration::from_secs(2), target)

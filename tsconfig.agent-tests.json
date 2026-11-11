@@ -59,6 +59,7 @@
         "tests/vaultSshCertificate.test.ts",
         "tests/connections/connectionForm.browser.tsx",
         "tests/connections/connectionForm.browser.test.ts",
+        "tests/connections/hostInventoryAccount.test.ts",
         "tests/connectionOptions.test.ts",
         "tests/networkInterface.test.ts",
         "tests/terminalOutputFlow.browser.ts",

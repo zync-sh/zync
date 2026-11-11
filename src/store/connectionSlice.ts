@@ -94,7 +94,7 @@ import {
     trackConnectSuccess,
     usageFeatureForTabView,
 } from '../features/usage';
-import type { VncProfile } from '../features/vnc/domain/profile';
+import { type VncProfile, vncDestinationKey } from '../features/vnc/domain/profile';
 import { terminalForConnectionStartup } from '../features/workspace/application/reconnectTerminal';
 import {
     assertSupportedMainTabPresentations,
@@ -188,6 +188,8 @@ export interface ConnectionSlice {
             skipCredentialPull?: boolean;
             /** Connect host-backed content without creating or selecting a shell. */
             preserveWorkspace?: boolean;
+            /** Cancel only this request and await any authentication retries it owns. */
+            signal?: AbortSignal;
         },
     ) => Promise<void>;
     cancelConnect: (id: string) => Promise<void>;
@@ -651,7 +653,28 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
     /** Own a foreground connection attempt through trust, verification, and workspace startup. */
     connect: async (id, options) => {
-        return runSerializedConnectOp(id, async () => {
+        const signal = options?.signal;
+        const skipCredentialPull = options?.skipCredentialPull ?? false;
+
+        /** Keep scoped retries in this queue slot while legacy callers keep their deferred retry. */
+        const retryAfterUnlock = () => {
+            if (signal) {
+                set((state) => ({
+                    connections: markConnectionStatus(state.connections, id, 'disconnected'),
+                }));
+                return true;
+            }
+            queueMicrotask(() => {
+                void get().connect(id, {
+                    ...options,
+                    skipVaultPrompt: true,
+                    skipCredentialPull,
+                });
+            });
+        };
+
+        /** Run one native attempt with a distinct cancellation identity. */
+        const connectOnce = async (skipVaultPrompt: boolean): Promise<boolean | void> => {
             const attemptId = createConnectAttemptId(id);
             activeConnectAttempts.set(id, attemptId);
             const inheritedQueuedCancel = registerConnectAttempt({
@@ -660,9 +683,6 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 pending: pendingConnectCancellations,
                 cancelledAttempts: cancelledConnectAttempts,
             });
-            const skipVaultPrompt = options?.skipVaultPrompt ?? false;
-            const skipCredentialPull = options?.skipCredentialPull ?? false;
-
             const finishCancelledConnect = async (disconnectBackend = false): Promise<boolean> => {
                 if (!clearCancelledConnectAttempt(cancelledConnectAttempts, attemptId)) {
                     return false;
@@ -713,12 +733,27 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 return;
             }
 
-            // Optimistic update
-            set((state) => ({
-                connections: markConnectionStatus(state.connections, id, 'connecting'),
-            }));
+            let cancellation: Promise<void> | undefined;
+            /** Cancel this native attempt without setting the host-wide queued-cancel flag. */
+            const cancelOwnedAttempt = () => {
+                if (
+                    activeConnectAttempts.get(id) !== attemptId ||
+                    get().connections.some((host) => host.id === id && host.status === 'connected')
+                ) {
+                    return;
+                }
+                cancelledConnectAttempts.add(attemptId);
+                cancelNetworkPrompts(id);
+                cancellation = cancelConnectIpc(id, attemptId).catch((error) => {
+                    console.error('Failed to cancel the SSH attempt:', error);
+                });
+            };
+            signal?.addEventListener('abort', cancelOwnedAttempt, { once: true });
 
             try {
+                set((state) => ({
+                    connections: markConnectionStatus(state.connections, id, 'connecting'),
+                }));
                 if (id === 'local') {
                     return; // Local connects instantly usually
                 }
@@ -788,6 +823,9 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
                 if (!skipVaultPrompt && connectConfigUsesVaultAuth(fullConfig)) {
                     const unlocked = await useVaultStore.getState().requestUnlock();
+                    if (await finishCancelledConnect()) {
+                        return;
+                    }
                     if (!unlocked) {
                         if (isVaultInUseError(useVaultStore.getState().error)) {
                             get().showToast('error', VAULT_IN_USE_USER_MESSAGE, 8000);
@@ -844,7 +882,14 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
 
                 const response = await connectWithHostKeyVerification(
                     fullConfig,
-                    connectIpc,
+                    signal
+                        ? (config) => {
+                              if (signal.aborted) {
+                                  throw new Error('SSH connection cancelled.');
+                              }
+                              return connectIpc(config);
+                          }
+                        : connectIpc,
                     get().showConfirmDialog,
                 );
                 if (await finishCancelledConnect(true)) {
@@ -1053,6 +1098,10 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     }
 
                     const unlocked = await useVaultStore.getState().requestUnlock();
+                    if (await finishCancelledConnect()) {
+                        clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
+                        return;
+                    }
                     if (!unlocked) {
                         clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
                         if (isVaultInUseError(useVaultStore.getState().error)) {
@@ -1075,6 +1124,10 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                             readLocalKeyFileIpc(error.keyPath),
                             vaultIpc.itemList(),
                         ]);
+                        if (await finishCancelledConnect()) {
+                            clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
+                            return;
+                        }
                         const baseLabel = buildDefaultKeyVaultLabel(target);
                         const label = buildUniqueVaultLabel(
                             baseLabel,
@@ -1116,13 +1169,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         if (await finishCancelledConnect()) {
                             return;
                         }
-                        queueMicrotask(() => {
-                            void get().connect(id, {
-                                ...options,
-                                skipVaultPrompt: true,
-                                skipCredentialPull,
-                            });
-                        });
+                        return retryAfterUnlock();
                     } catch (vaultError: unknown) {
                         clearVaultRequestedPassphrase(error.connectionId, error.keyPath);
                         if (createdVaultItemId) {
@@ -1147,14 +1194,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 if (!skipVaultPrompt && isVaultAccessError(message)) {
                     const unlocked = await useVaultStore.getState().requestUnlock();
                     if (shouldScheduleUnlockRetry(unlocked, cancelledConnectAttempts, attemptId)) {
-                        queueMicrotask(() => {
-                            void get().connect(id, {
-                                ...options,
-                                skipVaultPrompt: true,
-                                skipCredentialPull,
-                            });
-                        });
-                        return;
+                        return retryAfterUnlock();
                     }
                     set((state) => ({
                         connections: markConnectionStatus(state.connections, id, 'disconnected'),
@@ -1179,10 +1219,30 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     return { connections: nextConnections };
                 });
             } finally {
+                signal?.removeEventListener('abort', cancelOwnedAttempt);
+                if (cancellation) {
+                    await cancellation;
+                }
                 await finishCancelledConnect(true);
                 if (activeConnectAttempts.get(id) === attemptId) {
                     activeConnectAttempts.delete(id);
                 }
+            }
+        };
+        return runSerializedConnectOp(id, async () => {
+            let skipVaultPrompt = options?.skipVaultPrompt ?? false;
+            // A scoped request may have waited behind a connection established by another caller.
+            while (!signal?.aborted) {
+                if (
+                    signal &&
+                    get().connections.some((host) => host.id === id && host.status === 'connected')
+                ) {
+                    return;
+                }
+                if (!(await connectOnce(skipVaultPrompt))) {
+                    return;
+                }
+                skipVaultPrompt = true;
             }
         });
     },
@@ -1357,8 +1417,10 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         if (!profile) {
             return;
         }
-        const { host, port, credentialId } = profile;
-        const request = options?.connect ? { host, port, credentialId } : undefined;
+        const { host, port, credentialId, ssh } = profile;
+        const request = options?.connect
+            ? { host, port, credentialId, ...(ssh && { ssh }) }
+            : undefined;
         const existing = state.tabs.find(
             (tab) => tab.type === 'vnc' && tab.vncProfileId === profileId,
         );
@@ -1406,7 +1468,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
         /** Match the captured endpoint and credential without tying display settings to a connection request. */
         const matchesRequest = (candidate: VncProfile | undefined) =>
             candidate?.host === request.host &&
-            candidate.port === request.port &&
+            vncDestinationKey(candidate) === vncDestinationKey(request) &&
             candidate.credentialId === request.credentialId;
         const stillSaved = matchesRequest(profile);
         if (stillSaved && !matchesRequest(target)) {

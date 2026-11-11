@@ -100,3 +100,20 @@ test('a compiler failure stops the runner before any suite can execute', () => {
     assert.equal(status, 23);
     assert.equal(executions, 1);
 });
+
+test('legacy terminal suites receive a preload and an entry point as separate arguments', () => {
+    const suite = path.resolve('tests/terminalLifecycleOwnership.test.mjs');
+    let argumentsForSuite: string[] | undefined;
+    const status = runner.runAgentTests(['terminal'], (executable, arguments_) => {
+        assert.equal(executable, process.execPath);
+        if (arguments_.includes(suite)) {
+            argumentsForSuite = arguments_;
+        }
+        return { status: 0 };
+    });
+    assert.equal(status, 0);
+    const preload = runner
+        .readTestBuild()
+        .resolveTestFile('tests/terminal/helpers/legacyTerminalEnvironment.ts');
+    assert.deepEqual(argumentsForSuite, ['--import', pathToFileURL(preload).href, '--', suite]);
+});

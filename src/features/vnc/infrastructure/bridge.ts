@@ -10,8 +10,14 @@ export function openVncBridge(
     sessionId: string,
     connectionId: string,
     port: number,
+    profile?: { id: string; useVault: boolean },
 ): Promise<VncBridge> {
-    return invoke('vnc_start', { sessionId, connectionId, port });
+    return invoke('vnc_start', {
+        sessionId,
+        connectionId,
+        port,
+        ...(profile && { profileId: profile.id, useVault: profile.useVault }),
+    });
 }
 
 /** Start a direct viewer, optionally using the saved profile's native Vault binding. */

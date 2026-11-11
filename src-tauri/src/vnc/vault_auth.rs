@@ -1,6 +1,9 @@
 //! Optional native RFB 3.8 authentication for a Vault-linked standalone profile.
 
-use super::bridge::Viewer;
+use super::{
+    bridge::{close_with_reason, relay, Viewer},
+    SshRoute, SSH_LOOPBACK,
+};
 use crate::{
     commands::read_effective_settings,
     vault::{
@@ -14,6 +17,7 @@ use des::{
     Des,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{future::Future, time::Duration};
 use tauri::{AppHandle, Manager};
@@ -41,30 +45,68 @@ pub(super) struct VaultLink {
     app: AppHandle,
     profile_id: String,
     credential_id: String,
+    host: String,
+    port: u16,
+    ssh: Option<SshRoute>,
 }
 
 impl VaultLink {
     /// Capture only the persisted reference at admission, before opening any remote socket.
     pub(super) fn bind(app: AppHandle, profile_id: String, host: &str, port: u16) -> Option<Self> {
-        if !profile_id_is_valid(&profile_id) {
-            return None;
-        }
         let settings = tokio::task::block_in_place(|| read_effective_settings(&app)).ok()?;
-        let credential_id = saved_credential_id(&settings, &profile_id, host, port)?.into();
+        let profile = saved_profile(&settings, &profile_id, host, port, None)?;
+        let credential_id = saved_credential_id(profile)?.into();
         Some(Self {
             app,
             profile_id,
             credential_id,
+            host: host.into(),
+            port,
+            ssh: None,
         })
     }
 
-    /// Recheck the endpoint and reference when the server actually selects the Vault path.
-    pub(super) async fn key(self, host: &str, port: u16) -> Option<VncKey> {
+    /// Require the saved route even for a manual password attempt.
+    pub(super) fn bind_ssh(
+        app: AppHandle,
+        profile_id: String,
+        port: u16,
+        route: &SshRoute,
+        use_vault: bool,
+    ) -> Result<Option<Self>, &'static str> {
+        let settings = tokio::task::block_in_place(|| read_effective_settings(&app))
+            .map_err(|_| "Could not read the saved VNC profile.")?;
+        let profile = saved_profile(&settings, &profile_id, SSH_LOOPBACK, port, Some(route))
+            .ok_or("The saved VNC route changed. Review the profile and try again.")?;
+        if !use_vault {
+            return Ok(None);
+        }
+        let credential_id = saved_credential_id(profile)
+            .ok_or("The saved VNC password link changed. Review the profile and try again.")?;
+        Ok(Some(Self {
+            app,
+            profile_id,
+            credential_id: credential_id.into(),
+            host: SSH_LOOPBACK.into(),
+            port,
+            ssh: Some(route.clone()),
+        }))
+    }
+
+    /// Recheck the route and reference when the server actually selects the Vault path.
+    async fn key(self) -> Option<VncKey> {
         let vault = self.app.try_state::<Mutex<VaultService>>()?;
         let vault = timeout(VAULT_WAIT, vault.lock()).await.ok()?;
         tokio::task::block_in_place(|| {
             let settings = read_effective_settings(&self.app).ok()?;
-            let credential_id = saved_credential_id(&settings, &self.profile_id, host, port)?;
+            let profile = saved_profile(
+                &settings,
+                &self.profile_id,
+                &self.host,
+                self.port,
+                self.ssh.as_ref(),
+            )?;
+            let credential_id = saved_credential_id(profile)?;
             if credential_id != self.credential_id {
                 return None;
             }
@@ -81,13 +123,17 @@ fn profile_id_is_valid(id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
-/// Reject ambiguous profile IDs, nonexact destinations, and invalid Vault references.
-fn saved_credential_id<'a>(
+/// Match a unique persisted profile to the exact endpoint and transport.
+fn saved_profile<'a>(
     settings: &'a Value,
     profile_id: &str,
     host: &str,
     port: u16,
-) -> Option<&'a str> {
+    ssh: Option<&SshRoute>,
+) -> Option<&'a Value> {
+    if !profile_id_is_valid(profile_id) {
+        return None;
+    }
     let mut profiles = settings["vncProfiles"]
         .as_array()?
         .iter()
@@ -99,6 +145,18 @@ fn saved_credential_id<'a>(
     {
         return None;
     }
+    match (profile.get("ssh"), ssh) {
+        (None, None) => Some(profile),
+        (Some(saved), Some(route)) => {
+            let saved = SshRoute::deserialize(saved).ok()?;
+            (&saved == route).then_some(profile)
+        }
+        _ => None,
+    }
+}
+
+/// Accept only the bounded logical ID of a stored password.
+fn saved_credential_id(profile: &Value) -> Option<&str> {
     let id = profile["credentialId"].as_str()?;
     let (first, rest) = id.as_bytes().split_first()?;
     (id.len() <= 128
@@ -107,6 +165,23 @@ fn saved_credential_id<'a>(
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')))
     .then_some(id)
+}
+
+/// Complete optional native password authentication before relaying either transport.
+pub(super) async fn relay_with_vault<S>(
+    viewer: &mut Viewer,
+    mut stream: S,
+    link: Option<VaultLink>,
+) -> Result<(), &'static str>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if let Some(link) = link {
+        if let Err(failure) = negotiate(viewer, &mut stream, link.key()).await {
+            return Err(close_with_reason(viewer, failure.reason()).await);
+        }
+    }
+    relay(viewer, stream).await
 }
 
 /// Decrypt only the linked password and drop its plaintext before waiting for a challenge.
