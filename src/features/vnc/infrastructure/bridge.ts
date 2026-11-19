@@ -20,14 +20,14 @@ export function openVncBridge(
     });
 }
 
-/** Start a direct viewer, optionally using the saved profile's native Vault binding. */
+/** Start a direct viewer with its required TLS mode and optional native Vault binding. */
 export function openDirectVncBridge(
     sessionId: string,
     host: string,
     port: number,
-    profileId?: string,
+    options: { profileId?: string; tlsUsername?: string } = {},
 ): Promise<VncBridge> {
-    return invoke('vnc_start_direct', { sessionId, host, port, ...(profileId && { profileId }) });
+    return invoke('vnc_start_direct', { sessionId, host, port, ...options });
 }
 
 /** Retire a bridge even if the renderer cancelled before native startup completed. */

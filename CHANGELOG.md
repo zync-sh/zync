@@ -14,6 +14,14 @@ All notable changes to Zync are documented in this file. The format is based on 
   serves and lets you pin one key or use the agent's first key. Private keys
   never leave the agent; Zync only asks it to sign. The Quick Connect bar offers
   the same option.
+  
+## [2.40.0] - 2026-11-11
+
+### Added
+
+- **VNC over Direct TLS:** Connect to servers that offer VeNCrypt X509Plain.
+  Zync verifies the server certificate before sending a saved Vault password or
+  prompting for one. ([a51083a9], [51255c35])
 
 ### Changed
 
@@ -3130,7 +3138,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.39.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.40.0...HEAD
+[2.40.0]: https://github.com/zync-sh/zync/compare/v2.39.0...v2.40.0
 [2.39.0]: https://github.com/zync-sh/zync/compare/v2.38.2...v2.39.0
 [2.38.2]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.2
 [2.38.0]: https://github.com/zync-sh/zync/compare/v2.37.0...v2.38.0
@@ -3528,3 +3537,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [ce0f4d5f]: https://github.com/zync-sh/zync/commit/ce0f4d5f9292dfa4c213020139706d09a9cc3ebd
 [d2bd24f7]: https://github.com/zync-sh/zync/commit/d2bd24f7304ca3e104f824a15883a66488a528ad
 [be5a6e46]: https://github.com/zync-sh/zync/commit/be5a6e46b0114279bd90989cc325454dae576d7e
+[a51083a9]: https://github.com/zync-sh/zync/commit/a51083a907fb7c249ff80e3dd3d8d4dbfc8a82d5
+[51255c35]: https://github.com/zync-sh/zync/commit/51255c35252cdc7f176233f99f45308c578b62ff
