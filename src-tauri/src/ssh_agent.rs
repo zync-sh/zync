@@ -7,16 +7,22 @@
 //! agent. The private key never leaves the agent; Zync only asks it to sign.
 
 use anyhow::{anyhow, Result};
-use std::future::Future;
 use russh::keys::agent::client::{AgentClient, AgentStream};
-use russh::keys::agent::AgentIdentity;
+use russh::keys::agent::{AgentIdentity, AgentSessionBinding};
 use russh::keys::{self, HashAlg, PublicKeyBase64};
 use serde::Serialize;
+use std::future::Future;
+use std::time::Duration;
 
 /// Named pipe of the Windows OpenSSH agent service. Bitwarden/Vaultwarden and
 /// 1Password serve their SSH-agent keys through this same pipe when enabled.
 #[cfg(windows)]
 const WINDOWS_OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
+/// Upper bound on one pipe connection attempt: russh retries `ERROR_PIPE_BUSY`
+/// forever, which must not stall the fallback to Pageant (or the UI) forever.
+#[cfg(windows)]
+const PIPE_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Agent client with the backend stream erased, so named-pipe, Pageant and
 /// Unix-socket agents all share one type.
@@ -26,7 +32,8 @@ pub type DynamicAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentKeyInfo {
-    /// Canonical `algorithm base64` selector used to pick this identity again.
+    /// Canonical selector used to pick this identity again — `algorithm base64`
+    /// for plain keys, the full OpenSSH certificate line for certificates.
     pub public_key: String,
     /// SHA-256 fingerprint, as `SHA256:...`.
     pub fingerprint: String,
@@ -56,10 +63,18 @@ pub async fn list_keys() -> Result<Vec<AgentKeyInfo>> {
 /// Connect to the agent and select one identity: the requested public key when
 /// given, otherwise the agent's first key. Returns the client together with
 /// the identity because the client must stay alive to answer sign requests.
+///
+/// `session_binding` is the current SSH session's verified binding, used to
+/// support OpenSSH destination-constrained identities. Best effort: agents
+/// without the `session-bind@openssh.com` extension ignore the request.
 pub async fn select_identity(
     requested: Option<&str>,
+    session_binding: Option<&AgentSessionBinding>,
 ) -> Result<(DynamicAgentClient, AgentIdentity)> {
     let mut client = connect().await?;
+    if let Some(binding) = session_binding {
+        let _ = client.bind_session(binding, false).await;
+    }
     let mut identities = request_identities(&mut client).await?;
     let identity = match requested.map(canonicalize_requested_key).transpose()? {
         None => identities
@@ -70,7 +85,7 @@ pub async fn select_identity(
             let matches: Vec<usize> = identities
                 .iter()
                 .enumerate()
-                .filter(|(_, identity)| canonical_public_key_string(&identity.public_key()) == selector)
+                .filter(|(_, identity)| identity_selector(identity) == selector)
                 .map(|(index, _)| index)
                 .collect();
             match matches.as_slice() {
@@ -94,7 +109,12 @@ async fn request_identities(client: &mut DynamicAgentClient) -> Result<Vec<Agent
 
 #[cfg(windows)]
 async fn connect_platform() -> Result<DynamicAgentClient> {
-    if let Ok(client) = AgentClient::connect_named_pipe(WINDOWS_OPENSSH_AGENT_PIPE).await {
+    let pipe_attempt =
+        tokio::time::timeout(PIPE_CONNECT_TIMEOUT, AgentClient::connect_named_pipe(
+            WINDOWS_OPENSSH_AGENT_PIPE,
+        ))
+        .await;
+    if let Ok(Ok(client)) = pipe_attempt {
         return Ok(client.dynamic());
     }
     if let Ok(client) = AgentClient::connect_pageant().await {
@@ -129,7 +149,7 @@ fn list_identities() -> impl Future<Output = Result<Vec<AgentIdentity>>> {
 fn identity_key_info(identity: &AgentIdentity) -> AgentKeyInfo {
     let key = identity.public_key().into_owned();
     AgentKeyInfo {
-        public_key: canonical_public_key_string(&key),
+        public_key: identity_selector(identity),
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
         algorithm: key.algorithm().as_str().to_string(),
         comment: non_empty_comment(identity.comment()),
@@ -137,15 +157,53 @@ fn identity_key_info(identity: &AgentIdentity) -> AgentKeyInfo {
     }
 }
 
+/// Canonical selector for one agent identity. Plain keys keep the historical
+/// `algorithm base64` form; certificates get their full OpenSSH line so a
+/// certificate and its underlying key (or another certificate of the same key)
+/// never share one selector.
+fn identity_selector(identity: &AgentIdentity) -> String {
+    match identity {
+        AgentIdentity::PublicKey { key, .. } => canonical_public_key_string(key),
+        AgentIdentity::Certificate { certificate, .. } => certificate
+            .to_openssh()
+            .map(|line| normalize_openssh_line(&line))
+            .unwrap_or_else(|_| canonical_public_key_string(&identity.public_key())),
+    }
+}
+
 fn canonical_public_key_string(key: &keys::PublicKey) -> String {
     format!("{} {}", key.algorithm().as_str(), key.public_key_base64())
 }
 
-/// Accept a full `algorithm base64 comment` line or a bare base64 blob and
-/// return the canonical `algorithm base64` selector for comparisons.
+/// Keep only `algorithm blob`, dropping any trailing comment.
+fn normalize_openssh_line(line: &str) -> String {
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some(algorithm), Some(blob)) => format!("{algorithm} {blob}"),
+        _ => String::new(),
+    }
+}
+
+/// Accept a full `algorithm base64 comment` line, a bare base64 blob, or an
+/// OpenSSH certificate line, and return the canonical selector for
+/// comparisons.
 fn canonicalize_requested_key(requested: &str) -> Result<String> {
     let trimmed = requested.trim();
     anyhow::ensure!(!trimmed.is_empty(), "SSH agent key selector is empty");
+    let first_token = trimmed.split_whitespace().next().unwrap_or("");
+    if first_token.ends_with("-cert-v01@openssh.com") {
+        let certificate = keys::Certificate::from_openssh(trimmed)
+            .map_err(|error| anyhow!("Invalid SSH agent certificate selector: {error}"))?;
+        let line = certificate
+            .to_openssh()
+            .map_err(|error| anyhow!("Invalid SSH agent certificate selector: {error}"))?;
+        let normalized = normalize_openssh_line(&line);
+        anyhow::ensure!(
+            !normalized.is_empty(),
+            "Invalid SSH agent certificate selector"
+        );
+        return Ok(normalized);
+    }
     let base64_part = trimmed.split_whitespace().nth(1).unwrap_or(trimmed);
     let key = keys::parse_public_key_base64(base64_part)
         .map_err(|error| anyhow!("Invalid SSH agent key selector: {error}"))?;
@@ -180,5 +238,12 @@ mod tests {
         assert!(canonicalize_requested_key("").is_err());
         assert!(canonicalize_requested_key("   ").is_err());
         assert!(canonicalize_requested_key("not-a-key").is_err());
+    }
+
+    #[test]
+    fn routes_certificate_lines_to_the_certificate_parser() {
+        // A cert-algorithm line must not fall through to plain-key parsing.
+        let line = format!("ssh-ed25519-cert-v01@openssh.com {ED25519_BASE64} user@example");
+        assert!(canonicalize_requested_key(&line).is_err());
     }
 }

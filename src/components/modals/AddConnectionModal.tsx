@@ -1607,12 +1607,22 @@ export function AddConnectionModal({
                                                 </p>
                                             )}
                                             {agentStatus === 'error' && (
-                                                <div className="flex items-start gap-2 text-xs text-red-400">
-                                                    <AlertCircle
-                                                        size={12}
-                                                        className="mt-0.5 shrink-0"
-                                                    />
-                                                    <span>{agentError}</span>
+                                                <div className="space-y-2">
+                                                    <div className="flex items-start gap-2 text-xs text-red-400">
+                                                        <AlertCircle
+                                                            size={12}
+                                                            className="mt-0.5 shrink-0"
+                                                        />
+                                                        <span>{agentError}</span>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void refreshAgentKeys()}
+                                                        className="inline-flex items-center gap-1 text-xs text-app-muted hover:text-app-text transition-colors"
+                                                    >
+                                                        <RefreshCw size={10} />
+                                                        Refresh
+                                                    </button>
                                                 </div>
                                             )}
                                             {agentStatus === 'ready' && (

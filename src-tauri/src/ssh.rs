@@ -987,8 +987,11 @@ impl SshManager {
                 ));
             }
             AuthMethod::SshAgent { public_key } => {
-                let (mut agent, identity) =
-                    crate::ssh_agent::select_identity(public_key.as_deref()).await?;
+                let (mut agent, identity) = crate::ssh_agent::select_identity(
+                    public_key.as_deref(),
+                    session.agent_session_binding(),
+                )
+                .await?;
                 let pubkey = identity.public_key().into_owned();
                 let hash = if pubkey.algorithm().is_rsa() {
                     Some(rsa_auth_hash(session.best_supported_rsa_hash().await?)?)
