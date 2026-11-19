@@ -33,7 +33,7 @@ const VNC_PORT: u16 = 5901;
 
 type Viewer = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-async fn offer() -> (TcpListener, Offer, String) {
+pub(super) async fn offer() -> (TcpListener, Offer, String) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let offer = Offer::new(listener.local_addr().unwrap(), ORIGIN.into());
     let url = offer.websocket_url();
@@ -48,7 +48,7 @@ fn request(url: &str, origin: &'static str) -> tokio_tungstenite::tungstenite::h
     request
 }
 
-async fn connect(url: &str) -> Viewer {
+pub(super) async fn connect(url: &str) -> Viewer {
     connect_async(request(url, ORIGIN)).await.unwrap().0
 }
 
@@ -70,7 +70,7 @@ async fn staged_vault_bridge(
     (connect(&url).await, remote, bridge)
 }
 
-async fn viewer_data(viewer: &mut Viewer) -> Vec<u8> {
+pub(super) async fn viewer_data(viewer: &mut Viewer) -> Vec<u8> {
     timeout(Duration::from_secs(3), viewer.next())
         .await
         .unwrap()
@@ -376,6 +376,43 @@ async fn direct_vnc_dials_only_after_authorization_and_closes_on_stop() {
         Ok(())
     );
     assert_eq!(remote.read(&mut reply).await.unwrap(), 0);
+    assert!(sessions.0.lock().unwrap().active.is_empty());
+}
+
+#[tokio::test]
+async fn direct_tls_never_exposes_a_legacy_offer_to_the_viewer() {
+    let remote_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut endpoint =
+        direct::Endpoint::parse("127.0.0.1", remote_listener.local_addr().unwrap().port()).unwrap();
+    endpoint.require_tls("desktop-user".into()).unwrap();
+    let (listener, offer, url) = offer().await;
+    let sessions = VncSessions::default();
+    let lease = sessions.reserve(Uuid::new_v4()).unwrap();
+    let task = tokio::spawn(direct::run(listener, offer, endpoint, None, lease));
+    let server = tokio::spawn(async move {
+        let (mut remote, _) = remote_listener.accept().await.unwrap();
+        remote.write_all(RFB_VERSION).await.unwrap();
+        let mut version = [0; RFB_VERSION.len()];
+        remote.read_exact(&mut version).await.unwrap();
+        assert_eq!(&version, RFB_VERSION);
+        remote.write_all(&[1, 2]).await.unwrap();
+        let mut byte = [0u8; 1];
+        let count = timeout(Duration::from_secs(3), remote.read(&mut byte))
+            .await
+            .expect("Direct TLS did not close the legacy VNC connection")
+            .unwrap();
+        assert_eq!(count, 0);
+    });
+    let mut viewer = connect(&url).await;
+    let message = timeout(Duration::from_secs(3), viewer.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(matches!(message, Message::Close(Some(close))
+        if close.code == CloseCode::Error && close.reason.as_str() == "vnc-tls-unsupported"));
+    assert_eq!(task.await.unwrap(), Err("vnc-tls-unsupported"));
+    server.await.unwrap();
     assert!(sessions.0.lock().unwrap().active.is_empty());
 }
 

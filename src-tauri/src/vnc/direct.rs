@@ -3,6 +3,7 @@
 use super::{
     accept_viewer,
     bridge::close_with_reason,
+    direct_tls,
     vault_auth::{self, VaultLink},
     Lease, Offer, OPEN_TIMEOUT,
 };
@@ -47,6 +48,7 @@ impl ConnectFailure {
 pub(super) struct Endpoint {
     host: String,
     port: u16,
+    tls_username: Option<String>,
 }
 
 impl Endpoint {
@@ -67,7 +69,20 @@ impl Endpoint {
         Ok(Self {
             host: host.into(),
             port,
+            tls_username: None,
         })
+    }
+
+    /// A TLS route requires an account name for X509Plain authentication.
+    pub(super) fn require_tls(&mut self, username: String) -> Result<(), &'static str> {
+        if username.trim().is_empty()
+            || username.len() > 255
+            || username.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err("Enter a VNC username using 1 to 255 bytes.");
+        }
+        self.tls_username = Some(username);
+        Ok(())
     }
 
     /// Admit a Vault link only for the saved standalone endpoint identified by the renderer.
@@ -76,7 +91,13 @@ impl Endpoint {
         app: tauri::AppHandle,
         profile_id: String,
     ) -> Option<VaultLink> {
-        VaultLink::bind(app, profile_id, &self.host, self.port)
+        VaultLink::bind(
+            app,
+            profile_id,
+            &self.host,
+            self.port,
+            self.tls_username.as_deref(),
+        )
     }
 
     /// Bound DNS lookup and all address attempts by one deadline.
@@ -124,7 +145,11 @@ pub(super) async fn run(
             Ok(stream) => stream,
             Err(failure) => return Err(close_with_reason(&mut viewer, failure.reason()).await),
         };
-        vault_auth::relay_with_vault(&mut viewer, stream, vault_link).await
+        if let Some(username) = endpoint.tls_username {
+            direct_tls::run(&mut viewer, stream, &endpoint.host, &username, vault_link).await
+        } else {
+            vault_auth::relay_with_vault(&mut viewer, stream, vault_link).await
+        }
     };
     tokio::select! {
         biased;

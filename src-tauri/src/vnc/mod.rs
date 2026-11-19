@@ -2,6 +2,8 @@
 
 mod bridge;
 mod direct;
+mod direct_tls;
+mod rfb;
 mod vault_auth;
 
 #[cfg(test)]
@@ -315,10 +317,14 @@ pub async fn vnc_start_direct(
     host: String,
     port: u16,
     profile_id: Option<String>,
+    tls_username: Option<String>,
 ) -> Result<VncAdmission, String> {
     main_window(&window)?;
     validate_port(port)?;
-    let endpoint = direct::Endpoint::parse(&host, port)?;
+    let mut endpoint = direct::Endpoint::parse(&host, port)?;
+    if let Some(username) = tls_username {
+        endpoint.require_tls(username)?;
+    }
     let app = window.app_handle().clone();
     admit(&window, &sessions, session_id, async move {
         let vault_link = profile_id.and_then(|id| endpoint.vault_link(app, id));

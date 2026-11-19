@@ -2,6 +2,7 @@
 
 use super::{
     bridge::{close_with_reason, relay, Viewer},
+    rfb::{finish_viewer_auth, read_viewer, send_viewer, RFB_38},
     SshRoute, SSH_LOOPBACK,
 };
 use crate::{
@@ -16,7 +17,6 @@ use des::{
     cipher::{BlockCipherEncrypt, KeyInit},
     Des,
 };
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{future::Future, time::Duration};
@@ -26,14 +26,11 @@ use tokio::{
     sync::Mutex,
     time::timeout,
 };
-use tokio_tungstenite::tungstenite::protocol::Message;
 use zeroize::Zeroizing;
 
 #[cfg(test)]
 mod tests;
 
-const RFB_38: [u8; 12] = *b"RFB 003.008\n";
-const SECURITY_NONE: u8 = 1;
 const SECURITY_VNC: u8 = 2;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(8);
 const VAULT_WAIT: Duration = Duration::from_secs(1);
@@ -48,13 +45,20 @@ pub(super) struct VaultLink {
     host: String,
     port: u16,
     ssh: Option<SshRoute>,
+    tls_username: Option<String>,
 }
 
 impl VaultLink {
     /// Capture only the persisted reference at admission, before opening any remote socket.
-    pub(super) fn bind(app: AppHandle, profile_id: String, host: &str, port: u16) -> Option<Self> {
+    pub(super) fn bind(
+        app: AppHandle,
+        profile_id: String,
+        host: &str,
+        port: u16,
+        tls_username: Option<&str>,
+    ) -> Option<Self> {
         let settings = tokio::task::block_in_place(|| read_effective_settings(&app)).ok()?;
-        let profile = saved_profile(&settings, &profile_id, host, port, None)?;
+        let profile = saved_profile(&settings, &profile_id, host, port, None, tls_username)?;
         let credential_id = saved_credential_id(profile)?.into();
         Some(Self {
             app,
@@ -63,6 +67,7 @@ impl VaultLink {
             host: host.into(),
             port,
             ssh: None,
+            tls_username: tls_username.map(str::to_owned),
         })
     }
 
@@ -76,8 +81,15 @@ impl VaultLink {
     ) -> Result<Option<Self>, &'static str> {
         let settings = tokio::task::block_in_place(|| read_effective_settings(&app))
             .map_err(|_| "Could not read the saved VNC profile.")?;
-        let profile = saved_profile(&settings, &profile_id, SSH_LOOPBACK, port, Some(route))
-            .ok_or("The saved VNC route changed. Review the profile and try again.")?;
+        let profile = saved_profile(
+            &settings,
+            &profile_id,
+            SSH_LOOPBACK,
+            port,
+            Some(route),
+            None,
+        )
+        .ok_or("The saved VNC route changed. Review the profile and try again.")?;
         if !use_vault {
             return Ok(None);
         }
@@ -90,11 +102,12 @@ impl VaultLink {
             host: SSH_LOOPBACK.into(),
             port,
             ssh: Some(route.clone()),
+            tls_username: None,
         }))
     }
 
-    /// Recheck the route and reference when the server actually selects the Vault path.
-    async fn key(self) -> Option<VncKey> {
+    /// Recheck the route and return the password only to the selected native auth path.
+    pub(super) async fn credential<T>(self, prepare: impl FnOnce(&str) -> T) -> Option<T> {
         let vault = self.app.try_state::<Mutex<VaultService>>()?;
         let vault = timeout(VAULT_WAIT, vault.lock()).await.ok()?;
         tokio::task::block_in_place(|| {
@@ -105,12 +118,13 @@ impl VaultLink {
                 &self.host,
                 self.port,
                 self.ssh.as_ref(),
+                self.tls_username.as_deref(),
             )?;
             let credential_id = saved_credential_id(profile)?;
             if credential_id != self.credential_id {
                 return None;
             }
-            linked_key(&vault, credential_id)
+            linked_password(&vault, credential_id, prepare)
         })
     }
 }
@@ -130,6 +144,7 @@ fn saved_profile<'a>(
     host: &str,
     port: u16,
     ssh: Option<&SshRoute>,
+    tls_username: Option<&str>,
 ) -> Option<&'a Value> {
     if !profile_id_is_valid(profile_id) {
         return None;
@@ -144,6 +159,11 @@ fn saved_profile<'a>(
         || profile["port"].as_u64() != Some(u64::from(port))
     {
         return None;
+    }
+    match (profile.get("tlsUsername"), tls_username) {
+        (None, None) => {}
+        (Some(saved), Some(username)) if saved.as_str() == Some(username) => {}
+        _ => return None,
     }
     match (profile.get("ssh"), ssh) {
         (None, None) => Some(profile),
@@ -177,21 +197,25 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     if let Some(link) = link {
-        if let Err(failure) = negotiate(viewer, &mut stream, link.key()).await {
+        if let Err(failure) = negotiate(viewer, &mut stream, link.credential(password_key)).await {
             return Err(close_with_reason(viewer, failure.reason()).await);
         }
     }
     relay(viewer, stream).await
 }
 
-/// Decrypt only the linked password and drop its plaintext before waiting for a challenge.
-fn linked_key(vault: &VaultService, credential_id: &str) -> Option<VncKey> {
+/// Prepare the authentication value from the linked password while the Vault record is in scope.
+fn linked_password<T>(
+    vault: &VaultService,
+    credential_id: &str,
+    prepare: impl FnOnce(&str) -> T,
+) -> Option<T> {
     let record = vault.item_get_by_logical_id(credential_id).ok()?;
     if record.kind != PASSWORD_STORAGE_KIND {
         return None;
     }
     let password = record.secret_values.get(PASSWORD_FIELD)?;
-    (!password.is_empty()).then(|| password_key(password))
+    (!password.is_empty()).then(|| prepare(password))
 }
 
 /// Match the bundled viewer's first eight UTF-16 code units, low byte and reversed bits.
@@ -272,20 +296,15 @@ where
     let offer = &mut security[..=usize::from(count)];
     remote.read_exact(&mut offer[1..]).await?;
     if offer.get(1) != Some(&SECURITY_VNC) {
-        return send_viewer(viewer, offer).await;
+        return send_viewer(viewer, offer).await.map_err(Failure::from);
     }
     let Some(key) = key.await else {
-        return send_viewer(viewer, offer).await;
+        return send_viewer(viewer, offer).await.map_err(Failure::from);
     };
 
     authenticate_remote(remote, key).await?;
     // Only the authorized local WebSocket gets this synthetic result after real remote auth.
-    send_viewer(viewer, &[1, SECURITY_NONE]).await?;
-    if read_viewer::<1>(viewer, &mut pending).await? != [SECURITY_NONE] {
-        return Err(Failure::Protocol);
-    }
-    send_viewer(viewer, &[0; 4]).await?;
-    remote.write_all(&pending).await?;
+    finish_viewer_auth(viewer, &mut pending, remote).await?;
     Ok(())
 }
 
@@ -313,34 +332,4 @@ fn encrypt_challenge(key: VncKey, challenge: &mut [u8; 16]) {
     for block in challenge.as_chunks_mut::<8>().0 {
         cipher.encrypt_block(block.into());
     }
-}
-
-/// Read a small handshake field across WebSocket messages, preserving any binary tail.
-async fn read_viewer<const N: usize>(
-    viewer: &mut Viewer,
-    pending: &mut Bytes,
-) -> Result<[u8; N], Failure> {
-    let mut bytes = [0; N];
-    let mut written = 0;
-    while written < N {
-        if pending.is_empty() {
-            match viewer.next().await {
-                Some(Ok(Message::Binary(chunk))) => *pending = chunk,
-                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-                _ => return Err(Failure::Protocol),
-            }
-        }
-        let count = pending.len().min(N - written);
-        bytes[written..written + count].copy_from_slice(&pending.split_to(count));
-        written += count;
-    }
-    Ok(bytes)
-}
-
-/// Send staged protocol bytes over the same authorized binary WebSocket.
-async fn send_viewer(viewer: &mut Viewer, bytes: &[u8]) -> Result<(), Failure> {
-    viewer
-        .send(Message::binary(bytes.to_vec()))
-        .await
-        .map_err(|_| Failure::Protocol)
 }

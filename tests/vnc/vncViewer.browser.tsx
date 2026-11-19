@@ -44,6 +44,7 @@ const directProfile: VncProfile = {
     scale: query.get('scale') === '150' ? 150 : 'fit',
     ...(query.has('vault') && { credentialId: 'vnc-fixture-credential' }),
     ...(viaSsh && { ssh }),
+    ...(query.has('tls') && { tlsUsername: 'desktop-user' }),
 };
 
 interface Attempt {
@@ -53,6 +54,7 @@ interface Attempt {
     port: number;
     profileId?: string;
     useVault?: boolean;
+    tlsUsername?: string;
 }
 const starts: Attempt[] = [];
 const stops: string[] = [];

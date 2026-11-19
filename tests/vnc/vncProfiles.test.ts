@@ -84,6 +84,24 @@ test('profile inputs validate names and a separate numeric port', () => {
     assert.ok(validateVncProfileDraft({ ...draft, name: ' ' }).errors?.name);
 });
 
+test('Direct TLS persists its username and rejects invalid routes without falling back to Direct', () => {
+    const draft = { name: 'Desktop', host: 'desktop.example.test', port: '5901' };
+    const tls = validateVncProfileDraft({ ...draft, tlsUsername: ' desktop-user ' }).value;
+    assert.ok(tls);
+    assert.equal(tls.tlsUsername, 'desktop-user');
+    assert.deepEqual(normalizeVncProfiles([{ id: 'desktop', ...tls }]), [
+        { id: 'desktop', ...tls },
+    ]);
+    assert.notEqual(vncDestinationKey(tls), vncDestinationKey({ ...tls, tlsUsername: undefined }));
+    assert.notEqual(vncDestinationKey(tls), vncDestinationKey({ ...tls, tlsUsername: 'other' }));
+    for (const tlsUsername of ['', 'u\0ser', 'é'.repeat(128)]) {
+        assert.ok(validateVncProfileDraft({ ...draft, tlsUsername }).errors?.tlsUsername);
+        assert.deepEqual(normalizeVncProfiles([{ id: 'desktop', ...tls, tlsUsername }]), []);
+    }
+    const ssh = { id: 'saved-ssh', host: 'ssh.example.test', port: 22, username: 'user' };
+    assert.deepEqual(normalizeVncProfiles([{ id: 'desktop', ...tls, ssh }]), []);
+});
+
 test('VNC profiles retain only a valid stable Vault reference', () => {
     const draft = { name: 'Desktop', host: 'localhost', port: '5900' };
     const credentialId = 'vnc.office:password-1';

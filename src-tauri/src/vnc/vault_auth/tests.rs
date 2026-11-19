@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 fn direct_credential<'a>(settings: &'a Value, id: &str, host: &str, port: u16) -> Option<&'a str> {
-    saved_profile(settings, id, host, port, None).and_then(saved_credential_id)
+    saved_profile(settings, id, host, port, None, None).and_then(saved_credential_id)
 }
 
 #[test]
@@ -40,14 +40,30 @@ fn saved_ssh_profiles_require_the_authenticated_route_and_cannot_use_direct_auth
         "credentialId": "local-credential:1",
     }]});
     assert_eq!(
-        saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route))
+        saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route), None)
             .and_then(saved_credential_id),
         Some("local-credential:1"),
     );
     assert!(direct_credential(&settings, "desk", SSH_LOOPBACK, 5901).is_none());
-    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5900, Some(&route)).is_none());
+    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5900, Some(&route), None).is_none());
     route.host = "replacement.test".into();
-    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route)).is_none());
+    assert!(saved_profile(&settings, "desk", SSH_LOOPBACK, 5901, Some(&route), None).is_none());
+}
+
+#[test]
+fn tls_password_links_require_the_saved_tls_username_and_cannot_use_legacy_direct_auth() {
+    let host = "desktop.example.test";
+    let settings = json!({"vncProfiles": [{
+        "id": "desk", "host": host, "port": 5901, "tlsUsername": "desktop-user",
+        "credentialId": "local-credential:1",
+    }]});
+    assert_eq!(
+        saved_profile(&settings, "desk", host, 5901, None, Some("desktop-user"))
+            .and_then(saved_credential_id),
+        Some("local-credential:1"),
+    );
+    assert!(direct_credential(&settings, "desk", host, 5901).is_none());
+    assert!(saved_profile(&settings, "desk", host, 5901, None, Some("other-user")).is_none());
 }
 
 #[test]
@@ -66,6 +82,7 @@ fn reads_only_shared_passwords_by_logical_id_from_an_unlocked_vault() {
     vault
         .item_create_with_logical_id("Token", "api-token", "token-secret", None, Some("token"))
         .unwrap();
+    let linked_key = |vault: &VaultService, id: &str| linked_password(vault, id, password_key);
     assert!(linked_key(&vault, "vnc").is_some_and(|key| *key == *password_key("zyncpass")));
     assert!(linked_key(&vault, &vnc.id).is_none());
     assert!(linked_key(&vault, "ssh").is_some_and(|key| *key == *password_key("ssh-secret")));
