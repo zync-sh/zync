@@ -4,6 +4,17 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **SSH agent authentication** lets connections sign in with keys held by the
+  local SSH agent instead of stored key files — including the
+  Bitwarden/Vaultwarden SSH agent (issue #132), 1Password, the Windows OpenSSH
+  agent pipe, Pageant and any Unix `SSH_AUTH_SOCK` agent. The new **SSH Agent**
+  auth mode in the connection editor lists the identities the agent currently
+  serves and lets you pin one key or use the agent's first key. Private keys
+  never leave the agent; Zync only asks it to sign. The Quick Connect bar offers
+  the same option.
+
 ### Changed
 
 - The **Host Dashboard** uses compact cards that adapt to pane width, themed

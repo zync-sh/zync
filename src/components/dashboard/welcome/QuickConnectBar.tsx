@@ -1,32 +1,34 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { CornerDownLeft, Key, Sparkles } from 'lucide-react';
 import {
-    useState,
-    useRef,
-    useId,
-    useEffect,
-    useMemo,
-    type KeyboardEvent,
-    type FormEvent,
     type ClipboardEvent,
+    type FormEvent,
+    type KeyboardEvent,
+    useEffect,
+    useId,
+    useMemo,
+    useRef,
+    useState,
 } from 'react';
-import { Key, Sparkles, CornerDownLeft } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '../../../lib/utils';
+
 import { isXtermKeyboardTarget } from '../../../lib/shortcuts';
+import { cn } from '../../../lib/utils';
 import type { Connection } from '../../../store/connectionSlice';
 import { useAppStore } from '../../../store/useAppStore';
-import { filterConnectionSuggestions } from './welcomeQuickConnectHelpers';
 import { AuthPanel } from './quick-connect/AuthPanel';
-import { SuggestionsDropdown } from './quick-connect/SuggestionsDropdown';
-import { TemplatesDropdown, type ConnectionTemplate } from './quick-connect/TemplatesDropdown';
 import { parseConnectionString, parsePort, parseSSHCommand } from './quick-connect/parsing';
+import { SuggestionsDropdown } from './quick-connect/SuggestionsDropdown';
+import { type ConnectionTemplate, TemplatesDropdown } from './quick-connect/TemplatesDropdown';
+import { filterConnectionSuggestions } from './welcomeQuickConnectHelpers';
 
-const ipc: Window['ipcRenderer'] | undefined = typeof window !== 'undefined' ? window.ipcRenderer : undefined;
+const ipc: Window['ipcRenderer'] | undefined =
+    typeof window !== 'undefined' ? window.ipcRenderer : undefined;
 
 const CONNECTION_TEMPLATES: readonly ConnectionTemplate[] = [
-    { id: 'aws-ec2',      name: 'AWS EC2',       username: 'ec2-user', port: 22 },
-    { id: 'digitalocean', name: 'DigitalOcean',  username: 'root',     port: 22 },
-    { id: 'ubuntu',       name: 'Ubuntu Server', username: 'ubuntu',   port: 22 },
-    { id: 'raspberry-pi', name: 'Raspberry Pi',  username: 'pi',       port: 22 },
+    { id: 'aws-ec2', name: 'AWS EC2', username: 'ec2-user', port: 22 },
+    { id: 'digitalocean', name: 'DigitalOcean', username: 'root', port: 22 },
+    { id: 'ubuntu', name: 'Ubuntu Server', username: 'ubuntu', port: 22 },
+    { id: 'raspberry-pi', name: 'Raspberry Pi', username: 'pi', port: 22 },
 ] as const;
 
 interface QuickConnectBarProps {
@@ -38,48 +40,57 @@ interface QuickConnectBarProps {
         password?: string,
         privateKeyPath?: string,
         save?: boolean,
+        useSshAgent?: boolean,
     ) => void;
     onSelectExisting: (id: string) => void;
 }
 
 /** Inline quick-connect control with suggestions, templates, and auth options. */
-export function QuickConnectBar({ connections, onConnect, onSelectExisting }: QuickConnectBarProps) {
-    const showToast = useAppStore(state => state.showToast);
-    const [input,          setInput]          = useState('');
-    const [password,       setPassword]       = useState('');
-    const [portOverride,   setPortOverride]   = useState('');
+export function QuickConnectBar({
+    connections,
+    onConnect,
+    onSelectExisting,
+}: QuickConnectBarProps) {
+    const showToast = useAppStore((state) => state.showToast);
+    const [input, setInput] = useState('');
+    const [password, setPassword] = useState('');
+    const [portOverride, setPortOverride] = useState('');
     const [privateKeyPath, setPrivateKeyPath] = useState('');
-    const [isAuthOpen,     setIsAuthOpen]     = useState(false);
-    const [saveConn,       setSaveConn]       = useState(true);
-    const [showTemplates,  setShowTemplates]  = useState(false);
+    const [useSshAgent, setUseSshAgent] = useState(false);
+    const [isAuthOpen, setIsAuthOpen] = useState(false);
+    const [saveConn, setSaveConn] = useState(true);
+    const [showTemplates, setShowTemplates] = useState(false);
     const [templateFocusIndex, setTemplateFocusIndex] = useState(0);
-    const [activeIndex,    setActiveIndex]    = useState(-1);
-    const [error,          setError]          = useState('');
-    const [isFocused,      setIsFocused]      = useState(false);
+    const [activeIndex, setActiveIndex] = useState(-1);
+    const [error, setError] = useState('');
+    const [isFocused, setIsFocused] = useState(false);
 
-    const inputRef     = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const templateItemRefs = useRef<Array<HTMLLIElement | null>>([]);
-    const listboxId    = useId();
+    const listboxId = useId();
 
     const suggestions = useMemo(
         () => filterConnectionSuggestions(input, connections, 6),
         [input, connections],
     );
 
-    const recentConnections = useMemo(() => (
-        !input.trim()
-            ? [...connections]
-                .filter(c => c.lastConnected)
-                .sort((a, b) => (b.lastConnected ?? 0) - (a.lastConnected ?? 0))
-                .slice(0, 5)
-            : []
-    ), [input, connections]);
+    const recentConnections = useMemo(
+        () =>
+            !input.trim()
+                ? [...connections]
+                      .filter((c) => c.lastConnected)
+                      .sort((a, b) => (b.lastConnected ?? 0) - (a.lastConnected ?? 0))
+                      .slice(0, 5)
+                : [],
+        [input, connections],
+    );
 
     const showSuggestions = suggestions.length > 0 && !showTemplates;
-    const showRecents     = isFocused && !input.trim() && recentConnections.length > 0 && !showTemplates;
-    const showDropdown    = showSuggestions || showRecents;
-    const dropItems       = showSuggestions ? suggestions : recentConnections;
+    const showRecents =
+        isFocused && !input.trim() && recentConnections.length > 0 && !showTemplates;
+    const showDropdown = showSuggestions || showRecents;
+    const dropItems = showSuggestions ? suggestions : recentConnections;
 
     // Live parse preview — shown when we have a valid parse but no dropdown/error
     const parsedPreview = useMemo(
@@ -87,9 +98,12 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
         [input],
     );
     const previewPort = useMemo(
-        () => (parsedPreview
-            ? (portOverride ? (parsePort(portOverride) ?? parsedPreview.port) : parsedPreview.port)
-            : null),
+        () =>
+            parsedPreview
+                ? portOverride
+                    ? (parsePort(portOverride) ?? parsedPreview.port)
+                    : parsedPreview.port
+                : null,
         [parsedPreview, portOverride],
     );
     const showPreview = Boolean(parsedPreview && !error && !showDropdown);
@@ -198,19 +212,27 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
             }
             finalPort = parsedPort;
         }
-        onConnect(result.host, result.username, finalPort, password || undefined, privateKeyPath || undefined, saveConn);
+        onConnect(
+            result.host,
+            result.username,
+            finalPort,
+            useSshAgent ? undefined : password || undefined,
+            useSshAgent ? undefined : privateKeyPath || undefined,
+            saveConn,
+            useSshAgent,
+        );
     }
 
     function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
         if (showDropdown) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setActiveIndex(i => Math.min(i + 1, dropItems.length - 1));
+                setActiveIndex((i) => Math.min(i + 1, dropItems.length - 1));
                 return;
             }
             if (e.key === 'ArrowUp') {
                 e.preventDefault();
-                setActiveIndex(i => Math.max(i - 1, -1));
+                setActiveIndex((i) => Math.max(i - 1, -1));
                 return;
             }
             if (e.key === 'Enter') {
@@ -261,8 +283,12 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
             return;
         }
         try {
-            const res = await ipc.invoke('dialog:openFile') as { canceled?: boolean; filePaths?: string[] };
-            if (!res.canceled && res.filePaths && res.filePaths.length > 0) setPrivateKeyPath(res.filePaths[0]);
+            const res = (await ipc.invoke('dialog:openFile')) as {
+                canceled?: boolean;
+                filePaths?: string[];
+            };
+            if (!res.canceled && res.filePaths && res.filePaths.length > 0)
+                setPrivateKeyPath(res.filePaths[0]);
         } catch (error) {
             console.error('[QuickConnectBar] Failed to browse private key path', error);
             setError('Failed to open file picker');
@@ -273,18 +299,30 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
     const hasAuth = Boolean(password || privateKeyPath);
 
     return (
-        <div ref={containerRef} className="relative w-full">
-            <form onSubmit={handleSubmit} noValidate aria-label="Quick connect to an SSH server">
+        <div
+            ref={containerRef}
+            className="relative w-full"
+        >
+            <form
+                onSubmit={handleSubmit}
+                noValidate
+                aria-label="Quick connect to an SSH server"
+            >
                 {/* Terminal prompt bar */}
                 <div
                     className={cn(
                         'flex items-center bg-app-surface/50 border rounded-2xl transition-all',
                         error
                             ? 'border-red-500/40 focus-within:border-red-500/60'
-                            : 'border-app-border/50 focus-within:border-app-accent/50 focus-within:shadow-[0_0_0_3px_rgba(121,123,206,0.08)]'
+                            : 'border-app-border/50 focus-within:border-app-accent/50 focus-within:shadow-[0_0_0_3px_rgba(121,123,206,0.08)]',
                     )}
                 >
-                    <span className="pl-4 pr-2 font-mono text-base text-app-accent/80 select-none shrink-0" aria-hidden="true">$</span>
+                    <span
+                        className="pl-4 pr-2 font-mono text-base text-app-accent/80 select-none shrink-0"
+                        aria-hidden="true"
+                    >
+                        $
+                    </span>
 
                     <input
                         ref={inputRef}
@@ -294,12 +332,18 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                         aria-expanded={showDropdown}
                         aria-haspopup="listbox"
                         aria-controls={listboxId}
-                        aria-activedescendant={activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined}
+                        aria-activedescendant={
+                            activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined
+                        }
                         aria-autocomplete="list"
                         autoComplete="off"
                         spellCheck={false}
                         value={input}
-                        onChange={(e) => { setInput(e.target.value); setActiveIndex(-1); setError(''); }}
+                        onChange={(e) => {
+                            setInput(e.target.value);
+                            setActiveIndex(-1);
+                            setError('');
+                        }}
                         onKeyDown={handleKeyDown}
                         onFocus={() => setIsFocused(true)}
                         onPaste={handlePaste}
@@ -312,17 +356,21 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                             type="button"
                             aria-label="Connection templates"
                             aria-expanded={showTemplates}
-                            onClick={() => setShowTemplates(v => !v)}
+                            onClick={() => setShowTemplates((v) => !v)}
                             onKeyDown={(e) => {
                                 if (e.key === 'ArrowDown') {
                                     e.preventDefault();
                                     setShowTemplates(true);
-                                    requestAnimationFrame(() => templateItemRefs.current[0]?.focus());
+                                    requestAnimationFrame(() =>
+                                        templateItemRefs.current[0]?.focus(),
+                                    );
                                 }
                             }}
                             className={cn(
                                 'p-2 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40',
-                                showTemplates ? 'bg-app-panel text-app-text' : 'text-app-muted/50 hover:text-app-muted hover:bg-app-panel/60'
+                                showTemplates
+                                    ? 'bg-app-panel text-app-text'
+                                    : 'text-app-muted/50 hover:text-app-muted hover:bg-app-panel/60',
                             )}
                         >
                             <Sparkles size={13} />
@@ -332,10 +380,12 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                             type="button"
                             aria-label="Authentication options"
                             aria-expanded={isAuthOpen}
-                            onClick={() => setIsAuthOpen(v => !v)}
+                            onClick={() => setIsAuthOpen((v) => !v)}
                             className={cn(
                                 'p-2 rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40',
-                                isAuthOpen || hasAuth ? 'bg-app-accent/15 text-app-accent' : 'text-app-muted/50 hover:text-app-muted hover:bg-app-panel/60'
+                                isAuthOpen || hasAuth
+                                    ? 'bg-app-accent/15 text-app-accent'
+                                    : 'text-app-muted/50 hover:text-app-muted hover:bg-app-panel/60',
                             )}
                         >
                             <Key size={13} />
@@ -359,7 +409,10 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                             className="flex items-center gap-1.5 bg-app-accent text-white px-3.5 py-2 rounded-xl text-xs font-medium hover:brightness-110 disabled:opacity-35 disabled:cursor-not-allowed transition-all ml-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/50"
                         >
                             <span>Connect</span>
-                            <CornerDownLeft size={11} aria-hidden="true" />
+                            <CornerDownLeft
+                                size={11}
+                                aria-hidden="true"
+                            />
                         </button>
                     </div>
                 </div>
@@ -375,11 +428,17 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                             className="flex items-center gap-1.5 mt-1.5 ml-4"
                             aria-live="polite"
                         >
-                            <span className="text-[10px] font-mono text-app-accent/60">{parsedPreview!.username}</span>
+                            <span className="text-[10px] font-mono text-app-accent/60">
+                                {parsedPreview!.username}
+                            </span>
                             <span className="text-[10px] text-app-muted/20">·</span>
-                            <span className="text-[10px] font-mono text-app-muted/50">{parsedPreview!.host}</span>
+                            <span className="text-[10px] font-mono text-app-muted/50">
+                                {parsedPreview!.host}
+                            </span>
                             <span className="text-[10px] text-app-muted/20">·</span>
-                            <span className="text-[10px] font-mono text-app-muted/40">:{previewPort}</span>
+                            <span className="text-[10px] font-mono text-app-muted/40">
+                                :{previewPort}
+                            </span>
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -409,6 +468,8 @@ export function QuickConnectBar({ connections, onConnect, onSelectExisting }: Qu
                     privateKeyPath={privateKeyPath}
                     setPrivateKeyPath={setPrivateKeyPath}
                     onBrowseKey={handleBrowseKey}
+                    useSshAgent={useSshAgent}
+                    setUseSshAgent={setUseSshAgent}
                 />
             </form>
 

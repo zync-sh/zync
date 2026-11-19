@@ -11,9 +11,14 @@ export interface ConnectionDraft {
     folder?: string;
 }
 
-export type AuthMode = 'password' | 'key' | 'vault';
+export type AuthMode = 'password' | 'key' | 'vault' | 'agent';
 
-export type ConnectionDraftField = 'host' | 'username' | 'port' | 'privateKeyPath' | 'certificatePath';
+export type ConnectionDraftField =
+    | 'host'
+    | 'username'
+    | 'port'
+    | 'privateKeyPath'
+    | 'certificatePath';
 
 export interface ValidationResult {
     ok: boolean;
@@ -50,9 +55,7 @@ const isLikelyIpv6Literal = (value: string): boolean => {
 
 const isIpLiteral = (value: string): boolean => {
     if (!value) return false;
-    const normalized = value.startsWith('[') && value.endsWith(']')
-        ? value.slice(1, -1)
-        : value;
+    const normalized = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
     return isIpv4Literal(normalized) || isLikelyIpv6Literal(normalized);
 };
 
@@ -115,7 +118,11 @@ export const validateConnectionDraft = (
 };
 
 /** Content inspection supersedes filename heuristics; existing callers retain their pre-inspection hints. */
-export const getCredentialHealthChecks = (draft: ConnectionDraft, authMode: AuthMode, options?: { keyInspected?: boolean }): CredentialHealthCheck[] => {
+export const getCredentialHealthChecks = (
+    draft: ConnectionDraft,
+    authMode: AuthMode,
+    options?: { keyInspected?: boolean },
+): CredentialHealthCheck[] => {
     const checks: CredentialHealthCheck[] = [];
     const password = normalizeText(draft.password);
     const keyPath = normalizeText(draft.privateKeyPath);
@@ -139,7 +146,12 @@ export const getCredentialHealthChecks = (draft: ConnectionDraft, authMode: Auth
             severity: 'warning',
             message: 'Selected key looks like a public key (.pub). Choose a private key file.',
         });
-    } else if (authMode === 'key' && !options?.keyInspected && keyPath && !/(\.pem|id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i.test(keyPath)) {
+    } else if (
+        authMode === 'key' &&
+        !options?.keyInspected &&
+        keyPath &&
+        !/(\.pem|id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i.test(keyPath)
+    ) {
         checks.push({
             severity: 'info',
             message: 'Key filename is uncommon. Confirm this is a private key.',

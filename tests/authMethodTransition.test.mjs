@@ -38,4 +38,39 @@ runTest('same method is a no-op', () => {
   assert.equal(next, form);
 });
 
+runTest('any mode → agent clears passwords, key paths and vault refs', () => {
+  const next = applyAuthMethodTransition(
+    { password: 'secret', privateKeyPath: '/k', authRef: { itemId: 'item-1' }, certificatePath: '/cert' },
+    'vault',
+    'agent',
+  );
+  assert.equal(next.password, '');
+  assert.equal(next.privateKeyPath, undefined);
+  assert.equal(next.authRef, undefined);
+  assert.equal(next.certificatePath, undefined);
+});
+
+runTest('agent → key clears agent selection and vault refs', () => {
+  const next = applyAuthMethodTransition(
+    { useSshAgent: true, agentKey: 'ssh-ed25519 AAAA', password: 'pass' },
+    'agent',
+    'key',
+  );
+  assert.equal(next.useSshAgent, undefined);
+  assert.equal(next.agentKey, undefined);
+  assert.equal(next.authRef, undefined);
+});
+
+runTest('agent → password clears agent selection', () => {
+  const next = applyAuthMethodTransition(
+    { useSshAgent: true, agentKey: 'ssh-ed25519 AAAA', password: '' },
+    'agent',
+    'password',
+  );
+  assert.equal(next.useSshAgent, undefined);
+  assert.equal(next.agentKey, undefined);
+  assert.equal(next.privateKeyPath, undefined);
+  assert.equal(next.authRef, undefined);
+});
+
 console.log('Auth method transition tests passed.');

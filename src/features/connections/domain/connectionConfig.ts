@@ -18,10 +18,22 @@ export interface ConnectAuthMethodVaultRef {
     credential_id?: string;
 }
 
+/**
+ * Authenticate through the local SSH agent (Windows OpenSSH agent pipe, Pageant,
+ * or a Unix SSH_AUTH_SOCK agent). Bitwarden/Vaultwarden and 1Password serve their
+ * SSH keys through the same agent protocol. `public_key` optionally selects one
+ * agent identity; omit it to use the agent's first key.
+ */
+export interface ConnectAuthMethodSshAgent {
+    type: 'SshAgent';
+    public_key?: string;
+}
+
 export type ConnectAuthMethod =
     | ConnectAuthMethodPassword
     | ConnectAuthMethodPrivateKey
-    | ConnectAuthMethodVaultRef;
+    | ConnectAuthMethodVaultRef
+    | ConnectAuthMethodSshAgent;
 
 export type ForwardableConnectAuthMethod = ConnectAuthMethodPrivateKey | ConnectAuthMethodVaultRef;
 
@@ -59,11 +71,15 @@ const normalizeOptionalText = (value: unknown): string | undefined => {
     return trimmed.length > 0 ? trimmed : undefined;
 };
 
-const getConnectionAuthRef = (connection: ConnectionWithLegacyAuthFields): Connection['authRef'] | undefined =>
-    connection.authRef ?? connection.auth_ref ?? undefined;
+const getConnectionAuthRef = (
+    connection: ConnectionWithLegacyAuthFields,
+): Connection['authRef'] | undefined => connection.authRef ?? connection.auth_ref ?? undefined;
 
-const getConnectionPrivateKeyPath = (connection: ConnectionWithLegacyAuthFields): string | undefined =>
-    normalizeOptionalText(connection.privateKeyPath) ?? normalizeOptionalText(connection.private_key_path);
+const getConnectionPrivateKeyPath = (
+    connection: ConnectionWithLegacyAuthFields,
+): string | undefined =>
+    normalizeOptionalText(connection.privateKeyPath) ??
+    normalizeOptionalText(connection.private_key_path);
 
 const getConnectionPassword = (connection: ConnectionWithLegacyAuthFields): string | undefined =>
     typeof connection.password === 'string' && connection.password.length > 0
@@ -82,9 +98,7 @@ export type BuildConnectConfigResult =
     | { status: 'ok'; config: ConnectConfig }
     | { status: 'error'; reason: BuildConnectConfigErrorReason };
 
-type BuildAuthMethodResult =
-    | { status: 'ok'; auth: ConnectAuthMethod }
-    | { status: 'missing-auth' };
+type BuildAuthMethodResult = { status: 'ok'; auth: ConnectAuthMethod } | { status: 'missing-auth' };
 
 const buildAuthMethod = (connection: ConnectionWithLegacyAuthFields): BuildAuthMethodResult => {
     const authRef = getConnectionAuthRef(connection);
@@ -95,6 +109,17 @@ const buildAuthMethod = (connection: ConnectionWithLegacyAuthFields): BuildAuthM
                 type: 'VaultRef',
                 item_id: authRef.itemId,
                 credential_id: authRef.credentialId,
+            },
+        };
+    }
+
+    const agentKey = normalizeOptionalText(connection.agentKey);
+    if (agentKey !== undefined || connection.useSshAgent) {
+        return {
+            status: 'ok',
+            auth: {
+                type: 'SshAgent',
+                ...(agentKey !== undefined ? { public_key: agentKey } : {}),
             },
         };
     }
@@ -117,9 +142,13 @@ const buildAuthMethod = (connection: ConnectionWithLegacyAuthFields): BuildAuthM
         : { status: 'missing-auth' };
 };
 
-export const connectionHasForwardableKey = (connection: ConnectionWithLegacyAuthFields): boolean => {
+export const connectionHasForwardableKey = (
+    connection: ConnectionWithLegacyAuthFields,
+): boolean => {
     const authRef = getConnectionAuthRef(connection);
-    return authRef?.itemKind === 'ssh-private-key' || Boolean(getConnectionPrivateKeyPath(connection));
+    return (
+        authRef?.itemKind === 'ssh-private-key' || Boolean(getConnectionPrivateKeyPath(connection))
+    );
 };
 
 export const buildForwardableAuthMethod = (
@@ -136,10 +165,10 @@ export const buildForwardableAuthMethod = (
     const keyPath = getConnectionPrivateKeyPath(connection);
     return keyPath
         ? {
-            type: 'PrivateKey',
-            key_path: keyPath,
-            passphrase: getConnectionPassword(connection) ?? null,
-        }
+              type: 'PrivateKey',
+              key_path: keyPath,
+              passphrase: getConnectionPassword(connection) ?? null,
+          }
         : null;
 };
 
@@ -148,12 +177,10 @@ export const buildAgentForwardingConfig = (
     sourceConnectionId: string | undefined,
 ): ConnectAgentForwardingConfig | null => {
     if (!sourceConnectionId) return null;
-    const source = connections.find(connection => connection.id === sourceConnectionId);
+    const source = connections.find((connection) => connection.id === sourceConnectionId);
     if (!source) return null;
     const authMethod = buildForwardableAuthMethod(source);
-    return authMethod
-        ? { source_connection_id: source.id, auth_method: authMethod }
-        : null;
+    return authMethod ? { source_connection_id: source.id, auth_method: authMethod } : null;
 };
 
 /** Build a bounded hop chain without resolving secrets or changing per-hop certificate ownership. */
@@ -189,7 +216,8 @@ export const buildConnectConfigResult = (
         username: connection.username,
         auth_method: authResult.auth,
         ...(normalizeOptionalText(connection.certificatePath)
-            ? { certificate_path: normalizeOptionalText(connection.certificatePath) } : {}),
+            ? { certificate_path: normalizeOptionalText(connection.certificatePath) }
+            : {}),
         jump_host: null,
     };
 

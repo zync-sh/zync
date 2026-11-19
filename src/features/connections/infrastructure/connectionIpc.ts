@@ -31,7 +31,16 @@ export interface AuthMethodVaultRef {
     credential_id?: string;
 }
 
-export type AuthMethodPayload = AuthMethodPassword | AuthMethodPrivateKey | AuthMethodVaultRef;
+export interface AuthMethodSshAgent {
+    type: 'SshAgent';
+    public_key?: string;
+}
+
+export type AuthMethodPayload =
+    | AuthMethodPassword
+    | AuthMethodPrivateKey
+    | AuthMethodVaultRef
+    | AuthMethodSshAgent;
 
 export interface ConnectionConfigPayload {
     id: string;
@@ -102,6 +111,21 @@ export type SshImportSourceRequest =
     | { sourceType: 'text'; content: string };
 
 export type AgentSignatureDecision = 'deny' | 'allowOnce' | 'allowSession';
+
+/** One identity currently served by the local SSH agent (Bitwarden/Vaultwarden, 1Password, OpenSSH agent, Pageant). */
+export interface SshAgentKeyInfo {
+    /** Canonical `algorithm base64` selector used to pick this identity again. */
+    publicKey: string;
+    /** SHA-256 fingerprint, as `SHA256:...`. */
+    fingerprint: string;
+    algorithm: string;
+    comment?: string | null;
+    isCertificate: boolean;
+}
+
+/** List the identities the local SSH agent currently serves; rejects when no agent is reachable. */
+export const listSshAgentKeysIpc = async (): Promise<SshAgentKeyInfo[]> =>
+    window.ipcRenderer.invoke('ssh:agentListKeys');
 
 export interface AgentSignatureRequestPayload {
     requestId: string;

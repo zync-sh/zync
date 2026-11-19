@@ -1,18 +1,26 @@
-import type { Connection } from './types.js';
 import {
     buildAgentForwardingConfig,
     buildForwardableAuthMethod,
     type ConnectAgentForwardingConfig,
+    type ConnectAuthMethodSshAgent,
 } from './connectionConfig.js';
 import { normalizeFolderPath, normalizeTags, normalizeText, parsePort } from './normalization.js';
+import type { Connection } from './types.js';
 
-export type ConnectionAuthMode = 'password' | 'key' | 'vault';
+export type ConnectionAuthMode = 'password' | 'key' | 'vault' | 'agent';
 
 export type ConnectionFormDraft = Partial<Connection>;
 export const SELF_AGENT_FORWARDING_KEY = '$self';
 
 export const canSaveInspectedPrivateKey = (
-    status: 'idle' | 'checking' | 'valid' | 'passphraseRequired' | 'invalidPassphrase' | 'invalidKey' | 'unavailable',
+    status:
+        | 'idle'
+        | 'checking'
+        | 'valid'
+        | 'passphraseRequired'
+        | 'invalidPassphrase'
+        | 'invalidKey'
+        | 'unavailable',
     passphrase: string,
 ): boolean => status === 'valid' || (status === 'passphraseRequired' && passphrase.length === 0);
 
@@ -25,7 +33,8 @@ interface ToBackendConfig {
     auth_method:
         | { type: 'Password'; password: string }
         | { type: 'PrivateKey'; key_path: string; passphrase: string | null }
-        | { type: 'VaultRef'; item_id: string; credential_id?: string };
+        | { type: 'VaultRef'; item_id: string; credential_id?: string }
+        | ConnectAuthMethodSshAgent;
     agent_forwarding?: ConnectAgentForwardingConfig;
     certificate_path?: string;
     network_interface_id?: string;
@@ -38,17 +47,37 @@ interface ToBackendConfig {
 
 type ConfigCandidate = Connection | ConnectionFormDraft;
 
-type TestConnectionDependency = Partial<Pick<Connection, 'name' | 'host' | 'port' | 'username' | 'password'
-    | 'privateKeyPath' | 'certificatePath' | 'jumpServerId' | 'agentForwardingKeyConnectionId'>> & {
-    id: string; vaultId?: string; credentialId?: string; itemId?: string; itemKind?: string; purpose?: string;
+type TestConnectionDependency = Partial<
+    Pick<
+        Connection,
+        | 'name'
+        | 'host'
+        | 'port'
+        | 'username'
+        | 'password'
+        | 'privateKeyPath'
+        | 'certificatePath'
+        | 'jumpServerId'
+        | 'agentForwardingKeyConnectionId'
+        | 'useSshAgent'
+        | 'agentKey'
+    >
+> & {
+    id: string;
+    vaultId?: string;
+    credentialId?: string;
+    itemId?: string;
+    itemKind?: string;
+    purpose?: string;
 };
 
 /** Retain a stable auth/route snapshot for only the jump chain and offered keys; never stringify secrets. */
 export function connectionTestDependencies(
-    connections: readonly Connection[], draft: ConnectionFormDraft,
+    connections: readonly Connection[],
+    draft: ConnectionFormDraft,
     previous: readonly TestConnectionDependency[] = [],
 ): readonly TestConnectionDependency[] {
-    const byId = new Map(connections.map(connection => [connection.id, connection]));
+    const byId = new Map(connections.map((connection) => [connection.id, connection]));
     const selected = new Set<string>();
     const jumps = new Set<string>();
     let jumpId = draft.jumpServerId;
@@ -59,21 +88,42 @@ export function connectionTestDependencies(
         if (jump?.agentForwardingKeyConnectionId) selected.add(jump.agentForwardingKeyConnectionId);
         jumpId = jump?.jumpServerId;
     }
-    if (draft.agentForwardingKeyConnectionId && draft.agentForwardingKeyConnectionId !== SELF_AGENT_FORWARDING_KEY) {
+    if (
+        draft.agentForwardingKeyConnectionId &&
+        draft.agentForwardingKeyConnectionId !== SELF_AGENT_FORWARDING_KEY
+    ) {
         selected.add(draft.agentForwardingKeyConnectionId);
     }
-    const next = [...selected].map(id => {
+    const next = [...selected].map((id) => {
         const connection = byId.get(id);
-        return { id, name: connection?.name, host: connection?.host, port: connection?.port,
-            username: connection?.username, password: connection?.password, privateKeyPath: connection?.privateKeyPath,
-            certificatePath: connection?.certificatePath, jumpServerId: connection?.jumpServerId,
+        return {
+            id,
+            name: connection?.name,
+            host: connection?.host,
+            port: connection?.port,
+            username: connection?.username,
+            password: connection?.password,
+            privateKeyPath: connection?.privateKeyPath,
+            certificatePath: connection?.certificatePath,
+            jumpServerId: connection?.jumpServerId,
             agentForwardingKeyConnectionId: connection?.agentForwardingKeyConnectionId,
-            vaultId: connection?.authRef?.vaultId, credentialId: connection?.authRef?.credentialId,
-            itemId: connection?.authRef?.itemId, itemKind: connection?.authRef?.itemKind, purpose: connection?.authRef?.purpose };
+            useSshAgent: connection?.useSshAgent,
+            agentKey: connection?.agentKey,
+            vaultId: connection?.authRef?.vaultId,
+            credentialId: connection?.authRef?.credentialId,
+            itemId: connection?.authRef?.itemId,
+            itemKind: connection?.authRef?.itemKind,
+            purpose: connection?.authRef?.purpose,
+        };
     });
-    return previous.length === next.length && next.every((item, index) =>
-        (Object.keys(item) as (keyof TestConnectionDependency)[]).every(key => item[key] === previous[index][key]))
-        ? previous : next;
+    return previous.length === next.length &&
+        next.every((item, index) =>
+            (Object.keys(item) as (keyof TestConnectionDependency)[]).every(
+                (key) => item[key] === previous[index][key],
+            ),
+        )
+        ? previous
+        : next;
 }
 
 const requireNormalizedText = (value: unknown, fieldName: string): string => {
@@ -107,6 +157,10 @@ const resolveAuthMethod = (
             if (!itemId) throw new Error('No vault credential selected.');
             return { type: 'VaultRef', item_id: itemId, credential_id: authRef?.credentialId };
         }
+        if (authMode === 'agent') {
+            const agentKey = normalizeText((candidate as Connection).agentKey);
+            return agentKey ? { type: 'SshAgent', public_key: agentKey } : { type: 'SshAgent' };
+        }
         const normalizedKeyPath = normalizeText(keyPath);
         if (!normalizedKeyPath) throw new Error('Private key path is required for key auth.');
         return {
@@ -124,6 +178,10 @@ const resolveAuthMethod = (
             item_id: itemId,
             credential_id: (candidate as Connection).authRef?.credentialId,
         };
+    }
+    if ((candidate as Connection).useSshAgent) {
+        const agentKey = normalizeText((candidate as Connection).agentKey);
+        return agentKey ? { type: 'SshAgent', public_key: agentKey } : { type: 'SshAgent' };
     }
     if (candidate.privateKeyPath) {
         const normalizedKeyPath = normalizeText(candidate.privateKeyPath);
@@ -166,7 +224,8 @@ const toBackendConfig = (
         username,
         auth_method,
         ...(auth_method.type !== 'Password' && normalizeText(candidate.certificatePath)
-            ? { certificate_path: normalizeText(candidate.certificatePath) } : {}),
+            ? { certificate_path: normalizeText(candidate.certificatePath) }
+            : {}),
         jump_host: null,
     };
 };
@@ -220,6 +279,7 @@ export const buildConnectionSavePayload = ({
     }
 
     const id = editingConnectionId || crypto.randomUUID();
+    const agentKey = normalizeText(formData.agentKey);
     return {
         id,
         name,
@@ -227,16 +287,23 @@ export const buildConnectionSavePayload = ({
         username,
         port: portResult.normalizedPort,
         // Local-key passphrases are runtime/keychain credentials, never host-record fields.
-        password: authMethod === 'password' ? (formData.password || undefined) : undefined,
+        password: authMethod === 'password' ? formData.password || undefined : undefined,
         privateKeyPath: authMethod === 'key' ? formData.privateKeyPath : undefined,
-        certificatePath: authMethod !== 'password' && formData.authRef?.itemKind !== 'ssh-password'
-            ? normalizeText(formData.certificatePath) || undefined : undefined,
+        useSshAgent: authMethod === 'agent',
+        agentKey: authMethod === 'agent' && agentKey ? agentKey : undefined,
+        certificatePath:
+            authMethod !== 'password' && formData.authRef?.itemKind !== 'ssh-password'
+                ? normalizeText(formData.certificatePath) || undefined
+                : undefined,
         authRef: authMethod === 'vault' ? formData.authRef : undefined,
-        status: editingConnectionId ? (connections.find((c) => c.id === editingConnectionId)?.status || 'disconnected') : 'disconnected',
+        status: editingConnectionId
+            ? connections.find((c) => c.id === editingConnectionId)?.status || 'disconnected'
+            : 'disconnected',
         jumpServerId: formData.jumpServerId,
-        agentForwardingKeyConnectionId: formData.agentForwardingKeyConnectionId === SELF_AGENT_FORWARDING_KEY
-            ? id
-            : formData.agentForwardingKeyConnectionId,
+        agentForwardingKeyConnectionId:
+            formData.agentForwardingKeyConnectionId === SELF_AGENT_FORWARDING_KEY
+                ? id
+                : formData.agentForwardingKeyConnectionId,
         icon: formData.icon,
         theme: formData.theme,
         folder: normalizeFolderPath(formData.folder || ''),
@@ -260,14 +327,21 @@ export const buildConnectionTestPayload = ({
     };
 
     const config: ToBackendConfig = {
-        ...toBackendConfig(preparedForm, preparedForm, authMethod, formData.password, formData.privateKeyPath),
+        ...toBackendConfig(
+            preparedForm,
+            preparedForm,
+            authMethod,
+            formData.password,
+            formData.privateKeyPath,
+        ),
         jump_host: buildJumpChain(connections, formData.jumpServerId),
     };
     const forwardingSource = formData.agentForwardingKeyConnectionId;
     if (forwardingSource) {
         if (forwardingSource === SELF_AGENT_FORWARDING_KEY) {
             const forwardingAuth = buildForwardableAuthMethod(preparedForm as Connection);
-            if (!forwardingAuth) throw new Error('This connection does not have a private key to forward.');
+            if (!forwardingAuth)
+                throw new Error('This connection does not have a private key to forward.');
             config.agent_forwarding = {
                 source_connection_id: preparedForm.id || 'test-temp',
                 auth_method: forwardingAuth,

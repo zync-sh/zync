@@ -10,10 +10,11 @@ import {
     KeyRound,
     Laptop,
     Loader2,
+    RefreshCw,
     Shield,
     ShieldCheck,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { connectWithHostKeyVerification } from '../../features/connections/application/hostKeyVerification';
 import type { KeyPassphraseRetention } from '../../features/connections/application/keyPassphrasePrompt';
@@ -39,8 +40,10 @@ import {
     type ConnectionConfigPayload,
     deleteEphemeralKeyIpc,
     forgetKeyPassphraseIpc,
+    listSshAgentKeysIpc,
     readLocalKeyFileIpc,
     rememberKeyPassphraseIpc,
+    type SshAgentKeyInfo,
     testConnectionIpc,
     writeEphemeralKeyIpc,
 } from '../../features/connections/infrastructure/connectionIpc';
@@ -219,6 +222,10 @@ export function AddConnectionModal({
     const [keyInspectionRevision, setKeyInspectionRevision] = useState(0);
     const [isForgettingKeyPassphrase, setIsForgettingKeyPassphrase] = useState(false);
     const [rememberedKeyPath, setRememberedKeyPath] = useState<string | null>(null);
+    /** SSH-agent auth: identities served by the local agent (Bitwarden/Vaultwarden, 1Password, OpenSSH agent). */
+    const [agentKeys, setAgentKeys] = useState<SshAgentKeyInfo[]>([]);
+    const [agentStatus, setAgentStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [agentError, setAgentError] = useState('');
     const retentionDefaultedKeyPathRef = useRef<string | null>(null);
 
     const {
@@ -283,6 +290,27 @@ export function AddConnectionModal({
         materializePasswordToVault: authMethod === 'password' && passwordStorage === 'vault',
         showToast,
     });
+    /** Query the local SSH agent when the agent panel first opens; manual refresh re-runs it. */
+    const refreshAgentKeys = useCallback(async () => {
+        setAgentStatus('loading');
+        setAgentError('');
+        try {
+            const keys = await listSshAgentKeysIpc();
+            setAgentKeys(keys);
+            setAgentStatus('ready');
+        } catch (error: unknown) {
+            setAgentKeys([]);
+            setAgentStatus('error');
+            setAgentError(error instanceof Error ? error.message : String(error));
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isOpen && authMethod === 'agent' && agentStatus === 'idle') {
+            void refreshAgentKeys();
+        }
+    }, [isOpen, authMethod, agentStatus, refreshAgentKeys]);
+
     const sshVaultItems = useMemo(
         () =>
             vaultItems.flatMap((item) => {
@@ -1293,6 +1321,20 @@ export function AddConnectionModal({
                                         >
                                             SSH key
                                         </button>
+                                        <button
+                                            type="button"
+                                            aria-pressed={authMethod === 'agent'}
+                                            onClick={() => setAuthMethod('agent')}
+                                            className={cn(
+                                                'px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5',
+                                                authMethod === 'agent'
+                                                    ? 'bg-app-accent text-white shadow-sm'
+                                                    : 'text-app-muted hover:text-app-text',
+                                            )}
+                                        >
+                                            <KeyRound size={13} />
+                                            SSH Agent
+                                        </button>
                                         {vaultAvailable && (
                                             <button
                                                 type="button"
@@ -1537,6 +1579,124 @@ export function AddConnectionModal({
                                                     )}
                                                 </div>
                                             )}
+                                    </div>
+                                ) : authMethod === 'agent' ? (
+                                    <div className="space-y-3">
+                                        <div className="rounded-lg border border-app-border/60 bg-app-surface/30 p-3 space-y-3">
+                                            <div className="flex items-start gap-2">
+                                                <KeyRound
+                                                    size={14}
+                                                    className="mt-0.5 shrink-0 text-app-muted"
+                                                />
+                                                <p className="text-xs text-app-muted">
+                                                    Authenticate with keys held by the SSH agent on
+                                                    this device — including the
+                                                    Bitwarden/Vaultwarden SSH agent (enable it in
+                                                    their settings), 1Password, or the Windows
+                                                    OpenSSH agent. Private keys never leave the
+                                                    agent; Zync only asks it to sign.
+                                                </p>
+                                            </div>
+                                            {agentStatus === 'loading' && (
+                                                <p className="text-xs text-app-muted flex items-center gap-1.5">
+                                                    <Loader2
+                                                        size={12}
+                                                        className="animate-spin"
+                                                    />
+                                                    Looking for the SSH agent…
+                                                </p>
+                                            )}
+                                            {agentStatus === 'error' && (
+                                                <div className="flex items-start gap-2 text-xs text-red-400">
+                                                    <AlertCircle
+                                                        size={12}
+                                                        className="mt-0.5 shrink-0"
+                                                    />
+                                                    <span>{agentError}</span>
+                                                </div>
+                                            )}
+                                            {agentStatus === 'ready' && (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-xs text-app-muted">
+                                                            {agentKeys.length === 0
+                                                                ? 'The agent currently holds no keys.'
+                                                                : `${agentKeys.length} key${agentKeys.length === 1 ? '' : 's'} in agent`}
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void refreshAgentKeys()}
+                                                            className="inline-flex items-center gap-1 text-xs text-app-muted hover:text-app-text transition-colors"
+                                                        >
+                                                            <RefreshCw size={10} />
+                                                            Refresh
+                                                        </button>
+                                                    </div>
+                                                    {agentKeys.length > 0 && (
+                                                        <div
+                                                            role="radiogroup"
+                                                            aria-label="SSH agent key"
+                                                            className="space-y-1"
+                                                        >
+                                                            <label className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs cursor-pointer hover:bg-app-surface/60">
+                                                                <input
+                                                                    type="radio"
+                                                                    name="ssh-agent-key"
+                                                                    checked={!formData.agentKey}
+                                                                    onChange={() =>
+                                                                        setFormData({
+                                                                            ...formData,
+                                                                            agentKey: undefined,
+                                                                        })
+                                                                    }
+                                                                />
+                                                                <span className="font-medium text-app-text">
+                                                                    Use first available key
+                                                                </span>
+                                                            </label>
+                                                            {agentKeys.map((key) => (
+                                                                <label
+                                                                    key={key.publicKey}
+                                                                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs cursor-pointer hover:bg-app-surface/60"
+                                                                >
+                                                                    <input
+                                                                        type="radio"
+                                                                        name="ssh-agent-key"
+                                                                        checked={
+                                                                            formData.agentKey ===
+                                                                            key.publicKey
+                                                                        }
+                                                                        onChange={() =>
+                                                                            setFormData({
+                                                                                ...formData,
+                                                                                agentKey:
+                                                                                    key.publicKey,
+                                                                            })
+                                                                        }
+                                                                    />
+                                                                    <span className="font-medium text-app-text">
+                                                                        {key.algorithm}
+                                                                    </span>
+                                                                    {key.comment && (
+                                                                        <span className="text-app-muted truncate">
+                                                                            {key.comment}
+                                                                        </span>
+                                                                    )}
+                                                                    <span className="ml-auto text-[10px] text-app-muted font-mono shrink-0">
+                                                                        {key.fingerprint}
+                                                                    </span>
+                                                                    {key.isCertificate && (
+                                                                        <span className="text-[10px] rounded bg-app-accent/15 px-1 py-0.5 text-app-accent shrink-0">
+                                                                            cert
+                                                                        </span>
+                                                                    )}
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="space-y-3">

@@ -919,7 +919,10 @@ impl SshManager {
         verification: Option<&keyboard_interactive::Attempt>,
     ) -> Result<()> {
         if config.certificate_path.is_some()
-            && matches!(config.auth_method, AuthMethod::Password { .. })
+            && matches!(
+                config.auth_method,
+                AuthMethod::Password { .. } | AuthMethod::SshAgent { .. }
+            )
         {
             return Err(anyhow!(
                 "SSH user certificates require private-key authentication"
@@ -983,6 +986,36 @@ impl SshManager {
                     item_id
                 ));
             }
+            AuthMethod::SshAgent { public_key } => {
+                let (mut agent, identity) =
+                    crate::ssh_agent::select_identity(public_key.as_deref()).await?;
+                let pubkey = identity.public_key().into_owned();
+                let hash = if pubkey.algorithm().is_rsa() {
+                    Some(rsa_auth_hash(session.best_supported_rsa_hash().await?)?)
+                } else {
+                    None
+                };
+                match &identity {
+                    russh::keys::agent::AgentIdentity::Certificate { certificate, .. } => session
+                        .authenticate_certificate_with(
+                            &config.username,
+                            certificate.clone(),
+                            hash,
+                            &mut agent,
+                        )
+                        .await
+                        .map_err(|error| anyhow!("SSH agent authentication failed: {error}"))?,
+                    russh::keys::agent::AgentIdentity::PublicKey { .. } => session
+                        .authenticate_publickey_with(
+                            &config.username,
+                            pubkey,
+                            hash,
+                            &mut agent,
+                        )
+                        .await
+                        .map_err(|error| anyhow!("SSH agent authentication failed: {error}"))?,
+                }
+            }
         };
 
         self.verification
@@ -1043,6 +1076,11 @@ impl SshManager {
             } => (key_data.clone(), passphrase.as_deref()),
             AuthMethod::Password { .. } => {
                 return Err(anyhow!("Agent forwarding requires a private key"))
+            }
+            AuthMethod::SshAgent { .. } => {
+                return Err(anyhow!(
+                    "SSH-agent identities cannot be forwarded to another host's agent"
+                ))
             }
             AuthMethod::VaultRef { item_id, .. } => {
                 return Err(anyhow!(

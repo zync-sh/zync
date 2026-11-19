@@ -252,4 +252,93 @@ runTest('buildConnectionTestPayload handles vault auth without credential_id', (
   assert.equal(payload.auth_method.credential_id, undefined);
 });
 
+runTest('buildConnectionSavePayload persists SSH-agent auth with selected key', () => {
+  const payload = buildConnectionSavePayload({
+    formData: {
+      host: '10.0.0.3',
+      username: 'deploy',
+      port: 22,
+      agentKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq45yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ bitwarden',
+    },
+    authMethod: 'agent',
+    editingConnectionId: null,
+    connections: [],
+  });
+
+  assert.equal(payload.useSshAgent, true);
+  assert.equal(payload.agentKey, 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq45yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ bitwarden');
+  assert.equal(payload.password, undefined);
+  assert.equal(payload.privateKeyPath, undefined);
+});
+
+runTest('buildConnectionSavePayload persists SSH-agent auth without a key selection', () => {
+  const payload = buildConnectionSavePayload({
+    formData: { host: '10.0.0.3', username: 'deploy', port: 22 },
+    authMethod: 'agent',
+    editingConnectionId: null,
+    connections: [],
+  });
+
+  assert.equal(payload.useSshAgent, true);
+  assert.equal(payload.agentKey, undefined);
+});
+
+runTest('buildConnectionTestPayload sends SshAgent auth method from the form', () => {
+  const payload = buildConnectionTestPayload({
+    formData: {
+      id: 'main',
+      name: 'main',
+      host: '10.0.0.3',
+      username: 'deploy',
+      port: 22,
+      useSshAgent: true,
+      agentKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq45yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ',
+    },
+    authMethod: 'agent',
+    connections: [],
+  });
+
+  assert.equal(payload.auth_method.type, 'SshAgent');
+  assert.equal(payload.auth_method.public_key, 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq45yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ');
+});
+
+runTest('buildConnectionTestPayload omits public_key when the agent picks the key', () => {
+  const payload = buildConnectionTestPayload({
+    formData: {
+      id: 'main',
+      name: 'main',
+      host: '10.0.0.3',
+      username: 'deploy',
+      port: 22,
+      useSshAgent: true,
+    },
+    authMethod: 'agent',
+    connections: [],
+  });
+
+  assert.equal(payload.auth_method.type, 'SshAgent');
+  assert.equal(payload.auth_method.public_key, undefined);
+});
+
+runTest('buildConnectionTestPayload resolves SshAgent from a saved connection', () => {
+  const saved = {
+    id: 'saved-1',
+    name: 'agent-host',
+    host: '10.0.0.4',
+    username: 'deploy',
+    port: 22,
+    useSshAgent: true,
+    agentKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq45yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ',
+  };
+
+  const payload = buildConnectionTestPayload({
+    formData: saved,
+    authMethod: 'agent',
+    connections: [saved],
+  });
+
+  assert.equal(payload.auth_method.type, 'SshAgent');
+  assert.equal(payload.auth_method.public_key, saved.agentKey);
+});
+
 console.log('Connection form transform tests passed.');
