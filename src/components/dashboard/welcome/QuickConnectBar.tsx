@@ -111,7 +111,9 @@ export function QuickConnectBar({
     // ── Ctrl/Cmd+L focuses the input ───────────────────────────────────
     useEffect(() => {
         function onKey(e: globalThis.KeyboardEvent) {
-            if (e.defaultPrevented || e.isComposing || isXtermKeyboardTarget(e.target)) return;
+            if (e.defaultPrevented || e.isComposing || isXtermKeyboardTarget(e.target)) {
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
                 e.preventDefault();
                 inputRef.current?.focus();
@@ -137,14 +139,18 @@ export function QuickConnectBar({
     }, []);
 
     useEffect(() => {
-        if (!showTemplates) return;
+        if (!showTemplates) {
+            return;
+        }
         setTemplateFocusIndex(0);
         requestAnimationFrame(() => templateItemRefs.current[0]?.focus());
     }, [showTemplates]);
 
     function applyTemplate(index: number) {
         const template = CONNECTION_TEMPLATES[index];
-        if (!template) return;
+        if (!template) {
+            return;
+        }
         setInput(`${template.username}@`);
         setPortOverride(template.port === 22 ? '' : String(template.port));
         setShowTemplates(false);
@@ -160,7 +166,9 @@ export function QuickConnectBar({
     }
 
     function handleTemplateKeyDown(e: KeyboardEvent<HTMLUListElement>) {
-        if (!showTemplates) return;
+        if (!showTemplates) {
+            return;
+        }
         if (e.key === 'ArrowDown') {
             e.preventDefault();
             focusTemplate(templateFocusIndex + 1);
@@ -198,7 +206,7 @@ export function QuickConnectBar({
         setError('');
         const result = parseConnectionString(input);
         if (!result) {
-            setError('Enter a valid host — e.g. root@10.0.0.1 or host:2222');
+            setError('Enter a valid host, e.g. root@10.0.0.1 or host:2222');
             inputRef.current?.focus();
             return;
         }
@@ -255,19 +263,28 @@ export function QuickConnectBar({
                 return;
             }
         }
-        if (showTemplates && e.key === 'Escape') setShowTemplates(false);
+        if (showTemplates && e.key === 'Escape') {
+            setShowTemplates(false);
+        }
     }
 
     /** Intercept paste of full `ssh …` commands and auto-fill fields. */
     function handlePaste(e: ClipboardEvent<HTMLInputElement>) {
         const text = e.clipboardData.getData('text');
-        if (!text.trim().startsWith('ssh ')) return;
+        if (!text.trim().startsWith('ssh ')) {
+            return;
+        }
         const result = parseSSHCommand(text);
-        if (!result) return;
+        if (!result) {
+            return;
+        }
         e.preventDefault();
         setInput(`${result.username}@${result.host}`);
-        if (result.port !== 22) setPortOverride(result.port.toString());
-        else setPortOverride('');
+        if (result.port !== 22) {
+            setPortOverride(result.port.toString());
+        } else {
+            setPortOverride('');
+        }
         setPassword('');
         if (result.privateKeyPath) {
             setPrivateKeyPath(result.privateKeyPath);
@@ -287,8 +304,9 @@ export function QuickConnectBar({
                 canceled?: boolean;
                 filePaths?: string[];
             };
-            if (!res.canceled && res.filePaths && res.filePaths.length > 0)
+            if (!res.canceled && res.filePaths && res.filePaths.length > 0) {
                 setPrivateKeyPath(res.filePaths[0]);
+            }
         } catch (error) {
             console.error('[QuickConnectBar] Failed to browse private key path', error);
             setError('Failed to open file picker');

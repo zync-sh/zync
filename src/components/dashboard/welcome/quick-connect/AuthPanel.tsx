@@ -1,6 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { FileKey, FolderOpen, KeyRound, Lock } from 'lucide-react';
 
+import { SshAgentHelp } from '../../../connections/SshAgentHelp.js';
+
 interface AuthPanelProps {
     isAuthOpen: boolean;
     password: string;
@@ -49,7 +51,8 @@ export function AuthPanel({
                                 placeholder="Password"
                                 aria-label="SSH password"
                                 autoComplete="current-password"
-                                className="w-full bg-app-surface/60 border border-app-border/40 rounded-xl pl-8 pr-3 py-2 text-xs text-app-text placeholder:text-app-muted/30 focus:border-app-accent/50 outline-none transition-colors"
+                                disabled={useSshAgent}
+                                className="w-full bg-app-surface/60 border border-app-border/40 rounded-xl pl-8 pr-3 py-2 text-xs text-app-text placeholder:text-app-muted/30 focus:border-app-accent/50 outline-none transition-colors disabled:opacity-40"
                             />
                         </div>
                         <div className="relative col-span-2 sm:col-span-1">
@@ -98,19 +101,22 @@ export function AuthPanel({
                             </button>
                         </div>
                         {setUseSshAgent && (
-                            <label className="col-span-2 flex items-center gap-2 text-xs text-app-muted cursor-pointer select-none">
-                                <input
-                                    type="checkbox"
-                                    checked={useSshAgent ?? false}
-                                    onChange={(e) => setUseSshAgent(e.target.checked)}
-                                    className="accent-app-accent"
-                                />
-                                <KeyRound
-                                    size={12}
-                                    aria-hidden="true"
-                                />
-                                Use SSH agent (Bitwarden/Vaultwarden, 1Password, OpenSSH agent)
-                            </label>
+                            <div className="col-span-2 flex items-center gap-1">
+                                <label className="flex items-center gap-2 text-xs text-app-muted cursor-pointer select-none">
+                                    <input
+                                        type="checkbox"
+                                        checked={useSshAgent ?? false}
+                                        onChange={(e) => setUseSshAgent(e.target.checked)}
+                                        className="accent-app-accent"
+                                    />
+                                    <KeyRound
+                                        size={12}
+                                        aria-hidden="true"
+                                    />
+                                    Use local SSH agent
+                                </label>
+                                <SshAgentHelp />
+                            </div>
                         )}
                     </div>
                 </motion.div>

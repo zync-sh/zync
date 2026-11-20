@@ -1,8 +1,10 @@
 import { Provider as TooltipProvider } from '@radix-ui/react-tooltip';
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { GlobalNetworkInterfaceModal } from '../../src/components/connections/GlobalNetworkInterfaceModal';
 import { GlobalSshVerificationDialog } from '../../src/components/connections/GlobalSshVerificationDialog';
+import { AuthPanel } from '../../src/components/dashboard/welcome/quick-connect/AuthPanel';
 import { AddConnectionModal } from '../../src/components/modals/AddConnectionModal';
 import { Button } from '../../src/components/ui/Button';
 import { ModalRoot } from '../../src/components/ui/ModalRoot';
@@ -86,6 +88,7 @@ function deliverVerification(test: PendingTest) {
 
 /** Close the fixture channel before resolving its invocation. */
 function finishFixtureTest(test: PendingTest | undefined, error?: Error) {
+    document.body.dataset.pendingSshTests = String(pendingTests.length);
     if (!test) {
         return;
     }
@@ -279,6 +282,81 @@ Object.assign(window, {
 // Test-only native boundary: no credentials, sockets, adapters or files are accessed.
 window.ipcRenderer = {
     async invoke(channel: string, _config: unknown, verificationChannel?: { id: number }) {
+        if (channel === 'ssh:agentListKeys') {
+            if (document.body.dataset.agentFixture === 'error') {
+                throw {
+                    code: 'unavailable',
+                    message: 'No local SSH agent is reachable.',
+                    details: 'early eof',
+                };
+            }
+            if (document.body.dataset.agentFixture === 'accessDenied') {
+                throw {
+                    code: 'accessDenied',
+                    message: 'Zync cannot access the local SSH agent.',
+                    details: 'fixture permission denied',
+                };
+            }
+            if (document.body.dataset.agentFixture === 'timeout') {
+                throw {
+                    code: 'timeout',
+                    message: 'The local SSH agent did not respond in time.',
+                    details: 'fixture timeout',
+                };
+            }
+            if (document.body.dataset.agentFixture === 'refused') {
+                throw {
+                    code: 'refused',
+                    message: 'The SSH agent refused to list keys.',
+                    details: 'fixture agent failure',
+                };
+            }
+            if (document.body.dataset.agentFixture === 'legacy') {
+                throw new Error('Failed to list SSH agent keys: early eof');
+            }
+            if (document.body.dataset.agentFixture === 'certificates') {
+                // Renewed certificates can share a key fingerprint and comment, but not a selector.
+                return [0, 1].map((index) => ({
+                    publicKey: `ssh-ed25519-cert-v01@openssh.com fixture-certificate-${index}`,
+                    algorithm: 'ssh-ed25519',
+                    comment: 'Shared certificate label',
+                    fingerprint: 'SHA256:shared-certificate-key',
+                    isCertificate: true,
+                }));
+            }
+            if (['many', 'hint', 'unknown'].includes(document.body.dataset.agentFixture ?? '')) {
+                return Array.from({ length: 40 }, (_, index) => ({
+                    publicKey: `ssh-ed25519 fixture-public-selector-${index}`,
+                    algorithm: 'ssh-ed25519',
+                    comment: `Fixture key ${index}`,
+                    fingerprint: `SHA256:fixture-public-fingerprint-${index}`,
+                    isCertificate: false,
+                    provider:
+                        document.body.dataset.agentFixture === 'unknown'
+                            ? undefined
+                            : {
+                                  id: 'bitwarden',
+                                  evidence:
+                                      document.body.dataset.agentFixture === 'hint'
+                                          ? 'socketHint'
+                                          : 'signedProcess',
+                              },
+                }));
+            }
+            if (document.body.dataset.agentFixture === 'key') {
+                return [
+                    {
+                        publicKey: 'ssh-ed25519 fixture-public-selector',
+                        algorithm: 'ssh-ed25519',
+                        comment: 'Fixture key with a long comment '.repeat(12),
+                        fingerprint: 'SHA256:fixture-public-fingerprint',
+                        isCertificate: false,
+                        provider: { id: 'onePassword', evidence: 'signedProcess' },
+                    },
+                ];
+            }
+            return [];
+        }
         if (channel === 'ssh:importConfigBySource') {
             return [
                 {
@@ -295,6 +373,7 @@ window.ipcRenderer = {
         if (channel === 'ssh:test') {
             return new Promise<string>((resolve, reject) => {
                 pendingTests.push({ resolve, reject, channel: verificationChannel, round: 0 });
+                document.body.dataset.pendingSshTests = String(pendingTests.length);
             });
         }
         if (channel === 'ssh:networkPreference') {
@@ -369,6 +448,30 @@ async function editReloadedVncProfile() {
         throw new Error('Expected a saved VNC profile after reloading settings');
     }
     openVncProfileEditor(profile);
+}
+
+/** Exercise auth controls without opening sockets or accessing real credentials. */
+function QuickAuthFixture() {
+    const [useSshAgent, setUseSshAgent] = useState(false);
+    const [password, setPassword] = useState('');
+    const [privateKeyPath, setPrivateKeyPath] = useState('');
+    const [portOverride, setPortOverride] = useState('');
+    return (
+        <section aria-label="Quick connect authentication fixture">
+            <AuthPanel
+                isAuthOpen
+                password={password}
+                setPassword={setPassword}
+                privateKeyPath={privateKeyPath}
+                setPrivateKeyPath={setPrivateKeyPath}
+                portOverride={portOverride}
+                setPortOverride={setPortOverride}
+                onBrowseKey={() => {}}
+                useSshAgent={useSshAgent}
+                setUseSshAgent={setUseSshAgent}
+            />
+        </section>
+    );
 }
 
 /** Production modal with deterministic native ports; the controls expose delayed-result regressions. */
@@ -447,6 +550,7 @@ function Fixture() {
                         Toggle theme
                     </Button>
                 </div>
+                <QuickAuthFixture />
                 <ModalRoot />
                 <AddConnectionModal
                     isOpen={open}
