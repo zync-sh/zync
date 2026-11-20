@@ -4,6 +4,41 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **SSH agent authentication** lets connections sign in with keys held by the
+  local SSH agent instead of stored key files, including Bitwarden desktop
+  (with compatible Vaultwarden accounts, issue #132), 1Password, the Windows
+  OpenSSH agent pipe, Pageant and Unix `SSH_AUTH_SOCK` agents. The **Local SSH agent**
+  auth mode in the connection editor lists the identities the agent currently
+  serves and lets you pin one key or use the agent's first key. Private keys
+  never leave the agent; Zync only asks it to sign. The Quick Connect bar offers
+  the same option.
+- **Agent provider icons** identify recognized Bitwarden and 1Password agents
+  using their original application artwork. Tooltips distinguish Windows
+  process-signature checks from Unix socket-path hints; unknown agents retain a
+  generic key icon.
+
+### Changed
+
+- **SSH agent key selection** uses a searchable, scrollable picker. Setup and
+  authentication help are available through info buttons, and local agent login
+  is labeled separately from SSH agent forwarding.
+
+### Fixed
+
+- **Agent discovery** bounds connection and key-list requests without shortening
+  signing approval time. Late refresh results cannot replace newer results,
+  and Windows retains pipe permission errors and timeouts when Pageant is also
+  unavailable.
+- **Agent authentication** keeps missing saved key selections, distinguishes
+  certificates with matching labels and key fingerprints, and excludes unrelated
+  certificate files from agent login. Existing private-key certificate flows
+  remain available.
+- **Connection form controls** disable password and key-file inputs during Quick
+  Connect agent login, preserve their drafts when toggled off, and align provider
+  icons in the key picker. Escape closes open help before the host editor.
+
 ## [2.40.0] - 2026-11-11
 
 ### Added

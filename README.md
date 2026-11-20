@@ -115,6 +115,9 @@ See vendor websites for current pricing and plan details.
 ### Connect
 
 - SSH with key or password auth, **jump hosts**, and connection folders
+- **SSH agent auth:** sign in with keys held by the local SSH agent — including
+  the Bitwarden/Vaultwarden SSH agent and 1Password — without the private key
+  ever leaving the agent
 - **SSH config import** and visual **port forwarding** — local (`-L`), remote (`-R`), and SOCKS (`-D`); paste `ssh` commands to import; per-host and global dashboard; auto-start and reconnect restore ([port forwarding guide](https://zync.thesudoer.in/docs/port-forwarding))
 - Jump from **local shells** to remote sessions in the same app (see [Local terminal](#local-terminal))
 

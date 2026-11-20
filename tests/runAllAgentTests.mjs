@@ -169,7 +169,8 @@ export const tests = [
     'tests/notificationHistory.test.mjs',
     'tests/connectionOpQueue.test.mjs',
     'tests/connectCancelState.test.mjs',
-    'tests/connectionFormTransforms.test.mjs',
+    'tests/connections/connectionFormTransforms.test.ts',
+    'tests/connections/authMethodTransition.test.ts',
     'tests/connectionLifecycleService.test.mjs',
     'tests/keyPassphrasePrompt.test.mjs',
     'tests/hostKeyVerification.test.mjs',
@@ -307,13 +308,17 @@ export const tests = [
 /** Compile once before executing source-registered suites, including direct CLI invocation. */
 export function runAgentTests(arguments_ = process.argv.slice(2), spawn = spawnSync) {
     const [feature, ...testArguments] = arguments_;
+    const registeredSuite = tests.includes(feature);
     const browserRun = Object.hasOwn(browserSuites, feature) && testArguments[0] === '--browser';
     if (
-        (feature && !['ai', 'files', 'ghost', 'terminal'].includes(feature) && !browserRun) ||
+        (feature &&
+            !['ai', 'files', 'ghost', 'terminal'].includes(feature) &&
+            !browserRun &&
+            !registeredSuite) ||
         (testArguments.length > 0 && !browserRun)
     ) {
         console.error(
-            'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal | vnc --browser]',
+            'Usage: node tests/runAllAgentTests.mjs [ai [--browser] | files [--browser [browser flags]] | ghost | terminal | vnc --browser | registered-suite-source]',
         );
         return 1;
     }
@@ -328,26 +333,28 @@ export function runAgentTests(arguments_ = process.argv.slice(2), spawn = spawnS
         return compilation.status ?? 1;
     }
     normalizeEmittedImports(build.outputDirectory);
-    const selectedTests = browserRun
-        ? [browserSuites[feature]]
-        : feature === 'ai'
-          ? tests.filter((file) => file.startsWith('tests/ai/'))
-          : feature === 'files'
-            ? tests.filter((file) => file.startsWith('tests/files/'))
-            : feature === 'ghost'
-              ? tests.filter(
-                    (file) =>
-                        file.startsWith('tests/ghost/') ||
-                        file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
-                        file === 'tests/ghostPromptSafety.test.mjs' ||
-                        file === 'tests/terminalShellContext.test.mjs',
-                )
-              : feature === 'terminal'
+    const selectedTests = registeredSuite
+        ? [feature]
+        : browserRun
+          ? [browserSuites[feature]]
+          : feature === 'ai'
+            ? tests.filter((file) => file.startsWith('tests/ai/'))
+            : feature === 'files'
+              ? tests.filter((file) => file.startsWith('tests/files/'))
+              : feature === 'ghost'
                 ? tests.filter(
                       (file) =>
-                          file.startsWith('tests/terminal') || file.startsWith('tests/serial/'),
+                          file.startsWith('tests/ghost/') ||
+                          file === 'tests/ghostSuggestionsHelpers.test.mjs' ||
+                          file === 'tests/ghostPromptSafety.test.mjs' ||
+                          file === 'tests/terminalShellContext.test.mjs',
                   )
-                : tests;
+                : feature === 'terminal'
+                  ? tests.filter(
+                        (file) =>
+                            file.startsWith('tests/terminal') || file.startsWith('tests/serial/'),
+                    )
+                  : tests;
     for (const source of selectedTests) {
         const file = build.resolveTestFile(source);
         const legacyTerminal = source.startsWith('tests/terminal') && /\.[cm]?js$/.test(source);

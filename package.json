@@ -45,7 +45,7 @@
     "test:host-catalog": "npm run compile:agent-tests && node tests/hostCatalog.test.mjs",
     "test:connection-display": "npm run compile:agent-tests && node tests/connectionDisplay.test.mjs",
     "test:notification-history": "npm run compile:agent-tests && node tests/notificationHistory.test.mjs",
-    "test:connection-form-transforms": "npm run compile:agent-tests && node tests/connectionFormTransforms.test.mjs",
+    "test:connection-form-transforms": "node tests/runAllAgentTests.mjs tests/connections/connectionFormTransforms.test.ts",
     "test:connection-service": "npm run compile:agent-tests && node tests/connectionService.test.mjs",
     "test:connection-tab-service": "npm run compile:agent-tests && node tests/connectionTabService.test.mjs",
     "test:connection-lifecycle-service": "npm run compile:agent-tests && node tests/connectionLifecycleService.test.mjs",

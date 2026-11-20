@@ -25,6 +25,30 @@ const server = externalServer
           optimizeDeps: { entries: [fixture.slice(1)], exclude: ['@enjoys/context-engine'] },
       });
 
+/** Wait for the mocked native request before replying, regardless of rendering or preflight timing. */
+async function finishNextConnectionTest(page: Page, action: 'Finish test' | 'Reject test') {
+    await page.waitForFunction(() => Number(document.body.dataset.pendingSshTests) > 0);
+    await page
+        .getByRole('button', { name: action, exact: true })
+        .evaluate((button: HTMLElement) => button.click());
+}
+
+/** Flush queued ancestor scroll events before focus; Radix dismisses help on scrolling. */
+async function focusHelp(button: Locator) {
+    await button.scrollIntoViewIfNeeded();
+    await button.evaluate(
+        (element: HTMLElement) =>
+            new Promise<void>((resolve) => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        element.focus({ preventScroll: true });
+                        resolve();
+                    });
+                });
+            }),
+    );
+}
+
 /** Keep connection types distinct from imports and usable by keyboard in a bounded dialog. */
 async function checkConnectionChooser(page: Page, dialog: Locator, screenshots?: string) {
     const connectionTypes = dialog.getByRole('group', { name: 'Connection type', exact: true });
@@ -448,18 +472,14 @@ try {
     // A delayed result belongs to the tested snapshot, never to newly edited inputs.
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page.getByLabel('Host', { exact: true }).fill('changed.invalid');
-    await page
-        .getByRole('button', { name: 'Finish test', exact: true })
-        .evaluate((button: HTMLElement) => button.click());
+    await finishNextConnectionTest(page, 'Finish test');
     await page.waitForTimeout(100);
     assert.equal(await page.getByText('Connection successful!', { exact: true }).count(), 0);
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await page
         .getByRole('button', { name: 'Update connection status', exact: true })
         .evaluate((button: HTMLElement) => button.click());
-    await page
-        .getByRole('button', { name: 'Finish test', exact: true })
-        .evaluate((button: HTMLElement) => button.click());
+    await finishNextConnectionTest(page, 'Finish test');
     await page.getByText('Connection successful!', { exact: true }).waitFor();
     await page
         .getByRole('button', { name: 'Update connection status', exact: true })
@@ -473,9 +493,7 @@ try {
     assert.equal(await page.getByText('Connection successful!', { exact: true }).count(), 0);
 
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
-    await page
-        .getByRole('button', { name: 'Reject test', exact: true })
-        .evaluate((button: HTMLElement) => button.click());
+    await finishNextConnectionTest(page, 'Reject test');
     await page
         .getByText(
             'Connection refused. Check the host, port and whether the SSH server is running.',
@@ -535,9 +553,7 @@ try {
     await page.getByRole('button', { name: 'Key host fixture', exact: true }).click();
     await page.getByText('Valid unencrypted private key.', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
-    await page
-        .getByRole('button', { name: 'Finish test', exact: true })
-        .evaluate((button: HTMLElement) => button.click());
+    await finishNextConnectionTest(page, 'Finish test');
     await page.waitForTimeout(100);
     assert.equal(
         await page.getByRole('button', { name: 'Testing…', exact: true }).isDisabled(),
@@ -545,9 +561,7 @@ try {
         "Old completion cannot release the reopened editor's pending owner",
     );
     assert.equal(await page.getByText('Connection successful!', { exact: true }).count(), 0);
-    await page
-        .getByRole('button', { name: 'Finish test', exact: true })
-        .evaluate((button: HTMLElement) => button.click());
+    await finishNextConnectionTest(page, 'Finish test');
     await page.getByText('Connection successful!', { exact: true }).waitFor();
     assert.equal(
         await page
@@ -675,8 +689,335 @@ try {
             'Both footer corners follow the dialog radius',
         );
     }
+    await page.getByRole('button', { name: 'SSH key', exact: true }).click();
+    await page.getByRole('button', { name: 'Add certificate file', exact: true }).click();
+    await page.getByLabel('User certificate (optional)', { exact: true }).fill('/fixture-cert.pub');
+    const hostDialog = page.getByRole('dialog', { name: 'Edit host', exact: true });
+    await page.getByRole('button', { name: 'Local SSH agent', exact: true }).click();
+    await hostDialog.getByRole('status').filter({ hasText: '0 keys found' }).waitFor();
+    await page.getByText('No keys are available from this agent.', { exact: true }).waitFor();
+    const agentHelp = hostDialog.getByRole('button', {
+        name: 'About local SSH agent authentication',
+    });
+    await focusHelp(agentHelp);
+    await page.getByRole('tooltip').filter({ hasText: 'New logins need the agent' }).waitFor();
+    await page.keyboard.press('Escape');
+    await page.getByRole('tooltip').waitFor({ state: 'hidden' });
+    assert.equal(await hostDialog.isVisible(), true, 'Dismissing help must preserve the editor');
+    const forwarding = hostDialog.getByRole('switch', {
+        name: 'SSH agent forwarding',
+        exact: true,
+    });
+    const forwardingBefore = await forwarding.getAttribute('aria-checked');
+    const forwardingHelp = hostDialog.getByRole('button', { name: 'About SSH agent forwarding' });
+    await focusHelp(forwardingHelp);
+    await page
+        .getByRole('tooltip')
+        .filter({ hasText: 'This does not choose how you log in' })
+        .waitFor();
+    assert.equal(await forwarding.getAttribute('aria-checked'), forwardingBefore);
+
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'error';
+    });
+    await hostDialog
+        .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+        .click();
+    await hostDialog
+        .getByRole('alert')
+        .filter({ hasText: 'No local SSH agent is reachable.' })
+        .waitFor();
+    assert.equal(await hostDialog.getByText(/early eof/).count(), 0);
+    const setupButton = hostDialog.getByRole('button', {
+        name: 'SSH agent setup help',
+        exact: true,
+    });
+    await setupButton.click();
+    const setup = hostDialog.getByRole('region', { name: 'SSH agent setup help' });
+    const originalPlatform = await page.evaluate(() => navigator.platform);
+    await setup
+        .getByText(/win/i.test(originalPlatform) ? /same agent endpoint/ : /SSH_AUTH_SOCK/)
+        .waitFor();
+    await setup.getByText('Technical details', { exact: true }).click();
+    await setup.getByText('early eof', { exact: true }).waitFor();
+    await setupButton.click();
+    await setup.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+        Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
+    });
+    await setupButton.click();
+    await setup.getByText(/Windows OpenSSH Authentication Agent service/).waitFor();
+    await setupButton.click();
+    await page.evaluate((platform) => {
+        Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+    }, originalPlatform);
+    for (const scenario of [
+        {
+            mode: 'refused',
+            message: 'The SSH agent refused to list keys.',
+            help: 'allow it to share its key list',
+        },
+        {
+            mode: 'accessDenied',
+            message: 'Zync cannot access the local SSH agent.',
+            help: 'Allow Zync to access the agent',
+        },
+        {
+            mode: 'timeout',
+            message: 'The local SSH agent did not respond in time.',
+            help: 'Check for an agent prompt',
+        },
+        {
+            mode: 'legacy',
+            message: 'Could not read keys from the local SSH agent.',
+            help: 'Enable the SSH agent',
+        },
+    ]) {
+        await page.evaluate((mode) => {
+            document.body.dataset.agentFixture = mode;
+        }, scenario.mode);
+        await hostDialog
+            .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+            .click();
+        await hostDialog.getByRole('alert').filter({ hasText: scenario.message }).waitFor();
+        await setupButton.click();
+        await setup.getByText(new RegExp(scenario.help)).waitFor();
+        await setupButton.click();
+    }
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'key';
+    });
+    await hostDialog
+        .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+        .click();
+    await hostDialog.getByRole('status').filter({ hasText: '1 key found' }).waitFor();
+    const agentPanel = hostDialog.getByRole('group', { name: 'Local SSH agent authentication' });
+    const picker = agentPanel.getByRole('combobox', { name: 'Local SSH agent key', exact: true });
+    assert.equal(await setupButton.count(), 0);
+    assert.equal(await picker.innerText(), 'Use agent’s first key');
+    await picker
+        .getByRole('img', { name: /Agent: 1Password \(process signature checked\)/ })
+        .waitFor();
+    const originalIconStyle = await picker
+        .locator('img')
+        .evaluate(async (image: HTMLImageElement) => {
+            await image.decode();
+            const style = getComputedStyle(image);
+            return { width: image.naturalWidth, filter: style.filter, mask: style.maskImage };
+        });
+    assert.ok(originalIconStyle.width > 0, 'The original app icon loads');
+    assert.equal(originalIconStyle.filter, 'none', 'Provider artwork retains its original colors');
+    assert.equal(
+        originalIconStyle.mask,
+        'none',
+        'Provider artwork is not rendered as a themed mask',
+    );
+    for (const mark of ['1password', 'bitwarden']) {
+        const iconResponse = await page.request.get(`${baseUrl}/agent-providers/${mark}.png`);
+        assert.equal(iconResponse.status(), 200);
+        assert.equal(
+            (await iconResponse.body()).subarray(0, 8).toString('hex'),
+            '89504e470d0a1a0a',
+        );
+    }
+    await focusHelp(
+        agentPanel.getByRole('button', { name: 'About automatic agent key selection' }),
+    );
+    await page
+        .getByRole('tooltip')
+        .filter({ hasText: 'does not try the remaining keys' })
+        .waitFor();
+    await picker.focus();
+    assert.equal(
+        await picker.innerText(),
+        'Use agent’s first key',
+        'Help must not change selection',
+    );
+    await picker.click();
+    await page
+        .getByRole('option', { name: /Fixture key with a long comment/ })
+        .getByRole('img', { name: /Agent: 1Password/ })
+        .waitFor();
+    await page.getByRole('option', { name: /Fixture key with a long comment/ }).click();
+    await agentPanel.getByText('SHA256:fixture-public-fingerprint', { exact: true }).waitFor();
+    const agentBounds = await agentPanel.evaluate((element) => ({
+        client: element.clientWidth,
+        scroll: element.scrollWidth,
+    }));
+    assert.ok(agentBounds.scroll <= agentBounds.client + 1, 'Long key labels fit a narrow form');
+
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'certificates';
+    });
+    await agentPanel.getByRole('button', { name: 'Refresh local SSH agent keys' }).click();
+    await agentPanel.getByRole('status').filter({ hasText: '2 keys found' }).waitFor();
+    await picker.click();
+    const certificates = page.getByRole('option', { name: /Shared certificate label/ });
+    assert.equal(await certificates.count(), 2);
+    await certificates.nth(1).click();
+    await picker.click();
+    await certificates.nth(1).waitFor();
+    assert.equal(
+        await certificates.nth(1).getAttribute('aria-selected'),
+        'true',
+        'Reopening focuses the selected certificate even when display labels match',
+    );
+    assert.notEqual(await certificates.nth(0).getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('Enter');
+    assert.equal(await picker.innerText(), 'Shared certificate label');
+
+    // Many identities stay inside the shared, bounded popup and remain searchable by fingerprint.
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'many';
+    });
+    await hostDialog
+        .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+        .click();
+    await hostDialog.getByRole('status').filter({ hasText: '40 keys found' }).waitFor();
+    assert.equal(
+        await picker.innerText(),
+        'Saved key (not listed)',
+        'Refresh preserves a missing saved selector',
+    );
+    await picker.click();
+    const keyList = page.getByRole('listbox');
+    await keyList.waitFor();
+    const listBounds = await keyList.evaluate((element) => ({
+        client: element.clientHeight,
+        scroll: element.scrollHeight,
+    }));
+    assert.ok(listBounds.scroll > listBounds.client, 'Large key lists scroll inside the popup');
+    const filter = page.getByRole('combobox', { name: 'Filter Local SSH agent key', exact: true });
+    for (const hiddenValue of ['fixture-public-selector-37', 'option:']) {
+        await filter.fill(hiddenValue);
+        await page.getByText('No matches', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('option').count(), 0, 'Hidden IDs are not searchable');
+    }
+    await filter.fill('Fixture key 37');
+    await page.getByRole('option', { name: /Fixture key 37/ }).waitFor();
+    await filter.fill('SHA256:fixture-public-fingerprint-37');
+    await page.getByRole('option', { name: /Fixture key 37/ }).waitFor();
+    assert.equal(await page.getByRole('option').count(), 1);
+    await page.keyboard.press('Enter');
+    await agentPanel.getByText('SHA256:fixture-public-fingerprint-37', { exact: true }).waitFor();
+    assert.equal(await picker.innerText(), 'Fixture key 37');
+    await picker
+        .getByRole('img', { name: /Agent: Bitwarden \(process signature checked\)/ })
+        .waitFor();
+    for (const scenario of [
+        { mode: 'hint', label: /Agent: Bitwarden \(inferred from socket path\)/ },
+        { mode: 'unknown', label: /Provider could not be identified/ },
+        { mode: 'many', label: /Agent: Bitwarden \(process signature checked\)/ },
+    ]) {
+        await page.evaluate((mode) => {
+            document.body.dataset.agentFixture = mode;
+        }, scenario.mode);
+        await hostDialog
+            .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+            .click();
+        await hostDialog.getByRole('status').filter({ hasText: '40 keys found' }).waitFor();
+        await picker.getByRole('img', { name: scenario.label }).waitFor();
+        assert.equal(
+            await picker.innerText(),
+            'Fixture key 37',
+            'Provider metadata never replaces the selected key',
+        );
+    }
+    await hostDialog
+        .getByRole('button', { name: 'Refresh local SSH agent keys', exact: true })
+        .click();
+    await hostDialog.getByRole('status').filter({ hasText: '40 keys found' }).waitFor();
+    assert.equal(
+        await picker.innerText(),
+        'Fixture key 37',
+        'Refresh keeps the selected public identity',
+    );
+    const forwardingBounds = await forwarding.evaluate((element) => {
+        const row = element.parentElement!;
+        return { client: row.clientWidth, scroll: row.scrollWidth };
+    });
+    assert.ok(
+        forwardingBounds.scroll <= forwardingBounds.client + 1,
+        'Forwarding help fits beside its switch',
+    );
+    if (screenshots) {
+        await hostDialog.screenshot({ path: `${screenshots}/host-form-agent-narrow.png` });
+    }
+    assert.equal(
+        await page.getByRole('button', { name: 'Add certificate file', exact: true }).count(),
+        0,
+    );
+    assert.equal(await page.getByLabel('User certificate (optional)', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'SSH key', exact: true }).click();
+    assert.equal(
+        await page.getByLabel('User certificate (optional)', { exact: true }).inputValue(),
+        '',
+    );
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'error';
+    });
+    await page.getByRole('button', { name: 'Local SSH agent', exact: true }).click();
+    await hostDialog
+        .getByRole('alert')
+        .filter({ hasText: 'No local SSH agent is reachable.' })
+        .waitFor();
+    await hostDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await hostDialog.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'key';
+    });
+    await page
+        .getByRole('button', { name: 'Selector-only agent host fixture', exact: true })
+        .click();
+    await hostDialog.getByRole('combobox', { name: 'Local SSH agent key', exact: true }).waitFor();
+    await hostDialog.getByRole('status').filter({ hasText: '1 key found' }).waitFor();
+    assert.match(
+        await hostDialog
+            .getByRole('combobox', { name: 'Local SSH agent key', exact: true })
+            .innerText(),
+        /^Fixture key with a long comment/,
+        'A saved agent selector without the flag opens agent authentication with its key selected',
+    );
+    await hostDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await hostDialog.waitFor({ state: 'hidden' });
+    const quickAuth = page.getByRole('region', { name: 'Quick connect authentication fixture' });
+    const quickPrivateKey = quickAuth.getByRole('textbox', { name: 'Private key file path' });
+    const quickPassword = quickAuth.getByLabel('SSH password', { exact: true });
+    await quickPassword.fill('fixture password');
+    await quickPrivateKey.fill('/fixture/key');
+    const localAgent = quickAuth.getByRole('checkbox', { name: 'Use local SSH agent' });
+    await localAgent.check();
+    assert.equal(await quickPassword.isDisabled(), true);
+    assert.equal(await quickPrivateKey.isDisabled(), true);
+    assert.equal(
+        await quickAuth.getByRole('button', { name: 'Browse for private key file' }).isDisabled(),
+        true,
+    );
+    assert.equal(await quickAuth.getByLabel('Port override').isEnabled(), true);
+    await focusHelp(
+        quickAuth.getByRole('button', { name: 'About local SSH agent authentication' }),
+    );
+    await page.getByRole('tooltip').filter({ hasText: 'Agent forwarding is separate' }).waitFor();
+    assert.equal(await localAgent.isChecked(), true);
+    await page.keyboard.press('Escape');
+    await localAgent.uncheck();
+    assert.equal(await quickPassword.isEnabled(), true);
+    assert.equal(await quickPrivateKey.isEnabled(), true);
+    assert.equal(await quickPassword.inputValue(), 'fixture password');
+    assert.equal(await quickPrivateKey.inputValue(), '/fixture/key');
     assert.deepEqual(errors, []);
     console.log('Host onboarding browser regressions passed');
+} catch (error) {
+    const directory = process.env.ZYNC_BROWSER_SCREENSHOT_DIR;
+    const failedPage = browser?.contexts()[0]?.pages()[0];
+    if (directory && failedPage) {
+        try {
+            await failedPage.screenshot({ path: `${directory}/host-form-failure.png` });
+        } catch (screenshotError) {
+            console.warn('Could not capture the failed connection form:', screenshotError);
+        }
+    }
+    throw error;
 } finally {
     await browser?.close();
     await server?.close();

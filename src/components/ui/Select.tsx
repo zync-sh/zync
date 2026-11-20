@@ -1,4 +1,4 @@
-import { Command } from 'cmdk';
+import { Command, defaultFilter } from 'cmdk';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
@@ -260,11 +260,8 @@ export function Select({
         >
             <Command
                 ref={commandRef}
-                defaultValue={
-                    selectedOption
-                        ? (selectedOption.label + ' ' + (selectedOption.description || '')).trim()
-                        : undefined
-                }
+                defaultValue={selectedOption ? `option:${selectedOption.value}` : undefined}
+                filter={(_value, search, keywords) => defaultFilter('', search, keywords)}
                 loop
                 className="flex flex-col w-full bg-transparent"
             >
@@ -302,7 +299,8 @@ export function Select({
                     {options.map((option) => (
                         <Command.Item
                             key={option.value}
-                            value={option.label + ' ' + (option.description || '')}
+                            value={`option:${option.value}`}
+                            keywords={[option.label, option.description ?? '']}
                             onSelect={() => {
                                 setIsOpen(false);
                                 triggerRef.current?.focus();

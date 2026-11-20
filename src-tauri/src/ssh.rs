@@ -919,7 +919,10 @@ impl SshManager {
         verification: Option<&keyboard_interactive::Attempt>,
     ) -> Result<()> {
         if config.certificate_path.is_some()
-            && matches!(config.auth_method, AuthMethod::Password { .. })
+            && matches!(
+                config.auth_method,
+                AuthMethod::Password { .. } | AuthMethod::SshAgent { .. }
+            )
         {
             return Err(anyhow!(
                 "SSH user certificates require private-key authentication"
@@ -983,6 +986,15 @@ impl SshManager {
                     item_id
                 ));
             }
+            AuthMethod::SshAgent { public_key } => {
+                let (agent, identity) = crate::ssh_agent::select_identity(
+                    public_key.as_deref(),
+                    session.agent_session_binding(),
+                )
+                .await?;
+                crate::ssh_agent::authenticate_identity(session, &config.username, agent, identity)
+                    .await?
+            }
         };
 
         self.verification
@@ -1044,6 +1056,11 @@ impl SshManager {
             AuthMethod::Password { .. } => {
                 return Err(anyhow!("Agent forwarding requires a private key"))
             }
+            AuthMethod::SshAgent { .. } => {
+                return Err(anyhow!(
+                    "SSH-agent identities cannot be forwarded to another host's agent"
+                ))
+            }
             AuthMethod::VaultRef { item_id, .. } => {
                 return Err(anyhow!(
                     "Forwarded VaultRef({item_id}) was not resolved before connection"
@@ -1092,7 +1109,7 @@ impl SshManager {
 }
 
 /// Preserve SHA-2 for old servers lacking EXT_INFO and reject explicit SHA-1-only offers.
-fn rsa_auth_hash(supported: Option<Option<HashAlg>>) -> Result<HashAlg> {
+pub(crate) fn rsa_auth_hash(supported: Option<Option<HashAlg>>) -> Result<HashAlg> {
     match supported {
         Some(Some(hash @ (HashAlg::Sha256 | HashAlg::Sha512))) => Ok(hash),
         None => Ok(HashAlg::Sha512),

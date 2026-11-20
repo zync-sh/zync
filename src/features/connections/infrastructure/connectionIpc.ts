@@ -31,7 +31,16 @@ export interface AuthMethodVaultRef {
     credential_id?: string;
 }
 
-export type AuthMethodPayload = AuthMethodPassword | AuthMethodPrivateKey | AuthMethodVaultRef;
+export interface AuthMethodSshAgent {
+    type: 'SshAgent';
+    public_key?: string;
+}
+
+export type AuthMethodPayload =
+    | AuthMethodPassword
+    | AuthMethodPrivateKey
+    | AuthMethodVaultRef
+    | AuthMethodSshAgent;
 
 export interface ConnectionConfigPayload {
     id: string;
@@ -102,6 +111,74 @@ export type SshImportSourceRequest =
     | { sourceType: 'text'; content: string };
 
 export type AgentSignatureDecision = 'deny' | 'allowOnce' | 'allowSession';
+
+/** Display provenance from the agent used for this scan; never an authentication selector. */
+export interface SshAgentProvider {
+    id: 'bitwarden' | 'onePassword' | 'openSsh' | 'pageant';
+    evidence: 'signedProcess' | 'socketHint' | 'transport';
+}
+
+/** One identity currently served by the local SSH agent (Bitwarden/Vaultwarden, 1Password, OpenSSH agent, Pageant). */
+export interface SshAgentKeyInfo {
+    /** Canonical `algorithm base64` selector used to pick this identity again. */
+    publicKey: string;
+    /** SHA-256 fingerprint, as `SHA256:...`. */
+    fingerprint: string;
+    algorithm: string;
+    comment?: string | null;
+    isCertificate: boolean;
+    /** Absent when the process cannot be identified or the native version lacks provenance. */
+    provider?: SshAgentProvider | null;
+}
+
+/** List the identities the local SSH agent currently serves; rejects when no agent is reachable. */
+export const listSshAgentKeysIpc = async (): Promise<SshAgentKeyInfo[]> =>
+    window.ipcRenderer.invoke('ssh:agentListKeys');
+
+/** Stable native discovery codes; an unreachable agent is not proof that it is disabled or locked. */
+export type SshAgentDiscoveryCode =
+    | 'unavailable'
+    | 'accessDenied'
+    | 'refused'
+    | 'timeout'
+    | 'failed';
+
+export interface SshAgentDiscoveryIssue {
+    code: SshAgentDiscoveryCode;
+    message: string;
+    details: string;
+}
+
+/** Accept structured native diagnostics and preserve older or unexpected errors as details. */
+export function sshAgentDiscoveryIssue(error: unknown): SshAgentDiscoveryIssue {
+    const record =
+        typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : null;
+    if (
+        record &&
+        typeof record.message === 'string' &&
+        typeof record.details === 'string' &&
+        typeof record.code === 'string' &&
+        ['unavailable', 'accessDenied', 'refused', 'timeout', 'failed'].includes(record.code)
+    ) {
+        return {
+            code: record.code as SshAgentDiscoveryCode,
+            message: record.message,
+            details: record.details,
+        };
+    }
+    return {
+        code: 'failed',
+        message: 'Could not read keys from the local SSH agent.',
+        details:
+            error instanceof Error
+                ? error.message
+                : typeof error === 'string'
+                  ? error
+                  : typeof record?.message === 'string'
+                    ? record.message
+                    : 'Unexpected SSH agent error.',
+    };
+}
 
 export interface AgentSignatureRequestPayload {
     requestId: string;

@@ -175,6 +175,8 @@ pub fn apply_hosts_restore_records(
             pinned_features: None,
             auth_ref: record.auth_ref.clone(),
             agent_forwarding_key_connection_id: None,
+            use_ssh_agent: None,
+            agent_key: None,
         });
         restored = restored.saturating_add(1);
     }
@@ -288,6 +290,8 @@ mod tests {
             pinned_features: None,
             auth_ref: None,
             agent_forwarding_key_connection_id: None,
+            use_ssh_agent: None,
+            agent_key: None,
         }
     }
 

@@ -13,7 +13,7 @@ import {
     Shield,
     ShieldCheck,
 } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { connectWithHostKeyVerification } from '../../features/connections/application/hostKeyVerification';
 import type { KeyPassphraseRetention } from '../../features/connections/application/keyPassphrasePrompt';
@@ -32,6 +32,7 @@ import {
     getCredentialHealthChecks,
     SELF_AGENT_FORWARDING_KEY,
     shouldAutoConnectOnOpenTab,
+    supportsCertificateFile,
 } from '../../features/connections/domain';
 import { connectionFailureSummary } from '../../features/connections/domain/formPresentation';
 import { connectionTestDependencies } from '../../features/connections/domain/formTransforms';
@@ -39,8 +40,12 @@ import {
     type ConnectionConfigPayload,
     deleteEphemeralKeyIpc,
     forgetKeyPassphraseIpc,
+    listSshAgentKeysIpc,
     readLocalKeyFileIpc,
     rememberKeyPassphraseIpc,
+    type SshAgentDiscoveryIssue,
+    type SshAgentKeyInfo,
+    sshAgentDiscoveryIssue,
     testConnectionIpc,
     writeEphemeralKeyIpc,
 } from '../../features/connections/infrastructure/connectionIpc';
@@ -61,14 +66,16 @@ import { ConnectionTypeChooser } from '../connections/ConnectionTypeChooser';
 import { KeyPassphraseInput } from '../connections/KeyPassphraseInput';
 import { KeyPassphraseRetentionOptions } from '../connections/KeyPassphraseRetentionOptions';
 import { NetworkInterfaceControl } from '../connections/NetworkInterfaceControl';
+import { SshAgentHelp } from '../connections/SshAgentHelp';
+import { SshAgentPanel } from '../connections/SshAgentPanel';
 import { useHostNetworkPreference } from '../connections/useHostNetworkPreference';
 import { OSIcon } from '../icons/OSIcon';
-import { Toggle } from '../settings/common/Toggle';
 import { Button } from '../ui/Button';
 import { IconButton } from '../ui/IconButton';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { Select } from '../ui/Select';
+import { Switch } from '../ui/Switch';
 import { Toolbar } from '../ui/Toolbar';
 import { useAutoVault } from './useAutoVault';
 import { useConnectionForm } from './useConnectionForm';
@@ -219,6 +226,11 @@ export function AddConnectionModal({
     const [keyInspectionRevision, setKeyInspectionRevision] = useState(0);
     const [isForgettingKeyPassphrase, setIsForgettingKeyPassphrase] = useState(false);
     const [rememberedKeyPath, setRememberedKeyPath] = useState<string | null>(null);
+    /** SSH-agent auth: identities served by the local agent (Bitwarden/Vaultwarden, 1Password, OpenSSH agent). */
+    const [agentKeys, setAgentKeys] = useState<SshAgentKeyInfo[]>([]);
+    const [agentStatus, setAgentStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [agentIssue, setAgentIssue] = useState<SshAgentDiscoveryIssue | null>(null);
+    const agentRequestRef = useRef(0);
     const retentionDefaultedKeyPathRef = useRef<string | null>(null);
 
     const {
@@ -283,6 +295,37 @@ export function AddConnectionModal({
         materializePasswordToVault: authMethod === 'password' && passwordStorage === 'vault',
         showToast,
     });
+    /** Refresh on opening the agent panel; late replies cannot replace a newer discovery result. */
+    const refreshAgentKeys = useCallback(async () => {
+        const request = ++agentRequestRef.current;
+        setAgentStatus('loading');
+        setAgentIssue(null);
+        try {
+            const keys = await listSshAgentKeysIpc();
+            if (request !== agentRequestRef.current) {
+                return;
+            }
+            setAgentKeys(keys);
+            setAgentStatus('ready');
+        } catch (error: unknown) {
+            if (request !== agentRequestRef.current) {
+                return;
+            }
+            setAgentKeys([]);
+            setAgentStatus('error');
+            setAgentIssue(sshAgentDiscoveryIssue(error));
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isOpen && authMethod === 'agent') {
+            void refreshAgentKeys();
+        }
+        return () => {
+            agentRequestRef.current++;
+        };
+    }, [isOpen, authMethod, refreshAgentKeys]);
+
     const sshVaultItems = useMemo(
         () =>
             vaultItems.flatMap((item) => {
@@ -901,7 +944,7 @@ export function AddConnectionModal({
         let ephemeralTestPath: string | null = null;
         try {
             // Existing vault credential still needs unlock; paste/import test uses ephemeral file (no vault write).
-            // Skip on retryAfterUnlock — requestUnlock already refreshed vault state.
+            // Skip on retryAfterUnlock. requestUnlock already refreshed vault state.
             if (!retryAfterUnlock && authMethod === 'vault' && vaultInputMode === 'existing') {
                 const unlocked = await requestVaultUnlock();
                 if (!isCurrent()) {
@@ -1100,7 +1143,7 @@ export function AddConnectionModal({
             if (plaintextCount > 0 && vaultStatus?.status !== 'uninitialized') {
                 showToast(
                     'success',
-                    `Imported ${mappedConnections.length} connection(s)${tunnelNote} — ${plaintextCount} have plaintext credentials. Open Vault tab to secure them to vault.`,
+                    `Imported ${mappedConnections.length} connection(s)${tunnelNote}. ${plaintextCount} have plaintext credentials. Open Vault tab to secure them to vault.`,
                 );
             } else {
                 showToast(
@@ -1292,6 +1335,20 @@ export function AddConnectionModal({
                                             )}
                                         >
                                             SSH key
+                                        </button>
+                                        <button
+                                            type="button"
+                                            aria-pressed={authMethod === 'agent'}
+                                            onClick={() => setAuthMethod('agent')}
+                                            className={cn(
+                                                'px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5',
+                                                authMethod === 'agent'
+                                                    ? 'bg-app-accent text-white shadow-sm'
+                                                    : 'text-app-muted hover:text-app-text',
+                                            )}
+                                        >
+                                            <KeyRound size={13} />
+                                            Local SSH agent
                                         </button>
                                         {vaultAvailable && (
                                             <button
@@ -1538,6 +1595,17 @@ export function AddConnectionModal({
                                                 </div>
                                             )}
                                     </div>
+                                ) : authMethod === 'agent' ? (
+                                    <SshAgentPanel
+                                        keys={agentKeys}
+                                        status={agentStatus}
+                                        issue={agentIssue}
+                                        value={formData.agentKey}
+                                        onChange={(agentKey) =>
+                                            setFormData((previous) => ({ ...previous, agentKey }))
+                                        }
+                                        onRefresh={() => void refreshAgentKeys()}
+                                    />
                                 ) : (
                                     <div className="space-y-3">
                                         <div className="flex flex-wrap gap-1 p-0.5 bg-app-surface/50 rounded-lg w-fit border border-app-border">
@@ -1681,8 +1749,8 @@ export function AddConnectionModal({
                                                         {keyVaultLabelConflict && (
                                                             <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
                                                                 <Shield size={10} /> A vault item
-                                                                with this label already exists —
-                                                                rename to avoid a duplicate.
+                                                                with this label already exists.
+                                                                Rename to avoid a duplicate.
                                                             </p>
                                                         )}
                                                     </div>
@@ -1759,102 +1827,100 @@ export function AddConnectionModal({
                                             Using the SSH certificate stored with this Vault key.
                                         </p>
                                     )}
-                                {authMethod !== 'password' &&
-                                    !(
-                                        authMethod === 'vault' &&
-                                        vaultInputMode === 'existing' &&
-                                        formData.authRef?.itemKind === 'ssh-password'
-                                    ) && (
-                                        <div className="space-y-2">
-                                            {isCertificateOpen || formData.certificatePath ? (
-                                                <>
-                                                    <div className="flex items-end gap-2">
-                                                        <Input
-                                                            label="User certificate (optional)"
-                                                            placeholder="OpenSSH *-cert.pub file"
-                                                            value={formData.certificatePath || ''}
-                                                            error={
-                                                                validation.fieldErrors
-                                                                    .certificatePath
-                                                            }
-                                                            onChange={(event) =>
-                                                                setFormData((previous) => ({
-                                                                    ...previous,
-                                                                    certificatePath:
-                                                                        event.target.value ||
-                                                                        undefined,
-                                                                }))
-                                                            }
-                                                        />
-                                                        <Button
-                                                            variant="secondary"
-                                                            onClick={async () => {
-                                                                try {
-                                                                    const path = await open({
-                                                                        multiple: false,
-                                                                        directory: false,
-                                                                        title: 'Select SSH user certificate',
-                                                                    });
-                                                                    if (typeof path === 'string') {
-                                                                        setFormData((previous) => ({
-                                                                            ...previous,
-                                                                            certificatePath: path,
-                                                                        }));
-                                                                    }
-                                                                } catch (error: unknown) {
-                                                                    const message =
-                                                                        error instanceof Error
-                                                                            ? error.message
-                                                                            : String(error);
-                                                                    showToast(
-                                                                        'error',
-                                                                        `Failed to select certificate: ${message}`,
-                                                                    );
+                                {supportsCertificateFile(
+                                    authMethod,
+                                    vaultInputMode === 'existing'
+                                        ? formData.authRef?.itemKind
+                                        : undefined,
+                                ) && (
+                                    <div className="space-y-2">
+                                        {isCertificateOpen || formData.certificatePath ? (
+                                            <>
+                                                <div className="flex items-end gap-2">
+                                                    <Input
+                                                        label="User certificate (optional)"
+                                                        placeholder="OpenSSH *-cert.pub file"
+                                                        value={formData.certificatePath || ''}
+                                                        error={
+                                                            validation.fieldErrors.certificatePath
+                                                        }
+                                                        onChange={(event) =>
+                                                            setFormData((previous) => ({
+                                                                ...previous,
+                                                                certificatePath:
+                                                                    event.target.value || undefined,
+                                                            }))
+                                                        }
+                                                    />
+                                                    <Button
+                                                        variant="secondary"
+                                                        onClick={async () => {
+                                                            try {
+                                                                const path = await open({
+                                                                    multiple: false,
+                                                                    directory: false,
+                                                                    title: 'Select SSH user certificate',
+                                                                });
+                                                                if (typeof path === 'string') {
+                                                                    setFormData((previous) => ({
+                                                                        ...previous,
+                                                                        certificatePath: path,
+                                                                    }));
                                                                 }
-                                                            }}
-                                                        >
-                                                            Browse
-                                                        </Button>
-                                                    </div>
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <p className="text-xs text-app-muted">
-                                                            For CA-based login; must match this
-                                                            private key.
-                                                        </p>
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => {
-                                                                setFormData((previous) => ({
-                                                                    ...previous,
-                                                                    certificatePath: undefined,
-                                                                }));
-                                                                setIsCertificateOpen(false);
-                                                            }}
-                                                        >
-                                                            Remove
-                                                        </Button>
-                                                    </div>
-                                                    {authMethod === 'vault' && (
-                                                        <p className="text-xs text-app-muted">
-                                                            A selected file overrides the
-                                                            certificate stored with the Vault key.
-                                                        </p>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => setIsCertificateOpen(true)}
-                                                >
-                                                    Add certificate file
-                                                </Button>
-                                            )}
-                                        </div>
-                                    )}
+                                                            } catch (error: unknown) {
+                                                                const message =
+                                                                    error instanceof Error
+                                                                        ? error.message
+                                                                        : String(error);
+                                                                showToast(
+                                                                    'error',
+                                                                    `Failed to select certificate: ${message}`,
+                                                                );
+                                                            }
+                                                        }}
+                                                    >
+                                                        Browse
+                                                    </Button>
+                                                </div>
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <p className="text-xs text-app-muted">
+                                                        For CA-based login; must match this private
+                                                        key.
+                                                    </p>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => {
+                                                            setFormData((previous) => ({
+                                                                ...previous,
+                                                                certificatePath: undefined,
+                                                            }));
+                                                            setIsCertificateOpen(false);
+                                                        }}
+                                                    >
+                                                        Remove
+                                                    </Button>
+                                                </div>
+                                                {authMethod === 'vault' && (
+                                                    <p className="text-xs text-app-muted">
+                                                        A selected file overrides the certificate
+                                                        stored with the Vault key.
+                                                    </p>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                onClick={() => setIsCertificateOpen(true)}
+                                            >
+                                                Add certificate file
+                                            </Button>
+                                        )}
+                                    </div>
+                                )}
 
                                 {credentialHealthChecks.length > 0 && (
                                     <div className="rounded-md border border-app-border bg-app-bg/50 px-3 py-2 text-[11px] space-y-1">
@@ -2144,33 +2210,37 @@ export function AddConnectionModal({
                                             {jumpCycleWarning && (
                                                 <p className="text-[10px] text-amber-400/90 flex items-center gap-1 mt-1 pl-1">
                                                     <AlertCircle size={10} /> Jump chain creates a
-                                                    loop — this connection will not be reachable.
+                                                    loop. This connection will not be reachable.
                                                 </p>
                                             )}
                                         </div>
 
                                         <div className="border-t border-app-border/70 pt-2">
-                                            <Toggle
-                                                label="Forward an SSH key"
-                                                description="Let this host request authentication with one selected key. Every signature asks first."
-                                                checked={Boolean(
-                                                    formData.agentForwardingKeyConnectionId,
-                                                )}
-                                                disabled={
-                                                    !selfCanForwardKey &&
-                                                    forwardableConnections.length === 0
-                                                }
-                                                onChange={(enabled) =>
-                                                    setFormData((previous) => ({
-                                                        ...previous,
-                                                        agentForwardingKeyConnectionId: enabled
-                                                            ? selfCanForwardKey
-                                                                ? SELF_AGENT_FORWARDING_KEY
-                                                                : PICK_AGENT_FORWARDING_KEY
-                                                            : undefined,
-                                                    }))
-                                                }
-                                            />
+                                            <div className="flex items-center gap-1">
+                                                <Switch
+                                                    label="SSH agent forwarding"
+                                                    showLabel
+                                                    className="min-w-0 flex-1"
+                                                    checked={Boolean(
+                                                        formData.agentForwardingKeyConnectionId,
+                                                    )}
+                                                    disabled={
+                                                        !selfCanForwardKey &&
+                                                        forwardableConnections.length === 0
+                                                    }
+                                                    onCheckedChange={(enabled) =>
+                                                        setFormData((previous) => ({
+                                                            ...previous,
+                                                            agentForwardingKeyConnectionId: enabled
+                                                                ? selfCanForwardKey
+                                                                    ? SELF_AGENT_FORWARDING_KEY
+                                                                    : PICK_AGENT_FORWARDING_KEY
+                                                                : undefined,
+                                                        }))
+                                                    }
+                                                />
+                                                <SshAgentHelp topic="forwarding" />
+                                            </div>
                                             {formData.agentForwardingKeyConnectionId && (
                                                 <div className="mt-2 space-y-2 px-1">
                                                     <Select
@@ -2403,7 +2473,7 @@ export function AddConnectionModal({
                             const count = lastImportPlaintextCountRef.current;
                             const migrationSuffix =
                                 count > 0 && vaultStatus?.status !== 'uninitialized'
-                                    ? ` — ${count} have plaintext credentials. Open Vault tab to secure them to vault.`
+                                    ? `. ${count} have plaintext credentials. Open Vault tab to secure them to vault.`
                                     : '.';
                             showToast(
                                 'success',
