@@ -101,6 +101,19 @@ test('a compiler failure stops the runner before any suite can execute', () => {
     assert.equal(executions, 1);
 });
 
+test('a registered source runs only its own suite using the configured compiler output', () => {
+    const source = 'tests/connections/connectionFormTransforms.test.ts';
+    const calls: string[][] = [];
+    const status = runner.runAgentTests([source], (_executable, arguments_) => {
+        calls.push(arguments_);
+        return { status: 0 };
+    });
+    assert.equal(status, 0);
+    assert.equal(calls.length, 2, 'Compile once, then execute one registered suite');
+    assert.ok(calls[0][0].replaceAll('\\', '/').endsWith('/typescript/bin/tsc'));
+    assert.deepEqual(calls[1], [runner.readTestBuild().resolveTestFile(source)]);
+});
+
 test('legacy terminal suites receive a preload and an entry point as separate arguments', () => {
     const suite = path.resolve('tests/terminalLifecycleOwnership.test.mjs');
     let argumentsForSuite: string[] | undefined;

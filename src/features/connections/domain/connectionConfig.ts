@@ -66,7 +66,9 @@ type ConnectionWithLegacyAuthFields = Connection & {
 };
 
 const normalizeOptionalText = (value: unknown): string | undefined => {
-    if (typeof value !== 'string') return undefined;
+    if (typeof value !== 'string') {
+        return undefined;
+    }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
 };
@@ -176,9 +178,13 @@ export const buildAgentForwardingConfig = (
     connections: Connection[],
     sourceConnectionId: string | undefined,
 ): ConnectAgentForwardingConfig | null => {
-    if (!sourceConnectionId) return null;
+    if (!sourceConnectionId) {
+        return null;
+    }
     const source = connections.find((connection) => connection.id === sourceConnectionId);
-    if (!source) return null;
+    if (!source) {
+        return null;
+    }
     const authMethod = buildForwardableAuthMethod(source);
     return authMethod ? { source_connection_id: source.id, auth_method: authMethod } : null;
 };
@@ -215,7 +221,8 @@ export const buildConnectConfigResult = (
         port: connection.port,
         username: connection.username,
         auth_method: authResult.auth,
-        ...(normalizeOptionalText(connection.certificatePath)
+        ...((authResult.auth.type === 'PrivateKey' || authResult.auth.type === 'VaultRef') &&
+        normalizeOptionalText(connection.certificatePath)
             ? { certificate_path: normalizeOptionalText(connection.certificatePath) }
             : {}),
         jump_host: null,
@@ -257,9 +264,15 @@ export const buildConnectConfig = (
 };
 
 export const connectConfigUsesVaultAuth = (config: ConnectConfig): boolean => {
-    if (config.auth_method.type === 'VaultRef') return true;
-    if (config.agent_forwarding?.auth_method.type === 'VaultRef') return true;
-    if (config.jump_host) return connectConfigUsesVaultAuth(config.jump_host);
+    if (config.auth_method.type === 'VaultRef') {
+        return true;
+    }
+    if (config.agent_forwarding?.auth_method.type === 'VaultRef') {
+        return true;
+    }
+    if (config.jump_host) {
+        return connectConfigUsesVaultAuth(config.jump_host);
+    }
     return false;
 };
 
@@ -268,7 +281,9 @@ export const connectionUsesVaultAuth = (
     connectionId: string,
 ): boolean => {
     const result = buildConnectConfigResult(connections, connectionId);
-    if (result.status !== 'ok') return true;
+    if (result.status !== 'ok') {
+        return true;
+    }
     return connectConfigUsesVaultAuth(result.config);
 };
 

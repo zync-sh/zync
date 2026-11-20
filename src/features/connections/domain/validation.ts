@@ -13,6 +13,10 @@ export interface ConnectionDraft {
 
 export type AuthMode = 'password' | 'key' | 'vault' | 'agent';
 
+/** Certificate files accompany a private key; agent certificates come from the agent itself. */
+export const supportsCertificateFile = (authMode: AuthMode, itemKind?: string): boolean =>
+    authMode === 'key' || (authMode === 'vault' && itemKind !== 'ssh-password');
+
 export type ConnectionDraftField =
     | 'host'
     | 'username'
@@ -34,7 +38,9 @@ export interface CredentialHealthCheck {
 }
 
 const isIpv4Literal = (value: string): boolean => {
-    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) return false;
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) {
+        return false;
+    }
     return value.split('.').every((segment) => {
         const numeric = Number(segment);
         return Number.isInteger(numeric) && numeric >= 0 && numeric <= 255;
@@ -48,13 +54,19 @@ const isIpv4Literal = (value: string): boolean => {
  */
 const isLikelyIpv6Literal = (value: string): boolean => {
     const trimmed = value.trim();
-    if (!trimmed.includes(':')) return false;
-    if (!/[0-9a-f]/i.test(trimmed)) return false;
+    if (!trimmed.includes(':')) {
+        return false;
+    }
+    if (!/[0-9a-f]/i.test(trimmed)) {
+        return false;
+    }
     return /^[0-9a-f:.]+$/i.test(trimmed);
 };
 
 const isIpLiteral = (value: string): boolean => {
-    if (!value) return false;
+    if (!value) {
+        return false;
+    }
     const normalized = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
     return isIpv4Literal(normalized) || isLikelyIpv6Literal(normalized);
 };
@@ -108,7 +120,7 @@ export const validateConnectionDraft = (
         errors.push(portResult.error);
         fieldErrors.port = portResult.error;
     }
-    if (/[\r\n\0]/.test(draft.certificatePath || '')) {
+    if (authMode !== 'agent' && /[\r\n\0]/.test(draft.certificatePath || '')) {
         const message = 'Certificate path contains invalid characters.';
         errors.push(message);
         fieldErrors.certificatePath = message;
