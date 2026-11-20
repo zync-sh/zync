@@ -1701,6 +1701,15 @@ pub async fn ssh_inspect_private_key(
         .map_err(|error| format!("Private key inspection task failed: {error}"))?
 }
 
+/// List identities from the Windows agent pipe, Pageant or a Unix SSH_AUTH_SOCK agent.
+/// Bitwarden desktop (including compatible Vaultwarden accounts) and 1Password
+/// use the same protocol. Private-key material never reaches Zync.
+#[tauri::command]
+pub async fn ssh_agent_list_keys(
+) -> Result<Vec<crate::ssh_agent::AgentKeyInfo>, crate::ssh_agent::DiscoveryError> {
+    crate::ssh_agent::list_keys().await
+}
+
 fn read_private_key_file(path: &str) -> Result<SecretString, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2692,6 +2701,8 @@ fn parse_csv_connections(content: &str) -> Result<Vec<SavedConnection>, String> 
             },
             auth_ref: None,
             agent_forwarding_key_connection_id: None,
+            use_ssh_agent: None,
+            agent_key: None,
         });
     }
 

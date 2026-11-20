@@ -32,6 +32,7 @@ mod preference_settings;
 mod shell_icons;
 mod snippets;
 mod ssh;
+mod ssh_agent;
 mod ssh_command;
 mod ssh_certificate;
 mod network_interfaces;
@@ -220,6 +221,7 @@ pub fn run() {
             feedback_inbox::transport::feedback_inbox_stream,
             commands::ssh_connect,
             commands::ssh_test_connection,
+            commands::ssh_agent_list_keys,
             commands::ssh_agent_signature_respond,
             commands::ssh_verification_reply,
             commands::ssh_extract_pem,

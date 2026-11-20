@@ -62,6 +62,15 @@ pub enum AuthMethod {
         /// Backend-only encrypted-vault attachment; never serialized into host records or IPC.
         certificate: Option<String>,
     },
+    /// Authenticate through the local SSH agent (Windows OpenSSH agent pipe,
+    /// Pageant, or a Unix SSH_AUTH_SOCK agent). This is how Bitwarden/Vaultwarden
+    /// and 1Password serve SSH keys; the private key never leaves the agent.
+    SshAgent {
+        /// Optional `algorithm base64` (or bare base64) public key selecting one
+        /// agent identity; `None` uses the agent's first key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        public_key: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +146,13 @@ pub struct SavedConnection {
     pub auth_ref: Option<CredentialRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_forwarding_key_connection_id: Option<String>,
+    /// Authenticate through the local SSH agent (Bitwarden/Vaultwarden, 1Password,
+    /// OpenSSH agent, Pageant). Mutually exclusive with password/private_key_path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_ssh_agent: Option<bool>,
+    /// Optional `algorithm base64` public key selecting one agent identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

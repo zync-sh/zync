@@ -48,6 +48,10 @@ export interface Connection {
     privateKeyPath?: string;
     /** Local OpenSSH user-certificate file; separate from server host-key trust. */
     certificatePath?: string;
+    /** Authenticate via the local SSH agent (Bitwarden/Vaultwarden, 1Password, OpenSSH, Pageant). */
+    useSshAgent?: boolean;
+    /** Public selector for one agent identity; a nonempty selector implies agent auth unless Vault is selected. */
+    agentKey?: string;
     /** Vault credential reference — when set, password/privateKeyPath are ignored for SSH auth. */
     authRef?: CredentialRef;
     status: 'disconnected' | 'connecting' | 'connected' | 'error';

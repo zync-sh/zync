@@ -1,0 +1,12 @@
+Original provider application icons
+
+bitwarden.png: extracted without recoloring from the validly signed Bitwarden
+Desktop application, version 2026.10.3.0, publisher Bitwarden Inc.
+Brand reference: https://bitwarden.com/brand/
+
+1password.png: extracted without recoloring from the validly signed 1Password
+Desktop application, version 8.12.46.0, publisher Agilebits.
+Brand reference: https://1password.com/press/
+
+The artwork and trademarks belong to their respective owners. These images
+identify supported SSH agent providers and are not covered by Zync's code license.

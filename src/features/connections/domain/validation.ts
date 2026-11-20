@@ -11,9 +11,18 @@ export interface ConnectionDraft {
     folder?: string;
 }
 
-export type AuthMode = 'password' | 'key' | 'vault';
+export type AuthMode = 'password' | 'key' | 'vault' | 'agent';
 
-export type ConnectionDraftField = 'host' | 'username' | 'port' | 'privateKeyPath' | 'certificatePath';
+/** Certificate files accompany a private key; agent certificates come from the agent itself. */
+export const supportsCertificateFile = (authMode: AuthMode, itemKind?: string): boolean =>
+    authMode === 'key' || (authMode === 'vault' && itemKind !== 'ssh-password');
+
+export type ConnectionDraftField =
+    | 'host'
+    | 'username'
+    | 'port'
+    | 'privateKeyPath'
+    | 'certificatePath';
 
 export interface ValidationResult {
     ok: boolean;
@@ -29,7 +38,9 @@ export interface CredentialHealthCheck {
 }
 
 const isIpv4Literal = (value: string): boolean => {
-    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) return false;
+    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(value)) {
+        return false;
+    }
     return value.split('.').every((segment) => {
         const numeric = Number(segment);
         return Number.isInteger(numeric) && numeric >= 0 && numeric <= 255;
@@ -43,16 +54,20 @@ const isIpv4Literal = (value: string): boolean => {
  */
 const isLikelyIpv6Literal = (value: string): boolean => {
     const trimmed = value.trim();
-    if (!trimmed.includes(':')) return false;
-    if (!/[0-9a-f]/i.test(trimmed)) return false;
+    if (!trimmed.includes(':')) {
+        return false;
+    }
+    if (!/[0-9a-f]/i.test(trimmed)) {
+        return false;
+    }
     return /^[0-9a-f:.]+$/i.test(trimmed);
 };
 
 const isIpLiteral = (value: string): boolean => {
-    if (!value) return false;
-    const normalized = value.startsWith('[') && value.endsWith(']')
-        ? value.slice(1, -1)
-        : value;
+    if (!value) {
+        return false;
+    }
+    const normalized = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
     return isIpv4Literal(normalized) || isLikelyIpv6Literal(normalized);
 };
 
@@ -105,7 +120,7 @@ export const validateConnectionDraft = (
         errors.push(portResult.error);
         fieldErrors.port = portResult.error;
     }
-    if (/[\r\n\0]/.test(draft.certificatePath || '')) {
+    if (authMode !== 'agent' && /[\r\n\0]/.test(draft.certificatePath || '')) {
         const message = 'Certificate path contains invalid characters.';
         errors.push(message);
         fieldErrors.certificatePath = message;
@@ -115,7 +130,11 @@ export const validateConnectionDraft = (
 };
 
 /** Content inspection supersedes filename heuristics; existing callers retain their pre-inspection hints. */
-export const getCredentialHealthChecks = (draft: ConnectionDraft, authMode: AuthMode, options?: { keyInspected?: boolean }): CredentialHealthCheck[] => {
+export const getCredentialHealthChecks = (
+    draft: ConnectionDraft,
+    authMode: AuthMode,
+    options?: { keyInspected?: boolean },
+): CredentialHealthCheck[] => {
     const checks: CredentialHealthCheck[] = [];
     const password = normalizeText(draft.password);
     const keyPath = normalizeText(draft.privateKeyPath);
@@ -139,7 +158,12 @@ export const getCredentialHealthChecks = (draft: ConnectionDraft, authMode: Auth
             severity: 'warning',
             message: 'Selected key looks like a public key (.pub). Choose a private key file.',
         });
-    } else if (authMode === 'key' && !options?.keyInspected && keyPath && !/(\.pem|id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i.test(keyPath)) {
+    } else if (
+        authMode === 'key' &&
+        !options?.keyInspected &&
+        keyPath &&
+        !/(\.pem|id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i.test(keyPath)
+    ) {
         checks.push({
             severity: 'info',
             message: 'Key filename is uncommon. Confirm this is a private key.',

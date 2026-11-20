@@ -18,7 +18,7 @@ import { useVaultStore } from '../../vault/useVaultStore';
 interface UseAutoVaultOptions {
     isOpen: boolean;
     formData: Partial<Connection>;
-    authMethod: 'password' | 'key' | 'vault';
+    authMethod: 'password' | 'key' | 'vault' | 'agent';
     keyInputMode: 'file' | 'paste';
     vaultInputMode: 'existing' | 'paste' | 'import';
     activeEditingConnectionId: string | null;
