@@ -1,8 +1,8 @@
 //! Local SSH-agent integration.
 //!
 //! Lets connections authenticate through an agent process instead of stored
-//! private-key material. This is how the Bitwarden/Vaultwarden desktop apps
-//! serve SSH keys (their "SSH agent" feature), and it also covers 1Password,
+//! private-key material. Bitwarden desktop (including compatible Vaultwarden
+//! accounts) serves SSH keys through its "SSH agent" feature, as do 1Password,
 //! the Windows OpenSSH agent service, Pageant and any Unix `SSH_AUTH_SOCK`
 //! agent. The private key never leaves the agent; Zync only asks it to sign.
 
@@ -11,8 +11,17 @@ use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::agent::{AgentIdentity, AgentSessionBinding};
 use russh::keys::{self, HashAlg, PublicKeyBase64};
 use serde::Serialize;
-use std::future::Future;
 use std::time::Duration;
+
+mod discovery;
+pub use discovery::{DiscoveryCode, DiscoveryError};
+mod provider;
+pub use provider::AgentProvider;
+
+struct ConnectedAgent {
+    client: DynamicAgentClient,
+    origin: provider::AgentOrigin,
+}
 
 /// Named pipe of the Windows OpenSSH agent service. Bitwarden/Vaultwarden and
 /// 1Password serve their SSH-agent keys through this same pipe when enabled.
@@ -23,6 +32,11 @@ const WINDOWS_OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
 /// forever, which must not stall the fallback to Pageant (or the UI) forever.
 #[cfg(windows)]
 const PIPE_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Discovery and metadata exchanges must finish without waiting for user signing consent.
+/// Signing itself has no short metadata deadline: hardware and password-manager approvals
+/// can legitimately take longer.
+const AGENT_METADATA_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Agent client with the backend stream erased, so named-pipe, Pageant and
 /// Unix-socket agents all share one type.
@@ -42,21 +56,49 @@ pub struct AgentKeyInfo {
     pub comment: Option<String>,
     /// True when the identity is an OpenSSH user certificate.
     pub is_certificate: bool,
+    /// Agent serving this discovery connection; not the key's original creator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AgentProvider>,
 }
 
 /// Connect to the local SSH agent, trying each backend available for the
 /// platform in turn.
 pub async fn connect() -> Result<DynamicAgentClient> {
-    connect_platform().await
+    Ok(connect_agent().await?.client)
+}
+
+async fn connect_agent() -> Result<ConnectedAgent> {
+    tokio::time::timeout(AGENT_METADATA_TIMEOUT, connect_platform())
+        .await
+        .map_err(|_| {
+            DiscoveryError::new(DiscoveryCode::Timeout, "Timed out connecting to the agent.")
+        })?
 }
 
 /// List the identities the local agent currently serves. Errors when no agent
 /// is reachable, which the UI treats as "SSH agent unavailable".
-pub async fn list_keys() -> Result<Vec<AgentKeyInfo>> {
-    Ok(list_identities()
-        .await?
+pub async fn list_keys() -> Result<Vec<AgentKeyInfo>, DiscoveryError> {
+    let ConnectedAgent { mut client, origin } =
+        connect_agent().await.map_err(DiscoveryError::from)?;
+    let (identities, provider) = tokio::join!(
+        tokio::time::timeout(AGENT_METADATA_TIMEOUT, request_identities(&mut client)),
+        provider::identify(origin),
+    );
+    let identities = identities
+        .map_err(|_| {
+            DiscoveryError::new(
+                DiscoveryCode::Timeout,
+                "Timed out reading SSH agent identities.",
+            )
+        })?
+        .map_err(DiscoveryError::from)?;
+    Ok(identities
         .iter()
-        .map(identity_key_info)
+        .map(|identity| {
+            let mut info = identity_key_info(identity);
+            info.provider = provider;
+            info
+        })
         .collect())
 }
 
@@ -71,11 +113,47 @@ pub async fn select_identity(
     requested: Option<&str>,
     session_binding: Option<&AgentSessionBinding>,
 ) -> Result<(DynamicAgentClient, AgentIdentity)> {
-    let mut client = connect().await?;
-    if let Some(binding) = session_binding {
-        let _ = client.bind_session(binding, false).await;
-    }
-    let mut identities = request_identities(&mut client).await?;
+    select_identity_with_client(
+        connect().await?,
+        requested,
+        session_binding,
+        AGENT_METADATA_TIMEOUT,
+    )
+    .await
+}
+
+/// Own the client during metadata requests so a timeout drops any partially read protocol frame.
+async fn select_identity_with_client(
+    mut client: DynamicAgentClient,
+    requested: Option<&str>,
+    session_binding: Option<&AgentSessionBinding>,
+    timeout: Duration,
+) -> Result<(DynamicAgentClient, AgentIdentity)> {
+    let identities = tokio::time::timeout(timeout, async {
+        if let Some(binding) = session_binding {
+            match client.bind_session(binding, false).await {
+                Ok(()) | Err(keys::Error::AgentFailure) => {}
+                Err(error) => return Err(anyhow!("Failed to bind the SSH agent session: {error}")),
+            }
+        }
+        request_identities(&mut client).await
+    })
+    .await
+    .map_err(|_| {
+        DiscoveryError::new(
+            DiscoveryCode::Timeout,
+            "Timed out reading SSH agent identities.",
+        )
+    })??;
+    choose_identity(client, identities, requested)
+}
+
+/// Select without changing agent order or silently substituting another requested identity.
+fn choose_identity(
+    client: DynamicAgentClient,
+    mut identities: Vec<AgentIdentity>,
+    requested: Option<&str>,
+) -> Result<(DynamicAgentClient, AgentIdentity)> {
     let identity = match requested.map(canonicalize_requested_key).transpose()? {
         None => identities
             .into_iter()
@@ -100,50 +178,99 @@ pub async fn select_identity(
     Ok((client, identity))
 }
 
+/// Preserve the agent's error context while metadata callers supply their own deadline.
 async fn request_identities(client: &mut DynamicAgentClient) -> Result<Vec<AgentIdentity>> {
     client
         .request_identities()
         .await
-        .map_err(|error| anyhow!("Failed to list SSH agent keys: {error}"))
+        .map_err(|error| DiscoveryError::from(error).into())
 }
 
 #[cfg(windows)]
-async fn connect_platform() -> Result<DynamicAgentClient> {
-    let pipe_attempt =
-        tokio::time::timeout(PIPE_CONNECT_TIMEOUT, AgentClient::connect_named_pipe(
-            WINDOWS_OPENSSH_AGENT_PIPE,
-        ))
-        .await;
-    if let Ok(Ok(client)) = pipe_attempt {
-        return Ok(client.dynamic());
+async fn connect_platform() -> Result<ConnectedAgent> {
+    let pipe_error = match tokio::time::timeout(PIPE_CONNECT_TIMEOUT, open_windows_pipe()).await {
+        Ok(Ok(pipe)) => {
+            let origin = provider::windows_origin(&pipe);
+            return Ok(ConnectedAgent {
+                client: AgentClient::connect(pipe).dynamic(),
+                origin,
+            });
+        }
+        Ok(Err(error)) => DiscoveryError::from(keys::Error::IO(error)),
+        Err(_) => DiscoveryError::new(
+            DiscoveryCode::Timeout,
+            "Timed out opening the standard Windows agent pipe.",
+        ),
+    };
+    match AgentClient::connect_pageant().await {
+        Ok(client) => Ok(ConnectedAgent {
+            client: client.dynamic(),
+            origin: provider::AgentOrigin::Pageant,
+        }),
+        Err(error) => Err(pipe_error.with_pageant_failure(error).into()),
     }
-    if let Ok(client) = AgentClient::connect_pageant().await {
-        return Ok(client.dynamic());
-    }
-    Err(anyhow!(
-        "No SSH agent found. Start the OpenSSH Agent service, or enable the SSH agent in \
-         Bitwarden/Vaultwarden (Settings > SSH agent) or 1Password, then retry."
-    ))
 }
 
 #[cfg(not(windows))]
-async fn connect_platform() -> Result<DynamicAgentClient> {
-    AgentClient::connect_env()
+async fn connect_platform() -> Result<ConnectedAgent> {
+    let socket = std::env::var_os("SSH_AUTH_SOCK")
+        .ok_or_else(|| DiscoveryError::from(keys::Error::EnvVar("SSH_AUTH_SOCK")))?;
+    let client = AgentClient::connect_uds(&socket)
         .await
-        .map(|client| client.dynamic())
-        .map_err(|_| {
-            anyhow!(
-                "No SSH agent found. Set SSH_AUTH_SOCK to an ssh-agent socket, or enable the \
-                 SSH agent in Bitwarden/Vaultwarden (or 1Password), then retry."
-            )
-        })
+        .map_err(DiscoveryError::from)?;
+    Ok(ConnectedAgent {
+        client: client.dynamic(),
+        origin: provider::AgentOrigin::UnixSocket(socket.into()),
+    })
 }
 
-fn list_identities() -> impl Future<Output = Result<Vec<AgentIdentity>>> {
-    async move {
-        let mut client = connect().await?;
-        request_identities(&mut client).await
+/// Retain the native stream until ownership is captured. The caller bounds busy-pipe retries.
+#[cfg(windows)]
+async fn open_windows_pipe() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    loop {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(WINDOWS_OPENSSH_AGENT_PIPE)
+        {
+            Ok(pipe) => return Ok(pipe),
+            Err(error)
+                if error.raw_os_error()
+                    == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32) =>
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => return Err(error),
+        }
     }
+}
+
+/// Authenticate either agent identity using the existing RSA policy and upstream signer.
+/// User-mediated signature approval intentionally outlives the metadata timeout.
+pub(crate) async fn authenticate_identity<H: russh::client::Handler>(
+    session: &mut russh::client::Handle<H>,
+    username: &str,
+    mut agent: DynamicAgentClient,
+    identity: AgentIdentity,
+) -> Result<russh::client::AuthResult> {
+    let pubkey = identity.public_key().into_owned();
+    let hash = if pubkey.algorithm().is_rsa() {
+        Some(crate::ssh::rsa_auth_hash(
+            session.best_supported_rsa_hash().await?,
+        )?)
+    } else {
+        None
+    };
+    match identity {
+        AgentIdentity::Certificate { certificate, .. } => {
+            session
+                .authenticate_certificate_with(username, certificate, hash, &mut agent)
+                .await
+        }
+        AgentIdentity::PublicKey { .. } => {
+            session
+                .authenticate_publickey_with(username, pubkey, hash, &mut agent)
+                .await
+        }
+    }
+    .map_err(|error| anyhow!("SSH agent authentication failed: {error}"))
 }
 
 fn identity_key_info(identity: &AgentIdentity) -> AgentKeyInfo {
@@ -154,6 +281,7 @@ fn identity_key_info(identity: &AgentIdentity) -> AgentKeyInfo {
         algorithm: key.algorithm().as_str().to_string(),
         comment: non_empty_comment(identity.comment()),
         is_certificate: matches!(identity, AgentIdentity::Certificate { .. }),
+        provider: None,
     }
 }
 
@@ -216,34 +344,5 @@ fn non_empty_comment(comment: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A real ed25519 public key in OpenSSH wire format, base64-encoded.
-    const ED25519_BASE64: &str =
-        "AAAAC3NzaC1lZDI1NTE5AAAAIEutQa3U2JY/LeFkCo9yOuA7J5Q95r3zrtXr85oPplLX";
-
-    #[test]
-    fn canonicalizes_full_line_and_bare_base64() {
-        let line = format!("ssh-ed25519 {ED25519_BASE64} user@example");
-        let from_line = canonicalize_requested_key(&line).expect("full line parses");
-        let from_bare = canonicalize_requested_key(ED25519_BASE64).expect("bare base64 parses");
-        assert_eq!(from_line, from_bare);
-        assert!(from_line.starts_with("ssh-ed25519 "));
-        assert!(!from_line.contains("user@example"));
-    }
-
-    #[test]
-    fn rejects_empty_and_garbage_selectors() {
-        assert!(canonicalize_requested_key("").is_err());
-        assert!(canonicalize_requested_key("   ").is_err());
-        assert!(canonicalize_requested_key("not-a-key").is_err());
-    }
-
-    #[test]
-    fn routes_certificate_lines_to_the_certificate_parser() {
-        // A cert-algorithm line must not fall through to plain-key parsing.
-        let line = format!("ssh-ed25519-cert-v01@openssh.com {ED25519_BASE64} user@example");
-        assert!(canonicalize_requested_key(&line).is_err());
-    }
-}
+#[path = "ssh_agent/tests.rs"]
+mod tests;

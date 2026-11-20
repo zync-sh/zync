@@ -987,37 +987,13 @@ impl SshManager {
                 ));
             }
             AuthMethod::SshAgent { public_key } => {
-                let (mut agent, identity) = crate::ssh_agent::select_identity(
+                let (agent, identity) = crate::ssh_agent::select_identity(
                     public_key.as_deref(),
                     session.agent_session_binding(),
                 )
                 .await?;
-                let pubkey = identity.public_key().into_owned();
-                let hash = if pubkey.algorithm().is_rsa() {
-                    Some(rsa_auth_hash(session.best_supported_rsa_hash().await?)?)
-                } else {
-                    None
-                };
-                match &identity {
-                    russh::keys::agent::AgentIdentity::Certificate { certificate, .. } => session
-                        .authenticate_certificate_with(
-                            &config.username,
-                            certificate.clone(),
-                            hash,
-                            &mut agent,
-                        )
-                        .await
-                        .map_err(|error| anyhow!("SSH agent authentication failed: {error}"))?,
-                    russh::keys::agent::AgentIdentity::PublicKey { .. } => session
-                        .authenticate_publickey_with(
-                            &config.username,
-                            pubkey,
-                            hash,
-                            &mut agent,
-                        )
-                        .await
-                        .map_err(|error| anyhow!("SSH agent authentication failed: {error}"))?,
-                }
+                crate::ssh_agent::authenticate_identity(session, &config.username, agent, identity)
+                    .await?
             }
         };
 
@@ -1133,7 +1109,7 @@ impl SshManager {
 }
 
 /// Preserve SHA-2 for old servers lacking EXT_INFO and reject explicit SHA-1-only offers.
-fn rsa_auth_hash(supported: Option<Option<HashAlg>>) -> Result<HashAlg> {
+pub(crate) fn rsa_auth_hash(supported: Option<Option<HashAlg>>) -> Result<HashAlg> {
     match supported {
         Some(Some(hash @ (HashAlg::Sha256 | HashAlg::Sha512))) => Ok(hash),
         None => Ok(HashAlg::Sha512),
