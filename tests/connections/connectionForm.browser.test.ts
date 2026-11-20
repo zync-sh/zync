@@ -888,6 +888,13 @@ try {
     }));
     assert.ok(listBounds.scroll > listBounds.client, 'Large key lists scroll inside the popup');
     const filter = page.getByRole('combobox', { name: 'Filter Local SSH agent key', exact: true });
+    for (const hiddenValue of ['fixture-public-selector-37', 'option:']) {
+        await filter.fill(hiddenValue);
+        await page.getByText('No matches', { exact: true }).waitFor();
+        assert.equal(await page.getByRole('option').count(), 0, 'Hidden IDs are not searchable');
+    }
+    await filter.fill('Fixture key 37');
+    await page.getByRole('option', { name: /Fixture key 37/ }).waitFor();
     await filter.fill('SHA256:fixture-public-fingerprint-37');
     await page.getByRole('option', { name: /Fixture key 37/ }).waitFor();
     assert.equal(await page.getByRole('option').count(), 1);
@@ -956,6 +963,23 @@ try {
         .waitFor();
     await hostDialog.getByRole('button', { name: 'Close', exact: true }).click();
     await hostDialog.waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+        document.body.dataset.agentFixture = 'key';
+    });
+    await page
+        .getByRole('button', { name: 'Selector-only agent host fixture', exact: true })
+        .click();
+    await hostDialog.getByRole('combobox', { name: 'Local SSH agent key', exact: true }).waitFor();
+    await hostDialog.getByRole('status').filter({ hasText: '1 key found' }).waitFor();
+    assert.match(
+        await hostDialog
+            .getByRole('combobox', { name: 'Local SSH agent key', exact: true })
+            .innerText(),
+        /^Fixture key with a long comment/,
+        'A saved agent selector without the flag opens agent authentication with its key selected',
+    );
+    await hostDialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await hostDialog.waitFor({ state: 'hidden' });
     const quickAuth = page.getByRole('region', { name: 'Quick connect authentication fixture' });
     const quickPrivateKey = quickAuth.getByRole('textbox', { name: 'Private key file path' });
     const quickPassword = quickAuth.getByLabel('SSH password', { exact: true });
@@ -987,7 +1011,11 @@ try {
     const directory = process.env.ZYNC_BROWSER_SCREENSHOT_DIR;
     const failedPage = browser?.contexts()[0]?.pages()[0];
     if (directory && failedPage) {
-        await failedPage.screenshot({ path: `${directory}/host-form-failure.png` });
+        try {
+            await failedPage.screenshot({ path: `${directory}/host-form-failure.png` });
+        } catch (screenshotError) {
+            console.warn('Could not capture the failed connection form:', screenshotError);
+        }
     }
     throw error;
 } finally {

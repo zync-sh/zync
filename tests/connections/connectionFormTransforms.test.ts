@@ -370,6 +370,61 @@ runTest('buildConnectionTestPayload resolves SshAgent from a saved connection', 
     assert.equal(payload.auth_method.public_key, saved.agentKey);
 });
 
+runTest('saved auth discriminators agree for direct connections and tested jump hosts', () => {
+    const base: Connection = {
+        id: 'saved-agent-hop',
+        name: 'Saved hop',
+        host: 'hop.fixture.invalid',
+        username: 'fixture',
+        port: 22,
+        status: 'disconnected',
+    };
+    for (const fields of [
+        { agentKey: '  ssh-ed25519 fixture-selector  ' },
+        { useSshAgent: false, agentKey: '  ssh-ed25519 fixture-selector  ', password: 'unused' },
+        { useSshAgent: true },
+        { useSshAgent: true, agentKey: '   ' },
+        { useSshAgent: false, agentKey: '   ', password: 'fixture password' },
+        { agentKey: '   ', privateKeyPath: '/fixture/key' },
+        {
+            agentKey: 'ssh-ed25519 fixture-selector',
+            authRef: {
+                vaultId: 'vault',
+                itemId: 'item',
+                itemKind: 'ssh-private-key' as const,
+                purpose: 'ssh-auth' as const,
+            },
+        },
+    ]) {
+        const saved = { ...base, ...fields };
+        const direct = buildConnectConfig([saved], saved.id);
+        const tested = buildConnectionTestPayload({
+            formData: {
+                id: 'destination',
+                host: 'target.fixture.invalid',
+                username: 'fixture',
+                port: 22,
+                password: 'destination password',
+                jumpServerId: saved.id,
+            },
+            authMethod: 'password',
+            connections: [saved],
+        });
+        assert.ok(direct);
+        assert.deepEqual(tested.jump_host?.auth_method, direct.auth_method);
+        if (saved.authRef) {
+            assert.equal(direct.auth_method.type, 'VaultRef');
+        } else if (saved.agentKey?.trim() || saved.useSshAgent) {
+            assert.deepEqual(direct.auth_method, {
+                type: 'SshAgent',
+                ...(saved.agentKey?.trim() ? { public_key: saved.agentKey.trim() } : {}),
+            });
+        } else {
+            assert.equal(direct.auth_method.type, saved.privateKeyPath ? 'PrivateKey' : 'Password');
+        }
+    }
+});
+
 runTest('agent auth excludes stale certificate files from save, test and connect payloads', () => {
     const form: Connection = {
         id: 'agent-certificate',

@@ -3,6 +3,7 @@ import {
     buildForwardableAuthMethod,
     type ConnectAgentForwardingConfig,
     type ConnectAuthMethodSshAgent,
+    connectionUsesSshAgent,
 } from './connectionConfig.js';
 import { normalizeFolderPath, normalizeTags, normalizeText, parsePort } from './normalization.js';
 import type { Connection } from './types.js';
@@ -188,7 +189,7 @@ const resolveAuthMethod = (
             credential_id: (candidate as Connection).authRef?.credentialId,
         };
     }
-    if ((candidate as Connection).useSshAgent) {
+    if (connectionUsesSshAgent(candidate)) {
         const agentKey = normalizeText((candidate as Connection).agentKey);
         return agentKey ? { type: 'SshAgent', public_key: agentKey } : { type: 'SshAgent' };
     }

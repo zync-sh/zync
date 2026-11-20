@@ -488,6 +488,27 @@ function Fixture() {
                     <Button onClick={() => openConnectionModal(keyHost.id)}>
                         Key host fixture
                     </Button>
+                    <Button
+                        onClick={() => {
+                            const host = {
+                                ...keyHost,
+                                id: 'fixture-selector-only',
+                                privateKeyPath: undefined,
+                                agentKey: 'ssh-ed25519 fixture-public-selector',
+                            };
+                            useAppStore.setState((state) => ({
+                                connections: [
+                                    ...state.connections.filter(
+                                        (connection) => connection.id !== host.id,
+                                    ),
+                                    host,
+                                ],
+                            }));
+                            openConnectionModal(host.id);
+                        }}
+                    >
+                        Selector-only agent host fixture
+                    </Button>
                     <Button onClick={editReloadedVncProfile}>Edit reloaded VNC profile</Button>
                     <Button
                         onClick={async () => {

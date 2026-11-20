@@ -50,7 +50,7 @@ export interface Connection {
     certificatePath?: string;
     /** Authenticate via the local SSH agent (Bitwarden/Vaultwarden, 1Password, OpenSSH, Pageant). */
     useSshAgent?: boolean;
-    /** Optional `algorithm base64` public key selecting one agent identity; omit for the agent's first key. */
+    /** Public selector for one agent identity; a nonempty selector implies agent auth unless Vault is selected. */
     agentKey?: string;
     /** Vault credential reference — when set, password/privateKeyPath are ignored for SSH auth. */
     authRef?: CredentialRef;

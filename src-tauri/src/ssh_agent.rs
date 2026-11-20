@@ -312,12 +312,49 @@ fn normalize_openssh_line(line: &str) -> String {
     }
 }
 
-/// Accept a full `algorithm base64 comment` line, a bare base64 blob, or an
-/// OpenSSH certificate line, and return the canonical selector for
-/// comparisons.
+/// Accept a public-key/certificate line, an authorized_keys entry or a bare
+/// base64 key. Authorization options are ignored only for identity selection.
 fn canonicalize_requested_key(requested: &str) -> Result<String> {
     let trimmed = requested.trim();
     anyhow::ensure!(!trimmed.is_empty(), "SSH agent key selector is empty");
+    let (first, remainder) = split_selector_field(trimmed)?;
+    if remainder.is_empty() {
+        let key = keys::parse_public_key_base64(first)
+            .map_err(|error| anyhow!("Invalid SSH agent key selector: {error}"))?;
+        return Ok(canonical_public_key_string(&key));
+    }
+    // A certificate header must never fall through to plain-key parsing.
+    if first.ends_with("-cert-v01@openssh.com") {
+        return canonicalize_openssh_selector(trimmed);
+    }
+    canonicalize_openssh_selector(trimmed).or_else(|_| canonicalize_openssh_selector(remainder))
+}
+
+/// Split one optional options field without mistaking quoted command text for a key header.
+fn split_selector_field(input: &str) -> Result<(&str, &str)> {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in input.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            character if character.is_whitespace() && !quoted => {
+                return Ok((&input[..index], input[index..].trim_start()));
+            }
+            _ => {}
+        }
+    }
+    anyhow::ensure!(!quoted, "Unterminated quoted SSH agent selector option");
+    Ok((input, ""))
+}
+
+/// Delegate key material and algorithm validation to the existing OpenSSH parsers.
+fn canonicalize_openssh_selector(line: &str) -> Result<String> {
+    let trimmed = line.trim();
     let first_token = trimmed.split_whitespace().next().unwrap_or("");
     if first_token.ends_with("-cert-v01@openssh.com") {
         let certificate = keys::Certificate::from_openssh(trimmed)
@@ -332,8 +369,7 @@ fn canonicalize_requested_key(requested: &str) -> Result<String> {
         );
         return Ok(normalized);
     }
-    let base64_part = trimmed.split_whitespace().nth(1).unwrap_or(trimmed);
-    let key = keys::parse_public_key_base64(base64_part)
+    let key = keys::PublicKey::from_openssh(trimmed)
         .map_err(|error| anyhow!("Invalid SSH agent key selector: {error}"))?;
     Ok(canonical_public_key_string(&key))
 }

@@ -5,6 +5,7 @@ import {
     applyAuthMethodTransition,
     buildConnectionSavePayload,
     type ConnectionAuthMode,
+    connectionUsesSshAgent,
     SELF_AGENT_FORWARDING_KEY,
     validateConnectionDraft,
 } from '../../features/connections/domain';
@@ -59,7 +60,9 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
 
     const setAuthMethod = useCallback((next: ConnectionAuthMode) => {
         const prev = authMethodRef.current;
-        if (prev === next) return;
+        if (prev === next) {
+            return;
+        }
         // Keep the authMethod state updater pure — apply form secret clearing here.
         authMethodRef.current = next;
         setAuthMethodState(next);
@@ -67,7 +70,9 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
     }, []);
 
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen) {
+            return;
+        }
         setAllowDuplicateEndpoint(false);
         setSubmitAttempted(false);
         setTouched({ host: false, username: false, port: false, keyPath: false });
@@ -81,7 +86,7 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
             if (conn) {
                 const nextAuthMethod: ConnectionAuthMode = conn.authRef
                     ? 'vault'
-                    : conn.useSshAgent
+                    : connectionUsesSshAgent(conn)
                       ? 'agent'
                       : conn.privateKeyPath
                         ? 'key'
@@ -133,12 +138,18 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
         [activeEditingConnectionId, connections, formData],
     );
     const jumpCycleWarning = useMemo(() => {
-        if (!formData.jumpServerId || !activeEditingConnectionId) return false;
+        if (!formData.jumpServerId || !activeEditingConnectionId) {
+            return false;
+        }
         const visited = new Set<string>();
         let current: string | undefined = formData.jumpServerId;
         while (current) {
-            if (current === activeEditingConnectionId) return true;
-            if (visited.has(current)) break;
+            if (current === activeEditingConnectionId) {
+                return true;
+            }
+            if (visited.has(current)) {
+                break;
+            }
             visited.add(current);
             current = connections.find((c) => c.id === current)?.jumpServerId;
         }
@@ -150,7 +161,9 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
         canSave: boolean,
         persist?: (connection: Connection) => Promise<void>,
     ): Promise<Connection | null> => {
-        if (!canSave || !validation.ok) return null;
+        if (!canSave || !validation.ok) {
+            return null;
+        }
         const connectionData = buildConnectionSavePayload({
             formData,
             authMethod,

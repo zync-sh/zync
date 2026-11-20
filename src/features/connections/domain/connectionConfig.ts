@@ -88,6 +88,11 @@ const getConnectionPassword = (connection: ConnectionWithLegacyAuthFields): stri
         ? connection.password
         : undefined;
 
+/** A nonempty saved selector implies agent login; Vault references still take precedence. */
+export const connectionUsesSshAgent = (
+    connection: Pick<Connection, 'useSshAgent' | 'agentKey'>,
+): boolean => Boolean(connection.useSshAgent || normalizeOptionalText(connection.agentKey));
+
 export type BuildConnectConfigErrorReason =
     | 'connection-not-found'
     | 'missing-auth'
@@ -116,7 +121,7 @@ const buildAuthMethod = (connection: ConnectionWithLegacyAuthFields): BuildAuthM
     }
 
     const agentKey = normalizeOptionalText(connection.agentKey);
-    if (agentKey !== undefined || connection.useSshAgent) {
+    if (connectionUsesSshAgent(connection)) {
         return {
             status: 'ok',
             auth: {

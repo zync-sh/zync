@@ -1750,7 +1750,7 @@ export function AddConnectionModal({
                                                             <p className="text-[10px] text-amber-400/90 flex items-center gap-1">
                                                                 <Shield size={10} /> A vault item
                                                                 with this label already exists.
-                                                                rename to avoid a duplicate.
+                                                                Rename to avoid a duplicate.
                                                             </p>
                                                         )}
                                                     </div>

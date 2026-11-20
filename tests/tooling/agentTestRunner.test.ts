@@ -114,6 +114,38 @@ test('a registered source runs only its own suite using the configured compiler 
     assert.deepEqual(calls[1], [runner.readTestBuild().resolveTestFile(source)]);
 });
 
+test('an unregistered TypeScript suite fails before spawning the compiler', (context) => {
+    const calls: string[][] = [];
+    const output = context.mock.method(console, 'error', () => {});
+    const status = runner.runAgentTests(
+        ['tests/notRegistered.test.ts'],
+        (_executable, arguments_) => {
+            calls.push(arguments_);
+            return { status: 0 };
+        },
+    );
+    assert.equal(status, 1);
+    assert.deepEqual(calls, []);
+    assert.equal(output.mock.callCount(), 1);
+    assert.match(String(output.mock.calls[0].arguments[0]), /^Usage:/);
+});
+
+test('a registered suite with an extra argument fails before spawning the compiler', (context) => {
+    const calls: string[][] = [];
+    const output = context.mock.method(console, 'error', () => {});
+    const status = runner.runAgentTests(
+        ['tests/connections/connectionFormTransforms.test.ts', '--unexpected'],
+        (_executable, arguments_) => {
+            calls.push(arguments_);
+            return { status: 0 };
+        },
+    );
+    assert.equal(status, 1);
+    assert.deepEqual(calls, []);
+    assert.equal(output.mock.callCount(), 1);
+    assert.match(String(output.mock.calls[0].arguments[0]), /^Usage:/);
+});
+
 test('legacy terminal suites receive a preload and an entry point as separate arguments', () => {
     const suite = path.resolve('tests/terminalLifecycleOwnership.test.mjs');
     let argumentsForSuite: string[] | undefined;

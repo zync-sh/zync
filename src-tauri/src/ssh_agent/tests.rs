@@ -436,6 +436,40 @@ fn canonicalizes_full_line_and_bare_base64() {
 }
 
 #[test]
+fn canonicalizes_authorized_keys_options_without_reading_keys_from_quoted_commands() {
+    let expected = canonicalize_requested_key(ED25519_BASE64).unwrap();
+    for options in [
+        "no-agent-forwarding",
+        "restrict,no-pty",
+        r#"from="192.0.2.0/24",command="echo hello world""#,
+        r#"command="echo \"quoted text\"""#,
+        r#"command="echo ssh-ed25519 not-the-key""#,
+    ] {
+        for separator in [" ", "\t"] {
+            let line = format!("{options}{separator}ssh-ed25519 {ED25519_BASE64} fixture");
+            assert_eq!(canonicalize_requested_key(&line).unwrap(), expected);
+        }
+    }
+    assert!(canonicalize_requested_key(&format!(
+        "command=\"unterminated ssh-ed25519 {ED25519_BASE64}"
+    ))
+    .is_err());
+    assert!(canonicalize_requested_key(&format!("ssh-rsa {ED25519_BASE64}")).is_err());
+}
+
+#[test]
+fn canonicalizes_authorized_keys_certificate_options_without_losing_certificate_identity() {
+    let key = PrivateKey::random(&mut safe_rng(), Algorithm::Ed25519).unwrap();
+    let selector = identity_selector(&certificate_identity(&key));
+    let line = format!(r#"command="echo hello world",no-pty {selector} fixture"#);
+    assert_eq!(canonicalize_requested_key(&line).unwrap(), selector);
+    assert!(canonicalize_requested_key(&format!(
+        "restrict ssh-ed25519-cert-v01@openssh.com {ED25519_BASE64}"
+    ))
+    .is_err());
+}
+
+#[test]
 fn rejects_empty_and_garbage_selectors() {
     assert!(canonicalize_requested_key("").is_err());
     assert!(canonicalize_requested_key("   ").is_err());
