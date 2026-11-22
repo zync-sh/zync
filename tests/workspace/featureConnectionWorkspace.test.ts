@@ -1,3 +1,5 @@
+import * as legacyKeyExchange from '../../src/features/connections/application/legacyKeyExchange.js';
+
 type LoadSource = (
     file: string,
     dependencies?: Record<string, unknown>,
@@ -150,6 +152,7 @@ export async function runFeatureConnectionWorkspaceChecks(
                     return { detected_os: 'linux' };
                 },
             },
+            '../features/connections/application/legacyKeyExchange': legacyKeyExchange,
             '../vault/useVaultStore': {
                 useVaultStore: { getState: () => vaultState, setState: () => {} },
             },
