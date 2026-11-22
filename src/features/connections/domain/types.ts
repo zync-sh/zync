@@ -11,6 +11,14 @@ export type TabView = CoreTabView | PluginTabView;
 export type CredentialItemKind = 'ssh-password' | 'ssh-private-key' | 'ssh-agent-key';
 export type CredentialPurpose = 'ssh-auth';
 
+/** Named SSH key exchange exceptions accepted by the native transport. */
+export const LEGACY_KEX_ALGORITHMS = [
+    'diffie-hellman-group14-sha1',
+    'diffie-hellman-group-exchange-sha1',
+    'diffie-hellman-group1-sha1',
+] as const;
+export type LegacyKex = (typeof LEGACY_KEX_ALGORITHMS)[number];
+
 /** Device-only egress policy, intentionally absent from synced/exported Connection records. */
 export type NetworkPreference =
     | { mode: 'default' }

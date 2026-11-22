@@ -7,8 +7,10 @@ import { GlobalSshVerificationDialog } from '../../src/components/connections/Gl
 import { AuthPanel } from '../../src/components/dashboard/welcome/quick-connect/AuthPanel';
 import { AddConnectionModal } from '../../src/components/modals/AddConnectionModal';
 import { Button } from '../../src/components/ui/Button';
+import { GlobalConfirmDialog } from '../../src/components/ui/GlobalConfirmDialog';
 import { ModalRoot } from '../../src/components/ui/ModalRoot';
 import type { Connection } from '../../src/features/connections/domain/types';
+import type { ConnectionConfigPayload } from '../../src/features/connections/infrastructure/connectionIpc';
 import type { SshVerificationRequest } from '../../src/features/connections/infrastructure/sshVerificationIpc';
 import type { VncProfile } from '../../src/features/vnc/domain/profile';
 import { openVncProfileEditor } from '../../src/features/vnc/ui/VncProfileManager';
@@ -371,6 +373,21 @@ window.ipcRenderer = {
             ];
         }
         if (channel === 'ssh:test') {
+            if (document.body.dataset.legacyKexFixture === 'enabled') {
+                const config = _config as ConnectionConfigPayload;
+                const algorithm = 'diffie-hellman-group14-sha1';
+                if (config.legacy_kex !== algorithm) {
+                    throw new Error(
+                        `Connection Failed: ZYNC_LEGACY_KEX:${JSON.stringify({
+                            connectionId: config.id,
+                            host: config.host,
+                            port: config.port,
+                            algorithm,
+                        })}`,
+                    );
+                }
+                return 'ok';
+            }
             return new Promise<string>((resolve, reject) => {
                 pendingTests.push({ resolve, reject, channel: verificationChannel, round: 0 });
                 document.body.dataset.pendingSshTests = String(pendingTests.length);
@@ -580,6 +597,7 @@ function Fixture() {
                 />
                 <GlobalNetworkInterfaceModal />
                 <GlobalSshVerificationDialog />
+                <GlobalConfirmDialog />
             </main>
         </TooltipProvider>
     );

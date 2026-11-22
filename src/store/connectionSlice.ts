@@ -26,6 +26,13 @@ import {
     prepareConnectKeyPassphrases,
 } from '../features/connections/application/keyPassphraseRuntime';
 import {
+    type LegacyKex,
+    LegacyKexDeclinedError,
+    type SshEndpoint,
+    sameSshEndpoint,
+    writeLegacyKex,
+} from '../features/connections/application/legacyKeyExchange';
+import {
     cancelNetworkPrompts,
     NetworkSelectionCancelledError,
     prepareNetworkInterface,
@@ -880,6 +887,13 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     return;
                 }
 
+                const approvedLegacy: Array<{ endpoint: SshEndpoint; algorithm: LegacyKex }> = [];
+                const isSavedEndpoint = (endpoint: SshEndpoint) =>
+                    get().connections.some(
+                        (connection) =>
+                            !connection.id.startsWith('temp-') &&
+                            sameSshEndpoint(connection, endpoint),
+                    );
                 const response = await connectWithHostKeyVerification(
                     fullConfig,
                     signal
@@ -890,10 +904,37 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                               return connectIpc(config);
                           }
                         : connectIpc,
-                    get().showConfirmDialog,
+                    async (options) => {
+                        if (cancelledConnectAttempts.has(attemptId) || signal?.aborted) {
+                            return false;
+                        }
+                        const approved = await get().showConfirmDialog(options);
+                        return (
+                            approved && !cancelledConnectAttempts.has(attemptId) && !signal?.aborted
+                        );
+                    },
+                    {
+                        savedWhen: (endpoint) =>
+                            isSavedEndpoint(endpoint) ? 'on-success' : undefined,
+                        onSuccess: (endpoint, algorithm) =>
+                            approvedLegacy.push({ endpoint, algorithm }),
+                    },
                 );
                 if (await finishCancelledConnect(true)) {
                     return;
+                }
+                for (const { endpoint, algorithm } of approvedLegacy) {
+                    if (!isSavedEndpoint(endpoint)) {
+                        continue;
+                    }
+                    try {
+                        writeLegacyKex(endpoint, algorithm);
+                    } catch {
+                        get().showToast(
+                            'info',
+                            'Connected, but the legacy SSH exception could not be remembered on this device.',
+                        );
+                    }
                 }
                 markConnectionBackendLive(id);
 
@@ -1073,6 +1114,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                 }
                 if (
                     error instanceof KeyPassphrasePromptCancelledError ||
+                    error instanceof LegacyKexDeclinedError ||
                     error instanceof NetworkSelectionCancelledError ||
                     error instanceof SshVerificationCancelledError
                 ) {

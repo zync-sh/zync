@@ -170,6 +170,7 @@ export const tests = [
     'tests/connectionOpQueue.test.mjs',
     'tests/connectCancelState.test.mjs',
     'tests/connections/connectionFormTransforms.test.ts',
+    'tests/connections/legacyKeyExchange.test.ts',
     'tests/connections/authMethodTransition.test.ts',
     'tests/connectionLifecycleService.test.mjs',
     'tests/keyPassphrasePrompt.test.mjs',

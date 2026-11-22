@@ -19,6 +19,14 @@ import { connectWithHostKeyVerification } from '../../features/connections/appli
 import type { KeyPassphraseRetention } from '../../features/connections/application/keyPassphrasePrompt';
 import { stageKeyPassphraseForNextConnect } from '../../features/connections/application/keyPassphraseRuntime';
 import {
+    type LegacyKex,
+    LegacyKexDeclinedError,
+    readLegacyKex,
+    type SshEndpoint,
+    sameSshEndpoint,
+    writeLegacyKex,
+} from '../../features/connections/application/legacyKeyExchange';
+import {
     cancelNetworkPrompts,
     NetworkSelectionCancelledError,
     persistHostWithNetwork,
@@ -338,6 +346,24 @@ export function AddConnectionModal({
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testMessage, setTestMessage] = useState('');
     const [pendingTestOwner, setPendingTestOwner] = useState<string | null>(null);
+    const [legacyKexDraft, setLegacyKexDraft] = useState<{
+        endpoint: SshEndpoint;
+        algorithm?: LegacyKex;
+    } | null>(null);
+    const formEndpoint: SshEndpoint = {
+        id: activeEditingConnectionId || formData.id || '',
+        host: formData.host ?? '',
+        port: Number(formData.port || 22),
+    };
+    const matchingLegacyKexDraft =
+        legacyKexDraft && sameSshEndpoint(formEndpoint, legacyKexDraft.endpoint)
+            ? legacyKexDraft
+            : null;
+    const effectiveLegacyKex = matchingLegacyKexDraft
+        ? matchingLegacyKexDraft.algorithm
+        : activeEditingConnectionId
+          ? readLegacyKex(formEndpoint)
+          : undefined;
     const isTestPending = pendingTestOwner !== null;
     const testAttempt = useRef({
         generation: 0,
@@ -348,6 +374,7 @@ export function AddConnectionModal({
     testScope.current = { isOpen, connectionId: activeEditingConnectionId };
     useEffect(() => {
         setPendingTestOwner(null);
+        setLegacyKexDraft(null);
         return () => {
             testAttempt.current.generation++;
             if (testAttempt.current.ownerId) {
@@ -651,6 +678,19 @@ export function AddConnectionModal({
         const persist = () =>
             activeEditingConnectionId ? editConnection(connection) : addConnection(connection);
         await persistHostWithNetwork(connection.id, network.value, persist);
+        if (
+            matchingLegacyKexDraft &&
+            sameSshEndpoint({ ...connection, id: formEndpoint.id }, matchingLegacyKexDraft.endpoint)
+        ) {
+            try {
+                writeLegacyKex(connection, matchingLegacyKexDraft.algorithm);
+            } catch {
+                showToast(
+                    'info',
+                    'Host saved, but the legacy SSH exception could not be updated on this device.',
+                );
+            }
+        }
     };
 
     /** Prepare credentials, then persist routing and the host through one ordered save boundary. */
@@ -658,7 +698,7 @@ export function AddConnectionModal({
         if (!network.ready) {
             return null;
         }
-        if (isSaving && !retryAfterUnlock) {
+        if ((isSaving && !retryAfterUnlock) || isTestPending) {
             return null;
         }
         setIsSaving(true);
@@ -942,6 +982,7 @@ export function AddConnectionModal({
             testScope.current.connectionId === activeEditingConnectionId &&
             currentTestInputs.current === testInputs;
         let ephemeralTestPath: string | null = null;
+        let legacyExceptionPendingSave = false;
         try {
             // Existing vault credential still needs unlock; paste/import test uses ephemeral file (no vault write).
             // Skip on retryAfterUnlock. requestUnlock already refreshed vault state.
@@ -1002,12 +1043,30 @@ export function AddConnectionModal({
                     return testConnectionIpc(candidate, controller.signal);
                 },
                 async (options) => isCurrent() && (await showConfirmDialog(options)),
+                {
+                    load: (endpoint) =>
+                        sameSshEndpoint(endpoint, config) && matchingLegacyKexDraft
+                            ? matchingLegacyKexDraft.algorithm
+                            : readLegacyKex(endpoint),
+                    savedWhen: (endpoint) =>
+                        sameSshEndpoint(endpoint, config) ? 'on-save' : undefined,
+                    onSuccess: (endpoint, algorithm) => {
+                        if (isCurrent() && sameSshEndpoint(endpoint, config)) {
+                            setLegacyKexDraft({ endpoint: formEndpoint, algorithm });
+                            legacyExceptionPendingSave = true;
+                        }
+                    },
+                },
             );
             if (!isCurrent()) {
                 return;
             }
             setTestStatus('success');
-            setTestMessage('Connection successful!');
+            setTestMessage(
+                legacyExceptionPendingSave
+                    ? 'Connection successful. Save this host to remember the legacy SSH exception.'
+                    : 'Connection successful!',
+            );
         } catch (error: unknown) {
             if (!isCurrent()) {
                 return;
@@ -1025,6 +1084,7 @@ export function AddConnectionModal({
                 return;
             }
             if (
+                error instanceof LegacyKexDeclinedError ||
                 error instanceof NetworkSelectionCancelledError ||
                 error instanceof SshVerificationCancelledError
             ) {
@@ -2148,6 +2208,30 @@ export function AddConnectionModal({
                                 </button>
                                 {isAdvancedOpen && (
                                     <div className="space-y-4 px-4 pb-4">
+                                        {effectiveLegacyKex && (
+                                            <div className="space-y-1 rounded-lg border border-app-border p-3">
+                                                <p className="text-sm font-medium">
+                                                    Legacy SSH key exchange
+                                                </p>
+                                                <p className="break-all text-xs text-app-muted">
+                                                    {effectiveLegacyKex}
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    className="text-xs font-medium underline"
+                                                    disabled={isTestPending || isSaving}
+                                                    onClick={() => {
+                                                        setLegacyKexDraft({
+                                                            endpoint: formEndpoint,
+                                                        });
+                                                        setTestStatus('idle');
+                                                        setTestMessage('');
+                                                    }}
+                                                >
+                                                    Remove exception on save
+                                                </button>
+                                            </div>
+                                        )}
                                         <div className="space-y-2">
                                             <NetworkInterfaceControl
                                                 value={network.value}
@@ -2428,7 +2512,9 @@ export function AddConnectionModal({
                                         type="button"
                                         variant="secondary"
                                         size="sm"
-                                        disabled={!canSave || isSaving || !network.ready}
+                                        disabled={
+                                            !canSave || isSaving || isTestPending || !network.ready
+                                        }
                                         isLoading={isSaving}
                                         onClick={handleSave}
                                     >
@@ -2438,7 +2524,9 @@ export function AddConnectionModal({
                                         type="button"
                                         variant="primary"
                                         size="sm"
-                                        disabled={!canSave || isSaving || !network.ready}
+                                        disabled={
+                                            !canSave || isSaving || isTestPending || !network.ready
+                                        }
                                         onClick={handleSaveAndConnect}
                                     >
                                         Save & Connect
