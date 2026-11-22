@@ -4,6 +4,8 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.41.1] - 2026-11-22
+
 ### Added
 
 - **SSH agent authentication** lets connections sign in with keys held by the
@@ -3164,7 +3166,8 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.40.0...HEAD
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.41.1...HEAD
+[2.41.1]: https://github.com/zync-sh/zync/compare/v2.40.0...v2.41.1
 [2.40.0]: https://github.com/zync-sh/zync/compare/v2.39.0...v2.40.0
 [2.39.0]: https://github.com/zync-sh/zync/compare/v2.38.2...v2.39.0
 [2.38.2]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.2
