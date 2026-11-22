@@ -22,7 +22,9 @@ static PROVIDER_INSPECTION: tokio::sync::Semaphore = tokio::sync::Semaphore::con
 pub enum ProviderId {
     Bitwarden,
     OnePassword,
+    #[cfg(any(windows, test))]
     OpenSsh,
+    #[cfg(windows)]
     Pageant,
 }
 
@@ -30,8 +32,11 @@ pub enum ProviderId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProviderEvidence {
+    #[cfg(any(windows, test))]
     SignedProcess,
+    #[cfg(any(unix, test))]
     SocketHint,
+    #[cfg(windows)]
     Transport,
 }
 
