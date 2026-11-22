@@ -4,6 +4,20 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Legacy SSH key exchange (issue #154).** When a host or jump host requires a
+  supported legacy key exchange algorithm, Zync names the algorithm and offers
+  **Allow & retry**. Modern algorithms stay preferred and host-key verification
+  still applies. Saved exceptions are scoped to the profile and endpoint on
+  this device and can be removed in **Edit host → Advanced**.
+  ([88cd7825], [d1b18e8f])
+
+### Fixed
+
+- **SSH agent build warnings.** Provider variants are compiled on the platforms
+  that use them. ([72ef282c])
+
 ## [2.41.1] - 2026-11-22
 
 ### Added
@@ -3166,6 +3180,9 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
+[72ef282c]: https://github.com/zync-sh/zync/commit/72ef282cf48c46f3b3f483c6628963b5f9911516
+[88cd7825]: https://github.com/zync-sh/zync/commit/88cd78251ba40630d033a5d8a33e62dec4ac3cd9
+[d1b18e8f]: https://github.com/zync-sh/zync/commit/d1b18e8f2ff4994414ec5dd8cf1bfad053411dea
 [Unreleased]: https://github.com/zync-sh/zync/compare/v2.41.1...HEAD
 [2.41.1]: https://github.com/zync-sh/zync/compare/v2.40.0...v2.41.1
 [2.40.0]: https://github.com/zync-sh/zync/compare/v2.39.0...v2.40.0
