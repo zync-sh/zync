@@ -13,8 +13,18 @@ All notable changes to Zync are documented in this file. The format is based on 
   this device and can be removed in **Edit host → Advanced**.
   ([88cd7825], [d1b18e8f])
 
+### Changed
+
+- **Host Appearance.** Add and Edit host show a live preview of the host name,
+  icon and color label. The searchable icon picker includes **Automatic**,
+  which uses the OS detected when you connect. The Host and Port fields fit
+  better in narrow windows. ([dc45c276])
+
 ### Fixed
 
+- **Automatic host icons.** Automatic icons update when Zync detects a different
+  OS, and manually chosen icons stay selected. Host imports keep the detected
+  OS when the endpoint and resolved jump route match the saved host. ([dc45c276])
 - **SSH agent build warnings.** Provider variants are compiled on the platforms
   that use them. ([72ef282c])
 
@@ -3585,3 +3595,4 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [be5a6e46]: https://github.com/zync-sh/zync/commit/be5a6e46b0114279bd90989cc325454dae576d7e
 [a51083a9]: https://github.com/zync-sh/zync/commit/a51083a907fb7c249ff80e3dd3d8d4dbfc8a82d5
 [51255c35]: https://github.com/zync-sh/zync/commit/51255c35252cdc7f176233f99f45308c578b62ff
+[dc45c276]: https://github.com/zync-sh/zync/commit/dc45c276b4b468d9c179e383dfb6b6ccd9e414a1
