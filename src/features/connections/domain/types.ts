@@ -11,6 +11,14 @@ export type TabView = CoreTabView | PluginTabView;
 export type CredentialItemKind = 'ssh-password' | 'ssh-private-key' | 'ssh-agent-key';
 export type CredentialPurpose = 'ssh-auth';
 
+/** Named SSH key exchange exceptions accepted by the native transport. */
+export const LEGACY_KEX_ALGORITHMS = [
+    'diffie-hellman-group14-sha1',
+    'diffie-hellman-group-exchange-sha1',
+    'diffie-hellman-group1-sha1',
+] as const;
+export type LegacyKex = (typeof LEGACY_KEX_ALGORITHMS)[number];
+
 /** Device-only egress policy, intentionally absent from synced/exported Connection records. */
 export type NetworkPreference =
     | { mode: 'default' }
@@ -60,7 +68,10 @@ export interface Connection {
     /** Saved connection whose private key may be offered to this host's forwarded agent. */
     agentForwardingKeyConnectionId?: string;
     lastConnected?: number;
+    /** Explicit appearance choice. Missing means the icon follows detectedOs. */
     icon?: string;
+    /** Last OS identity observed on the saved SSH target. */
+    detectedOs?: string;
     folder?: string;
     theme?: string;
     tags?: string[];

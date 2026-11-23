@@ -19,6 +19,9 @@ pub struct ConnectionConfig {
     pub jump_host: Option<Box<ConnectionConfig>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_key_approval: Option<HostKeyApproval>,
+    /// Explicitly approved key exchange exception for this hop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) legacy_kex: Option<crate::ssh::legacy_kex::LegacyKex>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_attempt_id: Option<String>,
 }
@@ -136,6 +139,8 @@ pub struct SavedConnection {
     pub jump_server_id: Option<String>,
     pub last_connected: Option<u64>,
     pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_os: Option<String>,
     pub folder: Option<String>,
     pub theme: Option<String>,
     pub tags: Option<Vec<String>>,

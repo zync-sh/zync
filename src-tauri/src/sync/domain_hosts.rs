@@ -124,6 +124,13 @@ pub fn apply_hosts_restore_records(
             .iter_mut()
             .find(|conn| host_logical_id(conn) == record.logical_id)
         {
+            if existing.host.trim() != record.host.trim()
+                || existing.port != record.port
+                || existing.jump_server_id != record.jump_server_id
+            {
+                existing.detected_os = None;
+            }
+
             existing.name = record.name.clone();
             existing.host = record.host.clone();
             existing.port = record.port;
@@ -163,6 +170,7 @@ pub fn apply_hosts_restore_records(
             jump_server_id: record.jump_server_id.clone(),
             last_connected: Some(host_timestamp_from_sync(record.updated_at)),
             icon: None,
+            detected_os: None,
             folder: record.folder.clone(),
             theme: None,
             tags: if record.tags.is_empty() {
@@ -282,6 +290,7 @@ mod tests {
             jump_server_id: None,
             last_connected: Some(1),
             icon: None,
+            detected_os: None,
             folder: None,
             theme: None,
             tags: None,
@@ -451,6 +460,50 @@ mod tests {
             assert_eq!(updated.port, 2222);
             assert_eq!(updated.created_at, Some(9_000));
             assert_eq!(updated.last_connected, Some(9_000));
+
+            std::fs::remove_dir_all(&dir).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn restore_existing_host_keeps_detected_os_only_for_the_same_target() {
+        for (address, port, jump, expected_os) in [
+            ("h", 22, Some("jump-1"), Some("debian")),
+            ("other.invalid", 22, Some("jump-1"), None),
+            ("h", 2222, Some("jump-1"), None),
+            ("h", 22, Some("jump-2"), None),
+            ("h", 22, None, None),
+        ] {
+            let dir = temp_dir("restore-target");
+            std::fs::create_dir_all(&dir).expect("create temp dir");
+            let path = dir.join(CONNECTIONS_FILE);
+            let mut existing = test_connection("host-1");
+            existing.jump_server_id = Some("jump-1".into());
+            existing.detected_os = Some("debian".into());
+            existing.icon = Some("ubuntu".into());
+            let mut record =
+                map_saved_connection_to_sync_record(existing.clone(), existing.id.clone());
+            record.name = "Updated host".into();
+            record.host = address.into();
+            record.port = port;
+            record.jump_server_id = jump.map(str::to_owned);
+            save_saved_data_atomic(
+                &path,
+                &SavedData {
+                    connections: vec![existing],
+                    folders: Vec::new(),
+                },
+            )
+            .expect("save initial host");
+
+            assert_eq!(
+                apply_hosts_restore_records(&dir, &[record]).expect("restore host"),
+                (0, 1),
+            );
+            let saved = load_saved_data(&path).expect("load restored host");
+            let restored = &saved.connections[0];
+            assert_eq!(restored.detected_os.as_deref(), expected_os);
+            assert_eq!(restored.icon.as_deref(), Some("ubuntu"));
 
             std::fs::remove_dir_all(&dir).expect("cleanup");
         }

@@ -1,13 +1,15 @@
-import type { MouseEvent } from 'react';
 import { Bookmark, FileKey, Lock } from 'lucide-react';
-import { OSIcon } from '../../icons/OSIcon';
-import { cn } from '../../../lib/utils';
-import { getRelativeTime } from '../../../lib/relativeTime';
-import type { Connection } from '../../../store/connectionSlice';
+import type { MouseEvent } from 'react';
+
+import { resolveHostIcon } from '../../../features/connections/domain/hostAppearance';
 import {
     useConnectionDisplayLabels,
     useShowHostAddressesInLists,
 } from '../../../features/connections/presentation/useConnectionDisplayLabels';
+import { getRelativeTime } from '../../../lib/relativeTime';
+import { cn } from '../../../lib/utils';
+import type { Connection } from '../../../store/connectionSlice';
+import { OSIcon } from '../../icons/OSIcon';
 
 /** Re-export for existing callers; prefer `lib/relativeTime`. */
 export { getRelativeTime };
@@ -20,28 +22,33 @@ interface ConnectionCardProps {
 }
 
 /** Compact, accessible card for opening and managing a saved connection. */
-export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }: ConnectionCardProps) {
+export function ConnectionCard({
+    conn,
+    onOpen,
+    onToggleFavorite,
+    onContextMenu,
+}: ConnectionCardProps) {
     const isConnected = conn.status === 'connected';
-    const isFav       = Boolean(conn.isFavorite);
+    const isFav = Boolean(conn.isFavorite);
     const { primary, secondary } = useConnectionDisplayLabels(conn);
     const showHostAddressesInLists = useShowHostAddressesInLists();
     const displayName = primary;
-    const hasKey      = Boolean(conn.privateKeyPath);
-    const hasPass     = Boolean(conn.password) && !hasKey;
+    const hasKey = Boolean(conn.privateKeyPath);
+    const hasPass = Boolean(conn.password) && !hasKey;
 
     // Build a descriptive label so screen readers convey status, auth, and port
     const cardLabel = [
         `Open ${displayName}`,
-        isConnected    ? 'connected'          : null,
-        hasKey         ? 'key authentication' : null,
-        hasPass        ? 'password authentication' : null,
+        isConnected ? 'connected' : null,
+        hasKey ? 'key authentication' : null,
+        hasPass ? 'password authentication' : null,
         showHostAddressesInLists && conn.port !== 22 ? `port ${conn.port}` : null,
-    ].filter(Boolean).join(', ');
+    ]
+        .filter(Boolean)
+        .join(', ');
 
     return (
-        <div
-            className="group relative flex items-center gap-1"
-        >
+        <div className="group relative flex items-center gap-1">
             {/* Favorite left accent bar */}
             {isFav && (
                 <div
@@ -56,7 +63,9 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
                 className="flex flex-1 min-w-0 items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all hover:bg-app-surface/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40"
                 onClick={() => onOpen(conn.id)}
                 onContextMenu={(e) => {
-                    if (!onContextMenu) return;
+                    if (!onContextMenu) {
+                        return;
+                    }
                     e.preventDefault();
                     onContextMenu(e, conn);
                 }}
@@ -69,16 +78,22 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
                             isConnected
                                 ? 'bg-green-500/15 text-green-400'
                                 : isFav
-                                    ? 'bg-yellow-500/10 text-yellow-500/60'
-                                    : 'bg-app-surface/80 text-app-muted/50'
+                                  ? 'bg-yellow-500/10 text-yellow-500/60'
+                                  : 'bg-app-surface/80 text-app-muted/50',
                         )}
                     >
-                        <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
+                        <OSIcon
+                            icon={resolveHostIcon(conn)}
+                            className="w-3.5 h-3.5"
+                        />
                     </div>
 
                     {/* Status pulse dot */}
                     {isConnected && (
-                        <span className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2" aria-hidden="true">
+                        <span
+                            className="absolute -bottom-0.5 -right-0.5 flex h-2 w-2"
+                            aria-hidden="true"
+                        >
                             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-40" />
                             <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500 border border-app-bg" />
                         </span>
@@ -87,10 +102,12 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
 
                 {/* Name + host */}
                 <div className="flex-1 min-w-0">
-                    <span className={cn(
-                        'block text-xs font-medium truncate leading-tight',
-                        isFav ? 'text-app-text' : 'text-app-text/75'
-                    )}>
+                    <span
+                        className={cn(
+                            'block text-xs font-medium truncate leading-tight',
+                            isFav ? 'text-app-text' : 'text-app-text/75',
+                        )}
+                    >
                         {displayName}
                     </span>
                     <span className="block text-[10px] text-app-muted/55 truncate">
@@ -99,9 +116,22 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
                 </div>
 
                 {/* Auth + port badges */}
-                <div className="flex items-center gap-1 shrink-0" aria-hidden="true">
-                    {hasKey && <FileKey size={10} className="text-app-muted/40" />}
-                    {hasPass && <Lock size={10} className="text-app-muted/40" />}
+                <div
+                    className="flex items-center gap-1 shrink-0"
+                    aria-hidden="true"
+                >
+                    {hasKey && (
+                        <FileKey
+                            size={10}
+                            className="text-app-muted/40"
+                        />
+                    )}
+                    {hasPass && (
+                        <Lock
+                            size={10}
+                            className="text-app-muted/40"
+                        />
+                    )}
                     {showHostAddressesInLists && conn.port !== 22 && (
                         <span className="text-[9px] text-app-muted/40 font-mono">:{conn.port}</span>
                     )}
@@ -118,17 +148,27 @@ export function ConnectionCard({ conn, onOpen, onToggleFavorite, onContextMenu }
             {/* Favorite toggle */}
             <button
                 type="button"
-                aria-label={isFav ? `Remove ${displayName} from favorites` : `Add ${displayName} to favorites`}
-                onClick={(e) => { e.stopPropagation(); onToggleFavorite(conn.id); }}
+                aria-label={
+                    isFav
+                        ? `Remove ${displayName} from favorites`
+                        : `Add ${displayName} to favorites`
+                }
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleFavorite(conn.id);
+                }}
                 onKeyDown={(e) => e.stopPropagation()}
                 className={cn(
                     'p-1.5 rounded-lg shrink-0 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-accent/40',
                     isFav
                         ? 'text-yellow-500/60 hover:text-yellow-500'
-                        : 'text-transparent group-hover:text-app-muted/35 hover:text-app-muted/60'
+                        : 'text-transparent group-hover:text-app-muted/35 hover:text-app-muted/60',
                 )}
             >
-                <Bookmark size={11} className={isFav ? 'fill-yellow-500/60' : ''} />
+                <Bookmark
+                    size={11}
+                    className={isFav ? 'fill-yellow-500/60' : ''}
+                />
             </button>
         </div>
     );

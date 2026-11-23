@@ -1,7 +1,7 @@
 //! Encrypted in-memory upgrade checks: authentication, SFTP and forwarding.
 //! Fixtures never read credentials, connect sockets or mutate real files.
 
-use super::{keyboard_interactive, keys, SshManager};
+use super::{keyboard_interactive, keys, legacy_kex, SshManager};
 use crate::types::{AuthMethod, ConnectionConfig};
 use russh::{client, server, Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
@@ -12,6 +12,56 @@ const CONTENT: &[u8] = b"encrypted SSH to SFTP fixture bytes\0\xff\r\n";
 const DEADLINE: Duration = Duration::from_secs(20);
 const OUTPUT_CHUNKS: usize = 256;
 const OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
+
+#[tokio::test]
+async fn legacy_key_exchange_requires_explicit_approval() {
+    let key =
+        keys::PrivateKey::random(&mut keys::key::safe_rng(), keys::Algorithm::Ed25519).unwrap();
+    let mut config = server::Config::default();
+    config.keys.push(key.clone());
+    config.preferred.kex = vec![russh::kex::DH_G14_SHA1].into();
+    let config = Arc::new(config);
+
+    for approval in [None, Some(legacy_kex::LegacyKex::Group14)] {
+        let (local, remote) = tokio::io::duplex(64 * 1024);
+        let server_config = config.clone();
+        let handler = Server {
+            key: key.public_key().clone(),
+            certificate: None,
+            verification_round: None,
+            sessions: HashMap::new(),
+            output_tasks: tokio::task::JoinSet::new(),
+        };
+        let server = tokio::spawn(async move {
+            if let Ok(session) = server::run_stream(server_config, remote, handler).await {
+                let _ = session.await;
+            }
+        });
+        let mut client_config = client::Config::default();
+        legacy_kex::apply(&mut client_config, approval);
+        let result = tokio::time::timeout(
+            DEADLINE,
+            client::connect_stream(
+                Arc::new(client_config),
+                local,
+                Client(key.public_key().clone()),
+            ),
+        )
+        .await;
+        server.abort();
+
+        let result = result.expect("fixture negotiation timed out");
+        if approval.is_some() {
+            assert!(result.is_ok(), "approved legacy negotiation failed");
+        } else {
+            let error = result.err().expect("default policy accepted legacy KEX");
+            assert!(matches!(
+                error.downcast_ref::<russh::Error>(),
+                Some(russh::Error::NoCommonAlgo { kind: russh::AlgorithmKind::Kex, .. })
+            ));
+        }
+    }
+}
 
 /// Pin the generated fixture key; certificates and unrelated keys fail closed.
 struct Client(keys::PublicKey);
@@ -345,6 +395,7 @@ async fn begin_verification() -> (Transport, client::AuthResult, ConnectionConfi
         agent_forwarding: None,
         jump_host: None,
         host_key_approval: None,
+        legacy_kex: None,
         connect_attempt_id: None,
     };
     (fixture, result, config)

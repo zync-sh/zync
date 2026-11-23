@@ -696,6 +696,7 @@ fn connection(session: Arc<SshHandle>) -> ConnectionHandle {
             agent_forwarding: None,
             jump_host: None,
             host_key_approval: None,
+            legacy_kex: None,
             connect_attempt_id: None,
         },
         session: Some(session),

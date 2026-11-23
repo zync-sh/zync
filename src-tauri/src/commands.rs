@@ -2675,6 +2675,7 @@ fn parse_csv_connections(content: &str) -> Result<Vec<SavedConnection>, String> 
             },
             last_connected: field(last_connected_idx).parse::<u64>().ok(),
             icon: None,
+            detected_os: None,
             folder: {
                 let value = field(folder_idx);
                 if value.is_empty() {

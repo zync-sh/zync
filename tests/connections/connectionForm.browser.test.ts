@@ -520,6 +520,29 @@ try {
     await page.getByText('Details', { exact: true }).click();
     assert.equal(await rawError.isVisible(), true);
 
+    await page.evaluate(() => {
+        document.body.dataset.legacyKexFixture = 'enabled';
+    });
+    await dialog.getByRole('button', { name: 'Test connection', exact: true }).click();
+    const legacyPrompt = page.getByRole('dialog', { name: 'Allow legacy SSH key exchange?' });
+    await legacyPrompt.getByText(/diffie-hellman-group14-sha1/).waitFor();
+    await legacyPrompt.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await legacyPrompt.waitFor({ state: 'hidden' });
+    await dialog.getByRole('button', { name: 'Test connection', exact: true }).click();
+    await legacyPrompt.getByRole('button', { name: 'Allow & retry', exact: true }).click();
+    await dialog
+        .getByText('Connection successful. Save this host to remember the legacy SSH exception.')
+        .waitFor();
+    assert.equal(
+        await page.evaluate(() =>
+            Object.keys(localStorage).some((key) => key.startsWith('zync:legacy-kex:')),
+        ),
+        false,
+    );
+    await page.evaluate(() => {
+        delete document.body.dataset.legacyKexFixture;
+    });
+
     await page
         .getByRole('button', { name: 'Enable SSH verification fixture' })
         .evaluate((button: HTMLElement) => button.click());
@@ -567,6 +590,24 @@ try {
     await dialog.waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Key host fixture', exact: true }).click();
     await page.getByText('Valid unencrypted private key.', { exact: true }).waitFor();
+    const appearanceDialog = page.getByRole('dialog', { name: 'Edit host', exact: true });
+    await appearanceDialog.getByRole('button', { name: /^Appearance/ }).click();
+    const hostIcon = appearanceDialog.getByRole('combobox', { name: 'Icon', exact: true });
+    assert.equal(await hostIcon.innerText(), 'Automatic');
+    await appearanceDialog.getByText('Detected OS: Ubuntu', { exact: true }).waitFor();
+    await hostIcon.click();
+    const iconFilter = page.getByRole('combobox', { name: 'Filter Icon', exact: true });
+    await iconFilter.fill('Debian');
+    await page.getByRole('option', { name: 'Debian', exact: true }).click();
+    assert.equal(await hostIcon.innerText(), 'Debian');
+    await iconFilter.waitFor({ state: 'hidden' });
+    await hostIcon.click();
+    await page.getByRole('option', { name: 'Automatic', exact: true }).click();
+    await appearanceDialog.getByText('Detected OS: Ubuntu', { exact: true }).waitFor();
+    const blueLabel = appearanceDialog.getByRole('button', { name: 'Dev', exact: true });
+    await blueLabel.click();
+    assert.equal(await blueLabel.getAttribute('aria-pressed'), 'true');
+    await appearanceDialog.getByRole('button', { name: /^Appearance/ }).click();
     await page.getByRole('button', { name: 'Test connection', exact: true }).click();
     await finishNextConnectionTest(page, 'Finish test');
     await page.waitForTimeout(100);
@@ -1020,6 +1061,38 @@ try {
     assert.equal(await quickPrivateKey.isEnabled(), true);
     assert.equal(await quickPassword.inputValue(), 'fixture password');
     assert.equal(await quickPrivateKey.inputValue(), '/fixture/key');
+
+    await page.getByRole('button', { name: 'Key host fixture', exact: true }).click();
+    await hostDialog.getByRole('button', { name: 'Password', exact: true }).click();
+    await hostDialog.getByLabel('Password', { exact: true }).fill('fixture-password');
+    await page.evaluate(() => {
+        document.body.dataset.legacyKexFixture = 'enabled';
+    });
+    await hostDialog.getByRole('button', { name: 'Test connection', exact: true }).click();
+    await legacyPrompt.getByRole('button', { name: 'Allow & retry', exact: true }).click();
+    await hostDialog
+        .getByText('Connection successful. Save this host to remember the legacy SSH exception.')
+        .waitFor();
+    await hostDialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await hostDialog.waitFor({ state: 'hidden' });
+
+    await page.getByRole('button', { name: 'Key host fixture', exact: true }).click();
+    await hostDialog.getByRole('button', { name: /^Advanced/ }).click();
+    await hostDialog.getByText('diffie-hellman-group14-sha1', { exact: true }).waitFor();
+    await hostDialog.getByRole('button', { name: 'Test connection', exact: true }).click();
+    const legacyTestSuccess = hostDialog.getByText('Connection successful!', { exact: true });
+    await legacyTestSuccess.waitFor();
+    await hostDialog.getByRole('button', { name: 'Remove exception on save', exact: true }).click();
+    await legacyTestSuccess.waitFor({ state: 'hidden' });
+    await hostDialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await hostDialog.waitFor({ state: 'hidden' });
+    assert.equal(
+        await page.evaluate(() =>
+            Object.keys(localStorage).some((key) => key.startsWith('zync:legacy-kex:')),
+        ),
+        false,
+    );
+
     assert.deepEqual(errors, []);
     console.log('Host onboarding browser regressions passed');
 } catch (error) {

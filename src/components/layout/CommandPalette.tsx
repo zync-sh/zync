@@ -1,32 +1,33 @@
-import { useEffect, useRef, useState, memo } from "react";
-import { Command } from "cmdk";
+import { clsx } from 'clsx';
+import { Command } from 'cmdk';
 import {
-    Settings,
-    FileJson,
-    Terminal,
-    Search,
-    RefreshCw,
-    Plus,
     Code,
-    Network,
+    FileJson,
     FolderPlus,
-
+    Link2,
+    Network,
+    Plus,
+    RefreshCw,
+    Search,
+    Settings,
     Shield,
-    Link2
-} from "lucide-react";
-import { PublicUrlsLabel } from "../share/PublicUrlsLabel";
-import { useAppStore, Connection } from "../../store/useAppStore";
+    Terminal,
+} from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { usePlugins } from "../../context/PluginContext";
-import { clsx } from "clsx";
-import { OSIcon } from "../icons/OSIcon";
-import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
-import { builtinWorkspaceViewLabel } from '../../features/workspace/domain/registrations';
-import { GoogleMarkIcon } from "../icons/providerIcons";
-import { useConnectionDisplayLabels } from "../../features/connections/presentation/useConnectionDisplayLabels";
+
+import { usePlugins } from '../../context/PluginContext';
+import { resolveHostIcon } from '../../features/connections/domain/hostAppearance';
+import { useConnectionDisplayLabels } from '../../features/connections/presentation/useConnectionDisplayLabels';
 import { openBuiltinThemePicker } from '../../features/plugins/presentation/themePicker';
-import { WorkspaceCommandItems } from './WorkspaceCommandItems';
+import { builtinWorkspaceViewLabel } from '../../features/workspace/domain/registrations';
 import { iconThemeOptions } from '../../lib/icons/iconTheme';
+import { Connection, useAppStore } from '../../store/useAppStore';
+import { HardeningAuditIcon } from '../icons/HardeningAuditIcon';
+import { OSIcon } from '../icons/OSIcon';
+import { GoogleMarkIcon } from '../icons/providerIcons';
+import { PublicUrlsLabel } from '../share/PublicUrlsLabel';
+import { WorkspaceCommandItems } from './WorkspaceCommandItems';
 
 interface QuickPickItem {
     id: string;
@@ -51,37 +52,50 @@ interface QuickPickDetail {
 /** Global command/search palette with command mode and plugin quick-pick support. */
 export function CommandPalette() {
     const [open, setOpen] = useState(false);
-    const [search, setSearch] = useState("");
+    const [search, setSearch] = useState('');
     const [commandMode, setCommandMode] = useState(false); // true if triggered by Shift+P or ">"
 
     // Quick Pick State
     const [quickPickMode, setQuickPickMode] = useState(false);
     const [quickPickItems, setQuickPickItems] = useState<QuickPickItem[]>([]);
-    const [quickPickOptions, setQuickPickOptions] = useState<{ placeHolder?: string, requestId: string, pluginId: string, requester?: unknown } | null>(null);
+    const [quickPickOptions, setQuickPickOptions] = useState<{
+        placeHolder?: string;
+        requestId: string;
+        pluginId: string;
+        requester?: unknown;
+    } | null>(null);
 
     const openRef = useRef(open);
     const quickPickModeRef = useRef(quickPickMode);
     const quickPickOptionsRef = useRef(quickPickOptions);
 
-    useEffect(() => { openRef.current = open; }, [open]);
-    useEffect(() => { quickPickModeRef.current = quickPickMode; }, [quickPickMode]);
-    useEffect(() => { quickPickOptionsRef.current = quickPickOptions; }, [quickPickOptions]);
+    useEffect(() => {
+        openRef.current = open;
+    }, [open]);
+    useEffect(() => {
+        quickPickModeRef.current = quickPickMode;
+    }, [quickPickMode]);
+    useEffect(() => {
+        quickPickOptionsRef.current = quickPickOptions;
+    }, [quickPickOptions]);
 
     // Optimize selectors with shallow comparison
     const { connections, setAddConnectionModalOpen, openTab, openSettings } = useAppStore(
-        useShallow(state => ({
+        useShallow((state) => ({
             connections: state.connections,
             setAddConnectionModalOpen: state.setAddConnectionModalOpen,
             openTab: state.openTab,
-            openSettings: state.openSettings
-        }))
+            openSettings: state.openSettings,
+        })),
     );
 
     // Plugins
     const { commands: pluginCommands, executeCommand, plugins } = usePlugins();
-    const platform = typeof navigator !== 'undefined'
-        ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.userAgent)
-        : '';
+    const platform =
+        typeof navigator !== 'undefined'
+            ? ((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
+                  ?.platform ?? navigator.userAgent)
+            : '';
     const isMac = /mac/i.test(platform);
     const modKey = isMac ? 'Cmd' : 'Ctrl';
 
@@ -95,14 +109,16 @@ export function CommandPalette() {
             setQuickPickOptions(null);
             quickPickOptionsRef.current = null;
             if (currentOptions && currentOptions.pluginId !== 'system') {
-                window.dispatchEvent(new CustomEvent('zync:quick-pick-select', {
-                    detail: {
-                        requestId: currentOptions.requestId,
-                        pluginId: currentOptions.pluginId,
-                        selectedItem: null,
-                        requester: currentOptions.requester,
-                    }
-                }));
+                window.dispatchEvent(
+                    new CustomEvent('zync:quick-pick-select', {
+                        detail: {
+                            requestId: currentOptions.requestId,
+                            pluginId: currentOptions.pluginId,
+                            selectedItem: null,
+                            requester: currentOptions.requester,
+                        },
+                    }),
+                );
             }
         }
     };
@@ -129,7 +145,7 @@ export function CommandPalette() {
             quickPickModeRef.current = true;
             setOpen(true);
             openRef.current = true;
-            setSearch(""); // Clear search for picking
+            setSearch(''); // Clear search for picking
         };
 
         const handleOpenCommandPalette = (e: Event) => {
@@ -159,7 +175,7 @@ export function CommandPalette() {
     // Detect ">" in input
     const handleSearchChange = (value: string) => {
         setSearch(value);
-        if (value.startsWith(">")) {
+        if (value.startsWith('>')) {
             setCommandMode(true);
         } else {
             setCommandMode(false);
@@ -194,14 +210,16 @@ export function CommandPalette() {
                 return;
             }
 
-            window.dispatchEvent(new CustomEvent('zync:quick-pick-select', {
-                detail: {
-                    requestId: currentOptions.requestId,
-                    pluginId: currentOptions.pluginId,
-                    selectedItem: item,
-                    requester: currentOptions.requester,
-                }
-            }));
+            window.dispatchEvent(
+                new CustomEvent('zync:quick-pick-select', {
+                    detail: {
+                        requestId: currentOptions.requestId,
+                        pluginId: currentOptions.pluginId,
+                        selectedItem: item,
+                        requester: currentOptions.requester,
+                    },
+                }),
+            );
         }
     };
 
@@ -211,7 +229,9 @@ export function CommandPalette() {
         cancelActiveQuickPick();
     };
 
-    if (!open) return null;
+    if (!open) {
+        return null;
+    }
 
     // Filter items based on mode
     // If commandMode is TRUE: Show Plugins, Actions, Tools
@@ -228,17 +248,22 @@ export function CommandPalette() {
             <div className="relative w-full max-w-2xl transform transition-all">
                 <Command
                     className={clsx(
-                        "flex flex-col w-full max-h-[60vh] overflow-hidden rounded-xl border shadow-2xl animate-in fade-in zoom-in-95 duration-200",
-                        "bg-app-panel/95 backdrop-blur-lg border-app-border text-app-text"
+                        'flex flex-col w-full max-h-[60vh] overflow-hidden rounded-xl border shadow-2xl animate-in fade-in zoom-in-95 duration-200',
+                        'bg-app-panel/95 backdrop-blur-lg border-app-border text-app-text',
                     )}
                     loop
                     filter={(value, search) => {
                         const q = search.startsWith('>') ? search.substring(1).trim() : search;
-                        if (!q) return 1;
+                        if (!q) {
+                            return 1;
+                        }
                         return value.toLowerCase().includes(q.toLowerCase()) ? 1 : 0;
                     }}
                 >
-                    <div className="flex items-center border-b border-app-border px-3" cmdk-input-wrapper="">
+                    <div
+                        className="flex items-center border-b border-app-border px-3"
+                        cmdk-input-wrapper=""
+                    >
                         <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
                         <Command.Input
                             autoFocus
@@ -246,7 +271,7 @@ export function CommandPalette() {
                             onValueChange={handleSearchChange}
                             placeholder="Type a command or search..."
                             className={clsx(
-                                "flex h-10 w-full rounded-md bg-transparent py-2 text-sm outline-none placeholder:text-app-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
+                                'flex h-10 w-full rounded-md bg-transparent py-2 text-sm outline-none placeholder:text-app-muted/50 disabled:cursor-not-allowed disabled:opacity-50',
                             )}
                         />
                     </div>
@@ -258,10 +283,18 @@ export function CommandPalette() {
 
                         {/* QUICK PICK MODE */}
                         {quickPickMode && (
-                            <Command.Group heading={quickPickOptions?.placeHolder || "Select an option"} className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
+                            <Command.Group
+                                heading={quickPickOptions?.placeHolder || 'Select an option'}
+                                className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2"
+                            >
                                 {quickPickItems.map((item: QuickPickItem, idx) => {
                                     if (item.kind === 'separator') {
-                                        return <div key={item.id ?? idx} className="h-px bg-app-border/30 my-1.5 mx-2" />;
+                                        return (
+                                            <div
+                                                key={item.id ?? idx}
+                                                className="h-px bg-app-border/30 my-1.5 mx-2"
+                                            />
+                                        );
                                     }
                                     return (
                                         <Command.Item
@@ -284,30 +317,35 @@ export function CommandPalette() {
                             <>
                                 <WorkspaceCommandItems runCommand={runCommand} />
                                 {/* Plugin Commands */}
-                                <Command.Group heading="Plugins" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2">
+                                <Command.Group
+                                    heading="Plugins"
+                                    className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2"
+                                >
                                     <Command.Item
                                         value="Preferences: Icon Theme"
                                         onSelect={() => {
                                             cancelActiveQuickPick();
                                             const themes = iconThemeOptions(plugins);
 
-                                            const nextOptions = { 
-                                                placeHolder: 'Select Icon Theme', 
+                                            const nextOptions = {
+                                                placeHolder: 'Select Icon Theme',
                                                 requestId: 'icon-theme-select',
-                                                pluginId: 'system' 
+                                                pluginId: 'system',
                                             };
                                             setQuickPickItems(themes);
                                             setQuickPickOptions(nextOptions);
                                             quickPickOptionsRef.current = nextOptions;
                                             setQuickPickMode(true);
                                             quickPickModeRef.current = true;
-                                            setSearch("");
+                                            setSearch('');
                                         }}
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Code className="mr-2 h-4 w-4 opacity-70" />
                                         <span>Preferences: Icon Theme</span>
-                                        <span className="ml-auto text-[10px] opacity-50 font-mono">system</span>
+                                        <span className="ml-auto text-[10px] opacity-50 font-mono">
+                                            system
+                                        </span>
                                     </Command.Item>
 
                                     <Command.Item
@@ -320,24 +358,35 @@ export function CommandPalette() {
                                     >
                                         <Settings className="mr-2 h-4 w-4 opacity-70" />
                                         <span>Preferences: Color Theme</span>
-                                        <span className="ml-auto text-[10px] opacity-50 font-mono">system</span>
+                                        <span className="ml-auto text-[10px] opacity-50 font-mono">
+                                            system
+                                        </span>
                                     </Command.Item>
 
-                                    {pluginCommands.filter(cmd => cmd.id !== 'workbench.action.selectTheme').map(cmd => (
-                                        <Command.Item
-                                            key={cmd.id}
-                                            value={cmd.title}
-                                            onSelect={() => runCommand(() => executeCommand(cmd.id))}
-                                            className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
-                                        >
-                                            <Code className="mr-2 h-4 w-4 opacity-70" />
-                                            <span>{cmd.title}</span>
-                                            <span className="ml-auto text-[10px] opacity-50 font-mono">{cmd.pluginId.split('.').pop()}</span>
-                                        </Command.Item>
-                                    ))}
+                                    {pluginCommands
+                                        .filter((cmd) => cmd.id !== 'workbench.action.selectTheme')
+                                        .map((cmd) => (
+                                            <Command.Item
+                                                key={cmd.id}
+                                                value={cmd.title}
+                                                onSelect={() =>
+                                                    runCommand(() => executeCommand(cmd.id))
+                                                }
+                                                className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
+                                            >
+                                                <Code className="mr-2 h-4 w-4 opacity-70" />
+                                                <span>{cmd.title}</span>
+                                                <span className="ml-auto text-[10px] opacity-50 font-mono">
+                                                    {cmd.pluginId.split('.').pop()}
+                                                </span>
+                                            </Command.Item>
+                                        ))}
                                 </Command.Group>
 
-                                <Command.Group heading="Actions" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
+                                <Command.Group
+                                    heading="Actions"
+                                    className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2"
+                                >
                                     <Command.Item
                                         value="New Connection"
                                         onSelect={() => runCommand(openAddConnectionModal)}
@@ -369,13 +418,16 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="Open settings.json"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openSettingsJsonTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openSettingsJsonTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <FileJson className="mr-2 h-4 w-4 opacity-70" />
                                         <span>Open settings.json</span>
                                     </Command.Item>
-
 
                                     <Command.Item
                                         value="Reload Window"
@@ -387,10 +439,17 @@ export function CommandPalette() {
                                     </Command.Item>
                                 </Command.Group>
 
-                                <Command.Group heading="Tools" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
+                                <Command.Group
+                                    heading="Tools"
+                                    className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2"
+                                >
                                     <Command.Item
                                         value="Security hardening audit saved reports global"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openSecurityAuditsTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openSecurityAuditsTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <HardeningAuditIcon className="mr-2 h-4 w-4 opacity-70" />
@@ -398,7 +457,11 @@ export function CommandPalette() {
                                     </Command.Item>
                                     <Command.Item
                                         value="Port Forwarding"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openPortForwardingTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openPortForwardingTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Network className="mr-2 h-4 w-4 opacity-70" />
@@ -407,7 +470,11 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="Public URLs share internet https beta"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openPublicUrlsTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openPublicUrlsTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Link2 className="mr-2 h-4 w-4 opacity-70" />
@@ -416,7 +483,11 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="Local Vault"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openVaultTab('local'))}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openVaultTab('local'),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Shield className="mr-2 h-4 w-4 opacity-70" />
@@ -425,16 +496,28 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="Sync & Backup vault google drive"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openSyncBackupTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openSyncBackupTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
-                                        <GoogleMarkIcon size={16} variant="mono" className="mr-2 opacity-70" />
+                                        <GoogleMarkIcon
+                                            size={16}
+                                            variant="mono"
+                                            className="mr-2 opacity-70"
+                                        />
                                         <span>Sync & Backup</span>
                                     </Command.Item>
 
                                     <Command.Item
                                         value="Global Snippets"
-                                        onSelect={() => runCommand(() => useAppStore.getState().openSnippetsTab())}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                useAppStore.getState().openSnippetsTab(),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Code className="mr-2 h-4 w-4 opacity-70" />
@@ -443,7 +526,13 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="New Forward"
-                                        onSelect={() => runCommand(() => window.dispatchEvent(new Event('ssh-ui:open-new-tunnel')))}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                window.dispatchEvent(
+                                                    new Event('ssh-ui:open-new-tunnel'),
+                                                ),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <Plus className="mr-2 h-4 w-4 opacity-70" />
@@ -452,7 +541,13 @@ export function CommandPalette() {
 
                                     <Command.Item
                                         value="New Folder"
-                                        onSelect={() => runCommand(() => window.dispatchEvent(new Event('ssh-ui:open-folder-modal')))}
+                                        onSelect={() =>
+                                            runCommand(() =>
+                                                window.dispatchEvent(
+                                                    new Event('ssh-ui:open-folder-modal'),
+                                                ),
+                                            )
+                                        }
                                         className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
                                     >
                                         <FolderPlus className="mr-2 h-4 w-4 opacity-70" />
@@ -464,7 +559,10 @@ export function CommandPalette() {
 
                         {/* FILE MODE */}
                         {!commandMode && !quickPickMode && (
-                            <Command.Group heading="Connections" className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2">
+                            <Command.Group
+                                heading="Connections"
+                                className="text-[10px] font-semibold text-app-muted uppercase tracking-wider mb-1 px-2 mt-2"
+                            >
                                 {connections.map((conn: Connection) => (
                                     <ConnectionItem
                                         key={conn.id}
@@ -478,14 +576,20 @@ export function CommandPalette() {
 
                     <div className="border-t border-app-border px-3 py-1.5 flex items-center justify-between text-[10px] text-app-muted">
                         <div className="flex gap-2">
-                            <span><strong>↑↓</strong> to navigate</span>
-                            <span><strong>↵</strong> to select</span>
+                            <span>
+                                <strong>↑↓</strong> to navigate
+                            </span>
+                            <span>
+                                <strong>↵</strong> to select
+                            </span>
                         </div>
                         <div className="flex gap-2 opacity-50">
                             {commandMode ? (
                                 <span>Type to search commands</span>
                             ) : (
-                                <span>Type <strong>{'>'}</strong> for commands</span>
+                                <span>
+                                    Type <strong>{'>'}</strong> for commands
+                                </span>
                             )}
                         </div>
                     </div>
@@ -495,9 +599,14 @@ export function CommandPalette() {
     );
 }
 
-
 /** Connection result row for file/history mode inside the command palette. */
-const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: Connection; onSelect: () => void }) {
+const ConnectionItem = memo(function ConnectionItem({
+    conn,
+    onSelect,
+}: {
+    conn: Connection;
+    onSelect: () => void;
+}) {
     const { primary, secondary, searchText } = useConnectionDisplayLabels(conn);
 
     return (
@@ -507,14 +616,19 @@ const ConnectionItem = memo(function ConnectionItem({ conn, onSelect }: { conn: 
             className="relative flex cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none data-[selected=true]:bg-app-accent/20 data-[selected=true]:text-app-accent text-app-text transition-colors group mb-0.5"
         >
             <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border mr-2 group-data-[selected=true]:border-app-accent/50 group-data-[selected=true]:bg-app-accent/10">
-                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
+                <OSIcon
+                    icon={resolveHostIcon(conn)}
+                    className="w-3.5 h-3.5"
+                />
             </div>
             <div className="flex flex-col">
                 <span className="font-medium">{primary}</span>
                 <span className="text-[10px] text-app-muted/70">{secondary}</span>
             </div>
             {conn.status === 'connected' && (
-                <span className="ml-auto text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded animate-pulse">Connected</span>
+                <span className="ml-auto text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded animate-pulse">
+                    Connected
+                </span>
             )}
         </Command.Item>
     );

@@ -7,8 +7,12 @@ export const markConnectionStatus = (
 ): Connection[] => {
     let updated = false;
     const next = connections.map((connection) => {
-        if (connection.id !== connectionId) return connection;
-        if (connection.status === status) return connection;
+        if (connection.id !== connectionId) {
+            return connection;
+        }
+        if (connection.status === status) {
+            return connection;
+        }
         updated = true;
         return {
             ...connection,
@@ -28,11 +32,13 @@ export const markConnectionConnected = (
     homePath: string,
     detectedOs?: string | null,
 ): Connection[] => {
-    const normalizedOs = detectedOs?.toLowerCase();
+    const normalizedOs = detectedOs?.trim().toLowerCase();
     let updated = false;
 
     const next = connections.map((connection) => {
-        if (connection.id !== connectionId) return connection;
+        if (connection.id !== connectionId) {
+            return connection;
+        }
 
         const nextConnection: Connection = {
             ...connection,
@@ -42,14 +48,14 @@ export const markConnectionConnected = (
             homePath: homePath || connection.homePath,
         };
 
-        if (normalizedOs && (!connection.icon || connection.icon === 'Server')) {
-            nextConnection.icon = normalizedOs;
+        if (normalizedOs) {
+            nextConnection.detectedOs = normalizedOs;
         }
 
         if (
             connection.status !== nextConnection.status ||
             connection.homePath !== nextConnection.homePath ||
-            connection.icon !== nextConnection.icon ||
+            connection.detectedOs !== nextConnection.detectedOs ||
             connection.lastConnected !== nextConnection.lastConnected
         ) {
             updated = true;
@@ -67,18 +73,17 @@ export const applyConnectionMetadata = (
     detectedOs?: string | null,
 ): Connection[] => {
     const normalizedOs = detectedOs?.trim().toLowerCase();
-    if (!normalizedOs) return connections;
+    if (!normalizedOs) {
+        return connections;
+    }
 
     let updated = false;
     const next = connections.map((connection) => {
-        if (
-            connection.id !== connectionId
-            || (connection.icon && connection.icon !== 'Server')
-        ) {
+        if (connection.id !== connectionId || connection.detectedOs === normalizedOs) {
             return connection;
         }
         updated = true;
-        return { ...connection, icon: normalizedOs };
+        return { ...connection, detectedOs: normalizedOs };
     });
 
     return updated ? next : connections;
@@ -90,8 +95,12 @@ export const markConnectionErrorIfNeeded = (
     error?: string,
 ): Connection[] => {
     const current = connections.find((connection) => connection.id === connectionId);
-    if (!current) return connections;
-    if (current.status === 'error' && current.lastError === error) return connections;
+    if (!current) {
+        return connections;
+    }
+    if (current.status === 'error' && current.lastError === error) {
+        return connections;
+    }
 
     return connections.map((connection) =>
         connection.id === connectionId
@@ -118,12 +127,17 @@ export const getCloseTabPreActions = (
     connections: Connection[],
 ): CloseTabPreActions => {
     if (!tab?.connectionId) {
-        return { disconnectConnectionId: null, cancelConnectConnectionId: null, clearLocalTerminals: false };
+        return {
+            disconnectConnectionId: null,
+            cancelConnectConnectionId: null,
+            clearLocalTerminals: false,
+        };
     }
 
     if (tab.connectionId === 'local' && tab.view === 'terminal') {
         const hasOtherLocalTerminalTabs = tabs.some(
-            (item) => item.id !== tab.id && item.connectionId === 'local' && item.view === 'terminal',
+            (item) =>
+                item.id !== tab.id && item.connectionId === 'local' && item.view === 'terminal',
         );
         return {
             disconnectConnectionId: null,
@@ -136,7 +150,11 @@ export const getCloseTabPreActions = (
         (item) => item.id !== tab.id && item.connectionId === tab.connectionId,
     );
     if (hasOtherTabsForConnection) {
-        return { disconnectConnectionId: null, cancelConnectConnectionId: null, clearLocalTerminals: false };
+        return {
+            disconnectConnectionId: null,
+            cancelConnectConnectionId: null,
+            clearLocalTerminals: false,
+        };
     }
 
     const connection = connections.find((item) => item.id === tab.connectionId);
@@ -155,7 +173,11 @@ export const getCloseTabPreActions = (
         };
     }
 
-    return { disconnectConnectionId: null, cancelConnectConnectionId: null, clearLocalTerminals: false };
+    return {
+        disconnectConnectionId: null,
+        cancelConnectConnectionId: null,
+        clearLocalTerminals: false,
+    };
 };
 
 export const reduceTabCloseState = (
@@ -170,8 +192,8 @@ export const reduceTabCloseState = (
         activeTabId === closingTabId
             ? fallbackActiveTabId
             : hasCurrentActive
-                ? activeTabId
-                : fallbackActiveTabId;
+              ? activeTabId
+              : fallbackActiveTabId;
     const activeTab = nextTabs.find((tab) => tab.id === nextActiveTabId);
 
     return {

@@ -1,4 +1,4 @@
-import type { NetworkInterface, NetworkPreference } from '../domain/types.js';
+import type { LegacyKex, NetworkInterface, NetworkPreference } from '../domain/types.js';
 import { withSshVerification } from './sshVerificationIpc.js';
 
 /** Enumerate device adapters only on an explicit picker/connection request. */
@@ -57,6 +57,7 @@ export interface ConnectionConfigPayload {
     };
     jump_host: ConnectionConfigPayload | null;
     host_key_approval?: HostKeyApprovalPayload;
+    legacy_kex?: LegacyKex;
     connect_attempt_id?: string;
 }
 

@@ -18,6 +18,7 @@ use russh::client::Msg;
 use tokio::net::TcpStream;
 
 pub(crate) mod keyboard_interactive;
+pub(crate) mod legacy_kex;
 
 const MAX_FORWARDED_AGENT_PACKET_SIZE: usize = 256 * 1024;
 const AGENT_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -804,11 +805,12 @@ impl SshManager {
         verification: Option<&keyboard_interactive::Attempt>,
     ) -> Result<(client::Handle<Client>, Option<String>, String)> {
         // Keep-alive: send a heartbeat every 60s to prevent NAT/firewall timeouts on idle sessions
-        let client_config = client::Config {
+        let mut client_config = client::Config {
             keepalive_interval: Some(std::time::Duration::from_secs(60)),
             keepalive_max: 3,
             ..Default::default()
         };
+        legacy_kex::apply(&mut client_config, config.legacy_kex);
         let client_config = Arc::new(client_config);
         let forwarded_agent = self.load_forwarded_agent(&config).await?;
         let auth_banner = Arc::new(Mutex::new(String::new()));
@@ -861,7 +863,9 @@ impl SshManager {
 
             // russh::client::connect_stream takes stream and handler
             let mut session =
-                russh::client::connect_stream(client_config, stream, client_handler).await?;
+                russh::client::connect_stream(client_config, stream, client_handler)
+                    .await
+                    .map_err(|error| legacy_kex::challenge(error, &config))?;
 
             // 5. Authenticate (Target)
             self.authenticate_session(&mut session, &config, verification)
@@ -899,7 +903,9 @@ impl SshManager {
         if client_config.nodelay {
             stream.set_nodelay(true)?;
         }
-        let mut session = client::connect_stream(client_config, stream, client_handler).await?;
+        let mut session = client::connect_stream(client_config, stream, client_handler)
+            .await
+            .map_err(|error| legacy_kex::challenge(error, &config))?;
 
         self.authenticate_session(&mut session, &config, verification)
             .await?;
@@ -1583,6 +1589,7 @@ mod tests {
                     }),
                     jump_host: None,
                     host_key_approval: None,
+                    legacy_kex: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,
@@ -1656,6 +1663,7 @@ mod tests {
                     agent_forwarding: None,
                     jump_host: None,
                     host_key_approval: None,
+                    legacy_kex: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,
@@ -1679,6 +1687,7 @@ mod tests {
                     agent_forwarding: None,
                     jump_host: None,
                     host_key_approval: None,
+                    legacy_kex: None,
                     connect_attempt_id: None,
                     certificate_path: None,
                     network_interface_id: None,

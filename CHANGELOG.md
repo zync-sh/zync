@@ -4,6 +4,36 @@ All notable changes to Zync are documented in this file. The format is based on 
 
 ## [Unreleased]
 
+## [2.41.2] - 2026-11-23
+
+### Added
+
+- **Legacy SSH key exchange (issue #154).** When a host or jump host requires a
+  supported legacy key exchange algorithm, Zync names the algorithm and offers
+  **Allow & retry**. Modern algorithms stay preferred and host-key verification
+  still applies. Saved exceptions are scoped to the profile and endpoint on
+  this device and can be removed in **Edit host → Advanced**.
+  ([88cd7825], [d1b18e8f])
+
+### Changed
+
+- **Host Appearance.** Add and Edit host show a live preview of the host name,
+  icon and color label. The searchable icon picker includes **Automatic**,
+  which uses the OS detected when you connect. The Host and Port fields fit
+  better in narrow windows. ([dc45c276])
+
+### Fixed
+
+- **Automatic host icons.** Automatic icons update when Zync detects a different
+  OS, and manually chosen icons stay selected. Host imports keep the detected
+  OS when the endpoint and resolved jump route match the saved host. ([dc45c276])
+- **Host sync restore.** Clears the cached OS when a host's address, port or
+  jump route changes and preserves the selected icon. ([5f765fc7])
+- **SSH agent build warnings.** Provider variants are compiled on the platforms
+  that use them. ([72ef282c])
+
+## [2.41.1] - 2026-11-22
+
 ### Added
 
 - **SSH agent authentication** lets connections sign in with keys held by the
@@ -3164,7 +3194,12 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [840afc2]: https://github.com/zync-sh/zync/commit/840afc2
 [193f568]: https://github.com/zync-sh/zync/commit/193f568
 [4e3c5ff]: https://github.com/zync-sh/zync/commit/4e3c5ff
-[Unreleased]: https://github.com/zync-sh/zync/compare/v2.40.0...HEAD
+[72ef282c]: https://github.com/zync-sh/zync/commit/72ef282cf48c46f3b3f483c6628963b5f9911516
+[88cd7825]: https://github.com/zync-sh/zync/commit/88cd78251ba40630d033a5d8a33e62dec4ac3cd9
+[d1b18e8f]: https://github.com/zync-sh/zync/commit/d1b18e8f2ff4994414ec5dd8cf1bfad053411dea
+[Unreleased]: https://github.com/zync-sh/zync/compare/v2.41.2...HEAD
+[2.41.2]: https://github.com/zync-sh/zync/compare/v2.41.1...v2.41.2
+[2.41.1]: https://github.com/zync-sh/zync/compare/v2.40.0...v2.41.1
 [2.40.0]: https://github.com/zync-sh/zync/compare/v2.39.0...v2.40.0
 [2.39.0]: https://github.com/zync-sh/zync/compare/v2.38.2...v2.39.0
 [2.38.2]: https://github.com/zync-sh/zync/compare/v2.38.0...v2.38.2
@@ -3565,3 +3600,5 @@ Partial draft: desktop builds, AppImage Wayland strip, and APT `2.25.4` publishe
 [be5a6e46]: https://github.com/zync-sh/zync/commit/be5a6e46b0114279bd90989cc325454dae576d7e
 [a51083a9]: https://github.com/zync-sh/zync/commit/a51083a907fb7c249ff80e3dd3d8d4dbfc8a82d5
 [51255c35]: https://github.com/zync-sh/zync/commit/51255c35252cdc7f176233f99f45308c578b62ff
+[dc45c276]: https://github.com/zync-sh/zync/commit/dc45c276b4b468d9c179e383dfb6b6ccd9e414a1
+[5f765fc7]: https://github.com/zync-sh/zync/commit/5f765fc74b5fc006ba6198cba827bebc483971eb

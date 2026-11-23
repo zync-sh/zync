@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { LOCAL_TERMINAL_CONNECTION_ID } from '../../features/connections/application/tabService';
+import { resolveHostIcon } from '../../features/connections/domain/hostAppearance';
 import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
 import { useSerialProfileTabMenuItems } from '../../features/serial/ui/useSerialProfileTabMenuItems';
 import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
@@ -93,7 +94,7 @@ function getIconForTab(tab: Tab, connections: Connection[], size: 12 | 13 = 12) 
     const iconClassName = size === 13 ? 'w-[13px] h-[13px]' : 'w-[12px] h-[12px]';
     return (
         <OSIcon
-            icon={conn?.icon || 'Server'}
+            icon={resolveHostIcon(conn)}
             className={iconClassName}
         />
     );
@@ -391,7 +392,7 @@ export function TabBar({ contentMenuItems }: { contentMenuItems?: ContentMenuIte
                                     username: connection.username,
                                     folder: connection.folder,
                                     isFavorite: connection.isFavorite,
-                                    icon: connection.icon,
+                                    icon: resolveHostIcon(connection),
                                 }))}
                                 open={{
                                     portForwardingOpen: tabs.some(

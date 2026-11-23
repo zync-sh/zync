@@ -19,6 +19,14 @@ import { connectWithHostKeyVerification } from '../../features/connections/appli
 import type { KeyPassphraseRetention } from '../../features/connections/application/keyPassphrasePrompt';
 import { stageKeyPassphraseForNextConnect } from '../../features/connections/application/keyPassphraseRuntime';
 import {
+    type LegacyKex,
+    LegacyKexDeclinedError,
+    readLegacyKex,
+    type SshEndpoint,
+    sameSshEndpoint,
+    writeLegacyKex,
+} from '../../features/connections/application/legacyKeyExchange';
+import {
     cancelNetworkPrompts,
     NetworkSelectionCancelledError,
     persistHostWithNetwork,
@@ -36,6 +44,10 @@ import {
 } from '../../features/connections/domain';
 import { connectionFailureSummary } from '../../features/connections/domain/formPresentation';
 import { connectionTestDependencies } from '../../features/connections/domain/formTransforms';
+import {
+    isSameHostAppearanceTarget,
+    resolveHostIcon,
+} from '../../features/connections/domain/hostAppearance';
 import {
     type ConnectionConfigPayload,
     deleteEphemeralKeyIpc,
@@ -71,12 +83,12 @@ import { SshAgentPanel } from '../connections/SshAgentPanel';
 import { useHostNetworkPreference } from '../connections/useHostNetworkPreference';
 import { OSIcon } from '../icons/OSIcon';
 import { Button } from '../ui/Button';
-import { IconButton } from '../ui/IconButton';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { Select } from '../ui/Select';
 import { Switch } from '../ui/Switch';
 import { Toolbar } from '../ui/Toolbar';
+import { HostAppearanceFields } from './HostAppearanceFields';
 import { useAutoVault } from './useAutoVault';
 import { useConnectionForm } from './useConnectionForm';
 import { type PrivateKeyInspectionState, usePrivateKeyInspection } from './usePrivateKeyInspection';
@@ -91,41 +103,6 @@ interface AddConnectionModalProps {
     onClose: () => void;
     editingConnectionId: string | null;
 }
-
-const ICONS = [
-    'Server',
-    'Database',
-    'Cloud',
-    'Terminal',
-    'Code',
-    'Box',
-    'Monitor',
-    'Globe',
-    'HardDrive',
-    'Ubuntu',
-    'Debian',
-    'CentOS',
-    'Arch',
-    'Kali',
-    'macOS',
-    'Windows',
-    'Linux',
-    'AWS',
-    'Jenkins',
-    'MongoDB',
-    'Nginx',
-    'PostgreSQL',
-    'MySql',
-];
-
-const THEMES = [
-    { id: '', label: 'Default', color: 'bg-app-surface border-app-border' },
-    { id: 'red', label: 'Pro', color: 'bg-red-500/20 border-red-500' },
-    { id: 'blue', label: 'Dev', color: 'bg-blue-500/20 border-blue-500' },
-    { id: 'green', label: 'Test', color: 'bg-emerald-500/20 border-emerald-500' },
-    { id: 'orange', label: 'Stg', color: 'bg-orange-500/20 border-orange-500' },
-    { id: 'purple', label: 'App', color: 'bg-purple-500/20 border-purple-500' },
-];
 
 const PICK_AGENT_FORWARDING_KEY = '$pick-agent-forwarding-key';
 
@@ -338,6 +315,24 @@ export function AddConnectionModal({
     const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [testMessage, setTestMessage] = useState('');
     const [pendingTestOwner, setPendingTestOwner] = useState<string | null>(null);
+    const [legacyKexDraft, setLegacyKexDraft] = useState<{
+        endpoint: SshEndpoint;
+        algorithm?: LegacyKex;
+    } | null>(null);
+    const formEndpoint: SshEndpoint = {
+        id: activeEditingConnectionId || formData.id || '',
+        host: formData.host ?? '',
+        port: Number(formData.port || 22),
+    };
+    const matchingLegacyKexDraft =
+        legacyKexDraft && sameSshEndpoint(formEndpoint, legacyKexDraft.endpoint)
+            ? legacyKexDraft
+            : null;
+    const effectiveLegacyKex = matchingLegacyKexDraft
+        ? matchingLegacyKexDraft.algorithm
+        : activeEditingConnectionId
+          ? readLegacyKex(formEndpoint)
+          : undefined;
     const isTestPending = pendingTestOwner !== null;
     const testAttempt = useRef({
         generation: 0,
@@ -348,6 +343,7 @@ export function AddConnectionModal({
     testScope.current = { isOpen, connectionId: activeEditingConnectionId };
     useEffect(() => {
         setPendingTestOwner(null);
+        setLegacyKexDraft(null);
         return () => {
             testAttempt.current.generation++;
             if (testAttempt.current.ownerId) {
@@ -359,7 +355,6 @@ export function AddConnectionModal({
     const [isAppearanceOpen, setIsAppearanceOpen] = useState(false);
     const network = useHostNetworkPreference(isOpen, activeEditingConnectionId);
     const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
-    const [showAllIcons, setShowAllIcons] = useState(false);
     const [isCertificateOpen, setIsCertificateOpen] = useState(false);
     const [entryMode, setEntryMode] = useState<'chooser' | 'manual'>('chooser');
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -484,7 +479,6 @@ export function AddConnectionModal({
         setIsAdvancedOpen(false);
         setIsCertificateOpen(false);
         setEntryMode(activeEditingConnectionId ? 'manual' : 'chooser');
-        setShowAllIcons(false);
         setIsSaving(false);
         setIsForgettingKeyPassphrase(false);
         setKeyInspectionRevision(0);
@@ -605,13 +599,11 @@ export function AddConnectionModal({
         keyInspectionReady &&
         selectedForwardingKeyAvailable &&
         !needsForwardingKeyPick;
-    const selectedIcon = formData.icon || 'Server';
-    const compactIcons = ICONS.slice(0, 12);
-    const visibleIcons = showAllIcons
-        ? ICONS
-        : compactIcons.includes(selectedIcon)
-          ? compactIcons
-          : [...compactIcons, selectedIcon];
+    const savedAppearanceHost = connections.find((host) => host.id === activeEditingConnectionId);
+    const detectedOs =
+        savedAppearanceHost && isSameHostAppearanceTarget(savedAppearanceHost, formData)
+            ? savedAppearanceHost.detectedOs
+            : undefined;
 
     const needsVaultUnlock =
         authMethod === 'vault' ||
@@ -651,6 +643,19 @@ export function AddConnectionModal({
         const persist = () =>
             activeEditingConnectionId ? editConnection(connection) : addConnection(connection);
         await persistHostWithNetwork(connection.id, network.value, persist);
+        if (
+            matchingLegacyKexDraft &&
+            sameSshEndpoint({ ...connection, id: formEndpoint.id }, matchingLegacyKexDraft.endpoint)
+        ) {
+            try {
+                writeLegacyKex(connection, matchingLegacyKexDraft.algorithm);
+            } catch {
+                showToast(
+                    'info',
+                    'Host saved, but the legacy SSH exception could not be updated on this device.',
+                );
+            }
+        }
     };
 
     /** Prepare credentials, then persist routing and the host through one ordered save boundary. */
@@ -658,7 +663,7 @@ export function AddConnectionModal({
         if (!network.ready) {
             return null;
         }
-        if (isSaving && !retryAfterUnlock) {
+        if ((isSaving && !retryAfterUnlock) || isTestPending) {
             return null;
         }
         setIsSaving(true);
@@ -942,6 +947,7 @@ export function AddConnectionModal({
             testScope.current.connectionId === activeEditingConnectionId &&
             currentTestInputs.current === testInputs;
         let ephemeralTestPath: string | null = null;
+        let legacyExceptionPendingSave = false;
         try {
             // Existing vault credential still needs unlock; paste/import test uses ephemeral file (no vault write).
             // Skip on retryAfterUnlock. requestUnlock already refreshed vault state.
@@ -1002,12 +1008,30 @@ export function AddConnectionModal({
                     return testConnectionIpc(candidate, controller.signal);
                 },
                 async (options) => isCurrent() && (await showConfirmDialog(options)),
+                {
+                    load: (endpoint) =>
+                        sameSshEndpoint(endpoint, config) && matchingLegacyKexDraft
+                            ? matchingLegacyKexDraft.algorithm
+                            : readLegacyKex(endpoint),
+                    savedWhen: (endpoint) =>
+                        sameSshEndpoint(endpoint, config) ? 'on-save' : undefined,
+                    onSuccess: (endpoint, algorithm) => {
+                        if (isCurrent() && sameSshEndpoint(endpoint, config)) {
+                            setLegacyKexDraft({ endpoint: formEndpoint, algorithm });
+                            legacyExceptionPendingSave = true;
+                        }
+                    },
+                },
             );
             if (!isCurrent()) {
                 return;
             }
             setTestStatus('success');
-            setTestMessage('Connection successful!');
+            setTestMessage(
+                legacyExceptionPendingSave
+                    ? 'Connection successful. Save this host to remember the legacy SSH exception.'
+                    : 'Connection successful!',
+            );
         } catch (error: unknown) {
             if (!isCurrent()) {
                 return;
@@ -1025,6 +1049,7 @@ export function AddConnectionModal({
                 return;
             }
             if (
+                error instanceof LegacyKexDeclinedError ||
                 error instanceof NetworkSelectionCancelledError ||
                 error instanceof SshVerificationCancelledError
             ) {
@@ -1216,7 +1241,7 @@ export function AddConnectionModal({
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
                             <section className="rounded-xl border border-app-border/60 bg-app-surface/25 p-4 space-y-4">
                                 <h4 className="text-sm font-semibold text-app-text">Connection</h4>
-                                <div className="grid grid-cols-[1fr_7rem] gap-4">
+                                <div className="grid grid-cols-[minmax(0,1fr)_5rem] gap-3 sm:grid-cols-[minmax(0,1fr)_7rem] sm:gap-4">
                                     <Input
                                         label="Host"
                                         placeholder="example.com or IP address"
@@ -1993,7 +2018,9 @@ export function AddConnectionModal({
                                             Appearance
                                         </h4>
                                         <p className="mt-1 text-xs text-app-muted">
-                                            Color and icon
+                                            {formData.icon
+                                                ? 'Custom icon and color label'
+                                                : 'Automatic icon and color label'}
                                         </p>
                                     </div>
                                     {isAppearanceOpen ? (
@@ -2009,97 +2036,22 @@ export function AddConnectionModal({
                                     )}
                                 </button>
                                 {isAppearanceOpen && (
-                                    <div className="space-y-4 px-4 pb-4">
-                                        <div>
-                                            <div>
-                                                <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block mb-2">
-                                                    Color Label
-                                                </label>
-                                                <div className="flex gap-2">
-                                                    {THEMES.map((theme) => (
-                                                        <button
-                                                            key={theme.id}
-                                                            onClick={() =>
-                                                                setFormData({
-                                                                    ...formData,
-                                                                    theme: theme.id,
-                                                                })
-                                                            }
-                                                            className={cn(
-                                                                'h-9 w-9 rounded-full border-2 transition-all flex items-center justify-center',
-                                                                theme.color,
-                                                                formData.theme === theme.id
-                                                                    ? 'ring-2 ring-white scale-110'
-                                                                    : 'opacity-70 hover:opacity-100 hover:scale-105',
-                                                            )}
-                                                            title={theme.label}
-                                                            aria-label={theme.label}
-                                                            aria-pressed={
-                                                                formData.theme === theme.id
-                                                            }
-                                                        >
-                                                            {formData.theme === theme.id && (
-                                                                <div className="w-2.5 h-2.5 rounded-full bg-white/80" />
-                                                            )}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-xs font-semibold text-app-muted uppercase tracking-wider block">
-                                                    Icon
-                                                </label>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    type="button"
-                                                    className="text-app-accent"
-                                                    onClick={() => setShowAllIcons((prev) => !prev)}
-                                                >
-                                                    {showAllIcons ? 'Show less' : 'Show more'}
-                                                </Button>
-                                            </div>
-                                            <div className="grid grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-2">
-                                                {visibleIcons.map((iconName) => (
-                                                    <IconButton
-                                                        key={iconName}
-                                                        label={iconName}
-                                                        icon={
-                                                            <OSIcon
-                                                                icon={iconName}
-                                                                className="w-5 h-5"
-                                                            />
-                                                        }
-                                                        size="md"
-                                                        aria-pressed={
-                                                            (
-                                                                formData.icon || 'Server'
-                                                            ).toLowerCase() ===
-                                                            iconName.toLowerCase()
-                                                        }
-                                                        onClick={() =>
-                                                            setFormData({
-                                                                ...formData,
-                                                                icon: iconName,
-                                                            })
-                                                        }
-                                                        className={cn(
-                                                            'w-full border',
-                                                            (
-                                                                formData.icon || 'Server'
-                                                            ).toLowerCase() ===
-                                                                iconName.toLowerCase()
-                                                                ? 'bg-app-accent/20 border-app-accent text-app-accent'
-                                                                : 'bg-app-bg border-app-border text-app-muted',
-                                                        )}
-                                                        title={iconName}
-                                                    />
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <HostAppearanceFields
+                                        name={
+                                            formData.name?.trim() ||
+                                            formData.host?.trim() ||
+                                            'New host'
+                                        }
+                                        icon={formData.icon}
+                                        detectedOs={detectedOs}
+                                        theme={formData.theme}
+                                        onIconChange={(icon) =>
+                                            setFormData((draft) => ({ ...draft, icon }))
+                                        }
+                                        onThemeChange={(theme) =>
+                                            setFormData((draft) => ({ ...draft, theme }))
+                                        }
+                                    />
                                 )}
                             </section>
 
@@ -2148,6 +2100,30 @@ export function AddConnectionModal({
                                 </button>
                                 {isAdvancedOpen && (
                                     <div className="space-y-4 px-4 pb-4">
+                                        {effectiveLegacyKex && (
+                                            <div className="space-y-1 rounded-lg border border-app-border p-3">
+                                                <p className="text-sm font-medium">
+                                                    Legacy SSH key exchange
+                                                </p>
+                                                <p className="break-all text-xs text-app-muted">
+                                                    {effectiveLegacyKex}
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    className="text-xs font-medium underline"
+                                                    disabled={isTestPending || isSaving}
+                                                    onClick={() => {
+                                                        setLegacyKexDraft({
+                                                            endpoint: formEndpoint,
+                                                        });
+                                                        setTestStatus('idle');
+                                                        setTestMessage('');
+                                                    }}
+                                                >
+                                                    Remove exception on save
+                                                </button>
+                                            </div>
+                                        )}
                                         <div className="space-y-2">
                                             <NetworkInterfaceControl
                                                 value={network.value}
@@ -2195,7 +2171,7 @@ export function AddConnectionModal({
                                                             icon: (
                                                                 <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border">
                                                                     <OSIcon
-                                                                        icon={c.icon || 'Server'}
+                                                                        icon={resolveHostIcon(c)}
                                                                         className="w-3.5 h-3.5"
                                                                     />
                                                                 </div>
@@ -2428,7 +2404,9 @@ export function AddConnectionModal({
                                         type="button"
                                         variant="secondary"
                                         size="sm"
-                                        disabled={!canSave || isSaving || !network.ready}
+                                        disabled={
+                                            !canSave || isSaving || isTestPending || !network.ready
+                                        }
                                         isLoading={isSaving}
                                         onClick={handleSave}
                                     >
@@ -2438,7 +2416,9 @@ export function AddConnectionModal({
                                         type="button"
                                         variant="primary"
                                         size="sm"
-                                        disabled={!canSave || isSaving || !network.ready}
+                                        disabled={
+                                            !canSave || isSaving || isTestPending || !network.ready
+                                        }
                                         onClick={handleSaveAndConnect}
                                     >
                                         Save & Connect

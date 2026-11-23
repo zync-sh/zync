@@ -9,6 +9,7 @@ import {
     SELF_AGENT_FORWARDING_KEY,
     validateConnectionDraft,
 } from '../../features/connections/domain';
+import { hostIconOverride } from '../../features/connections/domain/hostAppearance';
 import { Connection, useAppStore } from '../../store/useAppStore';
 
 const EMPTY_FORM: Partial<Connection> = {
@@ -19,7 +20,6 @@ const EMPTY_FORM: Partial<Connection> = {
     password: '',
     privateKeyPath: '',
     jumpServerId: undefined,
-    icon: 'Server',
     agentForwardingKeyConnectionId: undefined,
     folder: '',
     theme: '',
@@ -100,7 +100,7 @@ export function useConnectionForm(isOpen: boolean, editingConnectionId: string |
                         conn.agentForwardingKeyConnectionId === conn.id
                             ? SELF_AGENT_FORWARDING_KEY
                             : conn.agentForwardingKeyConnectionId,
-                    icon: conn.icon || 'Server',
+                    icon: hostIconOverride(conn.icon),
                     tags: conn.tags || [],
                 });
                 authMethodRef.current = nextAuthMethod;
