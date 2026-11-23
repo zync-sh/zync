@@ -139,6 +139,8 @@ pub struct SavedConnection {
     pub jump_server_id: Option<String>,
     pub last_connected: Option<u64>,
     pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_os: Option<String>,
     pub folder: Option<String>,
     pub theme: Option<String>,
     pub tags: Option<Vec<String>>,

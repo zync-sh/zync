@@ -314,7 +314,7 @@ export function useDashboardMetrics(options: {
         if (connectionId !== 'local' && sample.info.os) {
             void useAppStore
                 .getState()
-                .setConnectionIconIfMissing(connectionId, detectOSIcon(sample.info.os))
+                .setDetectedOsIfMissing(connectionId, detectOSIcon(sample.info.os))
                 .catch((error) => console.warn('Could not save detected host icon:', error));
         }
     }, [reading]);

@@ -163,6 +163,7 @@ pub fn apply_hosts_restore_records(
             jump_server_id: record.jump_server_id.clone(),
             last_connected: Some(host_timestamp_from_sync(record.updated_at)),
             icon: None,
+            detected_os: None,
             folder: record.folder.clone(),
             theme: None,
             tags: if record.tags.is_empty() {
@@ -282,6 +283,7 @@ mod tests {
             jump_server_id: None,
             last_connected: Some(1),
             icon: None,
+            detected_os: None,
             folder: None,
             theme: None,
             tags: None,

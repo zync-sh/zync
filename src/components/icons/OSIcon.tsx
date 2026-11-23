@@ -1,5 +1,17 @@
-import { memo, useState, useEffect } from 'react';
-import { Server, Database, Monitor, Cloud, Box, HardDrive, Globe, Code, Terminal, Cpu } from 'lucide-react';
+import {
+    Box,
+    Cloud,
+    Code,
+    Cpu,
+    Database,
+    Globe,
+    HardDrive,
+    type LucideIcon,
+    Monitor,
+    Server,
+    Terminal,
+} from 'lucide-react';
+import { memo, useEffect, useState } from 'react';
 
 interface OSIconProps {
     icon: string;
@@ -12,21 +24,47 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
 
     // List of available custom icons
     const availableIcons = [
-        'ubuntu', 'debian', 'centos', 'arch', 'kali', 'linux', 'macos', 'redhat', 'windows',
-        'aws', 'jenkins', 'mongodb', 'nginx', 'postgresql', 'database', "mysql"
+        'ubuntu',
+        'debian',
+        'centos',
+        'arch',
+        'kali',
+        'linux',
+        'macos',
+        'redhat',
+        'windows',
+        'aws',
+        'jenkins',
+        'mongodb',
+        'nginx',
+        'postgresql',
+        'database',
+        'mysql',
     ];
 
     // Icons that use SVG format
-    const svgIcons = ['aws', 'jenkins', 'mongodb', "mysql"];
+    const svgIcons = ['aws', 'jenkins', 'mongodb', 'mysql'];
 
     // Specific mapping for variations
     let iconName = type;
-    if (type === 'apple' || type === 'darwin') iconName = 'macos';
-    if (type === 'rhel' || type === 'fedora' || type === 'alma' || type === 'rocky') iconName = 'redhat';
-    if (type === 'manjaro') iconName = 'arch';
-    if (type === 'pop' || type === 'mint') iconName = 'ubuntu';
-    if (type === 'raspbian') iconName = 'debian';
-    if (type === 'alpine' || type === 'amazon') iconName = 'linux';
+    if (type === 'apple' || type === 'darwin') {
+        iconName = 'macos';
+    }
+    if (type === 'rhel' || type === 'fedora' || type === 'alma' || type === 'rocky') {
+        iconName = 'redhat';
+    }
+    if (type === 'manjaro') {
+        iconName = 'arch';
+    }
+    if (type === 'pop' || type === 'mint') {
+        iconName = 'ubuntu';
+    }
+    if (type === 'raspbian') {
+        iconName = 'debian';
+    }
+    if (type === 'alpine' || type === 'amazon') {
+        iconName = 'linux';
+    }
 
     const [imageError, setImageError] = useState(false);
 
@@ -36,7 +74,7 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
     }, [icon]);
 
     // Default Mapping for Lucide Icons
-    const IconMap: any = {
+    const IconMap: Record<string, LucideIcon> = {
         server: Server,
         database: Database,
         monitor: Monitor,
@@ -46,10 +84,10 @@ export const OSIcon = memo(function OSIcon({ icon, className }: OSIconProps) {
         globe: Globe,
         code: Code,
         terminal: Terminal,
-        cpu: Cpu
+        cpu: Cpu,
     };
 
-    const IconComp = IconMap[type] || Server;
+    const IconComp = Object.prototype.hasOwnProperty.call(IconMap, type) ? IconMap[type] : Server;
     const isCustom = availableIcons.includes(iconName);
     const showImage = isCustom && !imageError;
 

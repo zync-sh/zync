@@ -62,6 +62,10 @@ import {
 } from '../features/connections/domain';
 import { DEFAULT_SHOW_HOST_ADDRESSES_IN_LISTS } from '../features/connections/domain/connectionDisplay.js';
 import { connectionErrorMessage } from '../features/connections/domain/errorSanitization';
+import {
+    hostIconOverride,
+    isSameHostAppearanceTarget,
+} from '../features/connections/domain/hostAppearance';
 import { CONNECTIONS_CLEARED_EVENT } from '../features/connections/domain/hostInventoryCache';
 import type { Connection, CoreTabView, Folder, Tab } from '../features/connections/domain/types.js';
 import {
@@ -181,8 +185,8 @@ export interface ConnectionSlice {
     // Actions
     addConnection: (conn: Connection, isTemp?: boolean) => Promise<void>;
     editConnection: (conn: Connection) => Promise<void>;
-    /** Fills a missing sampled icon without replacing other current host fields. */
-    setConnectionIconIfMissing: (id: string, icon: string) => Promise<void>;
+    /** Fills missing OS metadata without replacing other current host fields. */
+    setDetectedOsIfMissing: (id: string, detectedOs: string) => Promise<void>;
     deleteConnection: (id: string) => void;
     importConnections: (conns: Connection[] | ImportPlanItem[], importedFolders?: Folder[]) => void;
     clearConnections: () => void;
@@ -365,12 +369,22 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     editConnection: async (updatedConn) => {
-        const preSave = upsertConnectionInState(get(), updatedConn);
-        await saveToMain(preSave.connections, preSave.folders);
+        const mergeEdit = () => {
+            const state = get();
+            const existing = state.connections.find(
+                (connection) => connection.id === updatedConn.id,
+            );
+            const detectedOs =
+                existing && isSameHostAppearanceTarget(existing, updatedConn)
+                    ? existing.detectedOs
+                    : undefined;
+            return upsertConnectionInState(state, { ...updatedConn, detectedOs });
+        };
+        await queueConnectionSave(mergeEdit);
         const latestExisting = get().connections.find(
             (connection) => connection.id === updatedConn.id,
         );
-        const merged = upsertConnectionInState(get(), updatedConn);
+        const merged = mergeEdit();
         if (latestExisting && hasRemoteTargetChanged(latestExisting, updatedConn)) {
             clearRemoteShellCache(updatedConn.id);
         }
@@ -378,26 +392,26 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
     },
 
     /** Claims automatic metadata synchronously and reconciles after earlier queued manual saves. */
-    setConnectionIconIfMissing: async (id, icon) => {
-        if (!icon) {
+    setDetectedOsIfMissing: async (id, detectedOs) => {
+        if (!detectedOs) {
             return;
         }
         let applied: Connection | undefined;
         let source: Connection | undefined;
-        let previousIcon: string | undefined;
-        /** Patches only a still-missing icon on an existing current host. */
-        const applyMissingIcon = () =>
+        let previousDetectedOs: string | undefined;
+        /** Fills in OS metadata for an automatic icon on an existing current host. */
+        const applyMissingDetectedOs = () =>
             set((state) => {
                 const current = state.connections.find((connection) => connection.id === id);
-                if (!current || current.icon) {
+                if (!current || hostIconOverride(current.icon) || current.detectedOs) {
                     return state;
                 }
                 if (source && hasRemoteTargetChanged(source, current)) {
                     return state;
                 }
                 source ??= current;
-                previousIcon = current.icon;
-                const updated = { ...current, icon };
+                previousDetectedOs = current.detectedOs;
+                const updated = { ...current, detectedOs };
                 applied = updated;
                 return {
                     connections: state.connections.map((connection) =>
@@ -405,15 +419,15 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     ),
                 };
             });
-        applyMissingIcon();
+        applyMissingDetectedOs();
         if (!applied) {
             return;
         }
         try {
             await queueConnectionSave(() => {
                 // An earlier manual edit can publish after the optimistic claim.
-                // Reapply only if its current icon is still missing; never upsert.
-                applyMissingIcon();
+                // Reapply only if the current host still needs OS metadata.
+                applyMissingDetectedOs();
                 return get();
             });
         } catch (error) {
@@ -422,7 +436,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                     ? {
                           connections: state.connections.map((connection) =>
                               connection === applied
-                                  ? { ...connection, icon: previousIcon }
+                                  ? { ...connection, detectedOs: previousDetectedOs }
                                   : connection,
                           ),
                       }
@@ -534,10 +548,20 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                         );
                         if (targetIndex >= 0) {
                             const existing = nextConnections[targetIndex];
+                            const jumpServerId = resolveJumpServerId(
+                                normalizedConnection.jumpServerId,
+                                existing.jumpServerId,
+                            );
                             const preservedMetadata: Partial<Connection> = {
                                 isFavorite: existing.isFavorite,
                                 pinnedFeatures: existing.pinnedFeatures,
                                 icon: existing.icon,
+                                detectedOs: isSameHostAppearanceTarget(existing, {
+                                    ...normalizedConnection,
+                                    jumpServerId,
+                                })
+                                    ? existing.detectedOs
+                                    : undefined,
                                 lastConnected: existing.lastConnected,
                                 homePath: existing.homePath,
                                 createdAt: existing.createdAt,
@@ -551,10 +575,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
                                 ...preservedMetadata,
                                 id: existing.id,
                                 status: existing.status,
-                                jumpServerId: resolveJumpServerId(
-                                    normalizedConnection.jumpServerId,
-                                    existing.jumpServerId,
-                                ),
+                                jumpServerId,
                             };
                             return;
                         }
@@ -653,7 +674,7 @@ export const createConnectionSlice: StateCreator<AppStore, [], [], ConnectionSli
             if (connections === state.connections) {
                 return state;
             }
-            saveToMain(connections, state.folders);
+            void queueConnectionSave(get);
             return { connections };
         });
     },

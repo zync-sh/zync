@@ -68,7 +68,10 @@ export interface Connection {
     /** Saved connection whose private key may be offered to this host's forwarded agent. */
     agentForwardingKeyConnectionId?: string;
     lastConnected?: number;
+    /** Explicit appearance choice. Missing means the icon follows detectedOs. */
     icon?: string;
+    /** Last OS identity observed on the saved SSH target. */
+    detectedOs?: string;
     folder?: string;
     theme?: string;
     tags?: string[];

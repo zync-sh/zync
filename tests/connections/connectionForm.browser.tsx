@@ -21,6 +21,7 @@ import '../uiOverlays.browser.css';
 
 const keyHost: Connection = {
     id: 'fixture-key',
+    detectedOs: 'ubuntu',
     name: 'Lab',
     host: 'fixture.invalid',
     port: 22222,

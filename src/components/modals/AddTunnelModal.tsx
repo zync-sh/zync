@@ -1,22 +1,24 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Laptop, Server as ServerIcon, Plus, Trash2 } from 'lucide-react';
-import { TunnelTypeStep } from './tunnel/TunnelTypeStep';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ArrowLeft, Laptop, Plus, Server as ServerIcon, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
+import { resolveHostIcon } from '../../features/connections/domain/hostAppearance';
+import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
 import {
     DYNAMIC_REMOTE_HOST,
     DYNAMIC_REMOTE_PORT,
     defaultTunnelName,
     type TunnelType,
 } from '../../features/tunnels/domain/tunnelTypes';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useAppStore, type Connection, type TunnelConfig } from '../../store/useAppStore';
+import { type Connection, type TunnelConfig, useAppStore } from '../../store/useAppStore';
+import { OSIcon } from '../icons/OSIcon';
 import { Button } from '../ui/Button';
+import { GroupSelector } from '../ui/GroupSelector';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { Select } from '../ui/Select';
-import { GroupSelector } from '../ui/GroupSelector';
-import { OSIcon } from '../icons/OSIcon';
-import { getConnectionDisplayLabels } from '../../features/connections/domain/connectionDisplay';
-import { useShowHostAddressesInLists } from '../../features/connections/presentation/useConnectionDisplayLabels';
+import { TunnelTypeStep } from './tunnel/TunnelTypeStep';
 
 type WizardStep = 'type' | 'form';
 
@@ -37,18 +39,25 @@ interface AddTunnelModalProps {
     editingTunnel?: TunnelConfig | null;
 }
 
-export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTunnel }: AddTunnelModalProps) {
-    const connections = useAppStore(state => state.connections);
-    const tunnels = useAppStore(state => state.tunnels);
+export function AddTunnelModal({
+    isOpen,
+    onClose,
+    initialConnectionId,
+    editingTunnel,
+}: AddTunnelModalProps) {
+    const connections = useAppStore((state) => state.connections);
+    const tunnels = useAppStore((state) => state.tunnels);
     const showToast = useAppStore((state) => state.showToast);
     const showHostAddressesInLists = useShowHostAddressesInLists();
 
-    const existingGroups = Array.from(new Set(
-        Object.values(tunnels)
-            .flat()
-            .map(t => t.group)
-            .filter((g): g is string => !!g)
-    )).sort();
+    const existingGroups = Array.from(
+        new Set(
+            Object.values(tunnels)
+                .flat()
+                .map((t) => t.group)
+                .filter((g): g is string => !!g),
+        ),
+    ).sort();
 
     const [step, setStep] = useState<WizardStep>('type');
     const [mode, setMode] = useState<'single' | 'bulk'>('single');
@@ -62,11 +71,16 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
     const [bindAddress, setBindAddress] = useState('127.0.0.1');
     const [autoStart, setAutoStart] = useState(false);
 
-    const [bulkRows, setBulkRows] = useState<Array<{ type: 'local' | 'remote', localPort: string, remoteHost: string, remotePort: string }>>([
-        { type: 'local', localPort: '8080', remoteHost: '127.0.0.1', remotePort: '80' }
-    ]);
+    const [bulkRows, setBulkRows] = useState<
+        Array<{
+            type: 'local' | 'remote';
+            localPort: string;
+            remoteHost: string;
+            remotePort: string;
+        }>
+    >([{ type: 'local', localPort: '8080', remoteHost: '127.0.0.1', remotePort: '80' }]);
 
-    const saveTunnel = useAppStore(state => state.saveTunnel);
+    const saveTunnel = useAppStore((state) => state.saveTunnel);
 
     useEffect(() => {
         if (isOpen) {
@@ -99,7 +113,9 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                 setAutoStart(false);
                 setMode('single');
                 setStep('type');
-                setBulkRows([{ type: 'local', localPort: '8080', remoteHost: '127.0.0.1', remotePort: '80' }]);
+                setBulkRows([
+                    { type: 'local', localPort: '8080', remoteHost: '127.0.0.1', remotePort: '80' },
+                ]);
             }
         }
     }, [isOpen, initialConnectionId, editingTunnel]);
@@ -144,11 +160,14 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                     bindAddress,
                     autoStart,
                     status: editingTunnel?.status || 'stopped',
-                    group: group.trim() || undefined
+                    group: group.trim() || undefined,
                 };
 
                 await saveTunnel(config);
-                showToast('success', editingTunnel ? 'Forward updated successfully' : 'Forward created successfully');
+                showToast(
+                    'success',
+                    editingTunnel ? 'Forward updated successfully' : 'Forward created successfully',
+                );
                 onClose();
             } catch (error: any) {
                 showToast('error', `Failed to save forward: ${error.message}`);
@@ -179,7 +198,7 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                         bindAddress: '127.0.0.1',
                         autoStart: false,
                         status: 'stopped',
-                        group: group.trim() || undefined
+                        group: group.trim() || undefined,
                     };
                     await saveTunnel(config);
                     successCount++;
@@ -198,19 +217,25 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
     };
 
     const hostOptions = connections
-        .filter((c: Connection) => c.host || c.id === initialConnectionId || c.id === selectedConnectionId)
+        .filter(
+            (c: Connection) =>
+                c.host || c.id === initialConnectionId || c.id === selectedConnectionId,
+        )
         .map((conn: Connection) => {
             const labels = getConnectionDisplayLabels(conn, showHostAddressesInLists);
             return {
-            value: conn.id,
-            label: labels.primary || 'Unknown Host',
-            description: conn.host ? labels.secondary : 'Local/Custom Connection',
-            icon: (
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
-                    <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5" />
-                </div>
-            ),
-        };
+                value: conn.id,
+                label: labels.primary || 'Unknown Host',
+                description: conn.host ? labels.secondary : 'Local/Custom Connection',
+                icon: (
+                    <div className="flex h-6 w-6 items-center justify-center rounded-md bg-app-surface border border-app-border text-app-text">
+                        <OSIcon
+                            icon={resolveHostIcon(conn)}
+                            className="w-3.5 h-3.5"
+                        />
+                    </div>
+                ),
+            };
         });
 
     const handleTypeChange = (nextType: TunnelType) => {
@@ -223,21 +248,20 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
     const modalTitle = editingTunnel
         ? 'Update Port Forward'
         : isTypeStep
-            ? 'Select the port forwarding type'
-            : 'Create Port Forward';
+          ? 'Select the port forwarding type'
+          : 'Create Port Forward';
 
-    const modalSubtitle = editingTunnel
-        ? undefined
-        : isTypeStep
-            ? 'Step 1 of 2'
-            : 'Step 2 of 2';
+    const modalSubtitle = editingTunnel ? undefined : isTypeStep ? 'Step 1 of 2' : 'Step 2 of 2';
 
     return (
         <Modal
             isOpen={isOpen}
             onClose={onClose}
             title={
-                <AnimatePresence mode="wait" initial={false}>
+                <AnimatePresence
+                    mode="wait"
+                    initial={false}
+                >
                     <motion.span
                         key={modalTitle}
                         initial={{ opacity: 0, y: 6 }}
@@ -252,7 +276,10 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
             }
             subtitle={
                 modalSubtitle ? (
-                    <AnimatePresence mode="wait" initial={false}>
+                    <AnimatePresence
+                        mode="wait"
+                        initial={false}
+                    >
                         <motion.span
                             key={modalSubtitle}
                             initial={{ opacity: 0, y: 4 }}
@@ -269,8 +296,14 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
             className={isTypeStep ? 'max-w-[400px]' : 'max-w-xl'}
             contentClassName="!p-0 flex flex-col overflow-hidden"
         >
-            <motion.div layout className="overflow-hidden">
-                <AnimatePresence mode="popLayout" initial={false}>
+            <motion.div
+                layout
+                className="overflow-hidden"
+            >
+                <AnimatePresence
+                    mode="popLayout"
+                    initial={false}
+                >
                     {isTypeStep ? (
                         <motion.div
                             key="type-step"
@@ -302,308 +335,402 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                             }}
                             className="space-y-4 px-5 pb-1 pt-4"
                         >
-                        {!editingTunnel && (
-                            <button
-                                type="button"
-                                onClick={() => setStep('type')}
-                                className="inline-flex items-center gap-1.5 text-xs text-app-muted transition-colors hover:text-app-text"
-                            >
-                                <ArrowLeft size={14} />
-                                Change type
-                                <span className="rounded-md bg-app-surface px-1.5 py-0.5 font-mono text-[10px] text-app-muted">
-                                    {TYPE_LABELS[type]}
-                                </span>
-                            </button>
-                        )}
+                            {!editingTunnel && (
+                                <button
+                                    type="button"
+                                    onClick={() => setStep('type')}
+                                    className="inline-flex items-center gap-1.5 text-xs text-app-muted transition-colors hover:text-app-text"
+                                >
+                                    <ArrowLeft size={14} />
+                                    Change type
+                                    <span className="rounded-md bg-app-surface px-1.5 py-0.5 font-mono text-[10px] text-app-muted">
+                                        {TYPE_LABELS[type]}
+                                    </span>
+                                </button>
+                            )}
 
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                <Select
-                                    label="Target Server"
-                                    placeholder="Select server..."
-                                    value={selectedConnectionId}
-                                    onChange={setSelectedConnectionId}
-                                    options={hostOptions}
-                                    disabled={!!initialConnectionId}
-                                    portal={true}
-                                />
-                                <GroupSelector
-                                    label="Group (Optional)"
-                                    value={group}
-                                    onChange={setGroup}
-                                    existingGroups={existingGroups}
-                                    placeholder="e.g. Database, Web"
-                                />
-                            </div>
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <Select
+                                        label="Target Server"
+                                        placeholder="Select server..."
+                                        value={selectedConnectionId}
+                                        onChange={setSelectedConnectionId}
+                                        options={hostOptions}
+                                        disabled={!!initialConnectionId}
+                                        portal={true}
+                                    />
+                                    <GroupSelector
+                                        label="Group (Optional)"
+                                        value={group}
+                                        onChange={setGroup}
+                                        existingGroups={existingGroups}
+                                        placeholder="e.g. Database, Web"
+                                    />
+                                </div>
 
-                            <AnimatePresence mode="wait">
-                                {mode === 'single' ? (
-                                    <motion.div
-                                        key="single"
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        exit={{ opacity: 0 }}
-                                        transition={{ duration: 0.15 }}
-                                        className="space-y-4"
-                                    >
-                                        {type !== 'dynamic' && (
-                                            <div className="flex justify-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setMode('bulk')}
-                                                    className="text-xs text-app-muted hover:text-app-accent transition-colors"
-                                                >
-                                                    Add multiple forwards
-                                                </button>
+                                <AnimatePresence mode="wait">
+                                    {mode === 'single' ? (
+                                        <motion.div
+                                            key="single"
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            exit={{ opacity: 0 }}
+                                            transition={{ duration: 0.15 }}
+                                            className="space-y-4"
+                                        >
+                                            {type !== 'dynamic' && (
+                                                <div className="flex justify-end">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setMode('bulk')}
+                                                        className="text-xs text-app-muted hover:text-app-accent transition-colors"
+                                                    >
+                                                        Add multiple forwards
+                                                    </button>
+                                                </div>
+                                            )}
+
+                                            <div className="space-y-4">
+                                                {type === 'dynamic' ? (
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <Input
+                                                            label="SOCKS port"
+                                                            placeholder="1080"
+                                                            value={localPort}
+                                                            onChange={(e) =>
+                                                                setLocalPort(e.target.value)
+                                                            }
+                                                            className="font-mono text-center"
+                                                        />
+                                                        <Input
+                                                            label="Bind address"
+                                                            placeholder="127.0.0.1"
+                                                            value={bindAddress}
+                                                            onChange={(e) =>
+                                                                setBindAddress(e.target.value)
+                                                            }
+                                                            className="font-mono"
+                                                        />
+                                                    </div>
+                                                ) : type === 'local' ? (
+                                                    <div className="flex flex-wrap items-end gap-x-2 gap-y-3">
+                                                        <div className="w-[88px] shrink-0">
+                                                            <Input
+                                                                label="Local port"
+                                                                placeholder="8080"
+                                                                value={localPort}
+                                                                onChange={(e) =>
+                                                                    setLocalPort(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                        <span
+                                                            className="hidden pb-2.5 text-app-muted/40 sm:inline"
+                                                            aria-hidden
+                                                        >
+                                                            →
+                                                        </span>
+                                                        <div className="min-w-[120px] flex-1">
+                                                            <Input
+                                                                label="Remote host"
+                                                                placeholder="127.0.0.1"
+                                                                value={remoteHost}
+                                                                onChange={(e) =>
+                                                                    setRemoteHost(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="w-[72px] shrink-0">
+                                                            <Input
+                                                                label="Port"
+                                                                placeholder="80"
+                                                                value={remotePort}
+                                                                onChange={(e) =>
+                                                                    setRemotePort(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex flex-wrap items-end gap-x-2 gap-y-3">
+                                                        <div className="w-[88px] shrink-0">
+                                                            <Input
+                                                                label="Remote port"
+                                                                placeholder="9090"
+                                                                value={remotePort}
+                                                                onChange={(e) =>
+                                                                    setRemotePort(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                        <div className="min-w-[120px] flex-1">
+                                                            <Input
+                                                                label="Local host"
+                                                                placeholder="127.0.0.1"
+                                                                value={remoteHost}
+                                                                onChange={(e) =>
+                                                                    setRemoteHost(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                        <span
+                                                            className="hidden pb-2.5 text-app-muted/40 sm:inline"
+                                                            aria-hidden
+                                                        >
+                                                            ←
+                                                        </span>
+                                                        <div className="w-[88px] shrink-0">
+                                                            <Input
+                                                                label="Local port"
+                                                                placeholder="3000"
+                                                                value={localPort}
+                                                                onChange={(e) =>
+                                                                    setLocalPort(e.target.value)
+                                                                }
+                                                                className="font-mono"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
-                                        )}
 
-                                        <div className="space-y-4">
-                                            {type === 'dynamic' ? (
-                                                <div className="grid grid-cols-2 gap-4">
+                                            {type !== 'dynamic' ? (
+                                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                                     <Input
-                                                        label="SOCKS port"
-                                                        placeholder="1080"
-                                                        value={localPort}
-                                                        onChange={(e) => setLocalPort(e.target.value)}
-                                                        className="font-mono text-center"
+                                                        label="Name (optional)"
+                                                        placeholder={
+                                                            type === 'local'
+                                                                ? 'e.g. Postgres DB'
+                                                                : 'e.g. Webhook handler'
+                                                        }
+                                                        value={name}
+                                                        onChange={(e) => setName(e.target.value)}
                                                     />
                                                     <Input
                                                         label="Bind address"
-                                                        placeholder="127.0.0.1"
+                                                        placeholder={
+                                                            type === 'local'
+                                                                ? '127.0.0.1'
+                                                                : '0.0.0.0'
+                                                        }
                                                         value={bindAddress}
-                                                        onChange={(e) => setBindAddress(e.target.value)}
+                                                        onChange={(e) =>
+                                                            setBindAddress(e.target.value)
+                                                        }
                                                         className="font-mono"
                                                     />
                                                 </div>
-                                            ) : type === 'local' ? (
-                                                <div className="flex flex-wrap items-end gap-x-2 gap-y-3">
-                                                    <div className="w-[88px] shrink-0">
-                                                        <Input
-                                                            label="Local port"
-                                                            placeholder="8080"
-                                                            value={localPort}
-                                                            onChange={(e) => setLocalPort(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                    <span className="hidden pb-2.5 text-app-muted/40 sm:inline" aria-hidden>→</span>
-                                                    <div className="min-w-[120px] flex-1">
-                                                        <Input
-                                                            label="Remote host"
-                                                            placeholder="127.0.0.1"
-                                                            value={remoteHost}
-                                                            onChange={(e) => setRemoteHost(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                    <div className="w-[72px] shrink-0">
-                                                        <Input
-                                                            label="Port"
-                                                            placeholder="80"
-                                                            value={remotePort}
-                                                            onChange={(e) => setRemotePort(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                </div>
                                             ) : (
-                                                <div className="flex flex-wrap items-end gap-x-2 gap-y-3">
-                                                    <div className="w-[88px] shrink-0">
-                                                        <Input
-                                                            label="Remote port"
-                                                            placeholder="9090"
-                                                            value={remotePort}
-                                                            onChange={(e) => setRemotePort(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                    <div className="min-w-[120px] flex-1">
-                                                        <Input
-                                                            label="Local host"
-                                                            placeholder="127.0.0.1"
-                                                            value={remoteHost}
-                                                            onChange={(e) => setRemoteHost(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                    <span className="hidden pb-2.5 text-app-muted/40 sm:inline" aria-hidden>←</span>
-                                                    <div className="w-[88px] shrink-0">
-                                                        <Input
-                                                            label="Local port"
-                                                            placeholder="3000"
-                                                            value={localPort}
-                                                            onChange={(e) => setLocalPort(e.target.value)}
-                                                            className="font-mono"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {type !== 'dynamic' ? (
-                                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                                 <Input
                                                     label="Name (optional)"
-                                                    placeholder={type === 'local' ? 'e.g. Postgres DB' : 'e.g. Webhook handler'}
+                                                    placeholder="e.g. Dev SOCKS proxy"
                                                     value={name}
                                                     onChange={(e) => setName(e.target.value)}
                                                 />
-                                                <Input
-                                                    label="Bind address"
-                                                    placeholder={type === 'local' ? '127.0.0.1' : '0.0.0.0'}
-                                                    value={bindAddress}
-                                                    onChange={(e) => setBindAddress(e.target.value)}
-                                                    className="font-mono"
-                                                />
+                                            )}
+                                        </motion.div>
+                                    ) : (
+                                        <motion.div
+                                            key="bulk"
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            exit={{ opacity: 0 }}
+                                            transition={{ duration: 0.15 }}
+                                            className="space-y-3"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs text-app-muted">
+                                                    Add several local or remote forwards at once.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setMode('single')}
+                                                    className="text-xs text-app-muted hover:text-app-text transition-colors"
+                                                >
+                                                    Back to single
+                                                </button>
                                             </div>
-                                        ) : (
-                                            <Input
-                                                label="Name (optional)"
-                                                placeholder="e.g. Dev SOCKS proxy"
-                                                value={name}
-                                                onChange={(e) => setName(e.target.value)}
+
+                                            <div>
+                                                <div className="grid grid-cols-12 gap-2 px-1 py-1 text-[10px] font-medium text-app-muted uppercase tracking-wide">
+                                                    <div className="col-span-3">Type</div>
+                                                    <div className="col-span-2">Local Port</div>
+                                                    <div className="col-span-3">Remote Host</div>
+                                                    <div className="col-span-3">Remote Port</div>
+                                                    <div className="col-span-1"></div>
+                                                </div>
+
+                                                <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
+                                                    <AnimatePresence initial={false}>
+                                                        {bulkRows.map((row, index) => (
+                                                            <motion.div
+                                                                key={index}
+                                                                initial={{ opacity: 0, x: -10 }}
+                                                                animate={{ opacity: 1, x: 0 }}
+                                                                exit={{
+                                                                    opacity: 0,
+                                                                    height: 0,
+                                                                    marginBottom: 0,
+                                                                }}
+                                                                transition={{ delay: index * 0.05 }}
+                                                                className="grid grid-cols-12 gap-2 items-center py-1 px-1 group"
+                                                            >
+                                                                <div className="col-span-3">
+                                                                    <Select
+                                                                        value={row.type}
+                                                                        onChange={(value) => {
+                                                                            const newRows = [
+                                                                                ...bulkRows,
+                                                                            ];
+                                                                            newRows[index].type =
+                                                                                value as
+                                                                                    | 'local'
+                                                                                    | 'remote';
+                                                                            setBulkRows(newRows);
+                                                                        }}
+                                                                        options={[
+                                                                            {
+                                                                                value: 'local',
+                                                                                label: 'Local',
+                                                                                icon: (
+                                                                                    <Laptop
+                                                                                        size={14}
+                                                                                    />
+                                                                                ),
+                                                                            },
+                                                                            {
+                                                                                value: 'remote',
+                                                                                label: 'Remote',
+                                                                                icon: (
+                                                                                    <ServerIcon
+                                                                                        size={14}
+                                                                                    />
+                                                                                ),
+                                                                            },
+                                                                        ]}
+                                                                        showSearch={false}
+                                                                        triggerClassName="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:border-app-accent/30 focus:bg-app-surface/50"
+                                                                        showCheck={false}
+                                                                        itemClassName="text-[10px] py-1"
+                                                                        portal={true}
+                                                                    />
+                                                                </div>
+                                                                <div className="col-span-2">
+                                                                    <Input
+                                                                        value={row.localPort}
+                                                                        onChange={(e) => {
+                                                                            const newRows = [
+                                                                                ...bulkRows,
+                                                                            ];
+                                                                            newRows[
+                                                                                index
+                                                                            ].localPort =
+                                                                                e.target.value;
+                                                                            setBulkRows(newRows);
+                                                                        }}
+                                                                        placeholder="8080"
+                                                                        className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
+                                                                    />
+                                                                </div>
+                                                                <div className="col-span-3">
+                                                                    <Input
+                                                                        value={row.remoteHost}
+                                                                        onChange={(e) => {
+                                                                            const newRows = [
+                                                                                ...bulkRows,
+                                                                            ];
+                                                                            newRows[
+                                                                                index
+                                                                            ].remoteHost =
+                                                                                e.target.value;
+                                                                            setBulkRows(newRows);
+                                                                        }}
+                                                                        placeholder="localhost"
+                                                                        className="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30"
+                                                                    />
+                                                                </div>
+                                                                <div className="col-span-3">
+                                                                    <Input
+                                                                        value={row.remotePort}
+                                                                        onChange={(e) => {
+                                                                            const newRows = [
+                                                                                ...bulkRows,
+                                                                            ];
+                                                                            newRows[
+                                                                                index
+                                                                            ].remotePort =
+                                                                                e.target.value;
+                                                                            setBulkRows(newRows);
+                                                                        }}
+                                                                        placeholder="80"
+                                                                        className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
+                                                                    />
+                                                                </div>
+                                                                <div className="col-span-1 flex justify-end">
+                                                                    <button
+                                                                        type="button"
+                                                                        aria-label="Remove bulk forward row"
+                                                                        onClick={() => {
+                                                                            const newRows =
+                                                                                bulkRows.filter(
+                                                                                    (_, i) =>
+                                                                                        i !== index,
+                                                                                );
+                                                                            setBulkRows(newRows);
+                                                                        }}
+                                                                        disabled={
+                                                                            bulkRows.length <= 1
+                                                                        }
+                                                                        className="p-1.5 text-app-muted opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-500/10 hover:text-red-400 disabled:opacity-0"
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            </motion.div>
+                                                        ))}
+                                                    </AnimatePresence>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setBulkRows([
+                                                            ...bulkRows,
+                                                            {
+                                                                type: 'local',
+                                                                localPort: '',
+                                                                remoteHost: 'localhost',
+                                                                remotePort: '',
+                                                            },
+                                                        ])
+                                                    }
+                                                    className="mt-2 flex w-full items-center justify-center gap-1.5 py-2 text-xs text-app-muted hover:text-app-accent transition-colors"
+                                                >
+                                                    <Plus size={14} />
+                                                    Add row
+                                                </button>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                    {mode === 'single' && (
+                                        <label className="flex items-center gap-2.5 cursor-pointer text-xs text-app-muted hover:text-app-text transition-colors">
+                                            <input
+                                                type="checkbox"
+                                                checked={autoStart}
+                                                onChange={(e) => setAutoStart(e.target.checked)}
+                                                className="h-3.5 w-3.5 rounded border-app-border bg-app-surface accent-[var(--color-app-accent)]"
                                             />
-                                        )}
-                                    </motion.div>
-                                ) : (
-                                    <motion.div
-                                        key="bulk"
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        exit={{ opacity: 0 }}
-                                        transition={{ duration: 0.15 }}
-                                        className="space-y-3"
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <p className="text-xs text-app-muted">Add several local or remote forwards at once.</p>
-                                            <button
-                                                type="button"
-                                                onClick={() => setMode('single')}
-                                                className="text-xs text-app-muted hover:text-app-text transition-colors"
-                                            >
-                                                Back to single
-                                            </button>
-                                        </div>
-
-                                        <div>
-                                            <div className="grid grid-cols-12 gap-2 px-1 py-1 text-[10px] font-medium text-app-muted uppercase tracking-wide">
-                                                <div className="col-span-3">Type</div>
-                                                <div className="col-span-2">Local Port</div>
-                                                <div className="col-span-3">Remote Host</div>
-                                                <div className="col-span-3">Remote Port</div>
-                                                <div className="col-span-1"></div>
-                                            </div>
-
-                                            <div className="max-h-[240px] overflow-y-auto custom-scrollbar">
-                                                <AnimatePresence initial={false}>
-                                                    {bulkRows.map((row, index) => (
-                                                        <motion.div
-                                                            key={index}
-                                                            initial={{ opacity: 0, x: -10 }}
-                                                            animate={{ opacity: 1, x: 0 }}
-                                                            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                                                            transition={{ delay: index * 0.05 }}
-                                                            className="grid grid-cols-12 gap-2 items-center py-1 px-1 group"
-                                                        >
-                                                            <div className="col-span-3">
-                                                                <Select
-                                                                    value={row.type}
-                                                                    onChange={(value) => {
-                                                                        const newRows = [...bulkRows];
-                                                                        newRows[index].type = value as 'local' | 'remote';
-                                                                        setBulkRows(newRows);
-                                                                    }}
-                                                                    options={[
-                                                                        { value: 'local', label: 'Local', icon: <Laptop size={14} /> },
-                                                                        { value: 'remote', label: 'Remote', icon: <ServerIcon size={14} /> }
-                                                                    ]}
-                                                                    showSearch={false}
-                                                                    triggerClassName="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:border-app-accent/30 focus:bg-app-surface/50"
-                                                                    showCheck={false}
-                                                                    itemClassName="text-[10px] py-1"
-                                                                    portal={true}
-                                                                />
-                                                            </div>
-                                                            <div className="col-span-2">
-                                                                <Input
-                                                                    value={row.localPort}
-                                                                    onChange={(e) => {
-                                                                        const newRows = [...bulkRows];
-                                                                        newRows[index].localPort = e.target.value;
-                                                                        setBulkRows(newRows);
-                                                                    }}
-                                                                    placeholder="8080"
-                                                                    className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
-                                                                />
-                                                            </div>
-                                                            <div className="col-span-3">
-                                                                <Input
-                                                                    value={row.remoteHost}
-                                                                    onChange={(e) => {
-                                                                        const newRows = [...bulkRows];
-                                                                        newRows[index].remoteHost = e.target.value;
-                                                                        setBulkRows(newRows);
-                                                                    }}
-                                                                    placeholder="localhost"
-                                                                    className="h-8 text-[11px] bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30"
-                                                                />
-                                                            </div>
-                                                            <div className="col-span-3">
-                                                                <Input
-                                                                    value={row.remotePort}
-                                                                    onChange={(e) => {
-                                                                        const newRows = [...bulkRows];
-                                                                        newRows[index].remotePort = e.target.value;
-                                                                        setBulkRows(newRows);
-                                                                    }}
-                                                                    placeholder="80"
-                                                                    className="h-8 text-[11px] font-mono bg-transparent border-transparent hover:border-app-border focus:bg-app-surface/50 focus:border-app-accent/30 text-center"
-                                                                />
-                                                            </div>
-                                                            <div className="col-span-1 flex justify-end">
-                                                                <button
-                                                                    type="button"
-                                                                    aria-label="Remove bulk forward row"
-                                                                    onClick={() => {
-                                                                        const newRows = bulkRows.filter((_, i) => i !== index);
-                                                                        setBulkRows(newRows);
-                                                                    }}
-                                                                    disabled={bulkRows.length <= 1}
-                                                                    className="p-1.5 text-app-muted opacity-0 group-hover:opacity-100 transition-all rounded-md hover:bg-red-500/10 hover:text-red-400 disabled:opacity-0"
-                                                                >
-                                                                    <Trash2 size={14} />
-                                                                </button>
-                                                            </div>
-                                                        </motion.div>
-                                                    ))}
-                                                </AnimatePresence>
-                                            </div>
-
-                                            <button
-                                                type="button"
-                                                onClick={() => setBulkRows([...bulkRows, { type: 'local', localPort: '', remoteHost: 'localhost', remotePort: '' }])}
-                                                className="mt-2 flex w-full items-center justify-center gap-1.5 py-2 text-xs text-app-muted hover:text-app-accent transition-colors"
-                                            >
-                                                <Plus size={14} />
-                                                Add row
-                                            </button>
-                                        </div>
-                                    </motion.div>
-                                )}
-                                {mode === 'single' && (
-                                    <label className="flex items-center gap-2.5 cursor-pointer text-xs text-app-muted hover:text-app-text transition-colors">
-                                        <input
-                                            type="checkbox"
-                                            checked={autoStart}
-                                            onChange={(e) => setAutoStart(e.target.checked)}
-                                            className="h-3.5 w-3.5 rounded border-app-border bg-app-surface accent-[var(--color-app-accent)]"
-                                        />
-                                        Auto-start when connection opens
-                                    </label>
-                                )}
-                            </AnimatePresence>
-                        </div>
+                                            Auto-start when connection opens
+                                        </label>
+                                    )}
+                                </AnimatePresence>
+                            </div>
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -620,10 +747,18 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
                         transition={{ duration: 0.2, ease: 'easeInOut' }}
                         className="mt-4 flex items-center justify-end gap-2 border-t border-app-border/40 px-5 py-4"
                     >
-                        <Button type="button" variant="ghost" onClick={onClose}>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={onClose}
+                        >
                             Cancel
                         </Button>
-                        <Button type="button" onClick={handleSave} className="min-w-[140px] gap-2">
+                        <Button
+                            type="button"
+                            onClick={handleSave}
+                            className="min-w-[140px] gap-2"
+                        >
                             {editingTunnel ? (
                                 'Save changes'
                             ) : mode === 'bulk' ? (
@@ -640,4 +775,5 @@ export function AddTunnelModal({ isOpen, onClose, initialConnectionId, editingTu
 }
 
 import { registerModal } from '../../lib/modalRegistry';
+
 registerModal('addTunnel', AddTunnelModal);

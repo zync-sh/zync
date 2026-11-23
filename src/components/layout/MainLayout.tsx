@@ -21,6 +21,7 @@ import {
     GLOBAL_SNIPPETS_CONNECTION_ID,
     LOCAL_TERMINAL_CONNECTION_ID,
 } from '../../features/connections/application/tabService';
+import { resolveHostIcon } from '../../features/connections/domain/hostAppearance';
 import type { CoreTabView } from '../../features/connections/domain/types';
 import { FeedbackInbox } from '../../features/feedbackInbox/FeedbackInbox';
 import { listenWorkspacePresentationActions } from '../../features/shortcuts/workspacePresentation';
@@ -1390,7 +1391,7 @@ const TabContent = memo(function TabContent({ tab, isActive }: { tab: Tab; isAct
                             status={stage}
                             name={connection?.name ?? tab.title}
                             host={connection?.host}
-                            icon={connection?.icon}
+                            icon={resolveHostIcon(connection)}
                             lastError={connection?.lastError}
                             onCancel={() => {
                                 if (connection) {

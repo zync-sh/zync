@@ -7,7 +7,18 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { createStore } from 'zustand/vanilla';
 
+import {
+    applyConnectionMetadata,
+    markConnectionConnected,
+} from '../../src/features/connections/application/connectionLifecycleService.js';
 import * as connectionService from '../../src/features/connections/application/connectionService.js';
+import {
+    hostIconOverride,
+    isSameHostAppearanceTarget,
+    resolveHostIcon,
+} from '../../src/features/connections/domain/hostAppearance.js';
+import { preserveVaultCredentialOnUpdate } from '../../src/features/connections/domain/merge.js';
+import { normalizeFolderPath } from '../../src/features/connections/domain/normalization.js';
 import type { Connection, Folder } from '../../src/features/connections/domain/types.js';
 import type { AppStore } from '../../src/store/useAppStore.js';
 
@@ -50,6 +61,11 @@ function fixture(initial: Connection[] = [host]) {
     let next = 0;
     const waiting: Array<(write: Write) => void> = [];
     Object.assign(dependencies, {
+        '../features/connections/domain': { normalizeFolderPath, preserveVaultCredentialOnUpdate },
+        '../features/connections/domain/hostAppearance': {
+            hostIconOverride,
+            isSameHostAppearanceTarget,
+        },
         '../features/connections/application/connectionService': connectionService,
         '../features/connections/infrastructure/connectionPersistence': {
             saveConnectionsIpc: (connections: Connection[], folders: Folder[]) =>
@@ -70,7 +86,7 @@ function fixture(initial: Connection[] = [host]) {
     });
     const { createConnectionSlice } = loadSource<
         typeof import('../../src/store/connectionSlice.js')
-    >('store/connectionSlice.ts', dependencies, { console: { error() {} } });
+    >('store/connectionSlice.ts', dependencies, { console: { error() {}, log() {} } });
     const store = createStore<AppStore>()(
         (...args) =>
             ({
@@ -96,43 +112,43 @@ function fixture(initial: Connection[] = [host]) {
     };
 }
 
-test('dual-pane updates claim one icon immediately and queue only one pending save', {
+test('dual-pane updates claim one OS identity immediately and queue only one pending save', {
     timeout: 3000,
 }, async () => {
     const { store, writes, nextWrite } = fixture();
-    const pending = store.getState().setConnectionIconIfMissing(host.id, 'linux');
-    assert.equal(store.getState().connections[0].icon, 'linux');
+    const pending = store.getState().setDetectedOsIfMissing(host.id, 'linux');
+    assert.equal(store.getState().connections[0].detectedOs, 'linux');
     await Promise.all(
         Array.from({ length: 20 }, () =>
-            store.getState().setConnectionIconIfMissing(host.id, 'ubuntu'),
+            store.getState().setDetectedOsIfMissing(host.id, 'ubuntu'),
         ),
     );
     const write = await nextWrite();
     assert.equal(writes.length, 1);
-    assert.equal(write.connections[0].icon, 'linux');
+    assert.equal(write.connections[0].detectedOs, 'linux');
     assert.deepEqual(write.connections[0].tags, ['original']);
     write.resolve();
     await pending;
-    await store.getState().setConnectionIconIfMissing(host.id, 'ubuntu');
+    await store.getState().setDetectedOsIfMissing(host.id, 'ubuntu');
     assert.equal(writes.length, 1);
 });
 
-test('a prior pending same-target edit retains its new fields and receives the missing icon', {
+test('a prior pending same-target edit retains its new fields and receives the detected OS', {
     timeout: 3000,
 }, async () => {
     const { store, nextWrite } = fixture();
     const manual = store.getState().editConnection({ ...host, name: 'Renamed', tags: ['manual'] });
     const first = await nextWrite();
-    const automatic = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+    const automatic = store.getState().setDetectedOsIfMissing(host.id, 'linux');
     first.resolve();
     await manual;
     const metadata = await nextWrite();
     assert.equal(metadata.connections[0].name, 'Renamed');
     assert.deepEqual(metadata.connections[0].tags, ['manual']);
-    assert.equal(metadata.connections[0].icon, 'linux');
+    assert.equal(metadata.connections[0].detectedOs, 'linux');
     metadata.resolve();
     await automatic;
-    assert.equal(store.getState().connections[0].icon, 'linux');
+    assert.equal(store.getState().connections[0].detectedOs, 'linux');
 });
 
 test('a pending manual icon or target change cannot be overwritten by old sampled metadata', {
@@ -145,12 +161,13 @@ test('a pending manual icon or target change cannot be overwritten by old sample
         const { store, nextWrite } = fixture();
         const manual = store.getState().editConnection(update);
         const first = await nextWrite();
-        const automatic = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+        const automatic = store.getState().setDetectedOsIfMissing(host.id, 'linux');
         first.resolve();
         await manual;
         const metadata = await nextWrite();
         assert.equal(metadata.connections[0].host, update.host);
         assert.equal(metadata.connections[0].icon, update.icon);
+        assert.equal(metadata.connections[0].detectedOs, update.icon ? 'linux' : undefined);
         metadata.resolve();
         await automatic;
         assert.equal(store.getState().connections[0].icon, update.icon);
@@ -162,9 +179,9 @@ test('deletion before a queued metadata save never upserts its old host', {
 }, async () => {
     const blocker = { ...host, id: 'metadata-blocker' };
     const { store, nextWrite } = fixture([host, blocker]);
-    const blocking = store.getState().setConnectionIconIfMissing(blocker.id, 'linux');
+    const blocking = store.getState().setDetectedOsIfMissing(blocker.id, 'linux');
     const first = await nextWrite();
-    const automatic = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+    const automatic = store.getState().setDetectedOsIfMissing(host.id, 'linux');
     store.getState().deleteConnection(host.id);
     first.resolve();
     await blocking;
@@ -187,20 +204,21 @@ test('deletion before a queued metadata save never upserts its old host', {
     );
 });
 
-test('failed persistence rolls back only its own optimistic icon and permits retry', {
+test('failed persistence rolls back only its own optimistic OS metadata and permits retry', {
     timeout: 3000,
 }, async () => {
     for (const icon of [undefined, '']) {
         const { store, nextWrite } = fixture([{ ...host, icon }]);
-        const first = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+        const first = store.getState().setDetectedOsIfMissing(host.id, 'linux');
         const rejected = assert.rejects(first, /fixture save failure/);
         (await nextWrite()).reject(new Error('fixture save failure'));
         await rejected;
         assert.equal(store.getState().connections[0].icon, icon);
-        const retry = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+        assert.equal(store.getState().connections[0].detectedOs, undefined);
+        const retry = store.getState().setDetectedOsIfMissing(host.id, 'linux');
         (await nextWrite()).resolve();
         await retry;
-        assert.equal(store.getState().connections[0].icon, 'linux');
+        assert.equal(store.getState().connections[0].detectedOs, 'linux');
     }
 });
 
@@ -209,7 +227,7 @@ test('save failure never rolls back a newer user icon or recreates a removed hos
 }, async () => {
     for (const remove of [false, true]) {
         const { store, nextWrite } = fixture();
-        const pending = store.getState().setConnectionIconIfMissing(host.id, 'linux');
+        const pending = store.getState().setDetectedOsIfMissing(host.id, 'linux');
         const rejected = assert.rejects(pending, /fixture failure/);
         const write = await nextWrite();
         store.setState((state) => ({
@@ -229,8 +247,83 @@ test('missing hosts and existing manual icons produce no save or store notificat
     store.subscribe(() => {
         notifications++;
     });
-    await store.getState().setConnectionIconIfMissing(host.id, 'linux');
-    await store.getState().setConnectionIconIfMissing('removed', 'linux');
+    await store.getState().setDetectedOsIfMissing(host.id, 'linux');
+    await store.getState().setDetectedOsIfMissing('removed', 'linux');
     assert.equal(writes.length, 0);
     assert.equal(notifications, 0);
+});
+
+test('imported host metadata follows the resolved jump route', { timeout: 3000 }, async () => {
+    const originalJump: Connection = { ...host, id: 'original-jump', host: 'jump.invalid' };
+    const otherJump: Connection = { ...host, id: 'other-jump', host: 'other-jump.invalid' };
+    const savedHost: Connection = { ...host, jumpServerId: originalJump.id, detectedOs: 'debian' };
+
+    for (const { importedJumpId, remapTo, expectedJumpId, expectedOs } of [
+        {
+            importedJumpId: 'imported-jump',
+            remapTo: originalJump,
+            expectedJumpId: originalJump.id,
+            expectedOs: 'debian',
+        },
+        {
+            importedJumpId: 'missing-jump',
+            remapTo: null,
+            expectedJumpId: originalJump.id,
+            expectedOs: 'debian',
+        },
+        {
+            importedJumpId: originalJump.id,
+            remapTo: otherJump,
+            expectedJumpId: otherJump.id,
+            expectedOs: undefined,
+        },
+    ]) {
+        const { store, nextWrite } = fixture([savedHost, originalJump, otherJump]);
+        store.getState().importConnections([
+            {
+                connection: { ...savedHost, jumpServerId: importedJumpId },
+                targetId: savedHost.id,
+                matchType: 'endpoint',
+            },
+            ...(remapTo
+                ? [
+                      {
+                          connection: { ...remapTo, id: importedJumpId },
+                          targetId: remapTo.id,
+                          matchType: 'endpoint' as const,
+                      },
+                  ]
+                : []),
+        ]);
+        const write = await nextWrite();
+        write.resolve();
+        assert.equal(write.connections[0].jumpServerId, expectedJumpId);
+        assert.equal(write.connections[0].detectedOs, expectedOs);
+    }
+});
+
+test('clearing a saved icon restores the latest detected OS', () => {
+    const detected = { detectedOs: 'debian' };
+    assert.equal(resolveHostIcon(), 'Server');
+    assert.equal(resolveHostIcon({ ...detected, icon: 'ubuntu' }), 'ubuntu');
+    assert.equal(resolveHostIcon(detected), 'debian');
+    assert.equal(resolveHostIcon({ ...detected, icon: 'Server' }), 'debian');
+    assert.equal(resolveHostIcon({ ...detected, icon: 'server' }), 'server');
+});
+
+test('SSH metadata refreshes automatic icons and retains the last valid observation', () => {
+    const connected = markConnectionConnected([host], host.id, '/home/fixture', ' Ubuntu ');
+    assert.equal(connected[0].status, 'connected');
+    assert.equal(connected[0].homePath, '/home/fixture');
+    assert.equal(connected[0].icon, undefined);
+    assert.equal(resolveHostIcon(connected[0]), 'ubuntu');
+
+    const debian = applyConnectionMetadata(connected, host.id, 'debian');
+    assert.equal(resolveHostIcon(debian[0]), 'debian');
+    assert.equal(applyConnectionMetadata(debian, host.id, ''), debian);
+    assert.equal(applyConnectionMetadata(debian, host.id, 'Debian'), debian);
+
+    const [custom] = applyConnectionMetadata([{ ...host, icon: 'ubuntu' }], host.id, 'debian');
+    assert.equal(resolveHostIcon(custom), 'ubuntu');
+    assert.equal(resolveHostIcon({ ...custom, icon: undefined }), 'debian');
 });

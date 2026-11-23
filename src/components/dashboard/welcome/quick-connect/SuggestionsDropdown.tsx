@@ -1,9 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Clock } from 'lucide-react';
+
+import { resolveHostIcon } from '../../../../features/connections/domain/hostAppearance';
+import { useConnectionDisplayLabels } from '../../../../features/connections/presentation/useConnectionDisplayLabels';
+import { cn } from '../../../../lib/utils';
 import type { Connection } from '../../../../store/connectionSlice';
 import { OSIcon } from '../../../icons/OSIcon';
-import { cn } from '../../../../lib/utils';
-import { useConnectionDisplayLabels } from '../../../../features/connections/presentation/useConnectionDisplayLabels';
 
 interface SuggestionsDropdownProps {
     showDropdown: boolean;
@@ -38,9 +40,18 @@ export function SuggestionsDropdown({
                     className="absolute top-full mt-1.5 left-0 right-0 bg-app-panel/98 backdrop-blur-xl border border-app-border/60 rounded-2xl shadow-2xl overflow-hidden z-50 py-1"
                 >
                     {showRecents && (
-                        <li role="presentation" className="flex items-center gap-1.5 px-3 pt-2 pb-1">
-                            <Clock size={10} className="text-app-muted/30" aria-hidden="true" />
-                            <span className="text-[10px] uppercase tracking-widest text-app-muted/40 font-medium">Recent</span>
+                        <li
+                            role="presentation"
+                            className="flex items-center gap-1.5 px-3 pt-2 pb-1"
+                        >
+                            <Clock
+                                size={10}
+                                className="text-app-muted/30"
+                                aria-hidden="true"
+                            />
+                            <span className="text-[10px] uppercase tracking-widest text-app-muted/40 font-medium">
+                                Recent
+                            </span>
                         </li>
                     )}
                     {dropItems.map((conn, index) => (
@@ -90,7 +101,10 @@ function SuggestionRow({
             onMouseEnter={() => setActiveIndex(index)}
         >
             <div className="relative shrink-0">
-                <OSIcon icon={conn.icon || 'Server'} className="w-3.5 h-3.5 text-app-muted/60" />
+                <OSIcon
+                    icon={resolveHostIcon(conn)}
+                    className="w-3.5 h-3.5 text-app-muted/60"
+                />
                 {conn.status === 'connected' && (
                     <span
                         className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-green-500 border border-app-panel"

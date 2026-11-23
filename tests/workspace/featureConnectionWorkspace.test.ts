@@ -96,6 +96,9 @@ export async function runFeatureConnectionWorkspaceChecks(
             '../features/connections/infrastructure/sshVerificationIpc': {
                 SshVerificationCancelledError: class extends Error {},
             },
+            '../features/connections/domain/hostAppearance': pure(
+                'features/connections/domain/hostAppearance.ts',
+            ),
             '../features/connections/application/connectionService': {},
             '../features/connections/application/tabService': pure(
                 'features/connections/application/tabService.ts',
